@@ -6,6 +6,13 @@ const H: int = 180
 const SEA_LEVEL: int = 52
 const TILE: int = 16
 
+const LIGHT_CHUNK: int = 8            # размер чанка пространственного хэша света (клетки)
+const LIGHT_MIN: float = 0.05         # минимальный свет тайла, дающий источник
+const LIGHT_BASE_RADIUS: float = 46.0 # базовый радиус свечения тайла
+const LIGHT_RADIUS_PER_POWER: float = 60.0
+const LIGHT_CHUNKS_X: int = (W + LIGHT_CHUNK - 1) / LIGHT_CHUNK  # чанков по ширине
+const LIGHT_CHUNKS_Y: int = (H + LIGHT_CHUNK - 1) / LIGHT_CHUNK  # чанков по высоте
+
 var world_seed: int = 0
 var tiles: PackedByteArray = PackedByteArray()
 var surface: PackedInt32Array = PackedInt32Array()
@@ -19,10 +26,45 @@ var lights: Array[Dictionary] = []
 var machines: Dictionary = {}       # Vector2i -> Node (машина)
 var belts: Dictionary = {}         # Vector2i -> {dir:int, items:Array}
 var astar: AStarGrid2D = null
+var gen_stats: Dictionary = {}     # замеры последней генерации мира
+
+# --- Реестр источников света -------------------------------------------------
+# _light_cells: Vector2i клетка -> источник света, даваемый тайлом.
+# _light_chunks: индекс чанка -> Array источников света внутри чанка.
+# _light_flat: индекс чанка -> PackedFloat32Array (x, y, r², power) — зеркало
+# чанка для быстрого light_at: в горячем цикле словари не трогаем.
+# Чанки хранятся в обычных массивах, а не в словаре: индекс считается
+# арифметикой, без хеширования Vector2i.
+# Реестр нужен, чтобы обновлять свет точечно, а не пересобирать весь мир.
+var _light_cells: Dictionary = {}
+var _light_chunks: Array = []
+var _light_flat: Array = []
+var _light_max_radius: float = 0.0  # максимальный радиус источника в мире
+var _light_reach: int = 1           # на сколько чанков в сторону достаёт этот радиус
+var _tile_light_pow: PackedFloat32Array = PackedFloat32Array()  # свет тайла по id
+var _atlas_cache: Array = []          # id тайла -> координаты в атласе
+var _trees: int = 0
 
 
 func _ready() -> void:
 	_build_tileset()
+	_build_tile_light_table()
+	_build_atlas_cache()
+	_reset_light_chunks()
+
+
+## Кэш света тайлов по id — чтобы не лезть в словарь DB в горячих циклах.
+func _build_tile_light_table() -> void:
+	_tile_light_pow.resize(IDs.TILE_COUNT)
+	for id in range(IDs.TILE_COUNT):
+		_tile_light_pow[id] = DB.tile_light(id)
+
+
+## Кэш координат атласа по id тайла: поиск в словаре на каждой клетке дорогой.
+func _build_atlas_cache() -> void:
+	_atlas_cache.clear()
+	for id in range(IDs.TILE_COUNT):
+		_atlas_cache.append(DB.atlas_of_tile.get(id, Vector2i(-1, -1)))
 
 
 func _build_tileset() -> void:
@@ -44,7 +86,12 @@ func _build_tileset() -> void:
 # ------------------------------------------------------------ ГЕНЕРАЦИЯ
 
 func generate(p_seed: int) -> void:
+	var t_start: int = Time.get_ticks_usec()
 	world_seed = p_seed
+	if _tile_light_pow.size() < IDs.TILE_COUNT:
+		_build_tile_light_table()
+	if _atlas_cache.size() < IDs.TILE_COUNT:
+		_build_atlas_cache()
 	for m in machines.values():
 		if is_instance_valid(m):
 			m.queue_free()
@@ -60,6 +107,11 @@ func generate(p_seed: int) -> void:
 	machines.clear()
 	belts.clear()
 	lights.clear()
+	_light_cells.clear()
+	_reset_light_chunks()
+	_light_max_radius = 0.0
+	_light_reach = 1
+	_trees = 0
 
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 	rng.seed = world_seed
@@ -171,16 +223,25 @@ func generate(p_seed: int) -> void:
 				tiles[idx] = IDs.T.LAVA
 
 	# --- 7. Деревья, трава, камни --------------------------------------------
+	# Сначала деревья: крона занимает место над поверхностью, иначе мох и кристаллы
+	# выросли бы сквозь неё.
 	for x in range(2, W - 2):
 		var top: int = surface[x]
 		if get_tile(x, top) != IDs.T.GRASS:
 			continue
+		if rng.randf() < 0.055:
+			_place_tree(x, top, rng)
+	# Трава и светящиеся кристаллы — только в пустые клетки над поверхностью.
+	for x in range(2, W - 2):
+		var top: int = surface[x]
+		if get_tile(x, top) != IDs.T.GRASS:
+			continue
+		if get_tile(x, top - 1) != IDs.T.AIR:
+			continue
 		var r: float = rng.randf()
-		if r < 0.055:
-			_place_tree(x, top - 1, rng)
-		elif r < 0.10:
+		if r < 0.045:
 			set_tile_raw(x, top - 1, IDs.T.MOSS)
-		elif r < 0.115:
+		elif r < 0.060:
 			set_tile_raw(x, top - 1, IDs.T.LIGHT_CRYSTAL)
 
 	# --- 8. Руины станции -----------------------------------------------------
@@ -204,10 +265,30 @@ func generate(p_seed: int) -> void:
 		if get_tile(vx, vy) == IDs.T.AIR and get_tile(vx, vy + 1) != IDs.T.AIR:
 			vents.append(Vector2i(vx, vy))
 
+	# --- 11. Страховка: ничего не должно висеть в воздухе --------------------
+	_fix_floating_trees()
+
+	# --- 12. Визуализация, свет, поиск пути ----------------------------------
+	var t_sync: int = Time.get_ticks_usec()
 	_sync_all()
+	var t_lights: int = Time.get_ticks_usec()
 	_rebuild_lights()
+	var t_astar: int = Time.get_ticks_usec()
 	_build_astar()
+	var t_end: int = Time.get_ticks_usec()
 	spawn_point = Vector2(float((bx - 4) * TILE) + TILE * 0.5, float(surface[bx] * TILE) - 12.0)
+
+	gen_stats = {
+		"gen_ms": float(t_end - t_start) / 1000.0,
+		"astar_ms": float(t_end - t_astar) / 1000.0,
+		"sync_ms": float(t_lights - t_sync) / 1000.0,
+		"lights_ms": float(t_astar - t_lights) / 1000.0,
+		"lights_count": lights.size(),
+		"trees": _trees,
+	}
+	print("[Мир] генерация: gen=%.0f мс astar=%.0f мс sync=%.0f мс свет=%.0f мс источников=%d деревьев=%d"
+			% [gen_stats["gen_ms"], gen_stats["astar_ms"], gen_stats["sync_ms"],
+			gen_stats["lights_ms"], gen_stats["lights_count"], gen_stats["trees"]])
 
 
 ## Сетка поиска пути для фантомов. Строится один раз, точечно обновляется при копке.
@@ -219,10 +300,15 @@ func _build_astar() -> void:
 	astar.default_compute_heuristic = AStarGrid2D.HEURISTIC_MANHATTAN
 	astar.default_estimate_heuristic = AStarGrid2D.HEURISTIC_MANHATTAN
 	astar.update()
+	# Локальная таблица твёрдости: раз в клетку вместо обращения к словарю DB.
+	# Прямой вызов метода быстрее, чем вызов через Callable.
+	var solid_tbl: PackedByteArray = _tile_flag_table(true)
+	var grid: AStarGrid2D = astar
 	for y in range(H):
+		var row: int = y * W
 		for x in range(W):
-			if DB.tile_solid(tiles[y * W + x]):
-				astar.set_point_solid(Vector2i(x, y), true)
+			if solid_tbl[tiles[row + x]] != 0:
+				grid.set_point_solid(Vector2i(x, y), true)
 
 
 func _update_astar(x: int, y: int) -> void:
@@ -231,6 +317,18 @@ func _update_astar(x: int, y: int) -> void:
 	if x < 0 or y < 0 or x >= W or y >= H:
 		return
 	astar.set_point_solid(Vector2i(x, y), DB.tile_solid(tiles[y * W + x]))
+
+
+## Кэшированная таблица свойств тайлов — быстрее словарных запросов в DB.
+func _tile_flag_table(want_solid: bool) -> PackedByteArray:
+	var out: PackedByteArray = PackedByteArray()
+	out.resize(IDs.TILE_COUNT)
+	for id in range(IDs.TILE_COUNT):
+		if want_solid:
+			out[id] = 1 if DB.tile_solid(id) else 0
+		else:
+			out[id] = 1 if DB.tile_light(id) > LIGHT_MIN else 0
+	return out
 
 
 func _noise(type: int, freq: float, octaves: int, s: int) -> FastNoiseLite:
@@ -244,17 +342,89 @@ func _noise(type: int, freq: float, octaves: int, s: int) -> FastNoiseLite:
 	return n
 
 
-func _place_tree(x: int, y: int, rng: RandomNumberGenerator) -> void:
-	var hgt: int = rng.randi_range(4, 7)
-	for i in hgt:
-		set_tile_raw(x, y - i, IDs.T.LOG)
-	for ly in range(y - hgt - 2, y - hgt + 3):
-		var span: int = 2
-		for lx in range(x - span, x + span + 1):
-			if absi(lx - x) == span and rng.randf() < 0.5:
+# ------------------------------------------------------------ ДЕРЕВЬЯ
+
+## Ставит дерево на сплошной грунт.
+##
+## Форма дерева подчинена правилу «ничего не висит в воздухе»: под бревном должен
+## быть сплошной тайл, под листвой — бревно или другая листва. Поэтому ствол —
+## сплошные столбы брёвен от земли вверх, а крона — слои листвы, где каждый лист
+## опирается на бревно или на лист нижнего слоя.
+func _place_tree(x: int, ground: int, rng: RandomNumberGenerator) -> void:
+	# Опора: под стволом сплошной грунт, сверху пусто.
+	if not DB.tile_solid(get_tile(x, ground)):
+		return
+	if get_tile(x, ground - 1) != IDs.T.AIR:
+		return
+	# Ширина кроны: сколько соседних колонок стоят на почти той же высоте.
+	var ext: int = 0
+	for e in [2, 1]:
+		if _tree_ground_ok(x, ground, e):
+			ext = e
+			break
+	if ext < 1:
+		return # ровной площадки нет: вышло бы тонким прутом без кроны
+	# Ступень, с которой начинается крона: ниже самой высокой земли под деревом.
+	var min_ground: int = ground
+	for c in range(x - ext, x + ext + 1):
+		min_ground = mini(min_ground, surface[c])
+	var trunk_h: int = rng.randi_range(1, 2)
+	var top: int = min_ground - trunk_h
+	# Ствол: сплошной столб брёвен от своей земли до верха.
+	for c in range(x - ext, x + ext + 1):
+		for y in range(surface[c] - 1, top - 1, -1):
+			if get_tile(c, y) != IDs.T.AIR:
+				break
+			set_tile_raw(c, y, IDs.T.LOG)
+	# Крона: слои листвы снизу вверх; лист кладём только на бревно или на лист.
+	var layers: Array[int] = [ext, ext, ext - 1, ext - 1, ext - 2]
+	for i in range(layers.size()):
+		var half: int = layers[i]
+		if half < 0:
+			break
+		var row: int = top - 1 - i
+		for c in range(x - half, x + half + 1):
+			var below: int = get_tile(c, row + 1)
+			if below != IDs.T.LOG and below != IDs.T.LEAVES:
 				continue
-			if get_tile(lx, ly) == IDs.T.AIR:
-				set_tile_raw(lx, ly, IDs.T.LEAVES)
+			if get_tile(c, row) != IDs.T.AIR:
+				continue
+			set_tile_raw(c, row, IDs.T.LEAVES)
+	_trees += 1
+
+
+## Колонки x-e .. x+e пригодны под дерево: та же высота, сплошной грунт, сверху пусто.
+func _tree_ground_ok(x: int, ground: int, e: int) -> bool:
+	for c in range(x - e, x + e + 1):
+		if c < 1 or c >= W - 1:
+			return false
+		if absi(surface[c] - ground) > 1:
+			return false
+		if not DB.tile_solid(get_tile(c, surface[c])):
+			return false
+		if get_tile(c, surface[c] - 1) != IDs.T.AIR:
+			return false
+	return true
+
+
+## Страховка после расстановки построек: убирает брёвна и листву без опоры.
+## Обход снизу вверх, поэтому клетка над снятой опорой тоже успевает убраться.
+func _fix_floating_trees() -> void:
+	var max_top: int = 0
+	for x in range(W):
+		max_top = maxi(max_top, surface[x])
+	var limit: int = mini(max_top + 12, H - 1)
+	for y in range(limit, -1, -1):
+		var row: int = y * W
+		for x in range(W):
+			var t: int = tiles[row + x]
+			if t == IDs.T.LOG:
+				if not DB.tile_solid(get_tile(x, y + 1)):
+					tiles[row + x] = IDs.T.AIR
+			elif t == IDs.T.LEAVES:
+				var below: int = get_tile(x, y + 1)
+				if below != IDs.T.LOG and below != IDs.T.LEAVES:
+					tiles[row + x] = IDs.T.AIR
 
 
 func _flatten(cx: int, half: int) -> void:
@@ -442,30 +612,181 @@ func move_body(pos: Vector2, motion: Vector2, size: Vector2) -> Dictionary:
 
 # ------------------------------------------------------------ СВЕТ
 
+## Индекс чанка в массивах реестра. LIGHT_CHUNK == 8, поэтому деление — сдвиг на 3.
+static func _chunk_index(cell: Vector2i) -> int:
+	return (cell.y >> 3) * LIGHT_CHUNKS_X + (cell.x >> 3)
+
+
+## Пересоздаёт пустые чанки реестра света.
+func _reset_light_chunks() -> void:
+	_light_chunks.clear()
+	_light_flat.clear()
+	for i in range(LIGHT_CHUNKS_X * LIGHT_CHUNKS_Y):
+		_light_chunks.append([] as Array[Dictionary])
+		_light_flat.append(PackedFloat32Array())
+
+
+## Кладёт источник в чанк хэша.
+func _light_register(entry: Dictionary, cell: Vector2i) -> void:
+	var idx: int = _chunk_index(cell)
+	var bucket: Array = _light_chunks[idx]
+	bucket.append(entry)
+	# Числовое зеркало чанка: x, y, r², power. В light_at словари не трогаем.
+	var flat: PackedFloat32Array = _light_flat[idx]
+	var pos: Vector2 = entry["pos"]
+	var r: float = float(entry["radius"])
+	flat.push_back(pos.x)
+	flat.push_back(pos.y)
+	flat.push_back(r * r)
+	flat.push_back(float(entry["power"]))
+	_light_flat[idx] = flat
+	if r > _light_max_radius:
+		_light_max_radius = r
+		_light_reach = maxi(1, int(ceil(r / float(TILE * LIGHT_CHUNK))))
+
+
+## Убирает источник из чанка хэша.
+func _light_unregister(entry: Dictionary, cell: Vector2i) -> void:
+	var idx: int = _chunk_index(cell)
+	var bucket: Array = _light_chunks[idx]
+	var at: int = -1
+	for i in range(bucket.size()):
+		if is_same(bucket[i], entry):
+			at = i
+			break
+	if at < 0:
+		return
+	bucket.remove_at(at)
+	var flat: PackedFloat32Array = _light_flat[idx]
+	if flat.size() >= (at + 1) * 4:
+		for k in range(4):
+			flat.remove_at(at * 4)
+		_light_flat[idx] = flat
+
+
+## Добавляет источник света от тайла (светящиеся руды, кристаллы, лава).
+func _light_add_tile(cell: Vector2i, power: float) -> void:
+	var entry: Dictionary = {
+		"pos": cell_to_world(cell),
+		"radius": LIGHT_BASE_RADIUS + power * LIGHT_RADIUS_PER_POWER,
+		"power": power,
+	}
+	lights.append(entry)
+	_light_cells[cell] = entry
+	_light_register(entry, cell)
+
+
+## Убирает источник света от тайла.
+func _light_remove_tile(cell: Vector2i) -> void:
+	if not _light_cells.has(cell):
+		return
+	var entry: Dictionary = _light_cells[cell]
+	# Ищем по ссылке, а не по значению: сравнение словарей по содержимому дорогое.
+	for i in range(lights.size()):
+		if is_same(lights[i], entry):
+			lights.remove_at(i)
+			break
+	_light_unregister(entry, cell)
+	_light_cells.erase(cell)
+
+
+## Статический источник (вентиляция, терминал, релей) — не привязан к тайлу.
+func _light_add_static(cell: Vector2i, radius: float, power: float) -> void:
+	var entry: Dictionary = {
+		"pos": cell_to_world(cell),
+		"radius": radius,
+		"power": power,
+	}
+	lights.append(entry)
+	_light_register(entry, cell)
+
+
+## Полная пересборка реестра света. Дёргается только при генерации мира и sync_all().
 func _rebuild_lights() -> void:
 	lights.clear()
+	_light_cells.clear()
+	_reset_light_chunks()
+	_light_max_radius = 0.0
+	_light_reach = 1
+	var light_tbl: PackedByteArray = _tile_flag_table(false)
 	for y in range(H):
+		var row: int = y * W
 		for x in range(W):
-			var l: float = DB.tile_light(get_tile(x, y))
-			if l > 0.05:
-				lights.append({"pos": cell_to_world(Vector2i(x, y)), "radius": 46.0 + l * 60.0, "power": l})
+			var id: int = tiles[row + x]
+			if light_tbl[id] != 0:
+				_light_add_tile(Vector2i(x, y), _tile_light_pow[id])
 	for v in vents:
-		lights.append({"pos": cell_to_world(v), "radius": 26.0, "power": 0.35})
+		_light_add_static(v, 26.0, 0.35)
 	for c in terminals:
-		lights.append({"pos": cell_to_world(c), "radius": 40.0, "power": 0.4})
-	lights.append({"pos": cell_to_world(beacon_cell), "radius": 70.0, "power": 0.6})
+		_light_add_static(c, 40.0, 0.4)
+	_light_add_static(beacon_cell, 70.0, 0.6)
 
 
+## Точечное обновление света вокруг изменённой клетки.
+## Меняется только источник в самой клетке — никакого перебора всего мира.
 func _update_lights_around(x: int, y: int) -> void:
-	_rebuild_lights()
+	var cell: Vector2i = Vector2i(x, y)
+	var old_power: float = 0.0
+	if _light_cells.has(cell):
+		old_power = float(_light_cells[cell]["power"])
+	var new_power: float = _tile_light_pow[tiles[y * W + x]]
+	if old_power == new_power:
+		return
+	_light_remove_tile(cell)
+	if new_power > LIGHT_MIN:
+		_light_add_tile(cell, new_power)
 
 
+## Суммарный свет в клетке: складываем источники из соседних чанков хэша.
+## Ходим по числовому зеркалу чанка — без словарей в горячем цикле.
 func light_at(c: Vector2i) -> float:
 	var total: float = 0.0
-	for l in lights:
-		if (cell_to_world(c) - l["pos"]).length() < l["radius"]:
-			total += l["power"]
+	var cp: Vector2 = cell_to_world(c)
+	var cx: int = c.x >> 3
+	var cy: int = c.y >> 3
+	var reach: int = _light_reach
+	for y in range(cy - reach, cy + reach + 1):
+		if y < 0 or y >= LIGHT_CHUNKS_Y:
+			continue
+		var row: int = y * LIGHT_CHUNKS_X
+		for x in range(cx - reach, cx + reach + 1):
+			if x < 0 or x >= LIGHT_CHUNKS_X:
+				continue
+			var flat: PackedFloat32Array = _light_flat[row + x]
+			var n: int = flat.size() / 4
+			for i in range(n):
+				var o: int = i * 4
+				var ddx: float = cp.x - flat[o]
+				var ddy: float = cp.y - flat[o + 1]
+				if ddx * ddx + ddy * ddy < flat[o + 2]:
+					total += flat[o + 3]
 	return total
+
+
+## Источники света, чей радиус пересекает прямоугольник (в мировых координатах).
+## Нужен для отсечения света вне камеры.
+func get_lights_near(rect: Rect2) -> Array:
+	var out: Array = []
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return out
+	var reach: float = _light_max_radius
+	var span: float = float(TILE * LIGHT_CHUNK)
+	var x0: int = maxi(int(floor((rect.position.x - reach) / span)), 0)
+	var x1: int = mini(int(floor((rect.end.x + reach) / span)), LIGHT_CHUNKS_X - 1)
+	var y0: int = maxi(int(floor((rect.position.y - reach) / span)), 0)
+	var y1: int = mini(int(floor((rect.end.y + reach) / span)), LIGHT_CHUNKS_Y - 1)
+	for cy in range(y0, y1 + 1):
+		var row: int = cy * LIGHT_CHUNKS_X
+		for cx in range(x0, x1 + 1):
+			var bucket: Array = _light_chunks[row + cx]
+			for l in bucket:
+				var p: Vector2 = l["pos"]
+				var r: float = float(l["radius"])
+				var dx: float = maxf(maxf(rect.position.x - p.x, p.x - rect.end.x), 0.0)
+				var dy: float = maxf(maxf(rect.position.y - p.y, p.y - rect.end.y), 0.0)
+				if dx * dx + dy * dy <= r * r:
+					out.append(l)
+	return out
 
 
 # ------------------------------------------------------------ СИНХРОНИЗАЦИЯ
@@ -475,15 +796,21 @@ func _set_cell_visual(x: int, y: int, id: int) -> void:
 	if id == IDs.T.AIR:
 		tilemap.set_cell(Vector2i(x, y), 0, Vector2i(-1, -1))
 	else:
-		tilemap.set_cell(Vector2i(x, y), 0, DB.atlas_of_tile[id])
+		tilemap.set_cell(Vector2i(x, y), 0, _atlas_cache[id])
 
 
 func _sync_all() -> void:
 	if not tilemap:
 		return
+	# Пустые клетки пропускаем: тайлмап после очистки и так пуст.
+	# Координаты атласа берём из кэша — поиск в словаре на каждой клетке дорогой.
 	for y in range(H):
+		var row: int = y * W
 		for x in range(W):
-			_set_cell_visual(x, y, tiles[y * W + x])
+			var id: int = tiles[row + x]
+			if id == IDs.T.AIR:
+				continue
+			tilemap.set_cell(Vector2i(x, y), 0, _atlas_cache[id])
 
 
 func sync_all() -> void:
