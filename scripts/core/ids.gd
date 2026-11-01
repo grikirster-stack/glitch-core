@@ -1,0 +1,69 @@
+class_name IDs
+## Глобальные идентификаторы тайлов и предметов.
+
+enum T {
+	AIR,
+	STONE,
+	DIRT,
+	GRASS,
+	SAND,
+	SANDSTONE,
+	LOG,
+	LEAVES,
+	COPPER_ORE,
+	IRON_ORE,
+	CRYSTAL_ORE,
+	COAL_ORE,
+	SCRAP_ORE,
+	WATER,
+	LAVA,
+	BEDROCK,
+	STEEL,
+	PANEL,
+	TERMINAL,
+	GLASS,
+	COPPER_BLOCK,
+	IRON_BLOCK,
+	CRYSTAL_BLOCK,
+	LIGHT_CRYSTAL,
+	MOSS,
+	RELAY_CORE,
+}
+
+enum I {
+	NONE,
+	# Сырьё
+	COPPER_ORE,
+	IRON_ORE,
+	CRYSTAL,
+	COAL,
+	SCRAP,
+	SAND,
+	LOG,
+	STONE,
+	# Промежуточные
+	COPPER_INGOT,
+	IRON_INGOT,
+	GLASS,
+	# Компоненты
+	COPPER_PLATE,
+	IRON_PLATE,
+	CIRCUIT,
+	STEEL_PLATE,
+	POWER_CELL,
+	# Постройки
+	DRILL,
+	SMELTER,
+	ASSEMBLER,
+	BELT,
+	CHEST,
+	COAL_GEN,
+	SOLAR,
+	LAMP,
+	# Блоки-строительный материал
+	COPPER_BLOCK,
+	IRON_BLOCK,
+	CRYSTAL_BLOCK,
+}
+
+const TILE_COUNT := T.RELAY_CORE + 1

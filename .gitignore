@@ -1,0 +1,6 @@
+.tools/
+.godot/
+.work/
+_shot.png
+*.log
+*.err
