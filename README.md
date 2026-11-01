@@ -38,6 +38,35 @@ godot --headless --path C:\PROJECT\GODOTTEST -- --test --seed=12345
 
 В конце выводится строка `ИТОГ: проверок 42, провалов 0` и ненулевой код возврата при провалах.
 
+> **Важно про свежий чекаут.** `.godot/` не в git, поэтому в чистом клоне сначала
+> нужно зарегистрировать `class_name`-классы, иначе скрипты не загрузятся:
+>
+> ```bash
+> godot --headless --path . --import
+> ```
+>
+> Именно этот шаг стоит в CI перед автотестами.
+
+## Разработка
+
+Репозиторий: <https://github.com/grikirster-stack/glitch-core>
+
+Работа идёт через GitHub: **одна зона — один issue — один PR**. Зоны не
+пересекаются по файлам, поэтому правки сливаются без конфликтов.
+
+| Зона | Файлы | Issue |
+|---|---|---|
+| Мир | `scripts/autoload/world.gd` | [#2](https://github.com/grikirster-stack/glitch-core/issues/2) |
+| Эффекты | `scripts/ui/world_fx.gd` | [#3](https://github.com/grikirster-stack/glitch-core/issues/3) |
+| Питание | `scripts/autoload/game.gd`, `scripts/machines/machine_base.gd` | [#4](https://github.com/grikirster-stack/glitch-core/issues/4) |
+| Фантомы | `scripts/entities/phantom.gd` | [#5](https://github.com/grikirster-stack/glitch-core/issues/5) |
+| Тесты | `tools/**` | [#6](https://github.com/grikirster-stack/glitch-core/issues/6) |
+| HUD и предметы | `scripts/ui/hud.gd`, `scripts/ui/sky_backdrop.gd`, `scripts/entities/item_entity.gd` | [#7](https://github.com/grikirster-stack/glitch-core/issues/7) |
+| Игрок | `scripts/entities/player.gd` | [#8](https://github.com/grikirster-stack/glitch-core/issues/8) |
+
+Подробности — в [дорожной карте](https://github.com/grikirster-stack/glitch-core/issues/1)
+и в `tools/README_TESTS.md`.
+
 ## Управление
 
 | Клавиша | Действие |
