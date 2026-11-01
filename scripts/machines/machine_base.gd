@@ -2,6 +2,14 @@ class_name MachineBase
 extends Node2D
 ## Базовый класс построек: питание, приём/выдача предметов, логистика.
 
+const POWER_CHECK_INTERVAL: float = 0.25   ## как часто обновлять статус питания
+## Машины, которые потребляют питание: только им нужен Game.is_powered().
+## У конвейеров и сундуков питание не используется вовсе.
+const POWER_CONSUMERS: Array[String] = ["Drill", "Smelter", "Assembler"]
+## Машины, чья отрисовка зависит от времени (вращение, мерцание):
+## им нужна перерисовка каждый кадр.
+const TIME_ANIMATED: Array[String] = ["Drill", "Smelter", "Assembler"]
+
 var cell: Vector2i = Vector2i.ZERO
 var kind: String = ""
 var powered: bool = false
@@ -10,6 +18,7 @@ var power_active: bool = false
 var progress: float = 0.0
 var anim: float = 0.0
 var _pt: float = 0.0
+var _last_progress: float = 0.0
 
 
 static func place_machine(p_kind: String, c: Vector2i) -> bool:
@@ -44,17 +53,44 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 	World.machines[c] = m
 	if m is Belt:
 		World.belts[c] = m
+	Game.register_power_source(m, c)
 	World.add_world_node(m)
 	return true
 
 
 func _process(delta: float) -> void:
-	anim = maxf(0.0, anim - delta * 2.0)
-	_pt += delta
-	if _pt > 0.4:
-		_pt = 0.0
-		powered = Game.is_powered(global_position)
-	queue_redraw()
+	# Затухание вспышки анимации (например, после добычи).
+	if anim > 0.0:
+		anim = maxf(0.0, anim - delta * 2.0)
+		queue_redraw()
+	# Статус питания нужен только потребителям и обновляется не чаще
+	# раза в POWER_CHECK_INTERVAL: конвейеры и сундуки — самая массовая
+	# категория построек, им питание вообще не требуется.
+	if consumes_power():
+		_pt += delta
+		if _pt >= POWER_CHECK_INTERVAL:
+			_pt = 0.0
+			var p: bool = Game.is_powered(global_position)
+			if p != powered:
+				powered = p
+				queue_redraw()
+	# Полоса прогресса у станков.
+	if progress != _last_progress:
+		_last_progress = progress
+		queue_redraw()
+	# Непрерывная анимация отрисовки (вращение бура, мерцание горна).
+	if has_time_animation():
+		queue_redraw()
+
+
+## Нужен ли этой машине статус питания.
+func consumes_power() -> bool:
+	return kind in POWER_CONSUMERS
+
+
+## Зависит ли отрисовка от времени (тогда нужна перерисовка каждый кадр).
+func has_time_animation() -> bool:
+	return kind in TIME_ANIMATED
 
 
 ## Принимает предмет. Возвращает количество, которое НЕ принято (0 — принято всё).

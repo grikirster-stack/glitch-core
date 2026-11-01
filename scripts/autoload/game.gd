@@ -27,6 +27,29 @@ var stats_mined: int = 0
 var stats_crafted: int = 0
 var stats_kills: int = 0
 
+# ------------------------------------------------- ИНДЕКС ИСТОЧНИКОВ ПИТАНИЯ
+## Список генераторов (источников питания) — чтобы is_powered() не перебирал
+## ВСЕ машины мира. Старая версия давала O(N^2): каждая машина раз в 0.4 с
+## спрашивала питание у всех остальных. Теперь машина спрашивает только у
+## генераторов, а их обычно 2–5 на всю фабрику.
+##
+## Индекс сам следит за составом World.machines и перестраивается при
+## рассинхроне: править world.gd (его зона другого агента) нельзя, поэтому
+## явную очистку в World.generate() добавить невозможно. Вместо этого:
+##   * World.generate() делает machines.clear() → размер словаря меняется →
+##     индекс пересобирается и очищается сам (проверка размера — O(1));
+##   * новая машина-генератор добавляется в индекс сразу при постройке
+##     (MachineBase.place_machine → register_power_source);
+##   * раз в VERIFY_EVERY вызовов индекс сверяется с миром поимённо —
+##     ловит случай «сняли ТЭЦ и тут же поставили конвейер» (число машин
+##     не изменилось, а источник сменился).
+var _power_sources: Array = []          ## сами источники питания
+var _power_source_cells: Array = []     ## их клетки в World.machines
+var _power_index_size: int = -1         ## размер World.machines на момент сборки индекса
+var _power_verify_tick: int = 0         ## счётчик вызовов до сверки состава
+
+const POWER_VERIFY_EVERY: int = 32      ## как часто сверять индекс с миром
+
 
 func _ready() -> void:
 	relay_req = DB.relay_req.duplicate()
@@ -46,6 +69,7 @@ func reset_run() -> void:
 	stats_mined = 0
 	stats_crafted = 0
 	stats_kills = 0
+	_power_index_size = -1          ## мир мог смениться — индекс пересоберётся
 
 
 func _process(delta: float) -> void:
@@ -112,12 +136,87 @@ func phase_name() -> String:
 
 
 ## Есть ли в радиусе генератора энергия для точки p.
+## Перебираются только источники питания (генераторы), а не все машины мира.
 func is_powered(p: Vector2) -> bool:
-	for m in World.machines.values():
-		if m.power_active and m.power_radius > 0.0:
-			if p.distance_to(m.global_position) <= m.power_radius * World.TILE:
-				return true
+	_sync_power_index()
+	for s in _power_sources:
+		if not is_instance_valid(s):
+			continue
+		if not s.power_active:
+			continue
+		if p.distance_to(s.global_position) <= s.power_radius * World.TILE:
+			return true
 	return false
+
+
+## Сообщить о новой машине. Вызывается из MachineBase.place_machine().
+## В индекс попадают только источники питания (генераторы).
+func register_power_source(m, cell: Vector2i) -> void:
+	if not _is_power_source(m):
+		return
+	# Индекс мог устареть (например, мир пересоздали) — тогда проще пересобрать.
+	if _power_index_size != World.machines.size() or _has_dead_sources():
+		_rebuild_power_index()
+		return
+	if _power_sources.has(m):
+		return
+	_power_sources.append(m)
+	_power_source_cells.append(cell)
+	_power_index_size = World.machines.size()
+
+
+## Пересобрать индекс источников питания по текущему составу мира.
+func _rebuild_power_index() -> void:
+	_power_sources.clear()
+	_power_source_cells.clear()
+	for cell in World.machines.keys():
+		var m = World.machines[cell]
+		if _is_power_source(m):
+			_power_sources.append(m)
+			_power_source_cells.append(cell)
+	_power_index_size = World.machines.size()
+	_power_verify_tick = 0
+
+
+## Остались ли в индексе освобождённые машины.
+func _has_dead_sources() -> bool:
+	for s in _power_sources:
+		if not is_instance_valid(s):
+			return true
+	return false
+
+
+## Сверить индекс с миром и пересобрать его при рассинхроне.
+## Быстрая проверка (O(1)) — сравнение числа машин; полная сверка поимённо
+## идёт раз в POWER_VERIFY_EVERY вызовов, чтобы не платить за неё каждый раз.
+func _sync_power_index() -> void:
+	if World.machines.size() != _power_index_size:
+		_rebuild_power_index()
+		return
+	_power_verify_tick += 1
+	if _power_verify_tick < POWER_VERIFY_EVERY:
+		return
+	_power_verify_tick = 0
+	for i in _power_sources.size():
+		var s = _power_sources[i]
+		if not is_instance_valid(s) or World.machines.get(_power_source_cells[i]) != s:
+			_rebuild_power_index()
+			return
+
+
+## Источник питания — машина с ненулевым радиусом и признаком активности.
+## Проверка «утиной типизацией» (по имени свойства), а не через class_name:
+## game.gd — автозагрузка, и ссылка на MachineBase/Generator создала бы
+## циклическую зависимость autoload → class_name → autoload.
+## Активность (power_active) не кэшируется — она меняется в coal_gen.gd/solar.gd.
+static func _is_power_source(m) -> bool:
+	if m == null or not is_instance_valid(m):
+		return false
+	var radius = m.get("power_radius")
+	var active = m.get("power_active")
+	if not (radius is float or radius is int) or not (active is bool):
+		return false
+	return float(radius) > 0.0
 
 
 ## Попытка запустить релей-ядро. Возвращает true, если запуск прошёл.
