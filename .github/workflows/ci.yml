@@ -1,0 +1,52 @@
+name: CI
+
+# Прогон автотестов логики на каждом пуше и PR.
+# Godot ставится той же версии, что и у разработчиков (4.7.2-stable),
+# напрямую из официальных релизов godotengine — без сторонних actions.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  GODOT_VERSION: 4.7.2-stable
+
+jobs:
+  tests:
+    name: Автотесты логики
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Скачать Godot ${{ env.GODOT_VERSION }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          curl -fsSL "$url" -o godot.zip
+          unzip -q godot.zip
+          mv "Godot_v${GODOT_VERSION}_linux.x86_64" /usr/local/bin/godot
+          chmod +x /usr/local/bin/godot
+          godot --version
+
+      - name: Автотесты (сид 31337)
+        run: godot --headless --path . -- --test --seed=31337
+
+      - name: Автотесты (сид 4242)
+        run: godot --headless --path . -- --test --seed=4242
+
+      - name: Автотесты (сид 12345)
+        run: godot --headless --path . -- --test --seed=12345
+
+      - name: Сторож фризов (headless)
+        continue-on-error: true
+        run: godot --headless --path . --script res://tools/freeze_probe.gd -- --allow-hitch
+
+      - name: Отчёт о фризах
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freeze-report
+          path: .tools/freeze_report.txt
+          if-no-files-found: ignore
