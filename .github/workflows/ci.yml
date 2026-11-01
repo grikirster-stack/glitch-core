@@ -17,6 +17,7 @@ jobs:
   tests:
     name: Автотесты логики
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -30,16 +31,27 @@ jobs:
           chmod +x /usr/local/bin/godot
           godot --version
 
+      # ВАЖНО: без этого шага class_name-классы (Player, IDs, Phantom, ...)
+      # не регистрируются в свежем чекауте — .godot/global_script_class_cache.cfg
+      # не в git. Скрипты не грузятся, тест-раннер не стартует, процесс висит.
+      - name: Импорт проекта (регистрация class_name)
+        timeout-minutes: 5
+        run: godot --headless --path . --import
+
       - name: Автотесты (сид 31337)
+        timeout-minutes: 5
         run: godot --headless --path . -- --test --seed=31337
 
       - name: Автотесты (сид 4242)
+        timeout-minutes: 5
         run: godot --headless --path . -- --test --seed=4242
 
       - name: Автотесты (сид 12345)
+        timeout-minutes: 5
         run: godot --headless --path . -- --test --seed=12345
 
       - name: Сторож фризов (headless)
+        timeout-minutes: 10
         continue-on-error: true
         run: godot --headless --path . --script res://tools/freeze_probe.gd -- --allow-hitch
 
