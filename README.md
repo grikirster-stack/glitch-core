@@ -63,6 +63,7 @@ godot --headless --path C:\PROJECT\GODOTTEST -- --test --seed=12345
 | Тесты | `tools/**` | [#6](https://github.com/grikirster-stack/glitch-core/issues/6) |
 | HUD и предметы | `scripts/ui/hud.gd`, `scripts/ui/sky_backdrop.gd`, `scripts/entities/item_entity.gd` | [#7](https://github.com/grikirster-stack/glitch-core/issues/7) |
 | Игрок | `scripts/entities/player.gd` | [#8](https://github.com/grikirster-stack/glitch-core/issues/8) |
+| Сценарии | `scripts/main.gd`, `tools/scenarios/**` | [#9](https://github.com/grikirster-stack/glitch-core/issues/9) |
 
 Подробности — в [дорожной карте](https://github.com/grikirster-stack/glitch-core/issues/1)
 и в `tools/README_TESTS.md`.
