@@ -26,6 +26,7 @@ UI="*res://scripts/autoload/ui.gd"
 Tech="*res://scripts/autoload/tech.gd"
 Lore="*res://scripts/autoload/lore.gd"
 Threat="*res://scripts/autoload/threat.gd"
+Net="*res://scripts/autoload/net.gd"
 
 [display]
 
