@@ -78,3 +78,19 @@ func _draw_status_lamp(pos: Vector2) -> void:
 		draw_circle(pos, 1.8, Color(1.0, 0.8, 0.2))
 	elif power_active:
 		draw_circle(pos, 1.8, Color(0.4, 1.0, 0.5))
+
+
+# ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
+## Рубильник и активность: раскладка питания сразу после загрузки идёт по ним.
+func save_state() -> Dictionary:
+	var d: Dictionary = super()
+	d["enabled"] = enabled
+	d["power_active"] = power_active
+	return d
+
+
+## Рубильник ставится напрямую, без set_enabled: загрузка не щёлкает и не пишет в HUD.
+func load_state(d: Dictionary) -> void:
+	super(d)
+	enabled = bool(d.get("enabled", enabled))
+	power_active = bool(d.get("power_active", power_active))

@@ -40,6 +40,54 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		elif k.keycode == KEY_P and world_fx:
 			world_fx.show_power = not world_fx.show_power
+		elif k.keycode == KEY_F5:
+			quick_save()
+			get_viewport().set_input_as_handled()
+		elif k.keycode == KEY_F9:
+			quick_load()
+			get_viewport().set_input_as_handled()
+
+
+# ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
+## F5 — сохранить забег, F9 — загрузить (Save, слот Save.slot). В --hardcore
+## обе клавиши молчат: пермасмерть с загрузкой — уже не пермасмерть.
+
+## Забег сохранён / загружен по клавише (сразу после операции, в том же кадре).
+signal run_saved
+signal run_loaded
+
+
+func quick_save() -> bool:
+	if _hardcore():
+		Game.notify("Хардкор: сохранений нет.", Color(1.0, 0.6, 0.4))
+		return false
+	var why: String = Save.save_blocker()
+	if why != "":
+		Game.notify("Сохранить нельзя: %s." % why, Color(1.0, 0.6, 0.4))
+		return false
+	if not Save.save_game():
+		Game.notify("Ошибка сохранения: %s" % Save.last_error, Color(1.0, 0.4, 0.4))
+		return false
+	Game.notify("Забег сохранён (F9 — загрузить).", Color(0.6, 1.0, 0.75))
+	run_saved.emit()
+	return true
+
+
+func quick_load() -> bool:
+	if _hardcore():
+		Game.notify("Хардкор: сохранений нет.", Color(1.0, 0.6, 0.4))
+		return false
+	if not Save.load_game():
+		Game.notify("Загрузить нельзя: %s." % Save.last_error, Color(1.0, 0.6, 0.4))
+		return false
+	Game.notify("Забег загружен: смена %d." % Game.day_number, Color(0.6, 1.0, 0.75))
+	run_loaded.emit()
+	return true
+
+
+func _hardcore() -> bool:
+	var sc: Node = get_tree().current_scene
+	return sc != null and sc.get("hardcore") == true
 
 
 func toggle_inventory() -> void:
