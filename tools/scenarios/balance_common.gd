@@ -170,6 +170,12 @@ func dark_surface_spot(min_dx: int, max_dx: int, max_light: float = 0.3) -> Vect
 	return Vector2i(-1, -1)
 
 
+## Случай директора угрозы (выбор вентиляции, состав, размер стаи) — от сида
+## мира: один сид — одна и та же ночь, таблица balance_probe воспроизводима.
+func seed_threat(day: int) -> void:
+	Threat._rng.seed = int(scene.get("seed_value")) * 31 + day
+
+
 ## Убрать всех фантомов (между фазами одного сценария).
 func clear_phantoms() -> void:
 	for n in get_tree().get_nodes_in_group("phantom"):
@@ -233,6 +239,7 @@ func siege_night(day: int, speed: float) -> Dictionary:
 	var row: int = World.beacon_cell.y
 	stand_next_to_beacon()
 	player.invuln = 1.0e9
+	seed_threat(day)
 	Game.day_number = day
 	Game.time_of_day = Balance.NIGHT_START - 1.0 / Balance.DAY_LENGTH
 	var deaths0: int = Game.stats_deaths
@@ -265,9 +272,19 @@ func siege_night(day: int, speed: float) -> Dictionary:
 			if is_instance_valid(p):
 				hits[p.get_instance_id()] = int(p.get("machine_hits"))
 		await get_tree().process_frame
+	var min_hp: float = INF
 	for m in World.machines.values():
 		if m is CoalGen and not m.power_active:
 			gens_out += 1
+		if m is MachineBase and is_instance_valid(m) and absi(m.cell.x - bx) < 20 \
+				and absi(m.cell.y - row) < 6:
+			min_hp = minf(min_hp, m.hp / m.max_hp)
+	if OS.get_cmdline_user_args().has("--balance-debug"):
+		for p in get_tree().get_nodes_in_group("phantom"):
+			print("    к рассвету: %s в %.0f px от машин, цель-машина %s, состояние %d" % [
+					String(p.get("kind")),
+					p.global_position.distance_to(World.cell_to_world(Vector2i(bx + 10, row))),
+					str(p.get("target_machine") != null), int(p.get("state"))])
 	normal_speed()
 	drive_threat = false
 	release_mouse(MOUSE_BUTTON_LEFT)
@@ -276,8 +293,9 @@ func siege_night(day: int, speed: float) -> Dictionary:
 	var hit_sum: int = 0
 	for k in hits.keys():
 		hit_sum += int(hits[k])
-	print("  [ночь %d] бюджет %.1f, вышло %s; ударов по машинам %d; машин потеряно %d %s; ТЭЦ погасло %d; убито фантомов %d; смертей героя %d; ночь %.0f с" % [
-			day, Threat.budget, str(kinds), hit_sum, _lost.size(), str(_lost), gens_out,
+	print("  [ночь %d] бюджет %.1f, вышло %s; ударов по машинам %d; машин потеряно %d %s; мин. hp уцелевших %d %%; ТЭЦ погасло %d; убито фантомов %d; смертей героя %d; ночь %.0f с" % [
+			day, Threat.budget, str(kinds), hit_sum, _lost.size(), str(_lost),
+			int(round(min_hp * 100.0)) if min_hp < INF else 0, gens_out,
 			Game.stats_kills - kills0, Game.stats_deaths - deaths0, clock - t0])
 	return {"lost": _lost.size(), "kinds": kinds, "spawned": Threat.spawned_total - spawned0,
 			"deaths": Game.stats_deaths - deaths0}

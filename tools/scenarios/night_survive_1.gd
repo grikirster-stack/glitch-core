@@ -71,6 +71,7 @@ func run() -> void:
 func _night(day: int) -> Dictionary:
 	Game.day_number = day
 	Game.time_of_day = Balance.NIGHT_START - 1.0 / Balance.DAY_LENGTH
+	seed_threat(day)
 	var deaths0: int = Game.stats_deaths
 	var spawned0: int = Threat.spawned_total
 	drive_threat = true

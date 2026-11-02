@@ -7,7 +7,7 @@ extends "res://tools/scenarios/balance_common.gd"
 ## бессмертен, чтобы смерть не перемотала ночь к рассвету). Меряем, сколько
 ## машин разрушено за ночь.
 
-const SPEED: float = 3.0
+const SPEED: float = 2.0
 const TARGET_LOST: int = 1
 
 

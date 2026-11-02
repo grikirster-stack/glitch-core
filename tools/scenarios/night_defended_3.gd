@@ -6,7 +6,7 @@ extends "res://tools/scenarios/balance_common.gd"
 ## (MachineBase.place_machine("Turret") не ставит), сценарий честно отложен —
 ## пишет «[баланс] night3_def_lost=NA» и цель не проверяет.
 
-const SPEED: float = 3.0
+const SPEED: float = 2.0
 
 
 func run() -> void:
