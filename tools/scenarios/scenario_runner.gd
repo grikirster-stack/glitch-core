@@ -184,6 +184,43 @@ const REGISTRY: Dictionary = {
 		"title": "запертый вход станка",
 		"desc": "без питания горнило тёмное; вход рецепта T1 не берут ни станок, ни манипулятор, ни E — после T1 берут",
 	},
+	# --- Фантомы и директор угрозы (#27) ---
+	"swarm_targets_drill": {
+		"file": "swarm_targets_drill.gd",
+		"title": "рой идёт на бур",
+		"desc": "стая летит к работающему буру и грызёт его, игрок не цель",
+	},
+	"shade_drains_gen": {
+		"file": "shade_drains_gen.gd",
+		"title": "тень дренирует ТЭЦ",
+		"desc": "тень не боится света, у ТЭЦ сжигает уголь",
+	},
+	"burrower_digs_dirt": {
+		"file": "burrower_digs_dirt.gd",
+		"title": "копатель роет породу",
+		"desc": "камень роет, железный блок — нет",
+	},
+	"doppel_freezes_under_gaze": {
+		"file": "doppel_freezes_under_gaze.gd",
+		"title": "двойник под взглядом",
+		"desc": "смотришь — стоит; копаешь или отвернулся — идёт; имя над головой",
+	},
+	"threat_budget": {
+		"file": "threat_budget.gd",
+		"title": "бюджет ночи",
+		"desc": "формулы § 4.5; ночь 1 ≤ 3 фантома, ночь 4 ≥ 6",
+	},
+	"vent_spawn": {
+		"file": "vent_spawn.gd",
+		"title": "спавн из вентиляций",
+		"desc": "три ближайшие незапечатанные вентиляции, телеграф 2 с",
+	},
+	# --- Туман войны (#59) ---
+	"fog_reveal": {
+		"file": "fog_reveal.gd",
+		"title": "туман войны",
+		"desc": "в начале открыт только старт; по пути клетки открываются; дальние пещеры закрыты",
+	},
 	# --- Небесный тайник (#60) ---
 	"sky_secret": {
 		"file": "sky_secret.gd",
@@ -312,6 +349,7 @@ func _reset_world() -> void:
 		World.tilemap.clear()
 	World.generate(int(scene.get("seed_value")))
 	Game.reset_run()
+	Threat.reset()
 	Game.tasks_total = World.terminals.size()
 	# Игрок заново.
 	p.test_input = {}
