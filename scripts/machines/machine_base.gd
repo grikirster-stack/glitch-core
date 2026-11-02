@@ -16,11 +16,14 @@ const POWER_CHECK_INTERVAL: float = Balance.POWER_CHECK_INTERVAL
 const POWER_CONSUMERS: Array[String] = ["Drill", "Smelter", "Assembler"]
 ## Машины, чья отрисовка зависит от времени (вращение, мерцание):
 ## им нужна перерисовка каждый кадр.
-const TIME_ANIMATED: Array[String] = ["Drill", "Smelter", "Assembler"]
+const TIME_ANIMATED: Array[String] = ["Drill", "Smelter", "Assembler", "DeepDrill"]
 ## Шанс, что разрушенная машина оставит свой предмет (§ 4.4).
 const DESTROY_DROP_CHANCE: float = 0.5
 ## Сколько осколков разлетается при разрушении.
 const DESTROY_CHIPS: int = 4
+## Сколько готовых предметов машина держит для манипулятора (take_output, #30),
+## прежде чем снова выбрасывать готовое на землю.
+const OUTPUT_CAP: int = 20
 
 ## Машина разрушена (до удаления из мира). Для угрозы/HUD/звука.
 signal destroyed(machine: MachineBase)
@@ -44,6 +47,9 @@ var progress: float = 0.0
 var anim: float = 0.0
 var _last_progress: float = 0.0
 var _destroyed: bool = false
+## Готовое, ждущее манипулятора (#30): id -> count. См. deliver() и take_output().
+var _output: Dictionary = {}
+var _output_count: int = 0
 
 
 static func place_machine(p_kind: String, c: Vector2i) -> bool:
@@ -69,6 +75,13 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 			m = Solar.new()
 		"Belt":
 			m = Belt.new()
+		# --- Автоматизация (#30) ---
+		"Inserter":
+			m = Inserter.new()
+		"Analyzer":
+			m = Analyzer.new()
+		"DeepDrill":
+			m = DeepDrill.new()
 		_:
 			return false
 	m.cell = c
@@ -141,13 +154,53 @@ func deliver(item_id: int, count: int) -> void:
 		var n: Vector2i = cell + d
 		if World.belts.has(n):
 			var b: Belt = World.belts[n]
+			# Лента, которая везёт в нас, — вход, а не выход (#30): иначе готовое
+			# уезжает обратно в станок (слиток — во вход проката пластин).
+			if b.cell + b._dir_cell() == cell:
+				continue
 			if b.add_item(item_id, count):
 				return
+			continue
 		if World.machines.has(n):
 			var m: MachineBase = World.machines[n]
 			if m.receive_item(item_id, count) == 0:
 				return
+	# Готовое забирает манипулятор (#30) — держим у себя, не бросаем на землю.
+	if _output_count + count <= OUTPUT_CAP and _has_puller():
+		_output[item_id] = int(_output.get(item_id, 0)) + count
+		_output_count += count
+		return
 	spawn_item(item_id, count, global_position + Vector2(0.0, -4.0))
+
+
+## Выдать манипулятору один готовый предмет (#30). filter — только этот id
+## (NONE — любой); accepts — возьмёт ли приёмник (пустой Callable — да).
+## Возвращает id выданного предмета или IDs.I.NONE.
+func take_output(filter: int = IDs.I.NONE, accepts: Callable = Callable()) -> int:
+	if _output_count <= 0:
+		return IDs.I.NONE
+	for id in _output.keys():
+		if filter != IDs.I.NONE and int(id) != filter:
+			continue
+		if accepts.is_valid() and not bool(accepts.call(int(id))):
+			continue
+		var left: int = int(_output[id]) - 1
+		if left <= 0:
+			_output.erase(id)
+		else:
+			_output[id] = left
+		_output_count -= 1
+		return int(id)
+	return IDs.I.NONE
+
+
+## Стоит ли рядом манипулятор, который берёт из этой клетки.
+func _has_puller() -> bool:
+	for d in [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
+		var n = World.machines.get(cell + d)
+		if n is Inserter and n.source_cell() == cell:
+			return true
+	return false
 
 
 func spawn_item(item_id: int, count: int, pos: Vector2) -> void:
@@ -181,6 +234,7 @@ func destroy() -> void:
 	_destroyed = true
 	destroyed.emit(self)
 	_on_destroyed()
+	_drop_output()
 	if World.machines.get(cell) == self:
 		World.machines.erase(cell)
 	if World.belts.get(cell) == self:
@@ -199,6 +253,14 @@ func destroy() -> void:
 ## содержимое). В базовом классе — ничего.
 func _on_destroyed() -> void:
 	pass
+
+
+## Высыпать на землю готовое, не забранное манипулятором (#30).
+func _drop_output() -> void:
+	for id in _output.keys():
+		spawn_item(int(id), int(_output[id]), global_position + Vector2(0.0, -4.0))
+	_output.clear()
+	_output_count = 0
 
 
 ## Предмет, из которого ставится машина данного вида (NONE, если такого нет).
