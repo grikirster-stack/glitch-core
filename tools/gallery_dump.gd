@@ -184,6 +184,24 @@ func _dump_tiles() -> void:
 		_save(_upscale(_tile_image(int(id)), PIXEL_SCALE), "tiles/%s.png" % _tile_slug(int(id)))
 	print("тайлов: %d" % (ids.size() - 1))
 	_dump_tile_variants(ids)
+	_dump_decor_sheet()
+
+
+## ADR-003 V2: лист декор-слоя флоры — все виды × фактуры в ряд (Decor.paint). Без окна.
+func _dump_decor_sheet() -> void:
+	var decor = world.get("decor")
+	if decor == null:
+		return
+	var ts: int = db.TILE_SIZE
+	var gap: int = 2
+	var n: int = int(decor.KINDS) * int(decor.ALTS)
+	var img: Image = Image.create_empty(n * (ts + gap) + gap, ts + gap * 2, false, Image.FORMAT_RGBA8)
+	img.fill(Color("#1a1420"))
+	for i in n:
+		var t: Image = decor.paint(i / int(decor.ALTS), i % int(decor.ALTS))
+		img.blend_rect(t, Rect2i(0, 0, ts, ts), Vector2i(gap + i * (ts + gap), gap))
+	_save(_upscale(img, 4), "decor_flora.png")
+	print("лист декора флоры: %d клеток" % n)
 
 
 ## ADR-003 V1: лист вариантов атласа — строки тайлов, столбцы: 3 биома по глубине ×
@@ -670,6 +688,40 @@ func _dump_shots() -> void:
 	if crys.x >= 0:
 		await _look_at(world.cell_to_world(crys), false)
 		await _grab("shots/place_deep_ore.png", true)
+	# --- Стиль V2: флора (ADR-003, #104) ---
+	# Свечник на поверхности и завеса гиф в средних пещерах (декор заводится,
+	# когда камера с героем открыла туман).
+	var decor = world.get("decor")
+	if decor != null:
+		var tr: Vector2i = _find_tile(IDs.T.TREE, 0)
+		if tr.x >= 0:
+			# Первая клетка сверху — верх ствола: кадр пониже и пошире, свечник целиком.
+			await _look_at(world.cell_to_world(tr + Vector2i(0, 2)), false, 1.5)
+			await _frames(3)
+			await _grab("shots/place_flora.png", true)
+		var hy: Vector2i = _find_decor(decor, decor.K.HYPHAE_TOP)
+		if hy.x >= 0:
+			await _look_at(world.cell_to_world(hy + Vector2i(0, 3)), false)
+			await _frames(3)
+			await _grab("shots/place_cave_flora.png", true)
+
+
+## Первая клетка (подальше от краёв), где по правилам декора растёт вид kind и
+## рядом ещё хотя бы 6 таких же — кадр с гроздью, а не с одинокой нитью.
+func _find_decor(decor, kind: int) -> Vector2i:
+	var w: int = int(world.W)
+	var h: int = int(world.H)
+	for x in range(60, w - 60, 2):
+		for y in range(40, h - 10):
+			if decor.kind_of(decor.expected_at(x, y)) != kind:
+				continue
+			var n: int = 0
+			for dx in range(-8, 9):
+				if decor.kind_of(decor.expected_at(x + dx, y)) == kind:
+					n += 1
+			if n >= 7:
+				return Vector2i(x, y)
+	return Vector2i(-1, -1)
 
 
 ## Левый терминал базы (терминалы руин идут в списке раньше базовых).

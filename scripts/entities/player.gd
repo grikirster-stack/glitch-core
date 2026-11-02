@@ -477,6 +477,21 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 		if inv.selected_stack().id == IDs.I.COAL or term.x < 0:
 			aimed_gen.interact(self)
 			return
+	# Ближайший сундук в радиусе 40 px.
+	var chest: Chest = null
+	var chest_d: float = 40.0
+	for cm in World.machines.values():
+		if cm is Chest:
+			var cd: float = cm.global_position.distance_to(global_position)
+			if cd < chest_d:
+				chest_d = cd
+				chest = cm
+	# Сундук ближе терминала — E уходит в сундук. Терминал руины стоит в 36 px
+	# от её тайника, и раньше терминал (42 px) перехватывал E: тайник было
+	# невозможно открыть — «Терминал: нет питания» вместо панели сундука.
+	if chest != null and (term.x < 0 or chest_d < term_d):
+		UI.open_chest(chest)
+		return
 	# Терминалы: работают только под питанием (ADR-001 § 4.6, #29)
 	if term.x >= 0:
 		var tw2: Vector2 = World.cell_to_world(term)
@@ -507,11 +522,6 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 	if ins is Inserter and ins.global_position.distance_to(global_position) <= REACH:
 		ins.interact(self)
 		return
-	# Сундуки
-	for m in World.machines.values():
-		if m is Chest and m.global_position.distance_to(global_position) < 40.0:
-			UI.open_chest(m)
-			return
 	# Генератор: ТЭЦ с углём в хотбаре — загрузить топку, иначе — рубильник (#25)
 	for m2 in World.machines.values():
 		if m2 is Generator and m2.global_position.distance_to(global_position) < 40.0:
