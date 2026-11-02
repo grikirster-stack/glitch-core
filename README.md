@@ -66,7 +66,9 @@ godot --headless --path C:\PROJECT\GODOTTEST -- --test --seed=12345
 | Сценарии | `scripts/main.gd`, `tools/scenarios/**` | [#9](https://github.com/grikirster-stack/glitch-core/issues/9) |
 
 Подробности — в [дорожной карте](https://github.com/grikirster-stack/glitch-core/issues/1)
-и в `tools/README_TESTS.md`.
+и в `tools/README_TESTS.md`. Архитектурные решения — в `docs/adr/`: план геймплея
+(баланс, автоматизация, база, враги, генеративный лор) и разбивка на PR —
+в [ADR-001](docs/adr/0001-core-loop.md).
 
 ## Управление
 
