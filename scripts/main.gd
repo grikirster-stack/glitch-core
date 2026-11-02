@@ -15,6 +15,8 @@ var scenario_mode: bool = false
 
 func _ready() -> void:
 	_args = OS.get_cmdline_user_args()
+	if _menu_redirect():   # МЕНЮ (ADR-002, MP-B): без аргументов — главный экран
+		return
 	seed_value = randi()
 	for a in _args:
 		if a.begins_with("--seed="):
@@ -51,6 +53,7 @@ func _ready() -> void:
 	add_child(tint)
 
 	player = Player.new()
+	player.look = int(Profile.session.get("look", 0))   # МЕНЮ (ADR-002, MP-B): вид из профиля
 	player.add_to_group("player")
 	add_child(player)
 	player.global_position = World.spawn_point
@@ -187,3 +190,24 @@ func _respawn() -> void:
 	# и начнёт новую смену (day_number, «Смена N», роспуск фантомов — по сигналу).
 	Game.time_of_day = Balance.NIGHT_END - 0.0005
 	Game.notify("Капсула на базе. Мешок с вещами остался на месте гибели.", Color(1.0, 0.85, 0.6))
+
+
+# ------------------------------------------------- МЕНЮ (ADR-002 § 4.6, MP-B)
+const MENU_SCENE: String = "res://scenes/menu.tscn"
+
+
+## Запуск без аргументов командной строки и без выбора меню — главный экран
+## (true: эта сцена уступает место меню). Выбор меню («Одиночная игра»: сид,
+## --hardcore) лежит в Profile.session и дописывается к _args — дальше старт
+## идёт старым путём. Любой аргумент (--test, --scenario=, --seed=, …) и любой
+## инструмент --script (его SceneTree со своим скриптом сам грузит main.tscn, часто
+## без аргументов: save_test, lore_test) — старый немедленный старт, CI не меняется.
+func _menu_redirect() -> bool:
+	if not Profile.session.is_empty():
+		_args.append_array(Profile.session.get("args", PackedStringArray()))
+		return false
+	if not _args.is_empty() or get_tree().get_script() != null \
+			or not ResourceLoader.exists(MENU_SCENE):
+		return false
+	get_tree().change_scene_to_file.call_deferred(MENU_SCENE)
+	return true
