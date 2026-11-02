@@ -33,6 +33,11 @@ const PATH_GOAL_EPS: float = 16.0	## На этом расстоянии до ц�
 const PATH_MAX_NODES: int = 70			## Максимум узлов в одном куске пути.
 const STUCK_TIME: float = 0.8			## Сколько секунд без прогресса считать застреванием.
 const STUCK_PROGRESS: float = 6.0		## Минимальный прогресс к узлу пути за это время, px.
+## Узел пути считаем пройденным ближе этого, px. Стоящий на полу пеший фантом
+## (тело 22 px) держит центр на 13 px ниже центра клетки над головой: при пороге
+## 12 px узел пути, ведущего вверх по диагонали, не засчитывался, и фантом
+## замирал под ним до перестроения по застреванию (STUCK_TIME) — на каждом узле.
+const NODE_REACH: float = 14.0
 const FLIP_T: float = 2.0				## Как часто фантом меняет сторону обхода, с.
 const STUN_REDRAW: float = 0.066		## Частота перерисовки оглушённого фантома, с.
 const ECHO_SPEED: float = 160.0			## Скорость эха из таблицы: от неё масштабируются остальные.
@@ -236,7 +241,7 @@ func _physics_process(delta: float) -> void:
 		var node: Vector2i = path[path_i]
 		var np: Vector2 = World.cell_to_world(node)
 		var dnode: float = global_position.distance_to(np)
-		if dnode < 12.0:
+		if dnode < NODE_REACH:
 			path_i += 1
 			_stuck_t = 0.0
 			_stuck_best = INF
