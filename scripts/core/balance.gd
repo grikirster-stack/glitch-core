@@ -92,3 +92,31 @@ const RELAY_HOLD_CAP: int = 10         ## живых фантомов во вр�
 const HIDE_MAX: float = 6.0            ## с в вентиляции, потом выталкивает
 const HIDE_COOLDOWN: float = 10.0
 const RESPAWN_DELAY: float = 3.0
+
+# ------------------------------------------------------ § 4.9 Небесный тайник (#60)
+## Обломок «Кербер-9» в небе: между верхом рельефа под ним (с деревьями и
+## руинами) и днищем обломка — SKY_CLEARANCE_MIN..MAX пустых клеток. Прыжок
+## героя — 3.2 клетки (Player.JUMP_VELOCITY, GRAVITY), с ростом — 4.6: допрыгнуть
+## нельзя, достроиться лестницей из блоков — можно (блоки ставятся в воздух).
+const SKY_CLEARANCE_MIN: int = 9
+const SKY_CLEARANCE_MAX: int = 12
+const SKY_TOP_MARGIN: int = 2          ## клеток от верха мира до крыши обломка
+const SKY_BASE_GAP: int = 40           ## клеток от релея: тайник не висит над лагерем
+const SKY_EDGE_GAP: int = 32           ## клеток от левого края мира до носа: место под лестницу
+const SKY_TRIES: int = 32              ## попыток найти колонку, где обломок помещается
+const SKY_DEBRIS_CHANCE: float = 0.5   ## шанс второго, малого обломка рядом
+const SKY_CACHE_MIN: int = 3           ## разных предметов в тайнике
+const SKY_CACHE_MAX: int = 6
+const SKY_REVEAL_TILES: float = 6.0    ## ближе — обломок проступает из силуэта
+const SKY_HAZE_ALPHA: float = 0.82     ## насколько тёмен силуэт издалека
+## Груз обломка: предмет → [мин, макс]. Позиций не меньше SKY_CACHE_MAX.
+const SKY_LOOT: Dictionary = {
+	IDs.I.POWER_CELL: [1, 2],
+	IDs.I.CIRCUIT: [3, 6],
+	IDs.I.STEEL_PLATE: [3, 6],
+	IDs.I.CRYSTAL: [3, 6],
+	IDs.I.SOLAR: [1, 1],
+	IDs.I.DEEP_DRILL: [1, 1],
+	IDs.I.ANALYZER: [1, 1],
+	IDs.I.FLOODLIGHT: [1, 1],
+}

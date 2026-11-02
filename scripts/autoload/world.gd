@@ -315,6 +315,9 @@ func generate(p_seed: int) -> void:
 	# --- 11. Страховка: ничего не должно висеть в воздухе --------------------
 	_fix_floating_trees()
 
+	# --- 11. Небесный тайник (#60): после деревьев, на своём ГСЧ -----------
+	_place_sky_cache()
+
 	# --- 11a. Вода: уровни по готовому миру ----------------------------------
 	_init_fluid_from_tiles()
 
@@ -758,6 +761,227 @@ func _place_ruin_cache(i: int, cx: int, base: int, half: int) -> void:
 		"name": sign.title, "role": role, "owner": String(owner.get("full", "")),
 	})
 	ruin_cache_ms += float(Time.get_ticks_usec() - t0) / 1000.0
+
+
+# ------------------------------------------------------------ НЕБЕСНЫЙ ТАЙНИК
+# Высоко над рельефом висит обломок корабля «Кербер-9» (#60): стальной пол,
+# днище и корма из панелей, иллюминатор, сундук с редким грузом (Balance.SKY_LOOT)
+# и бортовой самописец с обрывком журнала (Lore.fragment). Допрыгнуть нельзя —
+# только достроиться лестницей из блоков (блоки ставятся прямо в воздух).
+# Всё считается своим ГСЧ от сида мира: поток случайных чисел генерации мира не
+# сдвигается, остальной мир остаётся прежним. Издалека обломок — тёмный силуэт
+# на фоне неба; на миникарте его нет (она рисует только рельеф World.surface).
+#
+# Форма (x0 — нос, открыт: туда приходит лестница; x1 — корма):
+#        . . . . . . . P P P P      fy-3  обрывок крыши и корма
+#        . . . . . . . . . . G      fy-2  G — иллюминатор
+#        . . . r . . . . c . P      fy-1  r — самописец, c — сундук
+#        S S S S S S S S S S S      fy    пол
+#        . . P P P P P P P . .      fy+1  днище
+#        . . . . P P P . . . .      fy+2
+# и, с шансом SKY_DEBRIS_CHANCE, малый обломок обшивки справа, выше пола.
+
+const SKY_SALT: int = 0x534B5946       # «SKYF»: свой поток случайных чисел
+const SKY_PLACES: Array = ["Грузовой отсек", "Кормовой отсек", "Шлюзовой отсек", "Рубка"]
+
+## Тайник текущего мира (пусто — обломок не поместился): {cell, chest, wreck,
+## x0, x1, floor_y, bottom, ground, clearance, debris, name, fragment}.
+var sky_cache: Dictionary = {}
+## Клетки обломков (тайлы и сундук): проверки «мир вне тайника не сдвинулся».
+var sky_cells: Array[Vector2i] = []
+var sky_cache_ms: float = 0.0          # сколько тайник добавил к gen_ms
+
+
+## Обломок: тёмный силуэт издалека, при подходе проступает; самописец с именем
+## отсека; при первом открытии сундука обрывок журнала уходит в Tech.fragments.
+class SkyWreck extends Node2D:
+	var cells: Array[Vector2i] = []
+	var bounds: Rect2 = Rect2()        # мировые координаты обломков
+	var recorder: Vector2 = Vector2.ZERO
+	var chest = null
+	var title: String = ""
+	var fragment: String = ""
+	var haze: float = Balance.SKY_HAZE_ALPHA
+	var announced: bool = false
+	var opened: bool = false
+
+	func _process(delta: float) -> void:
+		var p = UI.player
+		var near: bool = false
+		if p != null and is_instance_valid(p):
+			var q: Vector2 = p.global_position.clamp(bounds.position, bounds.end)
+			near = q.distance_to(p.global_position) < Balance.SKY_REVEAL_TILES * World.TILE
+		var a: float = move_toward(haze, 0.0 if near else Balance.SKY_HAZE_ALPHA, delta * 2.0)
+		if a != haze:
+			haze = a
+			queue_redraw()
+		if near and not announced:
+			announced = true
+			Game.notify("Обломок в небе: «%s»" % title, Color(0.8, 0.9, 1.0))
+		if not opened and chest != null and is_instance_valid(chest) \
+				and UI.panel != null and UI.panel.visible and UI.panel.chest == chest:
+			opened = true
+			if Tech.add_fragment(fragment):
+				Game.notify("Самописец: найден обрывок журнала (J).", Color(1.0, 0.85, 0.5))
+
+	func _draw() -> void:
+		var t: float = float(World.TILE)
+		var lit: float = 1.0 - haze / Balance.SKY_HAZE_ALPHA
+		var dark: Color = Color(0.04, 0.05, 0.09)
+		draw_rect(Rect2(recorder + Vector2(-5.0, 2.0), Vector2(10.0, 6.0)),
+				Color(0.85, 0.42, 0.12).lerp(dark, 1.0 - lit))
+		draw_rect(Rect2(recorder + Vector2(-5.0, 4.0), Vector2(10.0, 1.0)), Color(0.20, 0.10, 0.05))
+		for c in cells:
+			draw_rect(Rect2(Vector2(c) * t - position, Vector2(t, t)), Color(dark, haze))
+		if lit <= 0.01:
+			return
+		var font: Font = ThemeDB.fallback_font
+		var w: float = font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 8).x
+		draw_string(font, recorder + Vector2(-w * 0.5, -6.0), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 8,
+				Color(0.8, 0.9, 1.0, lit))
+
+
+func _clear_sky_cache() -> void:
+	var wreck = sky_cache.get("wreck")
+	if wreck != null and is_instance_valid(wreck):
+		wreck.queue_free()
+	sky_cache = {}
+	sky_cells.clear()
+	sky_cache_ms = 0.0
+
+
+## Верх рельефа в колонках x0..x1: самая высокая непустая клетка (с деревьями
+## и руинами). Клетки обломков не считаются — функция годится и после постройки.
+func sky_ground(x0: int, x1: int) -> int:
+	var top: int = H - 1
+	for x in range(maxi(x0, 0), mini(x1, W - 1) + 1):
+		for y in range(0, top):
+			if tiles[y * W + x] != IDs.T.AIR and not sky_cells.has(Vector2i(x, y)):
+				top = y
+				break
+	return top
+
+
+## Где и какой обломок висит: зависит только от сида мира и рельефа под ним.
+## {} — нигде не поместился (на трёх сидах CI такого нет — проверяет автотест).
+func sky_plan() -> Dictionary:
+	var r: RandomNumberGenerator = _sky_rng(0)
+	var debris: bool = r.randf() < Balance.SKY_DEBRIS_CHANCE
+	var w: int = r.randi_range(9, 11)
+	var span: int = w + (6 if debris else 1)    # колонок от носа до края обломков
+	var want: int = r.randi_range(Balance.SKY_CLEARANCE_MIN, Balance.SKY_CLEARANCE_MAX)
+	var title: String = "%s «%s»" % [SKY_PLACES[r.randi() % SKY_PLACES.size()], Lore.CREW_NAME]
+	var dx: int = r.randi_range(3, 4)
+	var dy: int = r.randi_range(1, 3)
+	for _k in Balance.SKY_TRIES:
+		var x0: int = r.randi_range(Balance.SKY_EDGE_GAP, W - 9 - span)
+		if absi(x0 + w / 2 - W / 2) < Balance.SKY_BASE_GAP:
+			continue
+		var ground: int = sky_ground(x0 - 2, x0 + span + 1)
+		# Днище — ground - clearance - 1, пол — на 2 выше, верх обломков — на 4 выше пола.
+		var fit: int = ground - 7 - Balance.SKY_TOP_MARGIN
+		if fit < Balance.SKY_CLEARANCE_MIN:
+			continue
+		var clearance: int = mini(want, fit)
+		var bottom: int = ground - clearance - 1
+		return {"x0": x0, "x1": x0 + w - 1, "floor_y": bottom - 2, "bottom": bottom,
+				"ground": ground, "clearance": clearance, "debris": debris,
+				"debris_x": x0 + w - 1 + dx, "debris_y": bottom - 2 - dy, "name": title}
+	return {}
+
+
+## Груз тайника: [[предмет, число], ...], SKY_CACHE_MIN..MAX разных предметов
+## из Balance.SKY_LOOT. Свой поток (1): раскладка обломка на груз не влияет.
+func sky_cache_loot() -> Array:
+	var pool: Array = Balance.SKY_LOOT.keys()
+	var r: RandomNumberGenerator = _sky_rng(1)
+	var n: int = mini(r.randi_range(Balance.SKY_CACHE_MIN, Balance.SKY_CACHE_MAX), pool.size())
+	for k in range(pool.size() - 1, 0, -1):
+		var j: int = r.randi_range(0, k)
+		var tmp = pool[k]
+		pool[k] = pool[j]
+		pool[j] = tmp
+	var out: Array = []
+	for k in n:
+		var span: Array = Balance.SKY_LOOT[pool[k]]
+		out.append([int(pool[k]), r.randi_range(int(span[0]), int(span[1]))])
+	return out
+
+
+## Обрывок журнала в самописце: свой поток (2), тот же сид — тот же текст.
+func sky_fragment() -> String:
+	return Lore.fragment(_sky_rng(2))
+
+
+## ГСЧ тайника: сид мира, соль и номер потока перемешаны через hash() — у соседних
+## сидов первые числа PCG почти одинаковы (на трёх сидах CI малый обломок
+## не выпадал ни разу при шансе 50 %).
+func _sky_rng(stream: int) -> RandomNumberGenerator:
+	var r: RandomNumberGenerator = RandomNumberGenerator.new()
+	r.seed = hash([world_seed, SKY_SALT, stream])
+	return r
+
+
+func _sky_set(x: int, y: int, id: int) -> void:
+	if get_tile(x, y) == IDs.T.AIR:
+		set_tile_raw(x, y, id)
+		sky_cells.append(Vector2i(x, y))
+
+
+func _place_sky_cache() -> void:
+	var t0: int = Time.get_ticks_usec()
+	_clear_sky_cache()
+	var plan: Dictionary = sky_plan()
+	if plan.is_empty():
+		push_warning("[Мир] небесный тайник не поместился (сид %d)" % world_seed)
+		return
+	var x0: int = int(plan["x0"])
+	var x1: int = int(plan["x1"])
+	var fy: int = int(plan["floor_y"])
+	for x in range(x0, x1 + 1):
+		_sky_set(x, fy, IDs.T.STEEL)
+	for x in range(x0 + 2, x1 - 1):
+		_sky_set(x, fy + 1, IDs.T.PANEL)
+	for x in range(x0 + 4, x1 - 3):
+		_sky_set(x, fy + 2, IDs.T.PANEL)
+	_sky_set(x1, fy - 1, IDs.T.PANEL)
+	_sky_set(x1, fy - 2, IDs.T.GLASS)
+	for x in range(x1 - 3, x1 + 1):
+		_sky_set(x, fy - 3, IDs.T.PANEL)
+	if plan["debris"]:
+		var ddx: int = int(plan["debris_x"])
+		var ddy: int = int(plan["debris_y"])
+		for x in range(ddx, ddx + 3):
+			_sky_set(x, ddy, IDs.T.PANEL)
+		_sky_set(ddx + 1, ddy - 1, IDs.T.GLASS)
+	var cell: Vector2i = Vector2i(x1 - 2, fy - 1)
+	var chest: Chest = null
+	if MachineBase.place_machine("Chest", cell):
+		chest = machines[cell]
+		sky_cells.append(cell)
+		for e in sky_cache_loot():
+			chest.receive_item(int(e[0]), int(e[1]))
+	var wreck: SkyWreck = SkyWreck.new()
+	var lo: Vector2i = Vector2i(x0, fy - 3)
+	var hi: Vector2i = Vector2i(x0, fy + 2)
+	for c in sky_cells:
+		lo = Vector2i(mini(lo.x, c.x), mini(lo.y, c.y))
+		hi = Vector2i(maxi(hi.x, c.x), maxi(hi.y, c.y))
+	wreck.position = Vector2(lo * TILE)
+	wreck.bounds = Rect2(Vector2(lo * TILE), Vector2((hi - lo + Vector2i.ONE) * TILE))
+	wreck.cells = sky_cells.duplicate()
+	wreck.recorder = cell_to_world(Vector2i(x0 + 3, fy - 1)) - wreck.position
+	wreck.chest = chest
+	wreck.title = String(plan["name"])
+	wreck.fragment = sky_fragment()
+	wreck.z_index = 4                  # над тайлами и сундуком, под героем
+	add_world_node(wreck)
+	sky_cache = plan.duplicate()
+	sky_cache["cell"] = cell
+	sky_cache["chest"] = chest
+	sky_cache["wreck"] = wreck
+	sky_cache["fragment"] = wreck.fragment
+	sky_cache_ms = float(Time.get_ticks_usec() - t0) / 1000.0
 
 
 func _place_base(cx: int) -> void:
