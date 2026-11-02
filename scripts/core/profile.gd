@@ -14,22 +14,20 @@ extends RefCounted
 ## умолчанию, uid 0 — новый uid. Неизвестные индексы вида хранятся как есть,
 ## рисуются как 0 (Avatar.resolve).
 ##
-## Profile.session — выбор главного меню на этот запуск процесса («Одиночная
-## игра»: аргументы старта и вид). main.gd читает его вместо командной строки;
-## пустой — меню не открывалось.
+## Правила ника — одни на игру: Net.nick_error() (их же проверяет хост в
+## рукопожатии). Меню кладёт профиль в Net.local_profile (to_net()).
+
+## Скрипт автозагрузки Net: его статические функции и константы. По имени
+## автозагрузки не обращаемся — Profile грузят и инструменты в режиме --script.
+const NetScript = preload("res://scripts/autoload/net.gd")
 
 const PATH: String = "user://profile.cfg"
-## Ник по умолчанию (валиден по nick_error()).
-const DEFAULT_NICK: String = "Инженер"
-const NICK_MIN: int = 2
-const NICK_MAX: int = 16
-## Порт игры по умолчанию (ADR-002 § 4.1; то же число, что у Net, MP-A).
-const DEFAULT_PORT: int = 24642
+## Ник по умолчанию (как у Net).
+const DEFAULT_NICK: String = NetScript.DEFAULT_NICK
+## Порт игры по умолчанию.
+const DEFAULT_PORT: int = NetScript.GAME_PORT
 ## Сколько адресов помнит «Подключиться по IP».
 const RECENT_IPS_MAX: int = 8
-
-## Выбор меню на этот запуск: {"args": PackedStringArray, "look": int}. См. шапку.
-static var session: Dictionary = {}
 
 var uid: int = 0
 var nick: String = DEFAULT_NICK
@@ -80,37 +78,14 @@ class Look:
 
 # ------------------------------------------------------------------ НИК
 
-## Почему ник не годится ("" — годится). Проверяется ник после strip_edges():
-## 2–16 символов; буквы A–Z a–z А–Я а–я Ё ё, цифры, пробел, «_ - .»; первый и
-## последний — буква или цифра; двух пробелов подряд нет.
-static func nick_error(raw: String) -> String:
-	var s: String = raw.strip_edges()
-	if s.length() < NICK_MIN:
-		return "Ник — хотя бы %d символа" % NICK_MIN
-	if s.length() > NICK_MAX:
-		return "Ник — не длиннее %d символов" % NICK_MAX
-	for i in s.length():
-		if not _nick_char(s.unicode_at(i)):
-			return "Нельзя символ «%s»: только буквы, цифры, пробел, _ - ." % s[i]
-	if not _alnum(s.unicode_at(0)) or not _alnum(s.unicode_at(s.length() - 1)):
-		return "Ник начинается и кончается буквой или цифрой"
-	if s.contains("  "):
-		return "Два пробела подряд нельзя"
-	return ""
-
-
+## Годится ли ник (правила — Net.nick_error()).
 static func is_valid_nick(raw: String) -> bool:
-	return nick_error(raw) == ""
+	return NetScript.nick_error(raw) == ""
 
 
-static func _alnum(c: int) -> bool:
-	return (c >= 0x41 and c <= 0x5A) or (c >= 0x61 and c <= 0x7A) \
-			or (c >= 0x30 and c <= 0x39) \
-			or (c >= 0x410 and c <= 0x44F) or c == 0x401 or c == 0x451
-
-
-static func _nick_char(c: int) -> bool:
-	return _alnum(c) or c == 0x20 or c == 0x5F or c == 0x2D or c == 0x2E
+## Профиль для рукопожатия: Net.local_profile = profile.to_net().
+func to_net() -> Dictionary:
+	return {"uid": uid, "nick": nick, "look": look & 0xFFFF}
 
 
 # ------------------------------------------------------------------ ФАЙЛ

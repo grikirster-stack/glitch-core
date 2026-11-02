@@ -15,9 +15,11 @@ const START_TIME: float = 0.30         ## время старта забега (
 # -------------------------------------------------------------- § 4.3 Питание
 ## Условные единицы мощности. Генератор даёт POWER_OUT, потребитель тянет
 ## POWER_DRAW; при перегрузе машины в радиусе замедляются пропорционально (#25).
+## Плавильня 0.5 (было 1.0, калибровка #33): стартовая линия § 4.2 — бур, две
+## плавильни (слитки и пластины), два манипулятора, сборщик — ровно 6 = одна ТЭЦ.
 const POWER_OUT: Dictionary = {"CoalGen": 6.0, "Solar": 2.0}
 const POWER_DRAW: Dictionary = {
-	"Drill": 2.0, "Smelter": 1.0, "Assembler": 2.0, "Inserter": 0.5,
+	"Drill": 2.0, "Smelter": 0.5, "Assembler": 2.0, "Inserter": 0.5,
 	"Analyzer": 2.0, "Turret": 2.0, "Floodlight": 1.0, "DeepDrill": 4.0,
 }
 const SOLAR_MIN_DAYLIGHT: float = 0.35 ## солнце работает, пока daylight() выше
@@ -35,7 +37,10 @@ const ANALYZER_PERIOD: float = 20.0    ## с на единицу данных
 const ANALYZER_DATA: int = 1           ## данных за один кристалл
 
 # -------------------------------------------------------------- § 4.4 Оборона
-const MACHINE_HP: float = 60.0
+## Было 60 (калибровка #33): каждая особь роя бьёт сразу, как долетела, — две
+## стаи (до 12 особей) первым же укусом снимали 60+ hp с одного бура, раньше
+## чем турели успевали выстрелить. 100 — бур переживает налёт под турелями.
+const MACHINE_HP: float = 100.0
 const TURRET_HP: float = 120.0
 const TURRET_RANGE_TILES: float = 7.0
 const TURRET_DAMAGE: float = 20.0
@@ -52,7 +57,9 @@ const AIRLOCK_CHECK_PERIOD: float = 0.1  ## как часто World пересч
 const GRATE_BREAK_TIME: float = 8.0      ## копатель ломает решётку (GRATE_HP) за столько секунд
 const GRATE_REACH_PX: float = 24.0       ## копатель ближе — грызёт решётку
 ## Приоритет целей турели: раньше в списке — важнее (§ 4.4).
-const TURRET_PRIORITY: Array[String] = ["shade", "burrower", "doppel", "echo", "swarm"]
+## Рой поднят перед копателем, двойником и эхо (калибровка #33): эхо под светом
+## базы кружит рядом и забирало все выстрелы, пока стая грызла бур под турелями.
+const TURRET_PRIORITY: Array[String] = ["shade", "swarm", "burrower", "doppel", "echo"]
 const TURRET_SCAN_PERIOD: float = 0.1    ## турель без цели ищет её не чаще, с
 const VENTS_RANDOM: int = 14             ## случайных вентиляций в пещерах (§ 1.1)
 const VENT_MIN_GAP: int = 16             ## клеток между соседними вентиляциями
@@ -68,7 +75,11 @@ const PHANTOMS: Dictionary = {
 	"burrower": {"hp": 140.0, "speed": 90.0,  "dmg": 30.0, "light_flee": 0.80, "from_night": 4, "cost": 4.0},
 	"doppel":   {"hp": 120.0, "speed": 168.0, "dmg": 40.0, "light_flee": INF,  "from_night": 6, "cost": 6.0, "max": 1},
 }
-const THREAT_PER_GENERATOR: float = 0.5
+## Было 0.5 (калибровка #33): у базы с 2 ТЭЦ ночь 3 получала B ≈ 11.7 — состав
+## из 6 единиц при cap 5, и единственная стая роя, выпав в очереди последней,
+## всю ночь ждала места за эхо, которые не умирают под светом базы. С 0.25
+## B ≈ 10.7: в составе две стаи (§ 4.5: «3 эхо + стая + тень»), одна выходит всегда.
+const THREAT_PER_GENERATOR: float = 0.25
 const THREAT_PER_LIGHT: float = 0.02
 const THREAT_RELAY: float = 4.0
 const NIGHT_BUDGET_BASE: float = 3.0
@@ -90,22 +101,29 @@ const SHADE_DRAIN_PERIOD: float = 3.0  ## тень у ТЭЦ сжигает 1 у
 const BURROWER_DIG_PERIOD: float = 0.6 ## копатель роет 1 клетку за столько секунд
 const BURROWER_HUNT_PX: float = 600.0  ## копатель чует игрока сквозь породу
 const DOPPEL_GAZE_PX: float = 200.0    ## двойник замирает под взглядом ближе этого
-const MACHINE_HIT_PERIOD: float = 0.8  ## пауза между ударами фантома по машине, с
+## Пауза между ударами фантома по машине, с. Было 0.8 (калибровка #33): стая из
+## 5–6 особей сносила машину за секунду — турели не успевали ответить.
+const MACHINE_HIT_PERIOD: float = 2.0
 const BLACK_BOX_DATA: int = 1          ## данных за чёрный ящик (§ 4.6)
 const VENT_SPAWN_COUNT: int = 3        ## из скольких ближайших вентиляций спавн
 const VENT_SPAWN_MIN_PX: float = 160.0 ## ближе к игроку вентиляция не «выдыхает»
-const VENT_SPAWN_MAX_PX: float = 1600.0 ## дальше — спавн в пещере, как раньше
+## Дальше — спавн в пещере, как раньше. Было 1600 (калибровка #33): стая из
+## вентиляции за ~80 клеток видела базу, но не находила к ней пути и всю ночь
+## висела в пещере — ночь 3 без обороны не стоила базе ни одной машины.
+const VENT_SPAWN_MAX_PX: float = 1000.0
 
 # --------------------------------------------------------- § 4.6 Исследования
 const TECH_COST: Dictionary = {"T1": 5, "T2": 10, "T3": 15, "T4": 20, "T5": 25}
 const TERMINAL_DATA: int = 5           ## данных за терминал под питанием
 
 # ---------------------------------------------------------------- § 4.7 Релей
+## Вдвое против § 4.7 (калибровка #33, риск «ручной путь жизнеспособен», § 6):
+## руками было ≈ 15 мин копки при цели ≥ 25, две линии буров — ≈ 4 мин при ≤ 12.
 const RELAY_REQ: Dictionary = {
-	IDs.I.IRON_PLATE: 24,
-	IDs.I.STEEL_PLATE: 12,
-	IDs.I.CIRCUIT: 12,
-	IDs.I.POWER_CELL: 6,
+	IDs.I.IRON_PLATE: 48,
+	IDs.I.STEEL_PLATE: 24,
+	IDs.I.CIRCUIT: 24,
+	IDs.I.POWER_CELL: 12,
 	IDs.I.RELAY_ANTENNA: 1,
 }
 const RELAY_TIME: float = 180.0        ## удержание сигнала, этап 4 (#32)
@@ -154,3 +172,20 @@ const SKY_LOOT: Dictionary = {
 	IDs.I.ANALYZER: [1, 1],
 	IDs.I.FLOODLIGHT: [1, 1],
 }
+
+# ---------------------------------------- ADR-002 Сеть и кооператив (docs/adr/0002-multiplayer.md)
+## Секция зарезервирована MP-A (#86, § 9.2). Транспортные числа (порты, частоты,
+## таймауты) — константы Net, а не Balance: калибровочный PR (MP-K) их не трогает.
+const MP_MAX_PLAYERS: int = 4                ## хост + 3 клиента (§ 4.1)
+const MP_BUDGET_PER_PLAYER: float = 0.5      ## бюджет ночи × (1 + k·(N−1)) (§ 4.7)
+const MP_CAP_PER_PLAYER: int = 2             ## + к cap за каждого игрока сверх первого, не выше MAX_PHANTOMS
+const MP_INTERVAL_PER_PLAYER: float = 0.35   ## интервал спавна ÷ (1 + k·(N−1))
+const MP_SPAWN_INTERVAL_MIN: float = 1.5     ## нижняя граница интервала в сети, с
+const MP_RESPAWN_DELAY: float = 15.0         ## респаун в сети без сдвига времени, с
+const MP_BAG_OWNER_LOCK: float = 120.0       ## мешок поднимает только владелец, с
+const MP_RELAY_HOLD_RADIUS_TILES: float = 12.0 ## отсчёт релея идёт, пока герой ближе
+const MP_TEAM_RADIO_TILES: float = 20.0      ## товарищ на миникарте без питания ближе этого
+const MP_ROLLCALL_COOLDOWN: float = 20.0     ## перекличка (G), с
+const MP_ROLLCALL_LIGHT: float = 4.0         ## зелёный огонёк ответившего, с
+const MP_DOPPEL_REVEAL: float = 1.5          ## двойник «глючит» после удара, с
+const MP_FRIENDLY_SLASH_CD: float = 1.0      ## кулдаун удара по своему, с

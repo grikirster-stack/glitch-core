@@ -15,8 +15,12 @@ var scenario_mode: bool = false
 
 func _ready() -> void:
 	_args = OS.get_cmdline_user_args()
-	if _menu_redirect():   # МЕНЮ (ADR-002, MP-B): без аргументов — главный экран
+	if _net_boot():   # СЕТЬ (ADR-002): меню или вход по сети — мир позже (_start)
 		return
+	_start()
+
+
+func _start() -> void:
 	seed_value = randi()
 	for a in _args:
 		if a.begins_with("--seed="):
@@ -53,7 +57,7 @@ func _ready() -> void:
 	add_child(tint)
 
 	player = Player.new()
-	player.look = int(Profile.session.get("look", 0))   # МЕНЮ (ADR-002, MP-B): вид из профиля
+	player.look = int(Net.local_profile.get("look", 0)) & 0xFFFF   # вид из профиля (MP-B, #87)
 	player.add_to_group("player")
 	add_child(player)
 	player.global_position = World.spawn_point
@@ -95,6 +99,8 @@ func _ready() -> void:
 		var srunner: ScenarioRunner = ScenarioRunner.new()
 		add_child(srunner)
 		srunner.start(self, scenarios)
+
+	_net_start()   # СЕТЬ (ADR-002): --mp-host, сетевые сценарии --mp-scenario
 
 
 ## Имена сценариев из --scenario=walk,mining
@@ -192,22 +198,101 @@ func _respawn() -> void:
 	Game.notify("Капсула на базе. Мешок с вещами остался на месте гибели.", Color(1.0, 0.85, 0.6))
 
 
-# ------------------------------------------------- МЕНЮ (ADR-002 § 4.6, MP-B)
+# ------------------------------------------------- СЕТЬ (ADR-002, MP-A #86)
+## Крюк меню (§ 4.6): без пользовательских аргументов, не под --script и без сессии —
+## меню, если его сцена есть (MP-B, #87); иначе старт как раньше. Любой аргумент —
+## немедленный старт. Инструменты --script (save_test, lore_test, …) сами грузят
+## main.tscn, часто без аргументов: у их SceneTree свой скрипт — меню им не нужно.
+## --mp-join=ip[:порт]: сначала рукопожатие (сид приходит от хоста), мир — после него.
+## --mp-host[=порт] [--mp-bind=ip]: сервер поднимается, когда мир готов.
+## --mp-scenario=<имя|all>: харнесс сетевых сценариев (tools/mp/mp_runner.gd).
+## Без этих флагов ни одна строка ниже не меняет одиночную игру.
 const MENU_SCENE: String = "res://scenes/menu.tscn"
+## Разобранные флаги сети (Net.parse_args).
+var _net: Dictionary = {}
 
 
-## Запуск без аргументов командной строки и без выбора меню — главный экран
-## (true: эта сцена уступает место меню). Выбор меню («Одиночная игра»: сид,
-## --hardcore) лежит в Profile.session и дописывается к _args — дальше старт
-## идёт старым путём. Любой аргумент (--test, --scenario=, --seed=, …) и любой
-## инструмент --script (его SceneTree со своим скриптом сам грузит main.tscn, часто
-## без аргументов: save_test, lore_test) — старый немедленный старт, CI не меняется.
-func _menu_redirect() -> bool:
-	if not Profile.session.is_empty():
-		_args.append_array(Profile.session.get("args", PackedStringArray()))
-		return false
-	if not _args.is_empty() or get_tree().get_script() != null \
-			or not ResourceLoader.exists(MENU_SCENE):
-		return false
-	get_tree().change_scene_to_file.call_deferred(MENU_SCENE)
-	return true
+## true — старт мира отложен (ждём рукопожатия) или сцена уходит в меню.
+func _net_boot() -> bool:
+	if _args.is_empty() and Net.session.is_empty() and get_tree().get_script() == null \
+			and ResourceLoader.exists(MENU_SCENE):
+		get_tree().change_scene_to_file.call_deferred(MENU_SCENE)
+		return true
+	_net = Net.parse_args(_args)
+	Net.apply_args(_net)
+	_net_session_args()
+	if _net.has("join_ip") and not Net.is_client():
+		Net.session_started.connect(_on_net_joined, CONNECT_ONE_SHOT)
+		Net.connection_failed.connect(_on_net_join_failed, CONNECT_ONE_SHOT)
+		print("СЕТЬ: подключение к %s:%d" % [_net["join_ip"], int(_net["join_port"])])
+		if Net.join(String(_net["join_ip"]), int(_net["join_port"])) != OK:
+			_on_net_join_failed.call_deferred(Net.last_error)
+		return true
+	return false
+
+
+## Сессия, заданная меню (MP-B) или рукопожатием: сид и --hardcore — теми же флагами,
+## что из командной строки (последний --seed= главнее).
+func _net_session_args() -> void:
+	if Net.session.is_empty():
+		return
+	var s: int = int(Net.session.get("seed", -1))
+	if s >= 0:
+		_args.append("--seed=%d" % s)
+	if bool(Net.session.get("hardcore", false)) and not _args.has("--hardcore"):
+		_args.append("--hardcore")
+
+
+func _on_net_joined() -> void:
+	if Net.connection_failed.is_connected(_on_net_join_failed):
+		Net.connection_failed.disconnect(_on_net_join_failed)
+	print("СЕТЬ: вход как «%s», слот %d, сид %d, %d мс" % [Net.session.get("nick", ""),
+			int(Net.session.get("slot", -1)), int(Net.session.get("seed", 0)), Net.join_ms])
+	Net.session_ended.connect(_on_net_ended)
+	_net_session_args()
+	_start()
+
+
+func _on_net_join_failed(reason: String) -> void:
+	if Net.session_started.is_connected(_on_net_joined):
+		Net.session_started.disconnect(_on_net_joined)
+	print("СЕТЬ: вход не удался: %s" % reason)
+	if _net.has("scenario"):
+		_net_runner()        # харнесс: клиент сам проверяет причину отказа, мира нет
+	elif ResourceLoader.exists(MENU_SCENE):
+		get_tree().change_scene_to_file.call_deferred(MENU_SCENE)
+	else:
+		get_tree().quit(1)
+
+
+func _on_net_ended(reason: String) -> void:
+	if _net.has("scenario"):
+		return               # харнесс сам решает, провал ли это
+	print("СЕТЬ: сессия окончена: %s" % reason)
+	if ResourceLoader.exists(MENU_SCENE):
+		get_tree().change_scene_to_file.call_deferred(MENU_SCENE)
+	else:
+		get_tree().quit(0)
+
+
+## Мир готов: --mp-host поднимает сервер, --mp-scenario запускает харнесс.
+func _net_start() -> void:
+	if _net.has("scenario"):
+		scenario_mode = true
+		Game.scenario_mode = true   # фантомов, как и в --scenario, создаёт сам сценарий
+		_net_runner()
+		return
+	if _net.has("host_port") and not Net.is_host():
+		var port: int = int(_net["host_port"])
+		var bind: String = String(_net.get("bind", "*"))
+		var title: String = "Экспедиция " + String(Net.local_profile.get("nick", Net.DEFAULT_NICK))
+		if Net.host(port, bind, seed_value, title) == OK:
+			print("СЕТЬ: хост %s:%d, сид %d" % [bind, port, seed_value])
+		else:
+			print("СЕТЬ: " + Net.last_error)
+
+
+func _net_runner() -> void:
+	var r: MpRunner = MpRunner.new()
+	add_child(r)
+	r.start_mp(self, _net)

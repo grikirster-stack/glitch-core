@@ -26,6 +26,9 @@ class_name MenuTest
 
 const MENU_SCENE: String = "res://scenes/menu.tscn"
 const MENU_SCRIPT: String = "res://scripts/ui/main_menu.gd"
+## Скрипт автозагрузки Net (MP-A): правила ника — его static nick_error(). Узел Net
+## берём через get_node("/root/Net") — имя автозагрузки в --script недоступно.
+const NetScript = preload("res://scripts/autoload/net.gd")
 const PLAYER_SCRIPT: String = "res://scripts/entities/player.gd"
 ## Временный профиль: настоящий user://profile.cfg тест не трогает.
 const TMP_DIR: String = "user://menu_test"
@@ -201,18 +204,20 @@ class Runner extends Node:
 		var bad_ok: Array = []
 		for n in NICKS_OK:
 			if not Profile.is_valid_nick(n):
-				bad_ok.append("%s: %s" % [n, Profile.nick_error(n)])
+				bad_ok.append("%s: %s" % [n, NetScript.nick_error(n)])
 		_ok("валидные ники приняты (%d)" % NICKS_OK.size(), bad_ok.is_empty(), str(bad_ok))
 		var passed: Array = []
 		var no_reason: Array = []
 		for n in NICKS_BAD:
 			if Profile.is_valid_nick(n):
 				passed.append(n)
-			elif Profile.nick_error(n) == "":
+			elif NetScript.nick_error(n) == "":
 				no_reason.append(n)
 		_ok("невалидные ники отклонены (%d)" % NICKS_BAD.size(), passed.is_empty(), str(passed))
 		_ok("у отказа есть причина", no_reason.is_empty(), str(no_reason))
 		_ok("ник по умолчанию валиден", Profile.is_valid_nick(Profile.DEFAULT_NICK))
+		_ok("Profile.is_valid_nick — те же правила, что Net.nick_error",
+				Profile.is_valid_nick("Аня 2") and not Profile.is_valid_nick("Аня  2"))
 
 	# --- Look ↔ u16
 	func _check_look() -> void:
@@ -317,6 +322,8 @@ class Runner extends Node:
 
 	# --- Меню: сборка, ник, вид, заглушки (узлом-ребёнком, без смены сцены)
 	func _check_menu() -> void:
+		var net: Node = get_tree().root.get_node("Net")
+		var net_profile0: Dictionary = net.local_profile.duplicate()
 		DirAccess.remove_absolute(TMP_PROFILE)
 		var menu = load(MENU_SCENE).instantiate()
 		var mm = load(MENU_SCRIPT)
@@ -356,14 +363,19 @@ class Runner extends Node:
 				and (rl >> 4) == 0 and menu.color_swatch.color == Avatar.suit_color(rl))
 		menu.net_buttons[1].pressed.emit()
 		_ok("сетевые кнопки — заглушка «Скоро»", menu.status_label.text == mm.SOON_TEXT)
-		var s0: Dictionary = mm.session_for("", false, 5)
-		var s1: Dictionary = mm.session_for(" 4242 ", true, 0x10005)
-		var s2: Dictionary = mm.session_for("Кербер", false, 0)
-		_ok("сид: пусто — случайный, число — как есть, текст — hash(); хардкор флагом",
-				(s0["args"] as PackedStringArray).is_empty() and int(s0["look"]) == 5
-				and s1["args"] == PackedStringArray(["--seed=4242", "--hardcore"])
-				and int(s1["look"]) == 5
-				and s2["args"] == PackedStringArray(["--seed=%d" % hash("Кербер")]))
+		_ok("профиль меню — в Net.local_profile (uid, ник, вид)",
+				int(net.local_profile.get("uid", 0)) == menu.profile.uid
+				and String(net.local_profile.get("nick", "")) == "Аня"
+				and int(net.local_profile.get("look", -1)) == rl)
+		var s0: Dictionary = mm.session_for("", false)
+		var s1: Dictionary = mm.session_for(" 4242 ", true)
+		var s2: Dictionary = mm.session_for("Кербер", false)
+		var s3: Dictionary = mm.session_for("-5", false)
+		_ok("Net.session: single; сид пусто — −1, число — как есть, текст — hash(); хардкор",
+				s0 == {"mode": "single", "seed": -1, "hardcore": false}
+				and s1 == {"mode": "single", "seed": 4242, "hardcore": true}
+				and int(s2["seed"]) == hash("Кербер") and int(s3["seed"]) == hash("-5"))
+		net.local_profile = net_profile0
 		menu.queue_free()
 		_menu = null
 		DirAccess.remove_absolute(TMP_PROFILE)
@@ -448,7 +460,7 @@ func _process(_delta: float) -> bool:
 				_ok("мир из меню запустился", false, "нет сцены игры за 600 кадров")
 				_step = 4
 		4:
-			Profile.session = {}
+			root.get_node("Net").session = {}
 			DirAccess.remove_absolute(TMP_PROFILE)
 			print("")
 			print("ИТОГ: проверок %d, провалов %d" % [_checks, _fails])
@@ -474,7 +486,7 @@ func _start_single() -> void:
 	var p: Profile = Profile.load_or_create(TMP_PROFILE)
 	p.look = Profile.Look.pack(PackedInt32Array([5, 0, 0, 0]))
 	p.save_to(TMP_PROFILE)
-	Profile.session = {}
+	root.get_node("Net").session = {}
 	_menu = load(MENU_SCENE).instantiate()
 	_menu.set("profile_path", TMP_PROFILE)
 	root.add_child(_menu)

@@ -6,13 +6,14 @@ extends Control
 ## номер версии в углу.
 ##
 ## Показ: main.gd открывает scenes/menu.tscn только при запуске без аргументов
-## командной строки и без выбора меню (Profile.session) — тесты и CI (--test,
-## --scenario=, --script) стартуют как раньше.
+## командной строки, не под --script и без сессии (Net.session) — тесты и CI
+## (--test, --scenario=, --mp-*, --script) стартуют как раньше.
 ##
-## «Одиночная игра» кладёт выбор в Profile.session ({"args", "look"}) и меняет
-## сцену на main.tscn; main.gd дописывает args к своим аргументам (--seed=,
-## --hardcore) и красит героя по look. Перезапуск (R после финала) берёт тот же
-## выбор.
+## Профиль (ник, uid, вид) меню держит в Net.local_profile — его шлёт рукопожатие,
+## по нему main.gd красит своего героя. «Одиночная игра» кладёт выбор в
+## Net.session = {mode: "single", seed (−1 — случайный), hardcore} и меняет сцену
+## на main.tscn; main.gd превращает его в --seed= / --hardcore. Перезапуск (R после
+## финала) берёт тот же выбор.
 ##
 ## Пока меню — текущая сцена, дерево на паузе (Game, Threat и мир не тикают,
 ## ночь в меню не наступает), а слой UI (HUD) скрыт; сам экран работает в паузе.
@@ -100,26 +101,25 @@ static func _report_first_frame() -> void:
 
 # ------------------------------------------------------------------ ДЕЙСТВИЯ
 
-## «Одиночная игра»: выбор — в Profile.session, дальше старт старым путём main.gd.
+## «Одиночная игра»: выбор — в Net.session, дальше старт старым путём main.gd.
 func start_single() -> void:
-	if not Profile.is_valid_nick(nick_edit.text):
+	if Net.nick_error(nick_edit.text) != "":
 		return
-	Profile.session = session_for(seed_edit.text, hardcore_box.button_pressed, profile.look)
 	profile.save_to(profile_path)
+	Net.local_profile = profile.to_net()
+	Net.session = session_for(seed_edit.text, hardcore_box.button_pressed)
 	_leave()
 	get_tree().change_scene_to_file(GAME_SCENE)
 
 
-## Выбор меню для main.gd: аргументы старта и вид.
-## Сид: пусто — случайный; целое число — как есть; другой текст — hash().
-static func session_for(seed_text: String, hardcore: bool, look: int) -> Dictionary:
-	var args: PackedStringArray = PackedStringArray()
+## Сессия одиночной игры для main.gd (формат Net.session, MP-A).
+## Сид: пусто — случайный (−1); целое ≥ 0 — как есть; другой текст — hash().
+static func session_for(seed_text: String, hardcore: bool) -> Dictionary:
 	var s: String = seed_text.strip_edges()
+	var sd: int = -1
 	if s != "":
-		args.append("--seed=%d" % (int(s) if s.is_valid_int() else hash(s)))
-	if hardcore:
-		args.append("--hardcore")
-	return {"args": args, "look": look & 0xFFFF}
+		sd = int(s) if s.is_valid_int() and int(s) >= 0 else hash(s)
+	return {"mode": "single", "seed": sd, "hardcore": hardcore}
 
 
 func set_part(i: int, idx: int) -> void:
@@ -140,14 +140,15 @@ func randomize_look() -> void:
 
 
 func _on_nick_changed(text: String) -> void:
-	var err: String = Profile.nick_error(text)
-	nick_error_label.text = err
+	var err: String = Net.nick_error(text)
+	nick_error_label.text = ("Ник: " + err) if err != "" else ""
 	single_button.disabled = err != ""
 	for b in net_buttons:
 		b.disabled = err != ""
 	if err == "" and text.strip_edges() != profile.nick:
 		profile.nick = text.strip_edges()
 		profile.save_to(profile_path)
+		Net.local_profile = profile.to_net()
 
 
 func _on_soon() -> void:
@@ -180,6 +181,7 @@ func _refresh_look() -> void:
 	if color_swatch != null:
 		color_swatch.color = Avatar.suit_color(profile.look)
 	preview.look = profile.look
+	Net.local_profile = profile.to_net()
 
 
 # ------------------------------------------------------------------ ВЁРСТКА
@@ -242,7 +244,7 @@ func _build() -> void:
 	right.add_child(_label("Ник", 20, ACCENT))
 	nick_edit = LineEdit.new()
 	nick_edit.text = profile.nick
-	nick_edit.max_length = Profile.NICK_MAX + 8
+	nick_edit.max_length = Net.NICK_MAX + 8
 	nick_edit.placeholder_text = "2–16 символов"
 	nick_edit.custom_minimum_size = Vector2(0, BUTTON_H)
 	nick_edit.text_changed.connect(_on_nick_changed)
