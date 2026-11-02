@@ -55,6 +55,8 @@ func has_time_animation() -> bool:
 
 func _process(delta: float) -> void:
 	super(delta)
+	if not Net.is_authority():   # СЕТЬ (ADR-002): работает хост, клиент рисует по net_state
+		return
 	if not powered:
 		return
 	if not _busy:
@@ -120,3 +122,22 @@ func load_state(d: Dictionary) -> void:
 	produced = int(d.get("produced", produced))
 	_busy = bool(d.get("busy", _busy))
 	_timer = float(d.get("timer", _timer))
+
+
+# ------------------------------------------------------------- СЕТЬ (ADR-002, MP-E #90)
+## + лоток u8 · в работе u8.
+func net_state() -> PackedByteArray:
+	var b: PackedByteArray = super()
+	b.append(clampi(crystals, 0, 255))
+	b.append(1 if _busy else 0)
+	return b
+
+
+func apply_net_state(b: PackedByteArray) -> int:
+	var o: int = super(b)
+	if o < 0 or b.size() < o + 2:
+		return -1
+	crystals = b[o]
+	_busy = b[o + 1] != 0
+	queue_redraw()
+	return o + 2

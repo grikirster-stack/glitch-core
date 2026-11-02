@@ -33,7 +33,7 @@ signal roster_changed
 enum Role { OFFLINE, HOST, CLIENT }
 
 # --- транспорт (§ 9.2: не баланс — калибровочный PR их не трогает)
-const PROTO: int = 3                 ## версия протокола: поднимать при смене кодека, IDs, таблиц DB (2 — MP-D: HIT, звуки, Fx; 3 — MP-H: LOBBY)
+const PROTO: int = 4                 ## версия протокола: поднимать при смене кодека, IDs, таблиц DB (2 — MP-D: HIT, звуки, Fx; 3 — MP-H: LOBBY; 4 — MP-E: net_state машин, запись предмета в SPAWN)
 const GAME_PORT: int = 24642
 const DISCOVERY_PORT: int = 24643
 const TICK_HZ: int = 20              ## пакет состояния

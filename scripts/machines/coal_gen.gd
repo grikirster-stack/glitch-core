@@ -22,6 +22,9 @@ func _init() -> void:
 
 func _process(delta: float) -> void:
 	super(delta)
+	if not Net.is_authority():   # СЕТЬ (ADR-002): топливо и активность — от хоста
+		queue_redraw()
+		return
 	if enabled and fuel > 0.0:
 		fuel = maxf(0.0, fuel - delta)
 	power_active = enabled and fuel > 0.0
@@ -121,3 +124,19 @@ func save_state() -> Dictionary:
 func load_state(d: Dictionary) -> void:
 	super(d)
 	fuel = float(d.get("fuel", fuel))
+
+
+# ------------------------------------------------------------- СЕТЬ (ADR-002, MP-E #90)
+## + топливо u8 — доля полной топки (FUEL_MAX_UNITS единиц).
+func net_state() -> PackedByteArray:
+	var b: PackedByteArray = super()
+	b.append(net_u8(fuel / (BURN * float(FUEL_MAX_UNITS))))
+	return b
+
+
+func apply_net_state(b: PackedByteArray) -> int:
+	var o: int = super(b)
+	if o < 0 or b.size() < o + 1:
+		return -1
+	fuel = float(b[o]) / 255.0 * BURN * float(FUEL_MAX_UNITS)
+	return o + 1
