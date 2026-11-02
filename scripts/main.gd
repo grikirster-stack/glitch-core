@@ -28,6 +28,13 @@ func _ready() -> void:
 		get_tree().quit(0)
 		return
 
+	# Печать лора по сиду для ревью текста (мир не нужен, поэтому до его генерации):
+	# godot --headless --path . -- --lore-dump --seed=31337
+	if _args.has("--lore-dump"):
+		load("res://tools/lore_dump.gd").dump(seed_value)
+		get_tree().quit(0)
+		return
+
 	Game.reset_run()
 	World.generate(seed_value)
 	Game.tasks_total = World.terminals.size()
