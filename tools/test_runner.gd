@@ -79,20 +79,48 @@ func _t_world() -> void:
 	_next(2)
 
 
-## Деревья не должны висеть в воздухе: ствол стоит на грунте, листва — на стволе.
+## Деревья не должны висеть в воздухе: ствол стоит на грунте, листва связана
+## со стволом. Плюс форма: у дерева есть высокий ствол и широкая крона.
 func _check_floating_trees() -> void:
-	var bad: Array = []
-	for x in range(World.W):
-		for y in range(World.H):
-			var t: int = World.get_tile(x, y)
-			if t == IDs.T.LOG:
-				if not DB.tile_solid(World.get_tile(x, y + 1)):
-					bad.append(Vector2i(x, y))
-			elif t == IDs.T.LEAVES:
-				var below: int = World.get_tile(x, y + 1)
-				if below != IDs.T.LOG and below != IDs.T.LEAVES:
-					bad.append(Vector2i(x, y))
+	var bad: Array = World.floating_tree_cells()
 	_ok("деревья не висят в воздухе", bad.is_empty(), str(bad.slice(0, 6)))
+	var st: Dictionary = _tree_stats()
+	_ok("ствол у дерева высокий (>=5 брёвен)", int(st["min_trunk"]) >= 5,
+			"минимальный %d" % int(st["min_trunk"]))
+	_ok("крона широкая (>=3 клетки)", int(st["min_crown"]) >= 3,
+			"минимальная %d" % int(st["min_crown"]))
+	_ok("деревьев в мире достаточно", int(st["trees"]) >= 30,
+			"деревьев %d" % int(st["trees"]))
+
+
+## Статистика по деревьям: сколько деревьев, какая минимальная высота ствола
+## и какая ширина кроны у самого скромного дерева.
+## Крона считается в пределах ±2 клеток от ствола: иначе листва соседних
+## деревьев слипается и ширина получается завышенной.
+func _tree_stats() -> Dictionary:
+	var trees: int = 0
+	var min_trunk: int = 999
+	var min_crown: int = 999
+	for x in range(World.W):
+		var ground: int = World.surface[x]
+		var h: int = 0
+		for y in range(ground - 1, maxi(ground - 12, 0), -1):
+			if World.get_tile(x, y) != IDs.T.LOG:
+				break
+			h += 1
+		if h == 0:
+			continue
+		trees += 1
+		min_trunk = mini(min_trunk, h)
+		var crown: int = 0
+		for row in range(ground - h - 8, ground - h):
+			var w: int = 0
+			for c in range(x - 2, x + 3):
+				if World.get_tile(c, row) == IDs.T.LEAVES:
+					w += 1
+			crown = maxi(crown, w)
+		min_crown = mini(min_crown, crown)
+	return {"trees": trees, "min_trunk": min_trunk, "min_crown": min_crown}
 
 
 func _inv_dump() -> String:

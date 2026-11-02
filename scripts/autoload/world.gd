@@ -6,6 +6,9 @@ const H: int = 180
 const SEA_LEVEL: int = 52
 const TILE: int = 16
 
+const TREE_CHANCE: float = 0.10      # шанс дерева на колонку (до учёта зазора)
+const TREE_MIN_GAP: int = 6          # минимум колонок между соседними стволами
+
 const LIGHT_CHUNK: int = 8            # размер чанка пространственного хэша света (клетки)
 const LIGHT_MIN: float = 0.05         # минимальный свет тайла, дающий источник
 const LIGHT_BASE_RADIUS: float = 46.0 # базовый радиус свечения тайла
@@ -225,12 +228,21 @@ func generate(p_seed: int) -> void:
 	# --- 7. Деревья, трава, камни --------------------------------------------
 	# Сначала деревья: крона занимает место над поверхностью, иначе мох и кристаллы
 	# выросли бы сквозь неё.
+	# Деревья не жмутся друг к другу: между соседними стволами держим
+	# минимальный зазор, иначе лес превращается в сплошную стену.
+	var last_tree_x: int = -TREE_MIN_GAP
 	for x in range(2, W - 2):
+		# Вокруг базы деревьев нет: площадку всё равно выровняют и вычистят.
+		if absi(x - W / 2) <= 18:
+			continue
 		var top: int = surface[x]
 		if get_tile(x, top) != IDs.T.GRASS:
 			continue
-		if rng.randf() < 0.055:
+		if x - last_tree_x < TREE_MIN_GAP:
+			continue
+		if rng.randf() < TREE_CHANCE:
 			_place_tree(x, top, rng)
+			last_tree_x = x
 	# Трава и светящиеся кристаллы — только в пустые клетки над поверхностью.
 	for x in range(2, W - 2):
 		var top: int = surface[x]
@@ -344,87 +356,115 @@ func _noise(type: int, freq: float, octaves: int, s: int) -> FastNoiseLite:
 
 # ------------------------------------------------------------ ДЕРЕВЬЯ
 
-## Ставит дерево на сплошной грунт.
+## Ставит дерево: высокий узкий ствол и круглая крона.
 ##
-## Форма дерева подчинена правилу «ничего не висит в воздухе»: под бревном должен
-## быть сплошной тайл, под листвой — бревно или другая листва. Поэтому ствол —
-## сплошные столбы брёвен от земли вверх, а крона — слои листвы, где каждый лист
-## опирается на бревно или на лист нижнего слоя.
+## Форма: ствол в одну клетку шириной и высотой 5–8 брёвен, сверху крона из
+## листвы шириной 3 или 5 клеток. Ствол узкий — мимо дерева можно пройти;
+## крона начинается высоко — под ней тоже можно пройти.
+##
+## Листва нависает над землёй: для дерева это нормально. Связана она всегда:
+## каждый лист стоит на бревне, на другом листе или рядом с ними, а по цепочке —
+## со стволом, стоящим на земле (см. _fix_floating_trees и floating_tree_cells).
 func _place_tree(x: int, ground: int, rng: RandomNumberGenerator) -> void:
 	# Опора: под стволом сплошной грунт, сверху пусто.
 	if not DB.tile_solid(get_tile(x, ground)):
 		return
 	if get_tile(x, ground - 1) != IDs.T.AIR:
 		return
-	# Ширина кроны: сколько соседних колонок стоят на почти той же высоте.
-	var ext: int = 0
-	for e in [2, 1]:
-		if _tree_ground_ok(x, ground, e):
-			ext = e
-			break
-	if ext < 1:
-		return # ровной площадки нет: вышло бы тонким прутом без кроны
-	# Ступень, с которой начинается крона: ниже самой высокой земли под деревом.
-	var min_ground: int = ground
-	for c in range(x - ext, x + ext + 1):
-		min_ground = mini(min_ground, surface[c])
-	var trunk_h: int = rng.randi_range(1, 2)
-	var top: int = min_ground - trunk_h
-	# Ствол: сплошной столб брёвен от своей земли до верха.
-	for c in range(x - ext, x + ext + 1):
-		for y in range(surface[c] - 1, top - 1, -1):
-			if get_tile(c, y) != IDs.T.AIR:
-				break
-			set_tile_raw(c, y, IDs.T.LOG)
-	# Крона: слои листвы снизу вверх; лист кладём только на бревно или на лист.
-	var layers: Array[int] = [ext, ext, ext - 1, ext - 1, ext - 2]
+	# Ширина кроны: 3 (1) или 5 (2) клеток в сторону.
+	var crown_w: int = rng.randi_range(1, 2)
+	# Земля вокруг ствола не должна обваливаться: иначе крона повиснет над
+	# обрывом и дерево будет выглядеть криво.
+	for c in range(x - crown_w, x + crown_w + 1):
+		if c < 1 or c >= W - 1:
+			return
+		if absi(surface[c] - ground) > 1:
+			return
+	# Высота ствола: чем выше, тем дальше от земли крона.
+	var trunk_h: int = rng.randi_range(5, 8)
+	var top: int = ground - trunk_h
+	# Место под ствол должно быть свободно — иначе ствол вырастет из воздуха.
+	for y in range(ground - 1, top - 1, -1):
+		if get_tile(x, y) != IDs.T.AIR:
+			return
+	# Слои кроны снизу вверх: широкие посередине, узкие сверху и снизу — крона
+	# получается круглой, а не прямоугольной.
+	var layers: Array[int] = [crown_w - 1, crown_w, crown_w, crown_w - 1, crown_w - 2]
+	# Проверяем, что место под крону свободно: иначе крона выйдет рваной.
 	for i in range(layers.size()):
-		var half: int = layers[i]
-		if half < 0:
+		var w: int = layers[i]
+		if w < 0:
 			break
-		var row: int = top - 1 - i
-		for c in range(x - half, x + half + 1):
-			var below: int = get_tile(c, row + 1)
-			if below != IDs.T.LOG and below != IDs.T.LEAVES:
-				continue
+		var row: int = top - i
+		for c in range(x - w, x + w + 1):
+			if c == x and row == top:
+				continue # место верхнего бревна
 			if get_tile(c, row) != IDs.T.AIR:
+				return
+	# Ствол: сплошной столб брёвен от земли до верха.
+	for y in range(ground - 1, top - 1, -1):
+		set_tile_raw(x, y, IDs.T.LOG)
+	# Крона: слои листвы снизу вверх.
+	for i in range(layers.size()):
+		var w2: int = layers[i]
+		if w2 < 0:
+			break
+		var row2: int = top - i
+		for c in range(x - w2, x + w2 + 1):
+			if c == x and row2 == top:
 				continue
-			set_tile_raw(c, row, IDs.T.LEAVES)
+			set_tile_raw(c, row2, IDs.T.LEAVES)
 	_trees += 1
 
 
-## Колонки x-e .. x+e пригодны под дерево: та же высота, сплошной грунт, сверху пусто.
-func _tree_ground_ok(x: int, ground: int, e: int) -> bool:
-	for c in range(x - e, x + e + 1):
-		if c < 1 or c >= W - 1:
-			return false
-		if absi(surface[c] - ground) > 1:
-			return false
-		if not DB.tile_solid(get_tile(c, surface[c])):
-			return false
-		if get_tile(c, surface[c] - 1) != IDs.T.AIR:
-			return false
-	return true
-
-
-## Страховка после расстановки построек: убирает брёвна и листву без опоры.
-## Обход снизу вверх, поэтому клетка над снятой опорой тоже успевает убраться.
-func _fix_floating_trees() -> void:
+## Клетки, которые висят в воздухе: бревна без грунта под ними и листва, не
+## связанная с землёй. Пусто — значит всё дерево держится на земле.
+func floating_tree_cells() -> Array:
+	var bad: Array = []
+	var attached: Dictionary = {}
+	var roots: Array[Vector2i] = []
+	# Деревья растут над поверхностью: глубже смотреть незачем.
 	var max_top: int = 0
 	for x in range(W):
 		max_top = maxi(max_top, surface[x])
-	var limit: int = mini(max_top + 12, H - 1)
-	for y in range(limit, -1, -1):
-		var row: int = y * W
-		for x in range(W):
-			var t: int = tiles[row + x]
-			if t == IDs.T.LOG:
-				if not DB.tile_solid(get_tile(x, y + 1)):
-					tiles[row + x] = IDs.T.AIR
-			elif t == IDs.T.LEAVES:
-				var below: int = get_tile(x, y + 1)
-				if below != IDs.T.LOG and below != IDs.T.LEAVES:
-					tiles[row + x] = IDs.T.AIR
+	var limit: int = mini(max_top + 14, H - 1)
+	for x in range(W):
+		for y in range(limit):
+			if get_tile(x, y) != IDs.T.LOG:
+				continue
+			if not DB.tile_solid(get_tile(x, y + 1)):
+				bad.append(Vector2i(x, y)) # бревно висит в воздухе
+				continue
+			attached[Vector2i(x, y)] = true
+			roots.append(Vector2i(x, y))
+	# Обход в ширину: от стволов по листве и брёвнам.
+	var queue: Array[Vector2i] = roots.duplicate()
+	while not queue.is_empty():
+		var c: Vector2i = queue.pop_back()
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = c + d
+			if attached.has(n):
+				continue
+			var t: int = get_tile(n.x, n.y)
+			if t != IDs.T.LOG and t != IDs.T.LEAVES:
+				continue
+			attached[n] = true
+			queue.append(n)
+	# Всё, что осталось непривязанным, — висящая листва.
+	for x in range(W):
+		for y in range(limit):
+			if get_tile(x, y) != IDs.T.LEAVES:
+				continue
+			if not attached.has(Vector2i(x, y)):
+				bad.append(Vector2i(x, y))
+	return bad
+
+
+## Страховка после расстановки построек: убирает брёвна и листву, не связанные
+## с землёй. Крона, нависающая над землёй, остаётся на месте.
+func _fix_floating_trees() -> void:
+	for c in floating_tree_cells():
+		set_tile_raw(c.x, c.y, IDs.T.AIR)
 
 
 func _flatten(cx: int, half: int) -> void:
