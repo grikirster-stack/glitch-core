@@ -51,6 +51,8 @@ var _registered: bool = false
 func _ready() -> void:
 	z_index = 4
 	vel = Vector2(randf_range(-40.0, 40.0), randf_range(-130.0, -70.0))
+	if Net.is_online():   # СЕТЬ (ADR-002): хост рассылает предмет, у клиента — марионетка
+		add_to_group(NET_GROUP)
 
 
 func _exit_tree() -> void:
@@ -84,6 +86,9 @@ static func ground_count() -> int:
 
 
 func _physics_process(delta: float) -> void:
+	if not Net.is_authority():   # СЕТЬ (ADR-002): подбор и слияние — на хосте
+		_net_puppet(delta)
+		return
 	age += delta
 	pickup_delay = maxf(0.0, pickup_delay - delta)
 	if despawn:
@@ -230,6 +235,116 @@ func _draw_bag() -> void:
 	var tex: ImageTexture = DB.item_texture(item_id)
 	if tex != null:
 		draw_texture_rect(tex, Rect2(-4.0, -2.0, 8.0, 8.0), false, Color(1, 1, 1, 0.9))
+
+
+# ------------------------------------------------------------- СЕТЬ (ADR-002, MP-E #90)
+## Предметы по сети (scripts/net/net_machines.gd, § 4.2.1): физику, подбор и слияние
+## считает хост. Клиенту — события: появление/обновление (SPAWN: net_record() + мешок)
+## и исчезновение (DESPAWN). У клиента предмет — марионетка: летит той же баллистикой
+## до приземления (World.move_body по тем же тайлам), к ближайшему герою тянется
+## «на глаз» и прячется у него, пока хост не скажет, подобран ли он.
+##
+## Запись (NET_RECORD_BYTES): предмет u8 · число u16 · позиция 2×u16 (NetCodec.pos_u16) ·
+## скорость 2×s16 (px/с) · флаги u8 (NIF_*) · возраст u16 (×10) · пауза подбора u8 (×100).
+
+const NET_GROUP: StringName = &"net_item"
+const NET_RECORD_BYTES: int = 15
+const NIF_GROUNDED: int = 1
+const NIF_DESPAWN: int = 2
+const NIF_MAGNET: int = 4
+
+## Номер предмета в сессии (хост выдаёт 1..65535; 0 — не разослан / не от хоста).
+var net_id: int = 0
+
+static var _net_heroes: Array = []
+static var _net_heroes_frame: int = -1
+
+
+func net_record() -> PackedByteArray:
+	var b: PackedByteArray = PackedByteArray()
+	b.resize(NET_RECORD_BYTES)
+	b[0] = item_id & 0xFF
+	b.encode_u16(1, clampi(count, 0, 0xFFFF))
+	b.encode_u16(3, NetCodec.pos_u16(global_position.x))
+	b.encode_u16(5, NetCodec.pos_u16(global_position.y))
+	b.encode_s16(7, clampi(roundi(vel.x), -32768, 32767))
+	b.encode_s16(9, clampi(roundi(vel.y), -32768, 32767))
+	b[11] = (NIF_GROUNDED if grounded else 0) | (NIF_DESPAWN if despawn else 0) \
+			| (NIF_MAGNET if magnet else 0)
+	b.encode_u16(12, clampi(roundi(age * 10.0), 0, 0xFFFF))
+	b[14] = clampi(roundi(pickup_delay * 100.0), 0, 255)
+	return b
+
+
+## Клиент: запись хоста (появление или обновление). false — запись битая.
+func net_apply(b: PackedByteArray, p_bag: Array) -> bool:
+	if b.size() != NET_RECORD_BYTES:
+		return false
+	item_id = b[0]
+	count = b.decode_u16(1)
+	global_position = Vector2(NetCodec.u16_pos(b.decode_u16(3)), NetCodec.u16_pos(b.decode_u16(5)))
+	vel = Vector2(b.decode_s16(7), b.decode_s16(9))
+	grounded = (b[11] & NIF_GROUNDED) != 0
+	despawn = (b[11] & NIF_DESPAWN) != 0
+	magnet = false
+	age = b.decode_u16(12) / 10.0
+	pickup_delay = b[14] / 100.0
+	bag = p_bag
+	visible = true
+	queue_redraw()
+	return true
+
+
+## Клиент: кадр марионетки (вместо подбора и слияния — только вид).
+func _net_puppet(delta: float) -> void:
+	age += delta
+	pickup_delay = maxf(0.0, pickup_delay - delta)
+	if is_warning():
+		modulate.a = 0.35 + 0.65 * absf(cos(age * PI * 4.0))
+	elif modulate.a != 1.0:
+		modulate.a = 1.0
+	var hero: Node2D = _net_nearest_hero()
+	var d: float = global_position.distance_to(hero.global_position) if hero != null else INF
+	if not magnet and d < MAGNET_DIST and pickup_delay <= 0.0:
+		magnet = true
+	if magnet:
+		if hero == null:
+			magnet = false
+			return
+		if d < PICKUP_DIST:
+			visible = false              # «подобран» — до ответа хоста (DESPAWN или обновление)
+			return
+		global_position += (hero.global_position - global_position).normalized() * 340.0 * delta
+		return
+	if grounded:
+		return
+	vel.y += 900.0 * delta
+	var res: Dictionary = World.move_body(global_position, vel * delta, Vector2(10.0, 10.0))
+	global_position = res["position"]
+	if res["hit_y"]:
+		vel.y = 0.0
+		vel.x *= 0.7
+		grounded = true
+	if res["hit_x"]:
+		vel.x = 0.0
+
+
+## Ближайший живой герой (список героев — раз в физический кадр на все предметы).
+func _net_nearest_hero() -> Node2D:
+	var f: int = Engine.get_physics_frames()
+	if f != _net_heroes_frame:
+		_net_heroes_frame = f
+		_net_heroes = get_tree().get_nodes_in_group("player")
+	var best: Node2D = null
+	var best_d: float = INF
+	for h in _net_heroes:
+		if not is_instance_valid(h) or bool(h.get("dead")):
+			continue
+		var dd: float = global_position.distance_squared_to(h.global_position)
+		if dd < best_d:
+			best_d = dd
+			best = h
+	return best
 
 
 # ------------------------------------------------- СЕТЬ (ADR-002, MP-D #89)

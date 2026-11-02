@@ -6,7 +6,7 @@ extends "res://tools/mp/scenarios/mp_threat_base.gd"
 ## Хост считает ИИ всех фантомов, прокси трёх клиентов, машины, воду, шлюзы и шлёт
 ## каждому клиенту свой пакет состояния 20 Гц. Проверки: p95 интервала кадра хоста
 ## ≤ 16 мс; все 16 фантомов в зоне интереса каждого клиента и видны у него.
-## Замер: интервал кадра хоста (среднее, p95, макс), время процесса и физики;
+## Замер: интервал кадра хоста (среднее, p95, макс);
 ## STATE на клиента, Б/с — всего и фантомы (12 Б × строк), строк фантомов за такт.
 
 const PERF_SEC: float = 6.0
@@ -17,16 +17,12 @@ const OTHER_KINDS: Array = ["Smelter", "Drill", "Chest", "Inserter", "Assembler"
 
 var _rec: bool = false
 var _us: PackedInt64Array = PackedInt64Array()
-var _proc: PackedFloat32Array = PackedFloat32Array()
-var _phys: PackedFloat32Array = PackedFloat32Array()
 
 
 func _process(_delta: float) -> void:
 	if not _rec:
 		return
 	_us.append(Time.get_ticks_usec())
-	_proc.append(float(Performance.get_monitor(Performance.TIME_PROCESS)) * 1000.0)
-	_phys.append(float(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)) * 1000.0)
 
 
 # ------------------------------------------------------------------ ХОСТ
@@ -73,8 +69,8 @@ func run_host() -> void:
 	var sec: float = float(Time.get_ticks_msec() - t0) / 1000.0
 	var alive: int = alive_phantoms().size()
 	var fs: Dictionary = frame_stats(_us)
-	print("  ЗАМЕР кадр хоста (4 игрока, %d фантомов, %d машин, %.1f с): среднее %.2f мс, p95 %.2f мс, макс %.2f мс, кадров %d; процесс p95 %.2f мс, физика p95 %.2f мс" % [
-			alive, World.machines.size(), sec, fs["avg"], fs["p95"], fs["max"], fs["n"], p95(_proc), p95(_phys)])
+	print("  ЗАМЕР кадр хоста (4 игрока, %d фантомов, %d машин, %.1f с): интервал кадра среднее %.2f мс, p95 %.2f мс, макс %.2f мс, кадров %d" % [
+			alive, World.machines.size(), sec, fs["avg"], fs["p95"], fs["max"], fs["n"]])
 	ok("p95 кадра хоста ≤ %d мс" % int(FRAME_P95_MAX), float(fs["p95"]) <= FRAME_P95_MAX and int(fs["n"]) > 60,
 			"p95 %.2f мс" % fs["p95"])
 	ok("фантомы живы весь замер (16)", alive == Balance.MAX_PHANTOMS, "%d" % alive)

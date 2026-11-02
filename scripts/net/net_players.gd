@@ -331,7 +331,7 @@ func _send_state() -> void:
 		rows.append((heroes[id] as Player).net_state_row(_slot_of(int(id))))
 	var tick: int = (_frame / STATE_EVERY) & 0xFFFF
 	# MP-F (#92): пакет — каждому клиенту свой, фантомы — в зоне интереса его героя.
-	# Летящие предметы допишет MP-E (#90).
+	# Предметы MP-E (#90) идут своими SPAWN-обновлениями, строки предметов пусты.
 	phantoms.host_sync()
 	for id in _st:
 		Net.send(NetCodec.Msg.STATE, NetCodec.encode_state(tick, rows, phantoms.rows_for(heroes[id]), []), int(id))

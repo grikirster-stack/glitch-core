@@ -95,6 +95,8 @@ func lock_reason(node: String) -> String:
 
 ## Открыть узел: списывает `Game.research`. false — нельзя (см. `lock_reason`).
 func unlock(node: String) -> bool:
+	if not Net.is_authority():   # СЕТЬ (ADR-002): у клиента — команда хосту (InvOps, MP-G)
+		return InvOps.unlock(node) if can_unlock(node) else false
 	if not can_unlock(node):
 		return false
 	Game.research -= cost(node)
@@ -164,3 +166,25 @@ func load_state(d: Dictionary) -> void:
 		unlocked.push_front("T0")
 	read_chapters = Array(d.get("read_chapters", [])).duplicate()
 	fragments = Array(d.get("fragments", [])).duplicate()
+
+
+# ------------------------------------------------------------------ СЕТЬ (ADR-002)
+## Исследования, главы и обрывки — общие для команды (§ 4.7, D10; MP-G #91). Считает
+## хост; клиенту они приходят событием TECH (InvOps), данные (Game.research) — в нём же.
+
+## Клиент: событие с хоста — то же, что у хоста (сигналы, уведомление), без списания данных.
+func net_apply(kind: int, arg: int, text: String) -> void:
+	match kind:
+		NetCodec.TechEv.UNLOCK:
+			if arg < 0 or arg >= ORDER.size():
+				return
+			var node: String = String(ORDER[arg])
+			if is_unlocked(node):
+				return
+			unlocked.append(node)
+			node_unlocked.emit(node)
+			Game.notify("Открыто: %s. Новые рецепты в крафте." % title(node), Color(0.45, 0.9, 1.0))
+		NetCodec.TechEv.CHAPTER:
+			read_chapter(arg)
+		NetCodec.TechEv.FRAGMENT:
+			add_fragment(text)

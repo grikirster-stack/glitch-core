@@ -67,7 +67,15 @@ const C_CHEST: Color = Color(1.0, 0.8, 0.4)
 
 var player = null    ## Игрок (без типа — во избежание цикла зависимостей).
 var chest = null     ## Открытый сундук.
-var held: ItemStack = ItemStack.new()
+## «Рука»: _hand[0] — стопка у курсора. Одиночная и хост: стопка вынута из ячейки
+## (InvOps.xfer перекладывает в руку и из руки). Клиент: рука — состояние окна,
+## стопка лежит в ячейке _hand_from, пока команда move её не переложит (ADR-002 § 4.2.7).
+var _hand: Array = [ItemStack.new()]
+var held: ItemStack:
+	get:
+		return _hand[0]
+	set(v):
+		_hand[0] = v
 var station_tab: int = 0            ## 0 — ручной, 1 — плавильня, 2 — сборщик, 3 — исследования
 var scroll: int = 0
 ## Последняя позиция мыши в координатах панели (из _gui_input).
@@ -142,6 +150,8 @@ func open_chest(p: Player, c: Chest) -> void:
 
 func close() -> void:
 	_return_held()
+	if chest and Net.is_client():   # СЕТЬ (ADR-002): хост больше не шлёт этот сундук
+		InvOps.send(NetCodec.InvOp.CLOSE, {"cell": InvOps.cell_of(chest)})
 	visible = false
 	chest = null
 
@@ -149,17 +159,13 @@ func close() -> void:
 ## Предмет «в руке» не пропадает: обратно в инвентарь, не влез — в открытый
 ## сундук, и уж совсем никак — на землю под ноги (подберётся, когда будет место).
 func _return_held() -> void:
-	if held.is_empty():
-		held = ItemStack.new()
+	if Net.is_client():   # СЕТЬ (ADR-002): рука клиента — окно, стопка не покидала ячейку
+		_net_drop_hand()
 		return
-	var left: int = held.count
-	if player:
-		left = player.inv.add(held.id, left)
-		if left > 0 and chest and is_instance_valid(chest):
-			left = Inventory.stack_into(chest.slots, held.id, left)
-		if left > 0:
-			player.spawn_item(held.id, left, player.global_position)
-	held = ItemStack.new()
+	var had: bool = not held.is_empty()
+	InvOps.return_hand(player, chest, _hand)
+	if had:
+		InvOps.chest_changed(chest)
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -388,6 +394,8 @@ func _draw() -> void:
 		return
 	if _font == null:
 		_font = ThemeDB.fallback_font
+	if not _hand_from.is_empty():   # СЕТЬ (ADR-002): рука клиента против свежего содержимого
+		_net_check_hand()
 	if text_audit != null:
 		text_audit.clear()     ## аудит — только последний кадр
 	_count_inventory()
@@ -450,7 +458,7 @@ func _draw_chest(origin: Vector2) -> void:
 		return
 	_text(origin + Vector2(16, 92), _chest_title, 300, 14, C_CHEST)
 	for i in Chest.CAP:
-		_draw_slot(_chest_slot_rect(i), chest.slots[i], false)
+		_draw_slot(_chest_slot_rect(i), _shown(chest.slots, NetCodec.Box.CHEST, i), false)
 	var has_chest: bool = false
 	for s in chest.slots:
 		if not s.is_empty():
@@ -479,7 +487,7 @@ func _draw_inventory(origin: Vector2) -> void:
 	var w: float = _text(origin + Vector2(16, inv_y - 6), "ВЫ", 40, 14, C_HEAD)
 	_text(origin + Vector2(16 + w + 8, inv_y - 6), "верхний ряд — хотбар (1…0)", 300 - w, 12, C_DIM)
 	for i in player.inv.size:
-		_draw_slot(_inv_slot_rect(i), player.inv.slots[i], i < player.inv.hotbar_size)
+		_draw_slot(_inv_slot_rect(i), _shown(player.inv.slots, NetCodec.Box.INV, i), i < player.inv.hotbar_size)
 
 
 func _draw_recipes(rx: float, origin: Vector2) -> void:
@@ -1127,6 +1135,9 @@ func _unlock_card(i: int) -> void:
 	var node: String = String(CARD_NODES[i])
 	if Tech.is_unlocked(node):
 		return
+	if Net.is_client() and Tech.can_unlock(node):   # СЕТЬ (ADR-002): узел открывает хост, всем — TECH
+		InvOps.unlock(node, _on_net_unlock.bind(node))
+		return
 	if Tech.unlock(node):
 		Sfx.play("craft", -4.0, 0.8)
 		_feedback("Открыто: %s — новые рецепты в крафте." % Tech.title(node), Color(0.45, 0.9, 1.0), {}, true, false)
@@ -1232,169 +1243,98 @@ func _click(pos: Vector2, right: bool, shift: bool = false) -> void:
 func quick_move_chest(index: int) -> int:
 	if chest == null:
 		return 0
-	var s: ItemStack = chest.slots[index]
-	if s.is_empty():
-		return 0
-	var id: int = s.id
-	var moved: int = s.count - player.inv.add(id, s.count)
-	s.take(moved)
-	chest.queue_redraw()
-	if moved > 0:
-		Sfx.play("pickup", -14.0)
-		_feedback("Забрано в инвентарь: %s ×%d" % [DB.item_name(id), moved], C_OK)
-	else:
-		_feedback("Инвентарь полон — некуда забрать %s." % DB.item_name(id), C_BAD)
-	return moved
+	if Net.is_client():   # СЕТЬ (ADR-002): команду выполняет хост
+		return _net_quick(NetCodec.Box.CHEST, index)
+	var r: Dictionary = InvOps.quick_from_chest(player.inv, chest, index)
+	InvOps.chest_changed(chest)
+	return _op_feedback(r, -14.0)
 
 
 ## Shift+ЛКМ по ячейке инвентаря: с открытым сундуком — стопку в сундук,
 ## без сундука — из хотбара в рюкзак и обратно.
 func quick_move_inv(index: int) -> int:
-	var s: ItemStack = player.inv.slots[index]
-	if s.is_empty():
-		return 0
-	var id: int = s.id
-	var left: int = 0
-	var where: String = ""
-	if chest:
-		left = Inventory.stack_into(chest.slots, id, s.count)
-		where = "в сундук"
-		chest.queue_redraw()
-	elif index < player.inv.hotbar_size:
-		left = Inventory.stack_into(player.inv.slots, id, s.count, player.inv.hotbar_size)
-		where = "в рюкзак"
-	else:
-		left = Inventory.stack_into(player.inv.slots, id, s.count, 0, player.inv.hotbar_size)
-		where = "в хотбар"
-	var moved: int = s.count - left
-	s.take(moved)
-	player.inv.changed.emit()
-	if moved > 0:
-		Sfx.play("pickup", -14.0)
-		_feedback("Переложено %s: %s ×%d" % [where, DB.item_name(id), moved], C_OK)
-	else:
-		_feedback("Места нет — %s не переложить %s." % [DB.item_name(id), where], C_BAD)
-	return moved
+	if Net.is_client():   # СЕТЬ (ADR-002): команду выполняет хост
+		return _net_quick(NetCodec.Box.INV, index)
+	var r: Dictionary = InvOps.quick_from_inv(player.inv, chest, index)
+	InvOps.chest_changed(chest)
+	return _op_feedback(r, -14.0)
 
 
 ## «Забрать всё»: всё из сундука — в инвентарь, что влезет. Возвращает число предметов.
 func take_all() -> int:
 	if chest == null:
 		return 0
-	var moved: int = 0
-	var left_total: int = 0
-	for s in chest.slots:
-		if s.is_empty():
-			continue
-		var m: int = s.count - player.inv.add(s.id, s.count)
-		s.take(m)
-		moved += m
-		left_total += s.count
-	chest.queue_redraw()
-	if moved > 0:
-		Sfx.play("pickup", -12.0)
-	if left_total > 0:
-		_feedback("Инвентарь полон: забрано %d, в сундуке осталось %d." % [moved, left_total], C_WARN)
-	elif moved > 0:
-		_feedback("Забрано из сундука: %d шт." % moved, C_OK)
-	else:
-		_feedback("Сундук пуст.", C_DIM)
-	return moved
+	if Net.is_client():   # СЕТЬ (ADR-002): команду выполняет хост
+		InvOps.send(NetCodec.InvOp.TAKE_ALL, {"cell": InvOps.cell_of(chest)}, _on_net_op.bind(-12.0))
+		return 0
+	var r: Dictionary = InvOps.take_all(player.inv, chest)
+	InvOps.chest_changed(chest)
+	return _op_feedback(r, -12.0)
 
 
 ## «Сложить всё»: рюкзак (всё, кроме хотбара) — в сундук.
 func put_all() -> int:
 	if chest == null:
 		return 0
-	var moved: int = 0
-	var left_total: int = 0
-	for i in range(player.inv.hotbar_size, player.inv.size):
-		var s: ItemStack = player.inv.slots[i]
-		if s.is_empty():
-			continue
-		var m: int = s.count - Inventory.stack_into(chest.slots, s.id, s.count)
-		s.take(m)
-		moved += m
-		left_total += s.count
-	player.inv.changed.emit()
-	chest.queue_redraw()
-	if moved > 0:
-		Sfx.play("pickup", -12.0)
-	if left_total > 0:
-		_feedback("Сундук полон: сложено %d, осталось %d." % [moved, left_total], C_WARN)
-	elif moved > 0:
-		_feedback("Сложено в сундук: %d шт. Хотбар не тронут." % moved, C_OK)
-	else:
-		_feedback("Рюкзак пуст (хотбар «Сложить всё» не трогает).", C_DIM)
-	return moved
+	if Net.is_client():   # СЕТЬ (ADR-002): команду выполняет хост
+		InvOps.send(NetCodec.InvOp.PUT_ALL, {"cell": InvOps.cell_of(chest)}, _on_net_op.bind(-12.0))
+		return 0
+	var r: Dictionary = InvOps.put_all(player.inv, chest)
+	InvOps.chest_changed(chest)
+	return _op_feedback(r, -12.0)
+
+
+## Итог команды InvOps ({n, text, tone}) — звук и строка обратной связи. Возвращает n.
+func _op_feedback(r: Dictionary, volume_db: float) -> int:
+	var n: int = int(r["n"])
+	if n > 0:
+		Sfx.play("pickup", volume_db)
+	if String(r["text"]) != "":
+		_feedback(String(r["text"]), _tone_color(int(r["tone"])))
+	return n
+
+
+func _tone_color(tone: int) -> Color:
+	match tone:
+		InvOps.Tone.OK:
+			return C_OK
+		InvOps.Tone.WARN:
+			return C_WARN
+		InvOps.Tone.BAD:
+			return C_BAD
+		InvOps.Tone.DIM:
+			return C_DIM
+		InvOps.Tone.ERR:
+			return Color(1.0, 0.6, 0.4)
+	return C_TEXT
 
 
 func _click_inv(index: int, right: bool) -> void:
-	var slot: ItemStack = player.inv.slots[index]
-	if held.is_empty():
-		if slot.is_empty():
-			return
-		if right:
-			var half: int = int(ceil(float(slot.count) * 0.5))
-			held = ItemStack.new(slot.id, half)
-			slot.take(half)
-		else:
-			held = slot.duplicate_stack()
-			player.inv.slots[index] = ItemStack.new()
+	if Net.is_client():   # СЕТЬ (ADR-002): рука — окно, перекладывает хост
+		_net_click(NetCodec.Box.INV, index, right)
 		return
-	if slot.is_empty():
-		if right:
-			player.inv.slots[index] = ItemStack.new(held.id, 1)
-			held.take(1)
-		else:
-			player.inv.slots[index] = held.duplicate_stack()
-			held = ItemStack.new()
-		return
-	if slot.id == held.id:
-		var room: int = DB.item_max_stack(slot.id) - slot.count
-		var move: int = mini(room, held.count)
-		if right:
-			move = mini(move, 1)
-		slot.count += move
-		held.take(move)
-	elif not right:
-		var tmp: ItemStack = held
-		held = slot.duplicate_stack()
-		player.inv.slots[index] = tmp
+	_click_slot(player.inv.slots, index, right, not right)
 
 
 func _click_chest(index: int, right: bool) -> void:
-	var slot: ItemStack = chest.slots[index]
+	if Net.is_client():   # СЕТЬ (ADR-002): рука — окно, перекладывает хост
+		_net_click(NetCodec.Box.CHEST, index, right)
+		return
+	_click_slot(chest.slots, index, right, true)
+	InvOps.chest_changed(chest)
+
+
+## ЛКМ — взять стопку в руку / положить / обменять с рукой, ПКМ — взять половину /
+## положить по одному. swap — другой предмет меняется с рукой (у сундука — и по ПКМ).
+func _click_slot(arr: Array, index: int, right: bool, swap: bool) -> void:
+	var slot: ItemStack = arr[index]
 	if held.is_empty():
 		if slot.is_empty():
 			return
-		if right:
-			var half: int = int(ceil(float(slot.count) * 0.5))
-			held = ItemStack.new(slot.id, half)
-			slot.take(half)
-		else:
-			held = slot.duplicate_stack()
-			chest.slots[index] = ItemStack.new()
+		InvOps.xfer(arr, index, _hand, 0, int(ceil(float(slot.count) * 0.5)) if right else slot.count)
 		return
-	if slot.is_empty():
-		if right:
-			chest.slots[index] = ItemStack.new(held.id, 1)
-			held.take(1)
-		else:
-			chest.slots[index] = held.duplicate_stack()
-			held = ItemStack.new()
-		return
-	if slot.id == held.id:
-		var room: int = DB.item_max_stack(slot.id) - slot.count
-		var move: int = mini(room, held.count)
-		if right:
-			move = mini(move, 1)
-		slot.count += move
-		held.take(move)
-	else:
-		var tmp: ItemStack = held
-		held = slot.duplicate_stack()
-		chest.slots[index] = tmp
+	var one: bool = right and (slot.is_empty() or slot.id == held.id)
+	InvOps.xfer(_hand, 0, arr, index, 1 if one else held.count, swap)
 
 
 ## Обратная связь: строка внизу панели (HUD с уведомлениями панель закрывает),
@@ -1423,35 +1363,148 @@ func _craft(rec: Dictionary) -> void:
 				rec, false, true)
 		return
 	var station: String = String(rec["station"])
-	var near: MachineBase = _near.get(station)
-	for id in rec["in"].keys():
-		player.inv.remove_id(id, int(rec["in"][id]))
-	var out_id: int = int(rec["out"])
-	var amount: int = int(rec["amount"])
-	if station == "hand":
-		var left: int = player.inv.add(out_id, amount)
-		if left > 0:
-			# Инвентарь полон — результат не пропадает, падает под ноги.
-			player.spawn_item(out_id, left, player.global_position)
-			_feedback("Скрафчено: %s ×%d — инвентарь полон, лежит под ногами." % [DB.item_name(out_id), amount],
-					C_WARN, rec, true, true)
-		else:
-			_feedback("Скрафчено: %s ×%d — в инвентаре." % [DB.item_name(out_id), amount], C_OK, rec, true, true)
-	else:
-		var loaded: PackedStringArray = PackedStringArray()
-		for id in rec["in"].keys():
-			var n: int = int(rec["in"][id])
-			var back: int = near.receive_item(id, n)
-			if back > 0:
-				# Станок не взял — обратно в инвентарь, ничего не теряется.
-				player.inv.add(id, back)
-			if n - back > 0:
-				loaded.append("%s ×%d" % [DB.item_name(id), n - back])
-		var si: Dictionary = STATION_INFO[station]
-		var tail: String = "%s сделает %s %s (≈ %.1f с)" % [String(si["it"]), DB.item_name(out_id),
-				String(si["self"]), float(rec["time"])]
-		if not near.powered:
-			tail += ", когда будет питание"
-		_feedback("Загружено %s: %s. %s." % [String(si["in"]), ", ".join(loaded), tail], C_OK, rec, true, true)
+	if Net.is_client():   # СЕТЬ (ADR-002): крафт выполняет хост у прокси, итог — ответом
+		InvOps.send(NetCodec.InvOp.CRAFT, {"recipe": DB.recipes.find(rec), "times": 1}, _on_net_craft.bind(rec))
+		return
+	var r: Dictionary = InvOps.do_craft(player, rec, _near.get(station))
+	_feedback(String(r["text"]), _tone_color(int(r["tone"])), rec, true, true)
 	Sfx.play("craft", -6.0)
-	Game.stats_crafted += 1
+
+
+# ------------------------------------------------- СЕТЬ (ADR-002)
+## Клиент (MP-G, #91, § 4.2.7): ячейки пишет хост — панель шлёт команды InvOps и
+## показывает итог. «Рука» — состояние окна: стопка лежит в своей ячейке (_hand_from),
+## ячейка рисуется за вычетом руки; клик по другой ячейке — команда move. Перекладывание
+## панель сразу повторяет у себя тем же InvOps.xfer (прогноз), свежий INV и CHEST хоста
+## его подтверждают или откатывают (опоздали — отказ и свежее содержимое).
+
+## Клиент: откуда стопка в руке — [Box, слот]; пусто — рука пуста.
+var _hand_from: Array = []
+
+
+func _net_drop_hand() -> void:
+	held = ItemStack.new()
+	_hand_from = []
+
+
+func _box_slots(box: int):
+	if box == NetCodec.Box.CHEST:
+		return chest.slots if chest else null
+	return player.inv.slots if player else null
+
+
+## Ячейка, как её рисовать: у клиента — без стопки, что сейчас «в руке».
+func _shown(arr: Array, box: int, i: int) -> ItemStack:
+	var s: ItemStack = arr[i]
+	if _hand_from.is_empty() or int(_hand_from[0]) != box or int(_hand_from[1]) != i:
+		return s
+	return ItemStack.new(s.id, s.count - held.count) if s.count > held.count else ItemStack.new()
+
+
+## Рука клиента указывает на ячейку, которую мог изменить хост (другой игрок забрал
+## стопку из сундука): предмета там нет — рука пуста, стало меньше — в руке столько же.
+func _net_check_hand() -> void:
+	if _hand_from.is_empty() or InvOps.pending_count() > 0:
+		return
+	var arr = _box_slots(int(_hand_from[0]))
+	var s: ItemStack = arr[int(_hand_from[1])] if arr != null else null
+	if s == null or s.is_empty() or s.id != held.id:
+		_net_drop_hand()
+	elif s.count < held.count:
+		held.count = s.count
+
+
+func _net_click(box: int, index: int, right: bool) -> void:
+	var arr = _box_slots(box)
+	if arr == null:
+		return
+	var slot: ItemStack = arr[index]
+	if held.is_empty():
+		if slot.is_empty():
+			return
+		held = ItemStack.new(slot.id, int(ceil(float(slot.count) * 0.5)) if right else slot.count)
+		_hand_from = [box, index]
+		return
+	var fbox: int = int(_hand_from[0])
+	var fi: int = int(_hand_from[1])
+	if fbox == box and fi == index:
+		# Обратно в свою ячейку: стопка и не уходила.
+		if right:
+			held.take(1)
+		else:
+			held = ItemStack.new()
+		if held.is_empty():
+			_hand_from = []
+		return
+	var src = _box_slots(fbox)
+	if src == null:
+		_net_drop_hand()
+		return
+	var same: bool = slot.is_empty() or slot.id == held.id
+	var swap: bool = box == NetCodec.Box.CHEST or not right
+	if not same:
+		if not swap:
+			return
+		if (src[fi] as ItemStack).count != held.count:
+			_feedback("Обменять можно только всю стопку: сначала положи её в пустую ячейку.", C_WARN)
+			return
+	var n: int = 1 if right and same else held.count
+	var id: int = held.id
+	var k: int = InvOps.xfer(src, fi, arr, index, n, swap)
+	if k <= 0:
+		return
+	InvOps.send(NetCodec.InvOp.MOVE, {"from": fbox, "fslot": fi, "to": box, "tslot": index, "id": id,
+			"n": n, "flags": NetCodec.MOVE_SWAP if swap and not same else 0, "cell": InvOps.cell_of(chest)},
+			_on_net_move)
+	if not same:
+		# Обмен: в руке теперь стопка, что лежала в «куда» — она уже в ячейке руки.
+		var now_src: ItemStack = src[fi]
+		held = ItemStack.new(now_src.id, now_src.count)
+	else:
+		held.take(k)
+		if held.is_empty():
+			_hand_from = []
+
+
+## Shift+ЛКМ у клиента: стопка целиком «в другое место» — хост решает куда.
+func _net_quick(box: int, index: int) -> int:
+	var arr = _box_slots(box)
+	if arr == null:
+		return 0
+	var s: ItemStack = arr[index]
+	if s.is_empty():
+		return 0
+	InvOps.send(NetCodec.InvOp.MOVE, {"from": box, "fslot": index,
+			"to": NetCodec.Box.INV if box == NetCodec.Box.CHEST or chest == null else NetCodec.Box.CHEST,
+			"tslot": NetCodec.SLOT_AUTO, "id": s.id, "n": s.count, "cell": InvOps.cell_of(chest)},
+			_on_net_op.bind(-14.0))
+	return 0
+
+
+func _on_net_op(ok: bool, text: String, volume_db: float) -> void:
+	if ok:
+		Sfx.play("pickup", volume_db)
+	if text != "":
+		_feedback(text, C_OK if ok else C_BAD)
+
+
+func _on_net_move(ok: bool, text: String) -> void:
+	if not ok and text != "":
+		_feedback(text, C_BAD)
+	_net_check_hand()
+	queue_redraw()
+
+
+func _on_net_craft(ok: bool, text: String, rec: Dictionary) -> void:
+	_feedback(text, C_OK if ok else Color(1.0, 0.6, 0.4), rec, ok, true)
+	if ok:
+		Sfx.play("craft", -6.0)
+
+
+func _on_net_unlock(ok: bool, text: String, node: String) -> void:
+	if ok:
+		Sfx.play("craft", -4.0, 0.8)
+		_feedback("Открыто: %s — новые рецепты в крафте." % Tech.title(node), Color(0.45, 0.9, 1.0), {}, true, false)
+	elif text != "":
+		Game.notify(text, Color(1.0, 0.6, 0.4))
+		_feedback(text, Color(1.0, 0.6, 0.4), {}, false, false)

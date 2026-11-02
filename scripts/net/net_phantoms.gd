@@ -62,7 +62,7 @@ func _begin() -> void:
 	_rows.clear()
 	_buf.clear()
 	_free_puppets()
-	Net.on_entity(NetCodec.Ent.PHANTOM, _on_spawn, _on_despawn)
+	_hook()
 
 
 func _end(_reason: String = "") -> void:
@@ -150,10 +150,19 @@ func _send_all(payload: PackedByteArray) -> void:
 
 # ------------------------------------------------------------------ КЛИЕНТ
 
-func _on_spawn(sender: int, payload: PackedByteArray) -> void:
-	if sender != 1 or not Net.is_client():
+## SPAWN и DESPAWN принимает NetMachines (MP-E) — и отдаёт вид Ent.PHANTOM сюда:
+## уже от хоста, уже после снимка.
+func _hook() -> bool:
+	if Game.net_machines == null:
+		return false
+	Game.net_machines.entity_handlers[NetCodec.Ent.PHANTOM] = {"spawn": _on_spawn, "despawn": _on_despawn}
+	return true
+
+
+func _on_spawn(id_: int, data: Dictionary) -> void:
+	if not _active or not Net.is_client():
 		return
-	var d: Dictionary = NetCodec.decode_phantom_spawn(payload)
+	var d: Dictionary = NetCodec.phantom_spawn_data(id_, data)
 	if d.is_empty():
 		return
 	var id: int = int(d["id"])
@@ -177,13 +186,10 @@ func _on_spawn(sender: int, payload: PackedByteArray) -> void:
 	p.visible = false        # покажется с первой строкой состояния
 
 
-func _on_despawn(sender: int, payload: PackedByteArray) -> void:
-	if sender != 1 or not Net.is_client():
+func _on_despawn(id: int) -> void:
+	if not _active or not Net.is_client():
 		return
-	var d: Dictionary = NetCodec.decode_despawn(payload)
-	if d.is_empty():
-		return
-	_remove(int(d["id"]))
+	_remove(id)
 	stats["despawned"] = int(stats["despawned"]) + 1
 
 
@@ -209,6 +215,8 @@ func on_state(t: float, rows: Array) -> void:
 func _process(_delta: float) -> void:
 	if not _active or not Net.is_client() or np == null:
 		return
+	if Game.net_machines != null and not Game.net_machines.entity_handlers.has(NetCodec.Ent.PHANTOM):
+		_hook()                 # NetMachines заводится отложенно
 	var rt: float = np.render_time
 	for id in puppets.keys():
 		if not is_instance_valid(puppets[id]):
