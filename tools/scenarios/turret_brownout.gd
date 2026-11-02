@@ -61,12 +61,12 @@ func _kill_time(turret: Turret) -> float:
 	var echo: Node = spawn_phantom_at(_floor_pos(_origin + Vector2i(8, 3)), "echo")
 	if echo == null:
 		return -1.0
-	var t0: int = Time.get_ticks_msec()
+	var t0: float = now_proc()   # турель стреляет в кадрах отрисовки
 	var ref: WeakRef = weakref(echo)   # захват освобождённого узла в лямбде — ошибка движка
 	var dead: bool = await wait_until(func(): return ref.get_ref() == null or not ref.get_ref().alive, 12.0)
 	if not dead:
 		return -1.0
-	return float(Time.get_ticks_msec() - t0) / 1000.0
+	return now_proc() - t0
 
 
 func _floor_pos(c: Vector2i) -> Vector2:

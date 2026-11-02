@@ -70,9 +70,9 @@ func run() -> void:
 	var bur: Node = spawn_phantom_at(Vector2(float((g.x + 1) * World.TILE) + 8.0,
 			float((g.y + 1) * World.TILE) - 12.0), "burrower")
 	ok("копатель появился", bur != null)
-	var t0: int = Time.get_ticks_msec()
+	var t0: float = now()   # копатель живёт в физических кадрах
 	var broke: bool = await wait_until(func(): return not World.is_vent_sealed(g), Balance.GRATE_BREAK_TIME + 4.0)
-	var secs: float = float(Time.get_ticks_msec() - t0) / 1000.0
+	var secs: float = now() - t0
 	ok("копатель сломал решётку", broke, "%.1f с" % secs)
 	ok("решётка держится ≈ 8 с", secs >= Balance.GRATE_BREAK_TIME - 1.0 and secs <= Balance.GRATE_BREAK_TIME + 2.0,
 			"%.1f с" % secs)

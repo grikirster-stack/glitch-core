@@ -34,10 +34,10 @@ func run() -> void:
 	# Эхо в 5 клетках: должно умереть за ≤ 6 с.
 	var echo: Node = spawn_phantom_at(_floor_pos(_origin + Vector2i(8, 3)), "echo")
 	ok("эхо появилось", echo != null)
-	var t0: int = Time.get_ticks_msec()
+	var t0: float = now_proc()   # турель стреляет в кадрах отрисовки
 	var ref: WeakRef = weakref(echo)   # захват освобождённого узла в лямбде — ошибка движка
 	var dead: bool = await wait_until(func(): return ref.get_ref() == null or not ref.get_ref().alive, KILL_LIMIT + 1.0)
-	var secs: float = float(Time.get_ticks_msec() - t0) / 1000.0
+	var secs: float = now_proc() - t0
 	ok("эхо убито турелью за ≤ 6 с", dead and secs <= KILL_LIMIT, "%.2f с, выстрелов %d" % [secs, turret.shots])
 	ok("на эхо ушло 5 разрядов", turret.shots == 5, "выстрелов %d" % turret.shots)
 	ok("сигнал fired на каждый выстрел", _fired.size() == turret.shots, "%d" % _fired.size())
