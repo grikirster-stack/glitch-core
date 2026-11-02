@@ -38,7 +38,7 @@ func run() -> void:
 	if ch == null:
 		finish()
 		return
-	ch.slots[0] = ItemStack.new(IDS.I.SCRAP, 2)
+	ch.slots[0] = ItemStack.new(IDs.I.SCRAP, 2)
 
 	Game.notification.connect(_on_note)
 
