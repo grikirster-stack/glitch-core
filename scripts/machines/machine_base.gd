@@ -82,6 +82,11 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 			m = Analyzer.new()
 		"DeepDrill":
 			m = DeepDrill.new()
+		# --- Оборона (#31) ---
+		"Turret":
+			m = Turret.new()
+		"Floodlight":
+			m = Floodlight.new()
 		_:
 			return false
 	m.cell = c

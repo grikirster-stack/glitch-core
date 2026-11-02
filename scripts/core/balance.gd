@@ -47,6 +47,15 @@ const REPAIR_PER_SCRAP: float = 20.0   ## HP машины за единицу х
 const BURROWER_DIG_MAX_HARD: float = 1.5 ## копатель роет тайлы не твёрже этого
 const AIRLOCK_OPEN_DIST_TILES: float = 1.5 ## игрок ближе — шлюз открывается
 const AIRLOCK_SAFE_DIST_TILES: float = 3.0 ## фантом ближе — шлюз не открывается
+# --- Оборона: поведение построек (#31) ---
+const AIRLOCK_CHECK_PERIOD: float = 0.1  ## как часто World пересчитывает шлюзы, с
+const GRATE_BREAK_TIME: float = 8.0      ## копатель ломает решётку (GRATE_HP) за столько секунд
+const GRATE_REACH_PX: float = 24.0       ## копатель ближе — грызёт решётку
+## Приоритет целей турели: раньше в списке — важнее (§ 4.4).
+const TURRET_PRIORITY: Array[String] = ["shade", "burrower", "doppel", "echo", "swarm"]
+const TURRET_SCAN_PERIOD: float = 0.1    ## турель без цели ищет её не чаще, с
+const VENTS_RANDOM: int = 14             ## случайных вентиляций в пещерах (§ 1.1)
+const VENT_MIN_GAP: int = 16             ## клеток между соседними вентиляциями
 
 # ---------------------------------------------------------------- § 4.5 Враги
 ## Таблица типов фантомов. light_flee — порог света, от которого фантом
@@ -99,7 +108,7 @@ const RELAY_REQ: Dictionary = {
 	IDs.I.POWER_CELL: 6,
 	IDs.I.RELAY_ANTENNA: 1,
 }
-const RELAY_TIME: float = 90.0         ## → 180 в #32 вместе с этапами цели
+const RELAY_TIME: float = 180.0        ## удержание сигнала, этап 4 (#32)
 const RELAY_HOLD_CAP: int = 10         ## живых фантомов во время удержания сигнала
 
 # --------------------------------------------------------------- § 4.8 Игрок
@@ -117,3 +126,31 @@ const FOG_RADIUS_SURFACE: int = 16     ## клеток обзора на пов�
 const FOG_SURFACE_DEPTH: int = 3       ## не глубже стольких клеток под рельефом — «на поверхности»
 const FOG_EDGE: int = 3                ## ширина мягкого края обзора, клеток
 const FOG_DIM: float = 0.55            ## затемнение исследованного вне обзора (1 — чёрное)
+
+# ------------------------------------------------------ § 4.9 Небесный тайник (#60)
+## Обломок «Кербер-9» в небе: между верхом рельефа под ним (с деревьями и
+## руинами) и днищем обломка — SKY_CLEARANCE_MIN..MAX пустых клеток. Прыжок
+## героя — 3.2 клетки (Player.JUMP_VELOCITY, GRAVITY), с ростом — 4.6: допрыгнуть
+## нельзя, достроиться лестницей из блоков — можно (блоки ставятся в воздух).
+const SKY_CLEARANCE_MIN: int = 9
+const SKY_CLEARANCE_MAX: int = 12
+const SKY_TOP_MARGIN: int = 2          ## клеток от верха мира до крыши обломка
+const SKY_BASE_GAP: int = 40           ## клеток от релея: тайник не висит над лагерем
+const SKY_EDGE_GAP: int = 32           ## клеток от левого края мира до носа: место под лестницу
+const SKY_TRIES: int = 32              ## попыток найти колонку, где обломок помещается
+const SKY_DEBRIS_CHANCE: float = 0.5   ## шанс второго, малого обломка рядом
+const SKY_CACHE_MIN: int = 3           ## разных предметов в тайнике
+const SKY_CACHE_MAX: int = 6
+const SKY_REVEAL_TILES: float = 6.0    ## ближе — обломок проступает из силуэта
+const SKY_HAZE_ALPHA: float = 0.82     ## насколько тёмен силуэт издалека
+## Груз обломка: предмет → [мин, макс]. Позиций не меньше SKY_CACHE_MAX.
+const SKY_LOOT: Dictionary = {
+	IDs.I.POWER_CELL: [1, 2],
+	IDs.I.CIRCUIT: [3, 6],
+	IDs.I.STEEL_PLATE: [3, 6],
+	IDs.I.CRYSTAL: [3, 6],
+	IDs.I.SOLAR: [1, 1],
+	IDs.I.DEEP_DRILL: [1, 1],
+	IDs.I.ANALYZER: [1, 1],
+	IDs.I.FLOODLIGHT: [1, 1],
+}
