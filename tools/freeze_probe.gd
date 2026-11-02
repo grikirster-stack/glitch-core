@@ -35,6 +35,7 @@ const SCENARIOS: Array = [
 	{"name": "База: мир + свет", "kind": "idle", "frames": 60},
 	{"name": "Копание 200 тайлов", "kind": "mine", "frames": 100},
 	{"name": "Фантомы (предел копий)", "kind": "phantoms", "frames": 90},
+	{"name": "16 фантомов пяти типов в погоне", "kind": "kinds", "frames": 240},
 	{"name": "Цепочка из 60 конвейеров", "kind": "belts", "frames": 90},
 	{"name": "Эффекты на пределе лимитов", "kind": "fx", "frames": 90},
 	{"name": "200 построек подряд", "kind": "build", "frames": 60},
@@ -413,6 +414,15 @@ func _scenario_setup(kind: String) -> void:
 			_st["peak"] = _alive_phantoms()
 			_st["note"] = "создано фантомов: %d, живых в сцене: %d (лимит Phantom.MAX_PHANTOMS = %d)" \
 					% [made, _alive_phantoms(), _phantom_limit()]
+		"kinds":
+			# В темноте: на освещённой базе эхо и копатель бы только убегали.
+			_st["ppos"] = player.global_position
+			var dark: Vector2i = _find_dark_surface()
+			if dark.x >= 0:
+				player.global_position = world.cell_to_world(dark)
+			player.set("invuln", 1.0e9)
+			_st["made"] = _spawn_mixed_phantoms()
+			_st["note"] = "фантомов в сцене: %d (типы: %s)" % [_alive_phantoms(), _kinds_note()]
 		"belts":
 			var saved: Array = _build_belt_chain(60)
 			_st["orig"] = saved
@@ -459,9 +469,11 @@ func _scenario_tick(kind: String, frame: int, frames: int) -> void:
 		"daynight":
 			var t: float = 0.30 + 0.50 * float(frame) / float(maxi(1, frames))
 			game.time_of_day = t
-			if t >= 0.62:
-				# Ночь: включаем волны фантомов.
-				scene.spawn_timer = 0.0
+			if t >= 0.62 and frame % 30 == 0:
+				# Ночь: торопим директора угрозы (#27) — волны идут чаще.
+				var threat: Node = root.get_node_or_null("Threat")
+				if threat != null:
+					threat.set("spawn_timer", 0.0)
 		_:
 			pass
 
@@ -475,6 +487,10 @@ func _scenario_cleanup(kind: String) -> void:
 				world.set_tile(c.x, c.y, int(s["tile"]))
 		"phantoms":
 			_free_phantoms()
+		"kinds":
+			_free_phantoms()
+			player.global_position = _st.get("ppos", player.global_position)
+			player.set("invuln", 0.0)
 		"belts":
 			_remove_machines_at(_st.get("orig", []))
 			_restore_tiles(_st.get("orig", []))
@@ -537,6 +553,71 @@ func _spawn_phantoms(count: int) -> int:
 		p.global_position = world.cell_to_world(Vector2i(x, y))
 		made += 1
 	return made
+
+
+## Смесь пяти типов (#27): 6 эхо, стая роя из 5, 2 тени, 2 копателя, двойник —
+## 16 фантомов вокруг игрока, все в погоне. На старой версии (без типов)
+## поле kind просто игнорируется — выходит то же число эхо (до лимита).
+const MIXED_KINDS: Array = ["echo", "echo", "echo", "echo", "echo", "echo",
+		"swarm", "swarm", "swarm", "swarm", "swarm",
+		"shade", "shade", "burrower", "burrower", "doppel"]
+
+
+func _spawn_mixed_phantoms() -> int:
+	var ph_script: GDScript = load("res://scripts/entities/phantom.gd")
+	var made: int = 0
+	# Фантомы прошлого сценария ещё в группе до конца кадра (queue_free) —
+	# убираем их из дерева сразу, иначе лимит копий отбросит новых.
+	for old in get_nodes_in_group("phantom"):
+		if is_instance_valid(old):
+			old.get_parent().remove_child(old)
+			old.queue_free()
+	var pc: Vector2i = world.world_to_cell(player.global_position)
+	for i in MIXED_KINDS.size():
+		# Кольцо вокруг игрока: ближайшая воздушная клетка в 6–14 клетках.
+		var cell: Vector2i = Vector2i(-1, -1)
+		for r in range(6, 15):
+			var ang: float = TAU * float(i) / float(MIXED_KINDS.size())
+			var c: Vector2i = pc + Vector2i(int(round(cos(ang) * r)), int(round(sin(ang) * r * 0.5)))
+			if world.get_tile(c.x, c.y) == IDs.T.AIR:
+				cell = c
+				break
+		if cell.x < 0:
+			cell = pc + Vector2i(6 + i, -2)
+		var p: Node = ph_script.new()
+		p.set("kind", String(MIXED_KINDS[i]))
+		p.set("player", player)
+		if String(MIXED_KINDS[i]) == "swarm":
+			p.set("pack_id", 1)
+		scene.add_child(p)
+		p.global_position = world.cell_to_world(cell)
+		p.set("alert", 30.0)
+		made += 1
+	return made
+
+
+## Тёмная клетка на поверхности (свет < 0.3) с полом под ней.
+func _find_dark_surface() -> Vector2i:
+	for x in range(20, world.W - 20, 3):
+		var c: Vector2i = Vector2i(x, int(world.surface[x]) - 1)
+		if world.get_tile(c.x, c.y) != IDs.T.AIR:
+			continue
+		if world.light_at(c) < 0.3:
+			return c
+	return Vector2i(-1, -1)
+
+
+func _kinds_note() -> String:
+	var counts: Dictionary = {}
+	for p in get_nodes_in_group("phantom"):
+		if is_instance_valid(p) and bool(p.get("alive")):
+			var k = p.get("kind")
+			var name: String = String(k) if k != null else "echo"
+			counts[name] = int(counts.get(name, 0)) + 1
+	var parts: Array = []
+	for k in counts.keys():
+		parts.append("%s %d" % [k, int(counts[k])])
+	return ", ".join(parts)
 
 
 func _alive_phantoms() -> int:

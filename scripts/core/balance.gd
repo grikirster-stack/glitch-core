@@ -71,7 +71,21 @@ const SPAWN_INTERVAL_MIN: float = 2.5
 const SPAWN_INTERVAL_PER_T: float = 0.5
 const VENT_TELEGRAPH: float = 2.0      ## с от «пара из вентиляции» до появления
 const BLACK_BOX_CHANCE: float = 0.25
-const MAX_PHANTOMS: int = 12           ## → 16 после замера в #27
+const MAX_PHANTOMS: int = 16           ## поднято с 12 после замера freeze_probe в #27
+
+# ------------------------------------------ § 4.5 Враги: поведение типов (#27)
+const SWARM_SEEK_PX: float = 300.0     ## рой видит работающий бур/сборщик в этом радиусе
+const SWARM_PACK_SPREAD: int = 1       ## стая = pack ± это число (4–6)
+const SHADE_SEEK_PX: float = 640.0     ## тень чует генератор в этом радиусе
+const SHADE_DRAIN_PERIOD: float = 3.0  ## тень у ТЭЦ сжигает 1 уголь за столько секунд
+const BURROWER_DIG_PERIOD: float = 0.6 ## копатель роет 1 клетку за столько секунд
+const BURROWER_HUNT_PX: float = 600.0  ## копатель чует игрока сквозь породу
+const DOPPEL_GAZE_PX: float = 200.0    ## двойник замирает под взглядом ближе этого
+const MACHINE_HIT_PERIOD: float = 0.8  ## пауза между ударами фантома по машине, с
+const BLACK_BOX_DATA: int = 1          ## данных за чёрный ящик (§ 4.6)
+const VENT_SPAWN_COUNT: int = 3        ## из скольких ближайших вентиляций спавн
+const VENT_SPAWN_MIN_PX: float = 160.0 ## ближе к игроку вентиляция не «выдыхает»
+const VENT_SPAWN_MAX_PX: float = 1600.0 ## дальше — спавн в пещере, как раньше
 
 # --------------------------------------------------------- § 4.6 Исследования
 const TECH_COST: Dictionary = {"T1": 5, "T2": 10, "T3": 15, "T4": 20, "T5": 25}
