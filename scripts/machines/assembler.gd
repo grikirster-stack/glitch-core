@@ -70,18 +70,26 @@ func _find_recipe() -> Dictionary:
 
 
 func _draw() -> void:
-	var base: Color = Color(0.24, 0.34, 0.44) if powered else Color(0.17, 0.22, 0.28)
-	draw_rect(Rect2(-8.0, -8.0, 16.0, 16.0), base)
-	draw_rect(Rect2(-8.0, -8.0, 16.0, 2.0), base.lightened(0.25))
-	# Шестерня
-	var a: float = Time.get_ticks_msec() * 0.003 * (1.0 if powered else 0.0)
-	for i in 4:
-		var ang: float = a + i * TAU / 4.0
-		draw_line(Vector2.ZERO, Vector2(cos(ang), sin(ang)) * 5.5, Color(0.75, 0.85, 0.95), 2.0)
-	draw_circle(Vector2.ZERO, 2.6, Color(0.85, 0.92, 1.0))
+	_draw_body(BODY, powered)
+	# Окно со «шестернёй» из квадратов: под питанием зубья перескакивают
+	# «+» ↔ «×» (поворот на 45° в два кадра), без питания стоят.
+	draw_rect(Rect2(-5.0, -4.0, 10.0, 9.0), C_FRAME)
+	draw_rect(Rect2(-4.0, -3.0, 8.0, 7.0), C_SCREEN)
+	var g: Color = C_METAL_HI if powered else C_METAL_D
+	var turn: bool = powered and (Time.get_ticks_msec() / 160) % 2 == 1
+	if turn:
+		for k in 4:
+			var sx: float = -4.0 if k % 2 == 0 else 2.0
+			var sy: float = -3.0 if k < 2 else 2.0
+			draw_rect(Rect2(sx, sy, 2.0, 2.0), g)
+	else:
+		draw_rect(Rect2(-1.0, -3.0, 2.0, 7.0), g)
+		draw_rect(Rect2(-4.0, -1.0, 8.0, 2.0), g)
+	draw_rect(Rect2(-2.0, -2.0, 4.0, 4.0), g)
+	draw_rect(Rect2(-1.0, -1.0, 2.0, 2.0), C_FRAME)
+	_draw_lamp(Vector2(6.0, -6.0), C_SCREEN_HI if powered else C_LAMP_OFF)
 	if progress > 0.0:
-		draw_rect(Rect2(-6.0, -13.0, 12.0, 2.0), Color(0, 0, 0, 0.6))
-		draw_rect(Rect2(-6.0, -13.0, 12.0 * progress, 2.0), Color(0.4, 0.9, 1.0))
+		_draw_progress(-13.0)
 
 
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)

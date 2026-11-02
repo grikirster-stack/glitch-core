@@ -2,11 +2,11 @@ class_name Smelter
 extends MachineBase
 ## Плавильня: переплавляет руду в слитки и сталь.
 
-## Горнило без питания — ровный тёмный цвет, без мерцания (#57).
-const FURNACE_COLD: Color = Color(0.30, 0.20, 0.16)
+## Горнило без питания — ровный тёмный цвет, без мерцания (#57). Палитра ADR-003.
+const FURNACE_COLD: Color = C_SOOT
 ## Горнило под питанием и цвет, к которому оно пульсирует.
-const FURNACE_HOT: Color = Color(0.95, 0.45, 0.12)
-const FURNACE_GLOW: Color = Color(1.0, 0.85, 0.4)
+const FURNACE_HOT: Color = C_LAVA
+const FURNACE_GLOW: Color = C_LAVA_HI
 
 var stock: Dictionary = {}    ## id -> count
 var recipe: Dictionary = {}
@@ -76,14 +76,18 @@ func _find_recipe() -> Dictionary:
 
 
 func _draw() -> void:
-	var base: Color = Color(0.46, 0.28, 0.20) if powered else Color(0.30, 0.20, 0.16)
-	draw_rect(Rect2(-8.0, -8.0, 16.0, 16.0), base)
-	draw_rect(Rect2(-8.0, -8.0, 16.0, 2.0), base.lightened(0.2))
-	# Горнило
-	draw_rect(Rect2(-5.0, -2.0, 10.0, 7.0), furnace_color(Time.get_ticks_msec()))
+	_draw_body(BODY, powered)
+	# Вытяжка: две щели под верхней кромкой.
+	draw_rect(Rect2(-5.0, -5.0, 4.0, 1.0), C_FRAME)
+	draw_rect(Rect2(1.0, -5.0, 4.0, 1.0), C_FRAME)
+	# Горнило в раме; в работе пульсирует лавовым, середина — светлее.
+	var fc: Color = furnace_color(Time.get_ticks_msec())
+	draw_rect(Rect2(-5.0, -3.0, 10.0, 8.0), C_FRAME)
+	draw_rect(Rect2(-4.0, -2.0, 8.0, 6.0), fc)
+	if powered:
+		draw_rect(Rect2(-3.0, 1.0, 6.0, 2.0), fc.lerp(FURNACE_GLOW, 0.6))
 	if progress > 0.0:
-		draw_rect(Rect2(-6.0, -12.0, 12.0, 2.0), Color(0, 0, 0, 0.6))
-		draw_rect(Rect2(-6.0, -12.0, 12.0 * progress, 2.0), Color(0.4, 0.9, 1.0))
+		_draw_progress(-12.0)
 
 
 ## Цвет горнила в момент t_ms: под питанием пульсирует к жёлтому,

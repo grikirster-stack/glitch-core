@@ -56,10 +56,14 @@ func take_any(filter: int = IDs.I.NONE, accepts: Callable = Callable()) -> int:
 
 
 func _draw() -> void:
-	draw_rect(Rect2(-8.0, -8.0, 16.0, 16.0), Color(0.45, 0.30, 0.17))
-	draw_rect(Rect2(-8.0, -8.0, 16.0, 3.0), Color(0.55, 0.38, 0.22))
-	draw_rect(Rect2(-8.0, -1.0, 16.0, 2.0), Color(0.28, 0.18, 0.10))
-	draw_rect(Rect2(-1.5, -1.0, 3.0, 3.0), Color(0.85, 0.72, 0.30))
+	# Кремовый ящик-контейнер: крышка отделена рамой, жёлтый замок по центру,
+	# рёбра жёсткости по бокам.
+	_draw_body(BODY, true, false)
+	draw_rect(Rect2(-7.0, -3.0, 14.0, 2.0), C_FRAME)
+	draw_rect(Rect2(-5.0, 0.0, 1.0, 6.0), C_METAL_D)
+	draw_rect(Rect2(4.0, 0.0, 1.0, 6.0), C_METAL_D)
+	draw_rect(Rect2(-2.0, -3.0, 4.0, 4.0), C_HAZARD)
+	draw_rect(Rect2(-1.0, -2.0, 2.0, 1.0), C_FRAME)
 
 
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)

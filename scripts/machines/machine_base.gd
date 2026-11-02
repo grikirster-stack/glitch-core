@@ -283,12 +283,84 @@ func power_label() -> String:
 	return "%d" % int(power_radius)
 
 
-func _draw_body(base: Color, accent: Color) -> void:
-	var r: Rect2 = Rect2(-8.0, -8.0, 16.0, 16.0)
-	draw_rect(r, base)
-	draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 2.0), base.lightened(0.2))
-	draw_rect(Rect2(r.position.x, r.end.y - 2.0, r.size.x, 2.0), base.darkened(0.25))
-	draw_rect(Rect2(r.position.x + 2.0, r.position.y + 2.0, 3.0, 3.0), accent)
+# ------------------------------------------------------------- ВИД (ADR-003, V6)
+## «Споровый луг»: кремовые короба в голубовато-серых рамах, жёлтая разметка,
+## лишайник на верхних кромках. Всё — прямоугольники по пиксельной сетке.
+## Цвета — из палитры DB.PAL (V1), не дублируются: константы разворачиваются
+## при компиляции, и _draw не ищет в словаре каждый кадр.
+
+const _PAL: Dictionary = preload("res://scripts/autoload/db.gd").PAL
+const C_METAL: Color = _PAL["metal"]          ## кремовая эмаль корпуса
+const C_METAL_D: Color = _PAL["metal_d"]      ## кромка и тень эмали
+const C_METAL_HI: Color = _PAL["metal_hi"]    ## блик верхней кромки
+const C_FRAME: Color = _PAL["frame"]          ## рамы, окна, механика
+const C_HAZARD: Color = _PAL["hazard"]        ## жёлтая разметка
+const C_SCREEN: Color = _PAL["screen"]        ## тёмное стекло окон и экранов
+const C_SCREEN_HI: Color = _PAL["screen_hi"]  ## экран/лампа «работает»
+const C_LICHEN: Color = _PAL["s_top"]         ## лишайник, проросший на кромке
+const C_LICHEN_HI: Color = _PAL["s_top2"]     ## кончики лишайника
+const C_LAVA: Color = _PAL["lava"]            ## топка, горнило
+const C_LAVA_HI: Color = _PAL["lava_hi"]
+const C_BIO: Color = _PAL["bio"]              ## био-бирюза: прогресс, кристаллы в работе
+const C_SOOT: Color = _PAL["bed"]             ## холодная топка, фон шкал
+## Лампа «нет питания / выключено» — единственный красный у машин (в палитре
+## концепта его нет: `danger` оставлен угрозе — фантомам и ночи).
+const C_LAMP_OFF: Color = Color("#E0503C")
+## Корпус без питания: та же эмаль, приглушённая к тени.
+const C_METAL_OFF: Color = Color("#C9C3B5")
+## Корпус машины по умолчанию — вся клетка.
+const BODY: Rect2 = Rect2(-8.0, -8.0, 16.0, 16.0)
+
+## Где на верхней кромке пророс лишайник: биты 0..15 — столбцы пикселей
+## (считается один раз от клетки, -1 — ещё не считали).
+var _moss_mask: int = -1
+
+
+## Кремовый короб: кромка 1 px, блик сверху, жёлтая разметка штрихами над
+## нижней кромкой и лишайник на верхней (ADR-003 § 4.1, «обрастание»).
+## on — под питанием (без питания эмаль тусклее). hazard — рисовать ли разметку.
+func _draw_body(r: Rect2 = BODY, on: bool = true, hazard: bool = true) -> void:
+	draw_rect(r, C_METAL_D)
+	draw_rect(r.grow(-1.0), C_METAL if on else C_METAL_OFF)
+	draw_rect(Rect2(r.position.x + 1.0, r.position.y + 1.0, r.size.x - 2.0, 1.0), C_METAL_HI)
+	if hazard:
+		var y: float = r.end.y - 3.0
+		var x: float = r.position.x + 1.0
+		while x < r.end.x - 1.0:
+			draw_rect(Rect2(x, y, minf(2.0, r.end.x - 1.0 - x), 1.0), C_HAZARD)
+			x += 4.0
+	_draw_moss(r)
+
+
+## Пучки лишайника на верхней кромке: где именно — по хэшу клетки (у соседних
+## машин узор разный, у одной и той же — всегда один и тот же).
+func _draw_moss(r: Rect2) -> void:
+	if _moss_mask < 0:
+		var h: int = hash(cell) & 0x7fffffff
+		_moss_mask = 0
+		for k in 16:
+			if ((h >> (k % 30)) & 3) == 0 or (k * 7 + h) % 11 == 0:
+				_moss_mask |= 1 << k
+	var n: int = mini(int(r.size.x), 16)
+	for k in n:
+		if _moss_mask & (1 << k) == 0:
+			continue
+		var x: float = r.position.x + float(k)
+		draw_rect(Rect2(x, r.position.y - 1.0, 1.0, 2.0), C_LICHEN)
+		if k % 3 == 0:
+			draw_rect(Rect2(x, r.position.y - 2.0, 1.0, 1.0), C_LICHEN_HI)
+
+
+## Лампа состояния 2×2 в рамке 4×4 (центр — at).
+func _draw_lamp(at: Vector2, col: Color) -> void:
+	draw_rect(Rect2(at.x - 2.0, at.y - 2.0, 4.0, 4.0), C_FRAME)
+	draw_rect(Rect2(at.x - 1.0, at.y - 1.0, 2.0, 2.0), col)
+
+
+## Полоса прогресса станка над корпусом (y — верх полосы).
+func _draw_progress(y: float) -> void:
+	draw_rect(Rect2(-6.0, y, 12.0, 2.0), Color(C_SOOT, 0.8))
+	draw_rect(Rect2(-6.0, y, 12.0 * progress, 2.0), C_BIO)
 
 
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)

@@ -116,21 +116,32 @@ func _dir_cell() -> Vector2i:
 func _draw() -> void:
 	var d: Vector2 = dir_vector()
 	var side: Vector2 = Vector2(-d.y, d.x)
-	var c: Color = Color(0.22, 0.22, 0.25)
-	draw_line(side * 8.0 - d * 8.0, side * 8.0 + d * 8.0, c, 5.0)
-	draw_line(-side * 8.0 - d * 8.0, -side * 8.0 + d * 8.0, c, 5.0)
-	# Стрелки движения
+	# Борта — голубовато-серые рамы с кремовой кромкой, полотно между ними
+	# тёмное; всё по сетке (d и side — единичные по осям).
+	_belt_rect(-5.0, 5.0, -8.0, 8.0, d, side, Color(C_SOOT, 0.55))
+	_belt_rect(5.0, 8.0, -8.0, 8.0, d, side, C_FRAME)
+	_belt_rect(-8.0, -5.0, -8.0, 8.0, d, side, C_FRAME)
+	_belt_rect(5.0, 6.0, -8.0, 8.0, d, side, C_METAL_D)
+	_belt_rect(-6.0, -5.0, -8.0, 8.0, d, side, C_METAL_D)
+	# Стрелка движения — жёлтый уголок из квадратов.
 	var t: float = fmod(anim * 3.0 + float(cell.x + cell.y) * 0.25, 1.0)
-	var p: Vector2 = -d * 6.0 + d * t * 12.0
-	draw_line(p - d * 3.0, p, Color(0.85, 0.72, 0.3), 2.0)
-	draw_line(p, p - d * 2.0 + side * 2.0, Color(0.85, 0.72, 0.3), 2.0)
-	draw_line(p, p - d * 2.0 - side * 2.0, Color(0.85, 0.72, 0.3), 2.0)
+	var a: float = roundf(-6.0 + t * 12.0)
+	_belt_rect(-1.0, 1.0, a - 1.0, a + 1.0, d, side, C_HAZARD)
+	_belt_rect(-3.0, -1.0, a - 3.0, a - 1.0, d, side, C_HAZARD)
+	_belt_rect(1.0, 3.0, a - 3.0, a - 1.0, d, side, C_HAZARD)
 	# Предметы
 	for it in items:
 		var tex: ImageTexture = DB.item_texture(int(it["id"]))
 		if tex:
 			var pos: Vector2 = -d * 6.0 + d * float(it["pos"]) * 12.0
 			draw_texture_rect(tex, Rect2(pos - Vector2(6, 6), Vector2(12, 12)), false)
+
+
+## Прямоугольник в координатах ленты: s — поперёк (side), a — вдоль (d).
+func _belt_rect(s0: float, s1: float, a0: float, a1: float, d: Vector2, side: Vector2, col: Color) -> void:
+	var p0: Vector2 = side * s0 + d * a0
+	var p1: Vector2 = side * s1 + d * a1
+	draw_rect(Rect2(Vector2(minf(p0.x, p1.x), minf(p0.y, p1.y)), (p1 - p0).abs()), col)
 
 
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)

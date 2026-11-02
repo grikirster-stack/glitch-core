@@ -47,7 +47,7 @@ func run() -> void:
 			"«%s»" % hud.hint_text)
 
 	# Туда: вправо до сундука.
-	var stats: Dictionary = {"lag": 0, "max_lag": 0, "seen": {}}
+	var stats: Dictionary = {"lag": 0, "max_lag": 0, "seen": {}, "mark_ok": 0, "mark_bad": 0}
 	hold(KEY_D)
 	var right_x: float = chest.global_position.x + DIST + 4.0
 	await _walk(stats, gen, chest, func() -> bool: return player.global_position.x > right_x, 6.0)
@@ -65,6 +65,11 @@ func run() -> void:
 	ok("подсказка сундука появлялась у сундука", seen.has(HINT_CHEST))
 	ok("подсказка появляется и пропадает сразу", int(stats["max_lag"]) <= MAX_LAG_FRAMES,
 			"наибольшее отставание %d кадр(а)" % int(stats["max_lag"]))
+	# ADR-003 V6: рамка интерактива — вокруг ТЭЦ/сундука, пока горит их подсказка,
+	# и нет рамки, когда подсказки нет.
+	ok("рамка интерактива — вокруг ТЭЦ/сундука и только при подсказке",
+			int(stats["mark_ok"]) > 0 and int(stats["mark_bad"]) == 0,
+			"верно %d кадров, неверно %d" % [int(stats["mark_ok"]), int(stats["mark_bad"])])
 	ok("отошёл — подсказки ТЭЦ/сундука нет", hud.hint_text == _want(gen, chest)
 			and hud.hint_text != hint_gen and hud.hint_text != HINT_CHEST, "«%s»" % hud.hint_text)
 	finish()
@@ -81,9 +86,28 @@ func _walk(stats: Dictionary, gen: Node2D, chest: Node2D, done_cond: Callable, t
 			stats["lag"] = 0
 			if want != "":
 				stats["seen"][want] = true
+			_check_mark(stats, want, gen, chest)
 		else:
 			stats["lag"] = int(stats["lag"]) + 1
 			stats["max_lag"] = maxi(int(stats["max_lag"]), int(stats["lag"]))
+
+
+## Рамка интерактива (V6): при подсказке ТЭЦ/сундука — вокруг этой постройки на
+## экране (допуск 8 px: камера и HUD обновляются в разном порядке внутри кадра),
+## без подсказки — рамки нет. Подсказку терминала не проверяем (рамка — от питания).
+func _check_mark(stats: Dictionary, want: String, gen: Node2D, chest: Node2D) -> void:
+	var hud: HUD = UI.hud
+	var tgt: Node2D = null
+	if want == hud.generator_hint(gen):
+		tgt = gen
+	elif want == HINT_CHEST:
+		tgt = chest
+	if tgt != null:
+		var sp: Vector2 = hud.get_viewport().get_canvas_transform() * tgt.global_position
+		var good: bool = Rect2(hud.mark_rect).grow(8.0).has_point(sp)
+		stats["mark_ok" if good else "mark_bad"] = int(stats["mark_ok" if good else "mark_bad"]) + 1
+	elif want == "" and hud.mark_rect.size != Vector2i.ZERO:
+		stats["mark_bad"] = int(stats["mark_bad"]) + 1
 
 
 ## Какая подсказка должна быть сейчас — по расстояниям, в том же порядке
