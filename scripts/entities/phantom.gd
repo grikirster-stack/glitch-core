@@ -164,7 +164,7 @@ func _physics_process(delta: float) -> void:
 		_flank_t = FLIP_T
 		_flank_side = -_flank_side
 
-	if Game.players.size() > 1:   # СЕТЬ (ADR-002 § 4.2.5): цель — ближайший герой
+	if Game.players.size() > 1 or (player != null and not is_instance_valid(player)):   # СЕТЬ: цель — ближайший герой
 		_net_pick_target(dt)
 	if player == null:
 		player = get_tree().get_first_node_in_group("player")
@@ -842,8 +842,12 @@ static var _net_light: Dictionary = {}
 
 
 ## Цель — ближайший доступный герой (Player.net_targetable); доступных нет — ближайший
-## живой (как в одиночной: спрятавшегося фантом всё равно стережёт).
+## живой (как в одиночной: спрятавшегося фантом всё равно стережёт). Цель вышла из
+## игры (узел освобождён) — выбор заново, и без товарищей.
 func _net_pick_target(dt: float) -> void:
+	if player != null and not is_instance_valid(player):
+		player = null           # товарищ вышел из игры — цель заново
+		_net_seek_t = 0.0
 	_net_seek_t -= dt
 	var cur: Player = player as Player if is_instance_valid(player) else null
 	if _net_seek_t > 0.0 and cur != null and cur.net_targetable():
