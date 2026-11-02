@@ -19,7 +19,7 @@ func _process(delta: float) -> void:
 	_spin += delta * (6.0 if powered else 0.6)
 	if not powered:
 		return
-	_timer -= delta
+	_timer -= work(delta)
 	if _timer <= 0.0:
 		_timer = CYCLE
 		_harvest()
