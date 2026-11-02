@@ -97,3 +97,22 @@ func _draw() -> void:
 	if progress > 0.0:
 		draw_rect(Rect2(-6.0, -12.0, 12.0, 2.0), Color(0, 0, 0, 0.6))
 		draw_rect(Rect2(-6.0, -12.0, 12.0 * progress, 2.0), Color(0.4, 0.9, 1.0))
+
+
+# ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
+## Лоток, счётчик данных и кристалл в работе.
+func save_state() -> Dictionary:
+	var d: Dictionary = super()
+	d["crystals"] = crystals
+	d["produced"] = produced
+	d["busy"] = _busy
+	d["timer"] = _timer
+	return d
+
+
+func load_state(d: Dictionary) -> void:
+	super(d)
+	crystals = int(d.get("crystals", crystals))
+	produced = int(d.get("produced", produced))
+	_busy = bool(d.get("busy", _busy))
+	_timer = float(d.get("timer", _timer))

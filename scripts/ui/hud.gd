@@ -473,14 +473,17 @@ func _draw() -> void:
 	stat_us += Time.get_ticks_usec() - t0
 
 
-func _draw_hotbar(font: Font) -> void:
+## Ячейка хотбара i (0…9) на экране. Ею же попадает тап по хотбару (TouchControls, #81).
+func hotbar_slot_rect(i: int) -> Rect2:
 	var slot: float = 46.0
+	var x0: float = size.x * 0.5 - slot * 10.0 * 0.5
+	return Rect2(x0 + i * slot, size.y - 74, slot - 4, slot - 4)
+
+
+func _draw_hotbar(font: Font) -> void:
 	var count: int = 10
-	var total: float = slot * count
-	var x0: float = size.x * 0.5 - total * 0.5
-	var y0: float = size.y - 74
 	for i in count:
-		var r: Rect2 = Rect2(x0 + i * slot, y0, slot - 4, slot - 4)
+		var r: Rect2 = hotbar_slot_rect(i)
 		var sel: bool = (player.inv.selected == i)
 		draw_rect(r, Color(0.08, 0.09, 0.12, 0.82))
 		draw_rect(r, Color(1, 1, 1, 0.85) if sel else Color(1, 1, 1, 0.22), false, 2.0 if sel else 1.0)

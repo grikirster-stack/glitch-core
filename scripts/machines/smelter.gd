@@ -93,3 +93,20 @@ func furnace_color(t_ms: int) -> Color:
 		return FURNACE_COLD
 	var glow: float = 0.5 + 0.5 * sin(t_ms * 0.006)
 	return FURNACE_HOT.lerp(FURNACE_GLOW, glow * 0.4)
+
+
+# ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
+## Загрузка входа, рецепт в работе (ссылкой на DB) и таймер плавки.
+func save_state() -> Dictionary:
+	var d: Dictionary = super()
+	d["stock"] = stock.duplicate()
+	d["recipe"] = recipe_ref("smelter", recipe)
+	d["timer"] = _timer
+	return d
+
+
+func load_state(d: Dictionary) -> void:
+	super(d)
+	stock = load_counts(d.get("stock", {}))
+	recipe = recipe_from("smelter", d.get("recipe"))
+	_timer = float(d.get("timer", _timer))

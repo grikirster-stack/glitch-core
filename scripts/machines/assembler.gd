@@ -82,3 +82,20 @@ func _draw() -> void:
 	if progress > 0.0:
 		draw_rect(Rect2(-6.0, -13.0, 12.0, 2.0), Color(0, 0, 0, 0.6))
 		draw_rect(Rect2(-6.0, -13.0, 12.0 * progress, 2.0), Color(0.4, 0.9, 1.0))
+
+
+# ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
+## Как у плавильни: вход, рецепт в работе и таймер.
+func save_state() -> Dictionary:
+	var d: Dictionary = super()
+	d["stock"] = stock.duplicate()
+	d["recipe"] = recipe_ref("assembler", recipe)
+	d["timer"] = _timer
+	return d
+
+
+func load_state(d: Dictionary) -> void:
+	super(d)
+	stock = load_counts(d.get("stock", {}))
+	recipe = recipe_from("assembler", d.get("recipe"))
+	_timer = float(d.get("timer", _timer))
