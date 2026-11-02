@@ -4,3 +4,6 @@
 _shot.png
 *.log
 *.err
+
+# Сборки экспорта (export_presets.cfg, issue #80)
+build/

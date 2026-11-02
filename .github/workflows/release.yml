@@ -1,0 +1,386 @@
+name: Релиз
+
+# Сборка и релиз (issue #80): универсальный Android APK + Windows/Linux zip.
+#
+#  - push в main            → тесты → экспорт → тег vX.Y.Z и GitHub Release (bump=auto);
+#  - workflow_dispatch      → то же вручную, с выбором bump; dry_run=true — только сборка
+#                             и артефакт, без тега и релиза (так можно гонять на любой ветке);
+#  - pull_request (paths)   → «Экспорт (проверка)»: та же сборка, что у релиза, без тестов
+#                             (их гоняет ci.yml) и без релиза. Только когда PR трогает
+#                             экспорт — чтобы не тормозить каждый PR скачиванием шаблонов.
+#
+# Версия: последний тег vX.Y.Z (нет тегов → v0.1.0); auto = minor, если у PR с прошлого
+# тега (или у закрытых ими issue) есть метка gameplay/enhancement, иначе patch — см.
+# tools/release/plan.py. Версия прописывается в project.godot и export_presets.cfg
+# ТОЛЬКО в раннере: обратно в main ничего не коммитится, тег ставит gh release create,
+# поэтому workflow не зацикливается.
+#
+# Godot и шаблоны экспорта — той же версии, что в ci.yml, напрямую из официальных
+# релизов godotengine, без сторонних actions для Godot.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Повышение версии"
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+      dry_run:
+        description: "Только сборка и артефакт, без тега и релиза"
+        type: boolean
+        default: false
+  pull_request:
+    branches: [main]
+    paths:
+      - export_presets.cfg
+      - project.godot
+      - .github/workflows/release.yml
+      - tools/release/**
+
+# Настоящие релизы идут строго по одному (версия считается от последнего тега).
+# Проверки PR и dry run — в своей группе на ветку, их можно отменять.
+concurrency:
+  group: ${{ (github.event_name == 'pull_request' || inputs.dry_run) && format('release-check-{0}', github.ref) || 'release' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: 4.7.2-stable
+  # Каталог шаблонов экспорта: «4.7.2-stable» → «4.7.2.stable».
+  GODOT_TEMPLATES_DIR: 4.7.2.stable
+  ANDROID_BUILD_TOOLS: 35.0.0
+  ANDROID_PLATFORM: android-35
+
+jobs:
+  plan:
+    name: Версия и заметки
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      code: ${{ steps.plan.outputs.code }}
+      commits: ${{ steps.plan.outputs.commits }}
+      publish: ${{ steps.mode.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # нужна вся история и теги
+
+      - name: Режим запуска
+        id: mode
+        env:
+          EVENT: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          publish=false
+          if [ "$EVENT" = push ]; then
+            publish=true
+          elif [ "$EVENT" = workflow_dispatch ] && [ "$DRY_RUN" != true ]; then
+            if [ "$GITHUB_REF" != refs/heads/main ]; then
+              echo "::error::Настоящий релиз — только с main. С ветки запускайте с dry_run=true."
+              exit 1
+            fi
+            publish=true
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Режим: $EVENT, публикация: $publish"
+
+      - name: Следующая версия и список PR
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUMP: ${{ inputs.bump || 'auto' }}
+        run: python3 tools/release/plan.py --bump "$BUMP" --notes release/notes.md
+
+      - name: Заметки в сводку
+        run: cat release/notes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release/notes.md
+
+  tests:
+    name: Автотесты перед релизом
+    # На PR тесты уже гоняет ci.yml; здесь они — замок перед публикацией и dry run.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Скачать Godot ${{ env.GODOT_VERSION }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          curl -fsSL "$url" -o godot.zip
+          unzip -q godot.zip
+          mv "Godot_v${GODOT_VERSION}_linux.x86_64" /usr/local/bin/godot
+          chmod +x /usr/local/bin/godot
+
+      - name: Импорт проекта
+        timeout-minutes: 5
+        run: godot --headless --path . --import
+
+      - name: Автотесты (сиды 31337, 4242, 12345)
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          for s in 31337 4242 12345; do
+            godot --headless --path . -- --test --seed=$s
+          done
+
+  build:
+    name: Экспорт (Android, Windows, Linux)
+    needs: [plan, tests]
+    # tests пропускается на PR — тогда сборка всё равно идёт; провал тестов её останавливает.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && (needs.tests.result == 'success' || needs.tests.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      CODE: ${{ needs.plan.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools build-tools;${{ env.ANDROID_BUILD_TOOLS }} platforms;${{ env.ANDROID_PLATFORM }}
+          log-accepted-android-sdk-licenses: false
+
+      - name: Скачать Godot ${{ env.GODOT_VERSION }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          curl -fsSL "$url" -o "$RUNNER_TEMP/godot.zip"
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP"
+          mv "$RUNNER_TEMP/Godot_v${GODOT_VERSION}_linux.x86_64" /usr/local/bin/godot
+          chmod +x /usr/local/bin/godot
+          godot --version
+
+      - name: Кэш шаблонов экспорта
+        id: tpl-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/godot/export_templates/${{ env.GODOT_TEMPLATES_DIR }}
+          key: godot-templates-${{ env.GODOT_VERSION }}-android-linux-windows-v1
+
+      # Полный .tpz (~1 ГБ) — только при промахе кэша; берём из него лишь нужные шаблоны.
+      - name: Скачать шаблоны экспорта ${{ env.GODOT_VERSION }}
+        if: steps.tpl-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          url="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
+          curl -fsSL "$url" -o "$RUNNER_TEMP/templates.tpz"
+          dir="$HOME/.local/share/godot/export_templates/$GODOT_TEMPLATES_DIR"
+          mkdir -p "$dir"
+          unzip -j -o "$RUNNER_TEMP/templates.tpz" \
+            'templates/version.txt' \
+            'templates/android_debug.apk' 'templates/android_release.apk' \
+            'templates/linux_debug.x86_64' 'templates/linux_release.x86_64' \
+            'templates/windows_*_x86_64*.exe' \
+            -d "$dir"
+          rm "$RUNNER_TEMP/templates.tpz"
+          ls -la "$dir"
+
+      # Ключи подписи. Есть секреты — release-ключ; нет (форк, первый запуск) — debug-ключ,
+      # сгенерированный тут же, и пометка в заметках релиза. Debug-ключ нужен Godot всегда.
+      - name: Ключи подписи Android
+        id: keys
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          ks="$RUNNER_TEMP/keys"
+          mkdir -p "$ks"
+          keytool -genkeypair -v -keystore "$ks/debug.keystore" -storetype PKCS12 \
+            -storepass android -keypass android -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US" > /dev/null 2>&1
+          {
+            echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$ks/debug.keystore"
+            echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey"
+            echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android"
+          } >> "$GITHUB_ENV"
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$ks/release.keystore"
+            {
+              echo "GODOT_ANDROID_KEYSTORE_RELEASE_PATH=$ks/release.keystore"
+              echo "GODOT_ANDROID_KEYSTORE_RELEASE_USER=$KEY_ALIAS"
+              echo "GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=$KEYSTORE_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "signing=release" >> "$GITHUB_OUTPUT"
+            echo "Подпись: release-ключ из секретов репозитория."
+          else
+            {
+              echo "GODOT_ANDROID_KEYSTORE_RELEASE_PATH=$ks/debug.keystore"
+              echo "GODOT_ANDROID_KEYSTORE_RELEASE_USER=androiddebugkey"
+              echo "GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=android"
+            } >> "$GITHUB_ENV"
+            echo "signing=debug" >> "$GITHUB_OUTPUT"
+            echo "::warning::Секретов ANDROID_KEYSTORE_* нет — APK подписан debug-ключом."
+          fi
+
+      # Headless-редактор берёт пути SDK/JDK из editor_settings. Файл пишем с нуля.
+      - name: Настройки редактора (пути Android SDK и JDK)
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.7.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$sdk"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          export/android/debug_keystore = "$GODOT_ANDROID_KEYSTORE_DEBUG_PATH"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOF
+          cat "$HOME/.config/godot/editor_settings-4.7.tres"
+
+      # Только в раннере: в main версия не коммитится.
+      - name: Версия ${{ env.TAG }} в project.godot и export_presets.cfg
+        run: |
+          set -euo pipefail
+          if grep -q '^config/version=' project.godot; then
+            sed -i "s|^config/version=.*|config/version=\"$VERSION\"|" project.godot
+          else
+            sed -i "/^config\/name=/a config/version=\"$VERSION\"" project.godot
+          fi
+          sed -i \
+            -e "s|^version/code=.*|version/code=$CODE|" \
+            -e "s|^version/name=.*|version/name=\"$VERSION\"|" \
+            -e "s|^application/file_version=.*|application/file_version=\"$VERSION.0\"|" \
+            -e "s|^application/product_version=.*|application/product_version=\"$VERSION.0\"|" \
+            export_presets.cfg
+          grep -n '^config/version=' project.godot
+          grep -n '^version/\|_version=' export_presets.cfg
+
+      # build/ — каталог сборки; .gdignore, чтобы Godot не сканировал APK и zip как ресурсы.
+      - name: Импорт проекта
+        timeout-minutes: 5
+        run: |
+          mkdir -p build/out && touch build/.gdignore
+          godot --headless --path . --import
+
+      - name: Экспорт Android (APK)
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          apk="build/out/glitch-core-$TAG-android.apk"
+          godot --headless --path . --export-release "Android" "$apk"
+          test -s "$apk" || { echo "::error::APK не собран"; exit 1; }
+          ls -la "$apk"
+
+      - name: Проверка APK (apksigner, aapt)
+        env:
+          SIGNING: ${{ steps.keys.outputs.signing }}
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          bt="$sdk/build-tools/$ANDROID_BUILD_TOOLS"
+          apk="build/out/glitch-core-$TAG-android.apk"
+          "$bt/apksigner" verify --verbose --print-certs "$apk" | tee "$RUNNER_TEMP/apksigner.txt"
+          "$bt/aapt" dump badging "$apk" > "$RUNNER_TEMP/badging.txt"
+          grep -E "^(package|sdkVersion|targetSdkVersion|native-code|uses-permission|launchable-activity|application-label):" "$RUNNER_TEMP/badging.txt" | tee "$RUNNER_TEMP/badging-short.txt"
+          fail=0
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            grep -q "^native-code:.*'$abi'" "$RUNNER_TEMP/badging.txt" || { echo "::error::в APK нет ABI $abi"; fail=1; }
+          done
+          grep -q "^package: name='com.glitchcore.game' versionCode='$CODE' versionName='$VERSION'" "$RUNNER_TEMP/badging.txt" \
+            || { echo "::error::package/versionCode/versionName не те"; fail=1; }
+          for perm in INTERNET ACCESS_NETWORK_STATE ACCESS_WIFI_STATE CHANGE_WIFI_MULTICAST_STATE; do
+            grep -q "^uses-permission: name='android.permission.$perm'" "$RUNNER_TEMP/badging.txt" \
+              || { echo "::error::нет разрешения $perm"; fail=1; }
+          done
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" "$RUNNER_TEMP/apksigner.txt" \
+            || { echo "::error::нет подписи v2"; fail=1; }
+          {
+            echo "### APK $TAG (подпись: $SIGNING)"
+            echo '```'
+            cat "$RUNNER_TEMP/badging-short.txt"
+            grep -E "^Verified using|^Signer #1 certificate DN|^Signer #1 certificate SHA-256" "$RUNNER_TEMP/apksigner.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $fail
+
+      - name: Экспорт Windows и Linux (zip)
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          mkdir -p build/windows build/linux
+          godot --headless --path . --export-release "Windows Desktop" build/windows/glitch-core.exe
+          godot --headless --path . --export-release "Linux" build/linux/glitch-core.x86_64
+          test -s build/windows/glitch-core.exe
+          test -s build/linux/glitch-core.x86_64
+          (cd build/windows && zip -q -r "../out/glitch-core-$TAG-windows-x86_64.zip" .)
+          (cd build/linux && chmod +x glitch-core.x86_64 && zip -q -r "../out/glitch-core-$TAG-linux-x86_64.zip" .)
+          ls -la build/out
+          echo "signing=${{ steps.keys.outputs.signing }}" > build/out/signing.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: glitch-core-${{ env.TAG }}
+          path: build/out/
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Тег и GitHub Release
+    needs: [plan, tests, build]
+    # Только настоящий релиз и только если тесты на этом коммите прошли.
+    if: ${{ !cancelled() && needs.plan.outputs.publish == 'true' && needs.tests.result == 'success' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: glitch-core-${{ env.TAG }}
+          path: out
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: notes
+
+      - name: Создать тег и релиз ${{ env.TAG }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::Релиз $TAG уже есть"; exit 1
+          fi
+          notes=notes/notes.md
+          if grep -q '^signing=debug' out/signing.txt; then
+            {
+              echo
+              echo "> **Внимание: APK подписан debug-ключом**, сгенерированным в CI для этой сборки."
+              echo "> Обновить поверх прошлой версии не выйдет — сначала удалите старую (сохранения"
+              echo "> пропадут). Постоянная подпись появится, когда в репозитории зададут секреты"
+              echo "> ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS."
+            } >> "$notes"
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "ГЛИТЧ-КОРЕ $TAG" --notes-file "$notes" \
+            out/*.apk out/*.zip
