@@ -99,7 +99,7 @@ const RELAY_REQ: Dictionary = {
 	IDs.I.POWER_CELL: 6,
 	IDs.I.RELAY_ANTENNA: 1,
 }
-const RELAY_TIME: float = 90.0         ## → 180 в #32 вместе с этапами цели
+const RELAY_TIME: float = 180.0        ## удержание сигнала, этап 4 (#32)
 const RELAY_HOLD_CAP: int = 10         ## живых фантомов во время удержания сигнала
 
 # --------------------------------------------------------------- § 4.8 Игрок

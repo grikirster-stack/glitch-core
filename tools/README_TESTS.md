@@ -455,6 +455,10 @@ godot --path . --script res://tools/freeze_probe.gd -- --probe --windowed --seed
   сценариями `swarm_targets_drill`, `shade_drains_gen`, `burrower_digs_dirt`,
   `doppel_freezes_under_gaze`, `threat_budget`, `vent_spawn`. Замер шагов
   фантома по типу: `phantom_probe.gd -- --kind=swarm` (echo по умолчанию).
+* Релей и финал (#32): `objective_stages` (этапы цели 1 → 4), `relay` (180 с,
+  отсчёт ускоряется через `Game.relay_speed`, победа и эпилог на экране),
+  `relay_doppel_spawns` (двойник за первые 30 с этапа 4; печатает строку
+  «замер:» — p95 кадра на удержании сигнала при cap 10, не провал).
 * Абсолютные цифры зависят от загрузки машины. Сравнивать нужно результаты
   одного и того же прогона между собой: baseline зафиксирован в PR.
 * Сторож фризов не может «подменить» сид мира: `main.gd` читает `--seed=`
