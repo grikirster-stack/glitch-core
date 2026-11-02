@@ -6,8 +6,11 @@ class_name MenuTest
 ## временный путь (uid создаётся один раз, битый файл не валит), Look ↔ u16 для
 ## всех индексов 0..15 каждой части, неизвестный индекс рисуется как 0, «Случайно»
 ## только из Avatar.VARIANTS, меню строится и реагирует на ник/вид/заглушки.
+## Скафандр «Кербер-9» (V4, MP-L #97): 16 цветов, 4 шлема, 4 аксессуара, 4 ранца,
+## неизвестный индекс части рисуется как 0, раскладка каждого варианта полна.
 ## Отдельный запуск сверх того: «Одиночная игра» из меню запускает мир с сидом,
-## хардкором и цветом из профиля; замер Avatar.draw против прежнего Player._draw.
+## хардкором и цветом из профиля; замер Player._draw: рисунок до V4 (прежний
+## красный герой) против скафандра.
 ##
 ## Отдельный запуск:
 ##   godot --headless --path . --script res://tools/menu_test.gd
@@ -15,10 +18,12 @@ class_name MenuTest
 ## (секция «== Меню и профиль ==») — общий код, без дублирования; смену сцены
 ## и замер там не делаем (раннер живёт в сцене игры).
 ##
-## Снимок меню и попиксельная сверка Avatar.draw с прежним рисунком (нужен
-## настоящий рендер, окно — за экраном):
+## Снимок меню, листы героя и вариантов (нужен настоящий рендер, окно — за
+## экраном); каждый вариант рисуется и отличается от соседей по части:
 ##   godot --path . --windowed --position -10000,-10000 --resolution 1280x720 \
-##         --script res://tools/menu_test.gd -- --menu-shot=res://docs/img/menu.png
+##         --script res://tools/menu_test.gd -- --menu-shot=res://docs/img/menu.png \
+##         --sheets=res://docs/img/
+## (--sheets= — папка для player_facing.png и avatar_variants.png).
 ##
 ## Режим --script: глобальные имена автозагрузок и player.gd (он ссылается на
 ## World) на этапе компиляции недоступны — их берём через load()/get_node().
@@ -33,8 +38,8 @@ const PLAYER_SCRIPT: String = "res://scripts/entities/player.gd"
 ## Временный профиль: настоящий user://profile.cfg тест не трогает.
 const TMP_DIR: String = "user://menu_test"
 const TMP_PROFILE: String = "user://menu_test/profile.cfg"
-## Цвет героя до ADR-002 (Player._draw).
-const OLD_RED: Color = Color(0.86, 0.22, 0.24)
+## Скафандр концепта A по умолчанию (ADR-003 § 4.1) — вид 0.
+const SUIT_DEFAULT: Color = Color("#E8743B")
 
 const NICKS_OK: Array = ["Аня", "Ёжик", "ёж", "Bob", "x1", "Аня 2", "Ann_Lee", "a-b.c",
 		"  Пётр  ", "1234567890123456", "Инженер", "Zz", "Юля.К"]
@@ -61,6 +66,8 @@ func _draw() -> void:
 	var t0: int = Time.get_ticks_usec()
 	for i in reps:
 		_breath = float(i) * 0.1
+		# После V4 — все варианты частей по кругу (раскладка от них зависит).
+		look = (i & 0xF) | (((i >> 1) & 3) << 4) | (((i >> 3) & 3) << 8) | (((i >> 5) & 3) << 12)
 		if old:
 			_old_draw()
 		else:
@@ -69,7 +76,8 @@ func _draw() -> void:
 	usec += dt
 	calls += reps
 	best = minf(best, float(dt) / float(reps))
-## Player._draw до MP-B дословно (коммит c2e8802, scripts/entities/player.gd).
+## Player._draw до MP-B дословно (коммит c2e8802, scripts/entities/player.gd),
+## раскладка — body_layout() до V4 (MenuTest.Legacy.layout).
 func _old_draw() -> void:
 	var body_col: Color = Color(0.86, 0.22, 0.24)
 	if hiding:
@@ -77,7 +85,7 @@ func _old_draw() -> void:
 	var flash: float = _hit_flash / HIT_FLASH
 	if flash > 0.0:
 		body_col = body_col.lerp(Color(1.0, 0.74, 0.64), flash * 0.85)
-	var lay: Dictionary = body_layout()
+	var lay: Dictionary = MenuTest.Legacy.layout(facing, walk_anim, _breath, vel.x)
 	var r: Rect2 = lay["body"]
 	draw_set_transform(Vector2(0, SIZE.y * 0.5), 0.0, Vector2(1.0, 0.35))
 	draw_circle(Vector2.ZERO, SIZE.x * 0.6, Color(0, 0, 0, 0.28))
@@ -97,14 +105,41 @@ func _old_draw() -> void:
 		draw_rect(r, Color(1.0, 0.35, 0.32, flash * 0.8), false, 1.5)
 	if hiding:
 		draw_arc(Vector2.ZERO, 14.0, 0.0, TAU, 24, Color(0.4, 0.9, 1.0, 0.5), 1.5)
-	_draw_mining_fx()
+	_draw_mining_fx(Vector2(0.0, -6.0))
 """
 
 
-## Прежний Player._draw (до MP-B) дословно, с параметрами вместо полей героя:
-## эталон для попиксельной сверки.
+## Прежний герой (до V4) дословно, с параметрами вместо полей героя: эталон
+## «до» для замера и листа player_facing.png.
 class Legacy:
-	static func draw(c: CanvasItem, lay: Dictionary, hiding: bool, flash: float, breath: float) -> void:
+	## Player.body_layout() до V4 (коммит d87421c).
+	static func layout(facing: int, walk_anim: float, breath: float, vx: float) -> Dictionary:
+		var size: Vector2 = Vector2(12.0, 22.0)
+		var idle_amt: float = clampf(1.0 - absf(vx) / 60.0, 0.0, 1.0)
+		var move_amt: float = clampf(absf(vx) / 168.0, 0.0, 1.0)
+		var breathe: float = sin(breath * 1.8) * idle_amt
+		var bounce: float = -absf(sin(walk_anim)) * 1.4 * move_amt
+		var body_h: float = size.y * (1.0 + 0.03 * breathe)
+		var r: Rect2 = Rect2(-size.x * 0.5, size.y * 0.5 - body_h + bounce, size.x, body_h)
+		var step: float = sin(walk_anim) * 2.0
+		var visor: Rect2 = Rect2(-1.0, r.position.y + 2.0, 11.0, 7.0)
+		var light: Vector2 = Vector2(visor.position.x + 8.0, visor.position.y)
+		var f: int = -1 if facing < 0 else 1
+		return {
+			"body": r,
+			"backpack": Avatar.mirror(Rect2(-r.size.x * 0.5 - 5.0, -r.size.y * 0.5 + 3.0, 5.0, r.size.y - 7.0), f),
+			"leg_back": Avatar.mirror(Rect2(-4.0, r.end.y - 3.0, 3.0, 3.0 + step), f),
+			"leg_front": Avatar.mirror(Rect2(1.0, r.end.y - 3.0, 3.0, 3.0 - step), f),
+			"visor": Avatar.mirror(visor, f),
+			"visor_top": Avatar.mirror(Rect2(visor.position.x, visor.position.y, visor.size.x, 2.0), f),
+			"visor_glint": Avatar.mirror(Rect2(visor.position.x + 1.0, visor.position.y + 1.0, 3.0, 2.0), f),
+			"light": Vector2(light.x * f, light.y),
+		}
+
+
+	## xf — преобразование холста, под которым рисуем (лист с увеличением).
+	static func draw(c: CanvasItem, lay: Dictionary, hiding: bool, flash: float, breath: float,
+			xf: Transform2D = Transform2D.IDENTITY) -> void:
 		var size: Vector2 = Vector2(12.0, 22.0)
 		var body_col: Color = Color(0.86, 0.22, 0.24)
 		if hiding:
@@ -112,9 +147,9 @@ class Legacy:
 		if flash > 0.0:
 			body_col = body_col.lerp(Color(1.0, 0.74, 0.64), flash * 0.85)
 		var r: Rect2 = lay["body"]
-		c.draw_set_transform(Vector2(0, size.y * 0.5), 0.0, Vector2(1.0, 0.35))
+		c.draw_set_transform_matrix(xf * Transform2D(0.0, Vector2(1.0, 0.35), 0.0, Vector2(0, size.y * 0.5)))
 		c.draw_circle(Vector2.ZERO, size.x * 0.6, Color(0, 0, 0, 0.28))
-		c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		c.draw_set_transform_matrix(xf)
 		c.draw_rect(lay["backpack"], body_col.darkened(0.25))
 		c.draw_rect(r, body_col)
 		c.draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 3.0), body_col.lightened(0.18))
@@ -132,20 +167,49 @@ class Legacy:
 			c.draw_arc(Vector2.ZERO, 14.0, 0.0, TAU, 24, Color(0.4, 0.9, 1.0, 0.5), 1.5)
 
 
-## Холст попиксельной сверки: mode 0 — Legacy, 1 — Avatar.draw.
-class Canvas extends Node2D:
-	var mode: int = 0
-	var lay: Dictionary = {}
-	var look: int = 0
-	var hiding: bool = false
-	var flash: float = 0.0
-	var breath: float = 0.0
+## Лист картинок: герои (до V4 — Legacy, после — Avatar.draw) и подписи.
+## items: {pos, scale, lay, look, state, legacy?, pick? (кирка из точки), cell?}.
+## labels: [позиция, текст, кегль, цвет].
+class Sheet extends Node2D:
+	const BG: Color = Color("#1E1A22")
+	const INK: Color = Color(0.82, 0.84, 0.88)
+	const DIM: Color = Color(0.62, 0.64, 0.70)
+	const BAD: Color = Color(0.95, 0.45, 0.42)
+	const GOOD: Color = Color(0.45, 0.88, 0.55)
+	var size_px: Vector2 = Vector2(64, 64)
+	var items: Array = []
+	var labels: Array = []
 
 	func _draw() -> void:
-		if mode == 0:
-			Legacy.draw(self, lay, hiding, flash, breath)
-		else:
-			Avatar.draw(self, lay, look, {"hiding": hiding, "flash": flash, "breath": breath})
+		draw_rect(Rect2(Vector2.ZERO, size_px), BG)
+		var font: Font = ThemeDB.fallback_font
+		for l in labels:
+			# Пятое поле — ширина: подпись по центру клетки.
+			var w: float = l[4] if l.size() > 4 else -1.0
+			draw_string(font, l[0], l[1], HORIZONTAL_ALIGNMENT_CENTER if w > 0.0 else HORIZONTAL_ALIGNMENT_LEFT,
+					w, l[2], l[3])
+		for it in items:
+			var xf: Transform2D = Transform2D(0.0, Vector2(it["scale"], it["scale"]), 0.0, it["pos"])
+			draw_set_transform_matrix(xf)
+			var st: Dictionary = it["state"]
+			if it.get("legacy", false):
+				Legacy.draw(self, it["lay"], st.get("hiding", false), st.get("flash", 0.0),
+						st.get("breath", 0.0), xf)
+			else:
+				Avatar.draw(self, it["lay"], it["look"], st)
+			if it.has("pick"):
+				_pick(it["pick"], it["cell"])
+		draw_set_transform_matrix(Transform2D.IDENTITY)
+
+	## Кирка как в Player._draw_mining_fx (без контура клетки): из pivot к клетке.
+	func _pick(pivot: Vector2, cell: Vector2) -> void:
+		var to_cell: Vector2 = cell - pivot
+		var ang: float = to_cell.angle()
+		var reach: float = clampf(to_cell.length(), 10.0, 30.0)
+		var head: Vector2 = pivot + Vector2(cos(ang), sin(ang)) * reach
+		draw_line(pivot, head, Color(0.42, 0.32, 0.24), 2.0)
+		var perp: Vector2 = Vector2(-sin(ang), cos(ang))
+		draw_line(head - perp * 4.5, head + perp * 4.5, Color(0.78, 0.82, 0.88), 2.0)
 
 
 ## --------------------------------------------------------------------- исполнитель
@@ -249,9 +313,13 @@ class Runner extends Node:
 			counts_ok = counts_ok and Avatar.VARIANTS[i] >= 1 and Avatar.VARIANTS[i] <= Profile.Look.SIZE \
 					and (Avatar.VARIANT_NAMES[i] as Array).size() == Avatar.VARIANTS[i]
 		_ok("VARIANTS: 4 части, 1..16 вариантов, подписи есть", counts_ok, str(Avatar.VARIANTS))
-		_ok("до ADR-003: 8 цветов, остальные части — только 0",
-				Avatar.VARIANTS == PackedInt32Array([8, 1, 1, 1]) and Avatar.SUIT_COLORS.size() == 8)
-		_ok("вид 0 — прежний красный герой", Avatar.suit_color(0) == OLD_RED)
+		_ok("V4: 16 цветов, 4 шлема, 4 аксессуара, 4 ранца",
+				Avatar.VARIANTS == PackedInt32Array([16, 4, 4, 4]) and Avatar.SUIT_COLORS.size() == 16)
+		_ok("вид 0 — скафандр концепта A (#E8743B)", Avatar.suit_color(0).is_equal_approx(SUIT_DEFAULT))
+		var distinct: Dictionary = {}
+		for c in Avatar.SUIT_COLORS:
+			distinct[c.to_html(false)] = true
+		_ok("16 цветов скафандра различны", distinct.size() == 16, "%d" % distinct.size())
 		var wrong: Array = []
 		for i in Profile.Look.PARTS:
 			for idx in Profile.Look.SIZE:
@@ -260,8 +328,27 @@ class Runner extends Node:
 				if Avatar.resolve(v, i) != want:
 					wrong.append("часть %d индекс %d" % [i, idx])
 		_ok("неизвестный индекс рисуется как 0", wrong.is_empty(), str(wrong.slice(0, 4)))
-		var unk: int = Profile.Look.pack(PackedInt32Array([12, 9, 15, 3]))
-		_ok("неизвестный цвет — цвет 0", Avatar.suit_color(unk) == Avatar.suit_color(0))
+		# Индексы шлема/аксессуара/ранца ≥ 4 (из будущих сборок) — вариант 0.
+		var unk: int = Profile.Look.pack(PackedInt32Array([0, 9, 15, 7]))
+		_ok("неизвестные шлем/аксессуар/ранец — раскладка варианта 0",
+				Avatar.layout(unk, -1, 1.3, 0.4, 1.0, false, true) == Avatar.layout(0, -1, 1.3, 0.4, 1.0, false, true))
+		# Раскладка каждого варианта: обязательные ключи, части разные у вариантов.
+		var need: Array = ["body", "torso", "helmet", "visor", "visor_top", "visor_glint", "arm", "glove",
+				"backpack", "tank", "leg_back", "leg_front", "boot_back", "boot_front", "light"]
+		var lacking: Array = []
+		var shapes: Array = [{}, {}, {}, {}]
+		for i in range(1, Profile.Look.PARTS):
+			for idx in Avatar.VARIANTS[i]:
+				var lay: Dictionary = Avatar.layout(Profile.Look.with_part(0, i, idx), 1, 0.0, 0.0, 0.0, false, false)
+				for k in need:
+					if not lay.has(k):
+						lacking.append("часть %d вариант %d: %s" % [i, idx, k])
+				shapes[i][str(lay)] = true
+		_ok("каждый вариант шлема/аксессуара/ранца даёт полную раскладку", lacking.is_empty(),
+				str(lacking.slice(0, 3)))
+		_ok("варианты частей различаются формой", shapes[1].size() == Avatar.VARIANTS[1]
+				and shapes[2].size() == Avatar.VARIANTS[2] and shapes[3].size() == Avatar.VARIANTS[3],
+				"шлемов %d, аксессуаров %d, ранцев %d" % [shapes[1].size(), shapes[2].size(), shapes[3].size()])
 		var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 		rng.seed = 87
 		var out_of: int = 0
@@ -347,20 +434,33 @@ class Runner extends Node:
 		_ok("валидный ник сохранён в профиль (без краевых пробелов)", not menu.single_button.disabled
 				and menu.nick_error_label.text == ""
 				and Profile.load_or_create(TMP_PROFILE).nick == "Аня")
+		var arrows_on: bool = true
+		for b in menu.look_arrows:
+			arrows_on = arrows_on and not (b as Button).disabled
+		_ok("стрелки всех четырёх частей активны (у каждой ≥ 2 вариантов)",
+				arrows_on and menu.look_arrows.size() == Profile.Look.PARTS * 2)
 		menu.step_part(Profile.Look.COLOR, 1)
 		menu.step_part(Profile.Look.HELMET, 1)
+		menu.step_part(Profile.Look.PACK, -1)
 		var saved: int = Profile.load_or_create(TMP_PROFILE).look
-		_ok("стрелки: цвет 1, шлем остался 0 (один вариант), сохранено",
+		_ok("стрелки: цвет 1, шлем 1, ранец по кругу 3, сохранено",
 				Profile.Look.part(saved, Profile.Look.COLOR) == 1
-				and Profile.Look.part(saved, Profile.Look.HELMET) == 0
-				and menu.preview.look == saved and menu.look_arrows[2].disabled)
+				and Profile.Look.part(saved, Profile.Look.HELMET) == 1
+				and Profile.Look.part(saved, Profile.Look.PACK) == Avatar.VARIANTS[3] - 1
+				and menu.preview.look == saved, "look=%04x" % saved)
+		_ok("подпись части — имя варианта и номер", String(menu.look_labels[1].text).begins_with(
+				Avatar.variant_name(1, 1)) and String(menu.look_labels[1].text).ends_with("2/4"),
+				String(menu.look_labels[1].text))
 		menu.step_part(Profile.Look.COLOR, -2)
-		_ok("стрелка влево по кругу: цвет 7",
+		_ok("стрелка влево по кругу: цвет 15",
 				Profile.Look.part(menu.profile.look, Profile.Look.COLOR) == Avatar.VARIANTS[0] - 1)
 		menu.randomize_look()
 		var rl: int = menu.profile.look
-		_ok("«Случайно» в пределах вариантов", Profile.Look.part(rl, 0) < Avatar.VARIANTS[0]
-				and (rl >> 4) == 0 and menu.color_swatch.color == Avatar.suit_color(rl))
+		var in_range: bool = true
+		for i in Profile.Look.PARTS:
+			in_range = in_range and Profile.Look.part(rl, i) < Avatar.VARIANTS[i]
+		_ok("«Случайно» в пределах вариантов", in_range
+				and menu.color_swatch.color == Avatar.suit_color(rl), "look=%04x" % rl)
 		menu.net_buttons[1].pressed.emit()
 		_ok("сетевые кнопки — заглушка «Скоро»", menu.status_label.text == mm.SOON_TEXT)
 		_ok("профиль меню — в Net.local_profile (uid, ник, вид)",
@@ -380,7 +480,7 @@ class Runner extends Node:
 		_menu = null
 		DirAccess.remove_absolute(TMP_PROFILE)
 
-	# --- Замер: Avatar.draw против прежнего _draw
+	# --- Замер: Player._draw до V4 против скафандра
 	func _bench_start() -> void:
 		var s: GDScript = GDScript.new()
 		s.source_code = BENCH_PLAYER_SRC
@@ -393,14 +493,17 @@ class Runner extends Node:
 			_bench_nodes.append(bp)
 
 	func _bench_report() -> void:
-		var names: Array = ["Player._draw до (прежний код)", "Player._draw после (Avatar.draw)"]
+		var names: Array = ["Player._draw до V4 (прежний красный герой)", "Player._draw после (скафандр «Кербер-9»)"]
 		var line: String = ""
+		var five: String = ""
 		for k in _bench_nodes.size():
 			var n = _bench_nodes[k]
-			line += "%s: лучший кадр %.2f, среднее %.2f; " % [names[k], float(n.best),
-					float(n.usec) / maxf(1.0, float(n.calls))]
+			var avg: float = float(n.usec) / maxf(1.0, float(n.calls))
+			line += "%s: лучший кадр %.2f, среднее %.2f; " % [names[k], float(n.best), avg]
+			five += "%s %.1f; " % ["до" if k == 0 else "после", avg * 5.0]
 		print("  ЗАМЕР (мкс на одного героя, %d кадров × %d рисунков): %s"
 				% [BENCH_FRAMES, BENCH_REPS, line])
+		print("  ЗАМЕР 4 героя + двойник, мкс/кадр (×5 среднего): %s" % five)
 		_ok("замер шёл (рисунки были)", int(_bench_nodes[0].calls) > 0 and int(_bench_nodes[1].calls) > 0)
 		for n in _bench_nodes:
 			n.queue_free()
@@ -422,6 +525,8 @@ func _initialize() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--menu-shot="):
 			_shot_path = a.substr(12)
+		elif a.begins_with("--sheets="):
+			_sheets_dir = a.substr(9)
 
 
 func _process(_delta: float) -> bool:
@@ -545,9 +650,11 @@ func _check_single(sc: Node) -> void:
 	_ok("после меню пауза снята, HUD виден", not paused and (root.get_node("UI") as CanvasLayer).visible)
 
 
-# ------------------------------------------------------------- снимок и сверка
+# ------------------------------------------------------------- снимок и листы
 
-var _cmp: Array = []
+## Листы (--sheets=): {"vp": SubViewport, "sheet": Sheet, "file": имя, "groups": клетки}.
+var _sheets: Array = []
+var _sheets_dir: String = ""
 
 
 func _shot_step() -> bool:
@@ -572,13 +679,16 @@ func _shot_step() -> bool:
 		3:
 			_menu.queue_free()
 			_menu = null
-			_cmp_start()
-			_frames = 0
-			_step = 4
+			if _sheets_dir == "":
+				_step = 6
+			else:
+				_sheets_start()
+				_frames = 0
+				_step = 4
 		4:
 			if _frames >= 4:
 				_step = 5
-				_cmp_finish()
+				_sheets_finish()
 		6:
 			DirAccess.remove_absolute(TMP_PROFILE)
 			print("ИТОГ: проверок %d, провалов %d" % [_checks, _fails])
@@ -597,61 +707,163 @@ func _save_shot() -> void:
 	_step = 3
 
 
-## Попиксельная сверка: прежний рисунок и Avatar.draw (look 0) в одинаковых
-## позах — должны совпасть до бита. Плюс неизвестный цвет = цвет 0.
-func _cmp_start() -> void:
-	var s: GDScript = GDScript.new()
-	s.source_code = BENCH_PLAYER_SRC
-	s.reload()
-	var poses: Array = []
-	for facing in [1, -1]:
-		for st in [[false, 0.0, 0.3], [true, 0.0, 1.1], [false, 0.7, 2.0]]:
-			poses.append([facing, st])
-	for pose in poses:
-		var bp = s.new()
-		bp.facing = pose[0]
-		bp._breath = float(pose[1][2])
-		var lay: Dictionary = bp.body_layout()
-		bp.free()
-		var pair: Array = []
-		for k in 3:
-			var vp: SubViewport = SubViewport.new()
-			vp.size = Vector2i(48, 48)
-			vp.transparent_bg = true
-			vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-			var c: Canvas = Canvas.new()
-			c.mode = 0 if k == 0 else 1
-			c.look = Profile.Look.pack(PackedInt32Array([13, 7, 9, 15])) if k == 2 else 0
-			c.lay = lay
-			c.hiding = pose[1][0]
-			c.flash = pose[1][1]
-			c.breath = pose[1][2]
-			c.position = Vector2(24, 24)
-			vp.add_child(c)
-			root.add_child(vp)
-			pair.append(vp)
-		_cmp.append(pair)
+## Позы листа героя: подпись, фаза шага, доля скорости, дыхание, прыжок, работа,
+## укрытие, урон.
+const SHEET_POSES: Array = [
+	["стоит", 0.0, 0.0, 0.3, false, false, false, 0.0],
+	["шаг 1", 1.3, 1.0, 0.0, false, false, false, 0.0],
+	["шаг 2", 2.9, 1.0, 0.0, false, false, false, 0.0],
+	["шаг 3", 4.4, 1.0, 0.0, false, false, false, 0.0],
+	["прыжок", 0.0, 0.6, 0.0, true, false, false, 0.0],
+	["копка", 0.0, 0.0, 0.0, false, true, false, 0.0],
+	["укрытие", 0.0, 0.0, 0.3, false, false, true, 0.0],
+	["урон", 0.0, 0.0, 0.3, false, false, false, 0.8],
+]
 
 
-func _cmp_finish() -> void:
+func _sheets_start() -> void:
+	_sheets.append(_sheet_facing())
+	_sheets.append(_sheet_variants())
+	for s in _sheets:
+		var vp: SubViewport = SubViewport.new()
+		vp.size = Vector2i(s["sheet"].size_px)
+		vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		vp.add_child(s["sheet"])
+		root.add_child(vp)
+		s["vp"] = vp
+
+
+## Лист героя: позы × направления, до V4 и после.
+func _sheet_facing() -> Dictionary:
+	var sh: Sheet = Sheet.new()
+	var cw: float = 150.0
+	var x0: float = 230.0
+	var sc: float = 6.0
+	sh.size_px = Vector2(x0 + cw * SHEET_POSES.size() + 10.0, 1040.0)
+	for c in SHEET_POSES.size():
+		sh.labels.append([Vector2(x0 + cw * c + 40.0, 40.0), SHEET_POSES[c][0], 22, Sheet.INK])
+	var y: float = 60.0
+	for legacy in [true, false]:
+		sh.labels.append([Vector2(16.0, y + 34.0), "ДО (main): красный герой" if legacy
+				else "ПОСЛЕ: скафандр «Кербер-9» (V4)", 26, Sheet.BAD if legacy else Sheet.GOOD])
+		y += 50.0
+		for facing in [1, -1]:
+			sh.labels.append([Vector2(16.0, y + 110.0), "вправо" if facing > 0 else "влево", 22, Sheet.INK])
+			for c in SHEET_POSES.size():
+				var p: Array = SHEET_POSES[c]
+				var lay: Dictionary
+				if legacy:
+					lay = Legacy.layout(facing, p[1], p[3], float(p[2]) * 168.0)
+				else:
+					lay = Avatar.layout(0, facing, p[1], p[3], p[2], p[4], p[5])
+				var it: Dictionary = {"pos": Vector2(x0 + cw * c + cw * 0.5, y + 130.0), "scale": sc,
+						"lay": lay, "look": 0, "legacy": legacy,
+						"state": {"breath": p[3], "hiding": p[6], "flash": p[7]}}
+				if p[5]:
+					it["pick"] = Vector2(0.0, -6.0) if legacy else (lay["glove"] as Rect2).get_center()
+					it["cell"] = Vector2(22.0 * facing, 8.0)
+				sh.items.append(it)
+			y += 210.0
+	return {"sheet": sh, "file": "player_facing.png", "groups": {}}
+
+
+## Лист вариантов: 16 цветов, 4 шлема, 4 аксессуара, 4 ранца, двойник, «Случайно».
+func _sheet_variants() -> Dictionary:
+	var sh: Sheet = Sheet.new()
+	var cw: float = 100.0
+	var ch: float = 150.0
+	var sc: float = 4.0
+	var x0: float = 20.0
+	sh.size_px = Vector2(x0 * 2.0 + cw * 16.0, 40.0 + (ch + 40.0) * 4.0)
+	var groups: Dictionary = {"цвет": [], "шлем": [], "аксессуар": [], "ранец": [], "случайные": []}
+	var rows: Array = []
+	var row0: Array = []
+	for i in 16:
+		row0.append(["цвет", Profile.Look.pack(PackedInt32Array([i, 0, 0, 0])), 1, {},
+				Avatar.variant_name(0, i)])
+	rows.append([["Цвет скафандра — 16 (палитра концепта A)"], row0])
+	var row1: Array = []
+	var hc: Array = [0, 3, 4, 1]
+	for h in 4:
+		row1.append(["шлем", Profile.Look.pack(PackedInt32Array([hc[h], h, 0, 0])), 1, {},
+				Avatar.variant_name(1, h)])
+	var ac: Array = [5, 2, 7, 8]
+	for a in 4:
+		row1.append(["аксессуар", Profile.Look.pack(PackedInt32Array([ac[a], 0, a, 0])), 1, {},
+				Avatar.variant_name(2, a)])
+	rows.append([["Шлем / визор — 4", "Аксессуар — 4"], row1])
+	var row2: Array = []
+	var pc: Array = [9, 6, 10, 13]
+	for k in 4:
+		row2.append(["ранец", Profile.Look.pack(PackedInt32Array([pc[k], 0, 0, k])), 1, {},
+				Avatar.variant_name(3, k)])
+	var dl: int = Profile.Look.pack(PackedInt32Array([3, 1, 3, 2]))
+	row2.append(["", dl, 1, {}, "герой"])
+	row2.append(["", dl, -1, {"impostor": true, "lit": true}, "двойник"])
+	row2.append(["", dl, -1, {"impostor": true, "lit": false, "tint": Color(0.6, 0.85, 1.0),
+			"tint_k": 0.55}, "оглушён"])
+	row2.append(["", dl, 1, {"hiding": true}, "в укрытии"])
+	rows.append([["Рюкзак / баллоны — 4", "Двойник — тем же Avatar с видом героя"], row2])
+	var row3: Array = []
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	rng.seed = 97
+	for i in 16:
+		row3.append(["случайные", Avatar.random_look(rng), -1 if i % 2 == 1 else 1, {}, ""])
+	rows.append([["«Случайно» — 16 видов"], row3])
+	var y: float = 10.0
+	for row in rows:
+		for t in (row[0] as Array).size():
+			sh.labels.append([Vector2(x0 + cw * 4.0 * t, y + 26.0), row[0][t], 22, Sheet.INK])
+		y += 40.0
+		for c in (row[1] as Array).size():
+			var cell: Array = row[1][c]
+			var pos: Vector2 = Vector2(x0 + cw * c + cw * 0.5, y + 92.0)
+			var st: Dictionary = (cell[3] as Dictionary).duplicate()
+			st["breath"] = 0.0
+			sh.items.append({"pos": pos, "scale": sc, "look": cell[1], "state": st,
+					"lay": Avatar.layout(cell[1], cell[2], 0.0, 0.0, 0.0, false, false)})
+			sh.labels.append([Vector2(pos.x - cw * 0.5, y + ch - 6.0), cell[4], 13, Sheet.DIM, cw])
+			if String(cell[0]) != "":
+				(groups[cell[0]] as Array).append(Rect2i(Vector2i(pos) - Vector2i(48, 92), Vector2i(96, 136)))
+		y += ch
+	return {"sheet": sh, "file": "avatar_variants.png", "groups": groups}
+
+
+func _sheets_finish() -> void:
 	await RenderingServer.frame_post_draw
-	var same: int = 0
-	var same_unk: int = 0
-	var opaque: int = 0
-	for pair in _cmp:
-		var a: Image = (pair[0] as SubViewport).get_texture().get_image()
-		var b: Image = (pair[1] as SubViewport).get_texture().get_image()
-		var u: Image = (pair[2] as SubViewport).get_texture().get_image()
-		if a.get_data() == b.get_data():
-			same += 1
-		if a.get_data() == u.get_data():
-			same_unk += 1
-		if not a.is_invisible():
-			opaque += 1
-		for vp in pair:
-			vp.queue_free()
-	_ok("Avatar.draw (вид 0) попиксельно равен прежнему _draw", same == _cmp.size() and opaque == _cmp.size(),
-			"совпало %d из %d поз" % [same, _cmp.size()])
-	_ok("неизвестные индексы рисуются как вид 0", same_unk == _cmp.size(),
-			"совпало %d из %d поз" % [same_unk, _cmp.size()])
+	for s in _sheets:
+		var img: Image = (s["vp"] as SubViewport).get_texture().get_image()
+		img.convert(Image.FORMAT_RGB8)
+		var path: String = ProjectSettings.globalize_path(_sheets_dir.path_join(s["file"]))
+		var err: Error = img.save_png(path)
+		print("ЛИСТ: %s (%dx%d) %s" % [path, img.get_width(), img.get_height(), error_string(err)])
+		_ok("лист %s сохранён" % s["file"], err == OK)
+		# Каждый вариант рисуется (в клетке есть фигура) и отличается от соседей по части.
+		var groups: Dictionary = s["groups"]
+		for g in groups:
+			var empty: int = 0
+			var seen: Dictionary = {}
+			for r: Rect2i in groups[g]:
+				var crop: Image = img.get_region(r)
+				if _ink(crop) < 150:
+					empty += 1
+				seen[crop.get_data()] = true
+			var n: int = (groups[g] as Array).size()
+			# «Случайно» может выпасть дважды — там только «рисуется».
+			var differ: bool = g == "случайные" or seen.size() == n
+			_ok("варианты «%s» рисуются%s" % [g, "" if g == "случайные" else " и различаются"],
+					empty == 0 and differ, "клеток %d, пустых %d, разных %d" % [n, empty, seen.size()])
+		(s["vp"] as SubViewport).queue_free()
+	_sheets.clear()
 	_step = 6
+
+
+## Сколько пикселей клетки (через один) отличаются от фона листа.
+func _ink(img: Image) -> int:
+	var n: int = 0
+	for y in range(0, img.get_height(), 2):
+		for x in range(0, img.get_width(), 2):
+			var c: Color = img.get_pixel(x, y)
+			if absf(c.r - Sheet.BG.r) + absf(c.g - Sheet.BG.g) + absf(c.b - Sheet.BG.b) > 0.06:
+				n += 1
+	return n
