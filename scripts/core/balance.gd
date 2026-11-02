@@ -154,3 +154,20 @@ const SKY_LOOT: Dictionary = {
 	IDs.I.ANALYZER: [1, 1],
 	IDs.I.FLOODLIGHT: [1, 1],
 }
+
+# ---------------------------------------- ADR-002 Сеть и кооператив (docs/adr/0002-multiplayer.md)
+## Секция зарезервирована MP-A (#86, § 9.2). Транспортные числа (порты, частоты,
+## таймауты) — константы Net, а не Balance: калибровочный PR (MP-K) их не трогает.
+const MP_MAX_PLAYERS: int = 4                ## хост + 3 клиента (§ 4.1)
+const MP_BUDGET_PER_PLAYER: float = 0.5      ## бюджет ночи × (1 + k·(N−1)) (§ 4.7)
+const MP_CAP_PER_PLAYER: int = 2             ## + к cap за каждого игрока сверх первого, не выше MAX_PHANTOMS
+const MP_INTERVAL_PER_PLAYER: float = 0.35   ## интервал спавна ÷ (1 + k·(N−1))
+const MP_SPAWN_INTERVAL_MIN: float = 1.5     ## нижняя граница интервала в сети, с
+const MP_RESPAWN_DELAY: float = 15.0         ## респаун в сети без сдвига времени, с
+const MP_BAG_OWNER_LOCK: float = 120.0       ## мешок поднимает только владелец, с
+const MP_RELAY_HOLD_RADIUS_TILES: float = 12.0 ## отсчёт релея идёт, пока герой ближе
+const MP_TEAM_RADIO_TILES: float = 20.0      ## товарищ на миникарте без питания ближе этого
+const MP_ROLLCALL_COOLDOWN: float = 20.0     ## перекличка (G), с
+const MP_ROLLCALL_LIGHT: float = 4.0         ## зелёный огонёк ответившего, с
+const MP_DOPPEL_REVEAL: float = 1.5          ## двойник «глючит» после удара, с
+const MP_FRIENDLY_SLASH_CD: float = 1.0      ## кулдаун удара по своему, с

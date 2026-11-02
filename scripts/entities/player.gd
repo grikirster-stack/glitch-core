@@ -855,3 +855,19 @@ func load_state(d: Dictionary) -> void:
 	inv.changed.emit()
 	stats_changed.emit()
 	queue_redraw()
+
+
+# ------------------------------------------------- СЕТЬ (ADR-002)
+## Крюки MP-A (#86, § 5.1 правило 1): только поля, без логики. Роли и обёртки
+## обратной связи — MP-D (#89), вид — MP-B (#87), перекличка — MP-J (#95).
+## LOCAL — одиночная и свой герой хоста; PROXY — чужой герой на хосте;
+## OWNER — свой герой клиента; PUPPET — чужой герой у клиента (§ 4.2.3).
+enum NetRole { LOCAL, PROXY, OWNER, PUPPET }
+var net_role: int = NetRole.LOCAL
+## Пир владельца (1 — хост и одиночная).
+var peer_id: int = 1
+## Параметры вида (Look, MP-B): 4 части по 4 бита, u16.
+var look: int = 0
+var nick: String = ""
+## Огонёк ответа на перекличку (G), с (MP-J).
+var rollcall_t: float = 0.0
