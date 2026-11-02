@@ -18,8 +18,8 @@ extends SceneTree
 
 ## Схема протокола PROTO = SCHEMA_PROTO. Поменяли кодек, порядок IDs или таблицы DB —
 ## поднимите Net.PROTO и впишите сюда новый PROTO и хэш, который напечатает тест.
-const SCHEMA_PROTO: int = 4
-const SCHEMA_HASH: String = "311223e2f1453eb856ef8a97e4850ad6"
+const SCHEMA_PROTO: int = 5
+const SCHEMA_HASH: String = "878881f01cf669c25e039c5bf1d13fba"
 
 const PORT_BASE: int = 24900
 const LOOP: String = "127.0.0.1"
@@ -74,6 +74,7 @@ func _until(cond: Callable, timeout: float) -> bool:
 func _run() -> void:
 	await process_frame          # автозагрузки (DB, World) готовы
 	_codec()
+	_codec_inv()   # MP-G (#91): команды InvOps, CHEST, TECH
 	_sizes()
 	_handshake_table()
 	await _loop()
@@ -577,3 +578,50 @@ func _schema() -> void:
 		return
 	ok("схема сообщений не изменилась без подъёма Net.PROTO", h == SCHEMA_HASH,
 			"" if h == SCHEMA_HASH else "хэш %s, ждали %s: поднимите Net.PROTO и обновите SCHEMA_PROTO/SCHEMA_HASH" % [h, SCHEMA_HASH])
+
+
+# ------------------------------------------------------------------ 5. ИНВЕНТАРИ (MP-G, #91)
+
+## Команды InvOps, сундук, исследования: туда-обратно, размеры, битые кадры.
+func _codec_inv() -> void:
+	print("== Кодек: команды инвентаря, сундук, исследования (MP-G) ==")
+	var Op: Dictionary = NetCodec.InvOp
+	var samples: Array = [
+		[Op.MOVE, {"from": NetCodec.Box.CHEST, "fslot": 23, "to": NetCodec.Box.INV, "tslot": NetCodec.SLOT_AUTO,
+				"id": 255, "n": 65535, "flags": NetCodec.MOVE_SWAP, "cell": 115199}],
+		[Op.SPLIT, {"from": NetCodec.Box.INV, "fslot": 0, "to": NetCodec.Box.INV, "tslot": 35, "id": 9, "n": 0,
+				"flags": 0, "cell": NetCodec.CELL_NONE}],
+		[Op.TAKE_ALL, {"cell": 4242}], [Op.PUT_ALL, {"cell": 0}], [Op.CLOSE, {"cell": NetCodec.CELL_NONE}],
+		[Op.CRAFT, {"recipe": 34, "times": 3}],
+		[Op.DROP, {"from": NetCodec.Box.INV, "fslot": 35, "id": 3, "n": 64, "cell": NetCodec.CELL_NONE}],
+		[Op.SELECT, {"slot": 9}], [Op.UNLOCK, {"node": 5}],
+	]
+	var all_ok: bool = true
+	var bad_ok: bool = true
+	for smp in samples:
+		var b: PackedByteArray = NetCodec.encode_inv_args(int(smp[0]), smp[1])
+		if NetCodec.decode_inv_args(int(smp[0]), b) != smp[1]:
+			all_ok = false
+			print("    расхождение: команда %d" % int(smp[0]))
+		if not NetCodec.decode_inv_args(int(smp[0]), b.slice(0, b.size() - 1)).is_empty():
+			bad_ok = false
+	ok("команды InvOps: аргументы туда-обратно (9 видов)", all_ok)
+	ok("команды InvOps: короткий кадр — отказ", bad_ok and NetCodec.decode_inv_args(99, PackedByteArray([1])).is_empty())
+	var move: PackedByteArray = NetCodec.frame(NetCodec.Msg.CMD, NetCodec.encode_cmd(Op.MOVE, 1,
+			NetCodec.encode_inv_args(Op.MOVE, samples[0][1])))
+	ok("MOVE на проводе — 16 Б (кадр)", move.size() == 16, "%d Б" % move.size())
+	ok("клетка ↔ u32", NetCodec.idx_cell(NetCodec.cell_idx(Vector2i(639, 179))) == Vector2i(639, 179)
+			and NetCodec.cell_idx(Vector2i(-1, -1)) == NetCodec.CELL_NONE)
+	var cs: Array = []
+	for i in 24:
+		cs.append([i % 40, i * 2])
+	cs[23] = [255, 65535]
+	var ch: Dictionary = NetCodec.decode_chest(NetCodec.encode_chest(77, NetCodec.CHEST_OPEN, cs))
+	ok("CHEST 24 слота — 78 Б, туда-обратно", NetCodec.encode_chest(77, NetCodec.CHEST_OPEN, cs).size() == 78
+			and ch.get("cell") == 77 and ch.get("flags") == NetCodec.CHEST_OPEN and ch.get("slots") == cs)
+	ok("CHEST: битый — пусто", NetCodec.decode_chest(PackedByteArray([1, 2, 3, 4, 0, 5])).is_empty())
+	var tu: Dictionary = NetCodec.decode_tech(NetCodec.encode_tech(NetCodec.TechEv.UNLOCK, 1234, 3))
+	var tf: Dictionary = NetCodec.decode_tech(NetCodec.encode_tech(NetCodec.TechEv.FRAGMENT, 7, 0, "…сигнал…"))
+	ok("TECH туда-обратно (узел, обрывок)", tu.get("kind") == NetCodec.TechEv.UNLOCK and tu.get("research") == 1234
+			and tu.get("arg") == 3 and tf.get("text") == "…сигнал…" and tf.get("research") == 7)
+	ok("TECH UNLOCK — 4 Б", NetCodec.encode_tech(NetCodec.TechEv.UNLOCK, 1, 1).size() == 4)
