@@ -8,6 +8,10 @@ extends MachineBase
 const PERIOD: float = Balance.ANALYZER_PERIOD
 ## Сколько кристаллов помещается в лоток (не считая того, что в работе).
 const CAP: int = 10
+## Кристалл в окне: цвета руды-кристалла и светлое ядро свечения (DB.PAL).
+const C_CRYSTAL: Color = _PAL["crystal"]
+const C_CRYSTAL_D: Color = _PAL["crystal_d"]
+const C_BIO_CORE: Color = _PAL["bio_core"]
 
 var crystals: int = 0
 ## Сколько данных выдал анализатор за всё время (для сценариев и HUD).
@@ -73,30 +77,30 @@ func _process(delta: float) -> void:
 
 
 func _draw() -> void:
-	var base: Color = Color(0.20, 0.36, 0.36) if powered else Color(0.16, 0.24, 0.25)
-	draw_rect(Rect2(-8.0, -8.0, 16.0, 16.0), base)
-	draw_rect(Rect2(-8.0, -8.0, 16.0, 2.0), base.lightened(0.25))
-	# Окно камеры с кристаллом.
-	draw_rect(Rect2(-5.0, -4.0, 10.0, 9.0), Color(0.06, 0.10, 0.12))
+	_draw_body(BODY, powered, false)
+	# Окно камеры с кристаллом: рама, тёмное стекло.
+	draw_rect(Rect2(-5.0, -4.0, 10.0, 9.0), C_FRAME)
+	draw_rect(Rect2(-4.0, -3.0, 8.0, 7.0), C_SCREEN)
 	var pulse: float = 0.0
 	if _busy and powered:
 		pulse = 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.008)
-	var cry: Color = Color(0.45, 0.85, 1.0) if _busy else Color(0.25, 0.40, 0.48)
-	cry = cry.lerp(Color(0.9, 1.0, 1.0), pulse * 0.5)
-	draw_colored_polygon(PackedVector2Array([
-		Vector2(0.0, -3.0), Vector2(3.0, 0.5), Vector2(0.0, 4.0), Vector2(-3.0, 0.5),
-	]), cry)
+	# Кристалл — вертикальная призма (язык руд § 3.2): в работе светится и пульсирует.
+	var cry: Color = C_CRYSTAL if _busy else C_CRYSTAL_D
+	cry = cry.lerp(C_BIO_CORE, pulse * 0.5)
+	draw_rect(Rect2(-1.0, -2.0, 3.0, 5.0), cry)
+	draw_rect(Rect2(0.0, -3.0, 1.0, 1.0), cry)
+	draw_rect(Rect2(-1.0, -2.0, 1.0, 2.0), cry.lerp(C_BIO_CORE, 0.6))
 	# Сканирующая линия идёт по окну вместе с прогрессом.
 	if _busy:
-		var y: float = -4.0 + 9.0 * progress
-		draw_line(Vector2(-5.0, y), Vector2(5.0, y), Color(0.6, 1.0, 0.8, 0.8), 1.0)
-	# Кристаллы в лотке — точки снизу.
+		var y: float = floorf(-3.0 + 6.99 * progress)
+		draw_rect(Rect2(-4.0, y, 8.0, 1.0), Color(C_SCREEN_HI, 0.8))
+	# Кристаллы в лотке — квадраты 2×2 на полке снизу.
+	draw_rect(Rect2(-7.0, 5.0, 14.0, 2.0), C_METAL_D)
 	for i in mini(crystals, 5):
-		draw_rect(Rect2(-6.0 + i * 2.6, 6.0, 1.6, 1.6), Color(0.45, 0.85, 1.0))
-	draw_circle(Vector2(5.5, -5.5), 1.4, Color(0.4, 1.0, 0.5) if powered else Color(0.9, 0.25, 0.2))
+		draw_rect(Rect2(-6.0 + i * 3.0, 5.0, 2.0, 2.0), C_CRYSTAL)
+	_draw_lamp(Vector2(6.0, -6.0), C_SCREEN_HI if powered else C_LAMP_OFF)
 	if progress > 0.0:
-		draw_rect(Rect2(-6.0, -12.0, 12.0, 2.0), Color(0, 0, 0, 0.6))
-		draw_rect(Rect2(-6.0, -12.0, 12.0 * progress, 2.0), Color(0.4, 0.9, 1.0))
+		_draw_progress(-12.0)
 
 
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)

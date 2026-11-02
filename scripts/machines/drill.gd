@@ -68,26 +68,33 @@ func _harvest() -> void:
 
 
 func _draw() -> void:
-	var base: Color = Color(0.34, 0.36, 0.40) if powered else Color(0.24, 0.25, 0.28)
-	draw_rect(Rect2(-8.0, -8.0, 16.0, 16.0), base)
-	draw_rect(Rect2(-8.0, -8.0, 16.0, 3.0), base.lightened(0.22))
-	_draw_bit(Color(0.78, 0.80, 0.85), 5.0)
-	# Стержень вниз
-	draw_line(Vector2(0, 6), Vector2(0, 14), Color(0.62, 0.64, 0.68), 3.0)
-	_draw_power_lamp(Vector2(5.0, -5.0))
+	_draw_body(BODY, powered)
+	# Окно шахты: рама, тёмный проём и шнек в нём.
+	draw_rect(Rect2(-4.0, -5.0, 8.0, 9.0), C_FRAME)
+	draw_rect(Rect2(-3.0, -4.0, 6.0, 7.0), C_SCREEN)
+	_draw_auger(Rect2(-2.0, -4.0, 4.0, 7.0), C_METAL_HI)
+	# Штанга вниз, в шахту
+	_draw_auger(Rect2(-1.0, 8.0, 3.0, 6.0), C_METAL_D)
+	_draw_power_lamp(Vector2(6.0, -5.0))
 
 
-## Вращающееся сверло: три лопасти и ступица.
-func _draw_bit(col: Color, radius: float) -> void:
-	for i in 3:
-		var ang: float = _spin + i * TAU / 3.0
-		draw_line(Vector2.ZERO, Vector2(cos(ang), sin(ang)) * radius, col, 2.0)
-	draw_circle(Vector2.ZERO, 2.4, Color(0.55, 0.58, 0.62))
+## Шнек: косые витки бегут вниз, пока бур крутится (_spin) — квадратами,
+## без поворота спрайта.
+func _draw_auger(r: Rect2, col: Color) -> void:
+	draw_rect(r, C_FRAME)
+	var half: float = floorf(r.size.x * 0.5)
+	var ph: int = int(_spin * 2.0) % 3
+	var y: float = r.position.y + float(ph)
+	while y < r.end.y:
+		draw_rect(Rect2(r.position.x, y, half, 1.0), col)
+		if y + 1.0 < r.end.y:
+			draw_rect(Rect2(r.position.x + half, y + 1.0, r.size.x - half, 1.0), col)
+		y += 3.0
 
 
-## Лампочка питания: зелёная — есть, красная — нет.
+## Лампочка питания: бирюзовая — есть, красная — нет.
 func _draw_power_lamp(at: Vector2) -> void:
-	draw_circle(at, 1.8, Color(0.4, 1.0, 0.5) if powered else Color(0.9, 0.25, 0.2))
+	_draw_lamp(at, C_SCREEN_HI if powered else C_LAMP_OFF)
 
 
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
