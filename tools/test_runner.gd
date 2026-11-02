@@ -2,7 +2,8 @@ extends Node
 ## Автотест игровой логики: копание, подбор, крафт, конвейер, питание, фантомы, релей.
 ## Плюс секция «== Анимации ==» — общий код из tools/anim_test.gd (issue #6),
 ## секция «== Индекс питания ==» — общий код из tools/power_test.gd (issue #11),
-## секции «== Данные ==» и «== Сутки ==» — согласованность IDs/DB/Balance и цикл смены (#24).
+## секции «== Данные ==» и «== Сутки ==» — согласованность IDs/DB/Balance и цикл смены (#24),
+## секция «== Лор ==» — общий код из tools/lore_test.gd (issue #26).
 ## Запускается из main.gd флагом `--test`.
 ##
 ## Все паузы отсчитываются по реальному времени, а не по кадрам: в headless-режиме
@@ -13,6 +14,8 @@ extends Node
 const AnimTestScript = preload("res://tools/anim_test.gd")
 ## Общий код регрессий индекса питания: tools/power_test.gd (issue #11).
 const PowerTestScript = preload("res://tools/power_test.gd")
+## Общий код проверок генеративного лора: tools/lore_test.gd (issue #26).
+const LoreTestScript = preload("res://tools/lore_test.gd")
 
 var scene: Node = null
 var step: int = 0
@@ -21,6 +24,7 @@ var fails: int = 0
 var checks: int = 0
 var anim: Node = null
 var power: Node = null
+var lore: Node = null
 
 var _wait_until_ms: int = 0
 
@@ -90,7 +94,9 @@ func _process(_delta: float) -> void:
 		18: _t_anim_wait()
 		19: _t_power_start()
 		20: _t_power_wait()
-		21: _t_finish()
+		21: _t_lore_start()
+		22: _t_lore_wait()
+		23: _t_finish()
 
 
 func _ok(label: String, cond: bool, extra: String = "") -> void:
@@ -654,6 +660,27 @@ func _t_power_wait() -> void:
 		power.queue_free()
 		power = null
 		_next(21, 0.2)
+
+
+func _t_lore_start() -> void:
+	# Секция «== Лор ==»: те же проверки, что и в tools/lore_test.gd.
+	# Общий код — дублирования нет. Проверки синхронные, мир не трогают.
+	lore = LoreTestScript.Runner.new(self)
+	add_child(lore)
+	lore.start(scene)
+	_next(22, 0.1)
+
+
+func _t_lore_wait() -> void:
+	if lore == null:
+		_next(23)
+		return
+	if lore.done:
+		checks += lore.checks
+		fails += lore.fails
+		lore.queue_free()
+		lore = null
+		_next(23, 0.1)
 
 
 func _t_finish() -> void:
