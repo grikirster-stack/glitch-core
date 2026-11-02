@@ -817,14 +817,14 @@ func _sheet_variants() -> Dictionary:
 		y += 40.0
 		for c in (row[1] as Array).size():
 			var cell: Array = row[1][c]
-			var pos: Vector2 = Vector2(x0 + cw * c + cw * 0.5, y + 92.0)
+			var pos: Vector2 = Vector2(x0 + cw * c + cw * 0.5, y + 86.0)
 			var st: Dictionary = (cell[3] as Dictionary).duplicate()
 			st["breath"] = 0.0
 			sh.items.append({"pos": pos, "scale": sc, "look": cell[1], "state": st,
 					"lay": Avatar.layout(cell[1], cell[2], 0.0, 0.0, 0.0, false, false)})
-			sh.labels.append([Vector2(pos.x - cw * 0.5, y + ch - 6.0), cell[4], 13, Sheet.DIM, cw])
+			sh.labels.append([Vector2(pos.x - cw * 0.5, y + ch - 2.0), cell[4], 13, Sheet.DIM, cw])
 			if String(cell[0]) != "":
-				(groups[cell[0]] as Array).append(Rect2i(Vector2i(pos) - Vector2i(48, 92), Vector2i(96, 136)))
+				(groups[cell[0]] as Array).append(Rect2i(Vector2i(pos) - Vector2i(48, 84), Vector2i(96, 132)))
 		y += ch
 	return {"sheet": sh, "file": "avatar_variants.png", "groups": groups}
 
