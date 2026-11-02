@@ -167,6 +167,14 @@ func _windows_by_buttons() -> void:
 	# Палец листает рецепты. Событие — прямо в _gui_input панели: в headless
 	# вьюпорт касания до контролов не доводит (как и мышь, см. inventory_transfer).
 	var panel: InventoryPanel = UI.panel
+	# Тап по ячейке — эмулированный из касания клик ЛКМ: стопка в руку и обратно.
+	var slot_pos: Vector2 = panel._inv_slot_rect(0).get_center()
+	var id0: int = player.inv.slots[0].id
+	_panel_tap(panel, slot_pos)
+	var took: bool = panel.held.id == id0 and player.inv.slots[0].is_empty()
+	_panel_tap(panel, slot_pos)
+	ok("тап по ячейке инвентаря: стопка в руку и обратно", took and panel.held.is_empty()
+			and player.inv.slots[0].id == id0, DB.item_name(id0))
 	if panel._max_scroll() >= 2:
 		var s0: int = panel.scroll
 		_panel_drag(panel, -InventoryPanel.RECIPE_H * 2.2)
@@ -228,6 +236,17 @@ func _drag(index: int, pos: Vector2) -> void:
 	e.relative = _win(pos) - _win(Vector2(_down.get(index, pos)))
 	Input.parse_input_event(e)
 	_down[index] = pos
+
+
+## Тап по панели так, как его видит панель на телефоне: ЛКМ с device эмуляции.
+func _panel_tap(panel: InventoryPanel, pos: Vector2) -> void:
+	for pressed in [true, false]:
+		var e: InputEventMouseButton = InputEventMouseButton.new()
+		e.device = InputEvent.DEVICE_ID_EMULATION
+		e.button_index = MOUSE_BUTTON_LEFT
+		e.position = pos
+		e.pressed = pressed
+		panel._gui_input(e)
 
 
 func _panel_drag(panel: InventoryPanel, dy: float) -> void:
