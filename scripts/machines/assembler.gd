@@ -34,7 +34,7 @@ func _process(delta: float) -> void:
 		recipe = _find_recipe()
 	if recipe.is_empty():
 		return
-	_timer += delta
+	_timer += work(delta)
 	progress = clampf(_timer / float(recipe["time"]), 0.0, 1.0)
 	if _timer >= float(recipe["time"]):
 		_timer = 0.0
@@ -51,6 +51,8 @@ func _process(delta: float) -> void:
 
 func _find_recipe() -> Dictionary:
 	for r in DB.recipes_for("assembler"):
+		if not DB.recipe_unlocked(r):    ## запертый деревом технологий (#28)
+			continue
 		var ok: bool = true
 		for k in r["in"].keys():
 			if int(stock.get(k, 0)) < int(r["in"][k]):
