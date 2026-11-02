@@ -15,6 +15,7 @@ extends Node
 
 const DIR: String = "res://tools/scenarios/"
 ## Максимальное время на один сценарий (страховка от зависшего бота).
+## Сценарий может задать свой предел ключом "timeout_ms" в REGISTRY.
 const TIMEOUT_MS: int = 60000
 
 const REGISTRY: Dictionary = {
@@ -83,6 +84,40 @@ const REGISTRY: Dictionary = {
 		"title": "блокировка инвентаря",
 		"desc": "открыт инвентарь — ЛКМ и ПКМ по миру игнорируются",
 	},
+	# --- Исследования и журнал (#28)
+	"tech_unlock": {
+		"file": "tech_unlock.gd",
+		"title": "исследования",
+		"desc": "4 данных — T1 закрыт; 5 данных → T1 → рецепт сборщика доступен",
+	},
+	"journal_open": {
+		"file": "journal_open.gd",
+		"title": "журнал",
+		"desc": "J открывает и закрывает журнал, ЛКМ по миру при этом игнорируется",
+	},
+	# --- Вода (#45) ---
+	"fluid": {
+		"file": "fluid.gd",
+		"title": "вода",
+		"desc": "не плёнка по ровной земле, наполняет яму, 1 порция невидима",
+	},
+	# ---- HUD и предметы на земле (#7) ----
+	"hud_no_alloc": {
+		"file": "hud_no_alloc.gd",
+		"title": "HUD без аллокаций",
+		"desc": "60 с простоя: 0 новых узлов, HUD/миникарта/небо не рисуются каждый кадр",
+		"timeout_ms": 90000,
+	},
+	"hud_hints": {
+		"file": "hud_hints.gd",
+		"title": "подсказки HUD",
+		"desc": "подсказка ТЭЦ/сундука появляется и пропадает сразу при 200 постройках",
+	},
+	"item_cleanup": {
+		"file": "item_cleanup.gd",
+		"title": "уборка предметов",
+		"desc": "одинаковые предметы сливаются, по сроку жизни мигают и исчезают",
+	},
 	# --- Питание (#25, ADR-001 § 4.3) ---
 	"power_budget": {
 		"file": "power_budget.gd",
@@ -109,6 +144,7 @@ var scenarios_total: int = 0
 var _queue: Array = []
 var _current: ScenarioBase = null
 var _started_ms: int = 0
+var _timeout_ms: int = TIMEOUT_MS
 
 
 # ------------------------------------------------------------------ РЕЕСТР
@@ -153,6 +189,7 @@ func _next_scenario() -> void:
 	add_child(sc)
 	_current = sc
 	_started_ms = Time.get_ticks_msec()
+	_timeout_ms = int(REGISTRY[name].get("timeout_ms", TIMEOUT_MS))
 	sc.done.connect(_on_scenario_done.bind(sc))
 	sc.run()
 
@@ -173,9 +210,9 @@ func _summary() -> void:
 func _process(_delta: float) -> void:
 	if _current == null or not is_instance_valid(_current):
 		return
-	if Time.get_ticks_msec() - _started_ms > TIMEOUT_MS:
+	if Time.get_ticks_msec() - _started_ms > _timeout_ms:
 		ok("сценарий уложился в отведённое время", false,
-				"%.0f с" % (float(TIMEOUT_MS) / 1000.0))
+				"%.0f с" % (float(_timeout_ms) / 1000.0))
 		_next_scenario()
 
 

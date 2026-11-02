@@ -121,6 +121,8 @@ func reset_run() -> void:
 	scenario_mode = false
 	objective_stage = 0
 	_power_index_size = -1          ## мир мог смениться — индекс пересоберётся
+	# --- Исследования (#28): дерево и журнал живут один забег.
+	Tech.reset()
 	_power_timer = 0.0
 	power_output_total = 0.0
 	power_load_total = 0.0

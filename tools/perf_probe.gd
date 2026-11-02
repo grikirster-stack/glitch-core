@@ -21,15 +21,24 @@ func _initialize() -> void:
 	scene = main_scene.instantiate()
 	root.add_child(scene)
 	current_scene = scene
+
+
+## Ссылки берём на первом кадре: в _initialize сцена ещё не прошла _ready.
+## SkyBackdrop по имени класса здесь не компилируется (он ссылается на автозагрузку
+## Game, а в режиме --script её имени ещё нет) — узнаём небо по пути скрипта.
+func _bind() -> void:
 	world = root.get_node("World")
 	world_fx = scene.get("world_fx")
 	hud = root.get_node("UI").get("hud")
 	for c in scene.get_children():
-		if c is SkyBackdrop:
+		var sc: Script = c.get_script()
+		if sc != null and sc.resource_path == "res://scripts/ui/sky_backdrop.gd":
 			sky = c
 
 
 func _process(delta: float) -> bool:
+	if hud == null:
+		_bind()
 	elapsed += delta
 	frame_acc += Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
 	fps_acc += Performance.get_monitor(Performance.TIME_FPS)

@@ -68,6 +68,11 @@ jobs:
         timeout-minutes: 5
         run: godot --headless --path . --script res://tools/lore_test.gd
 
+      # Процедурный звук (issue #36) — отдельным запуском: новые звуки, петли, голоса.
+      - name: Автотест звука (отдельный запуск)
+        timeout-minutes: 5
+        run: godot --headless --path . --script res://tools/sfx_test.gd
+
       # Текст лора для чтения глазами на ревью. Заодно проверяет, что флаг
       # --lore-dump печатает журнал и выходит с нулевым кодом.
       - name: Печать лора для ревью (сиды 31337, 4242, 12345)
