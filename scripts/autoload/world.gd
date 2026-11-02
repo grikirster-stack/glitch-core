@@ -402,8 +402,9 @@ func _place_tree(x: int, ground: int, rng: RandomNumberGenerator) -> void:
 			if get_tile(c, row) != IDs.T.AIR:
 				return
 	# Ствол: сплошной столб брёвен от земли до верха.
+	# Ствол — тайл TREE: он не твёрдый, сквозь него можно пройти.
 	for y in range(ground - 1, top - 1, -1):
-		set_tile_raw(x, y, IDs.T.LOG)
+		set_tile_raw(x, y, IDs.T.TREE)
 	# Крона: слои листвы снизу вверх.
 	for i in range(layers.size()):
 		var w2: int = layers[i]
@@ -417,8 +418,12 @@ func _place_tree(x: int, ground: int, rng: RandomNumberGenerator) -> void:
 	_trees += 1
 
 
-## Клетки, которые висят в воздухе: бревна без грунта под ними и листва, не
+## Клетки, которые висят в воздухе: стволы без грунта под ними и листва, не
 ## связанная с землёй. Пусто — значит всё дерево держится на земле.
+##
+## Связность, а не «под каждой клеткой что-то твёрдое»: ствол TREE не твёрдый
+## (сквозь него проходят), и клетка ствола опирается на клетку ствола ниже,
+## а не на землю напрямую.
 func floating_tree_cells() -> Array:
 	var bad: Array = []
 	var attached: Dictionary = {}
@@ -430,14 +435,13 @@ func floating_tree_cells() -> Array:
 	var limit: int = mini(max_top + 14, H - 1)
 	for x in range(W):
 		for y in range(limit):
-			if get_tile(x, y) != IDs.T.LOG:
+			if get_tile(x, y) != IDs.T.TREE:
 				continue
 			if not DB.tile_solid(get_tile(x, y + 1)):
-				bad.append(Vector2i(x, y)) # бревно висит в воздухе
-				continue
+				continue # ствол не стоит на грунте — это не корень
 			attached[Vector2i(x, y)] = true
 			roots.append(Vector2i(x, y))
-	# Обход в ширину: от стволов по листве и брёвнам.
+	# Обход в ширину: от стволов по стволам и листве.
 	var queue: Array[Vector2i] = roots.duplicate()
 	while not queue.is_empty():
 		var c: Vector2i = queue.pop_back()
@@ -446,25 +450,69 @@ func floating_tree_cells() -> Array:
 			if attached.has(n):
 				continue
 			var t: int = get_tile(n.x, n.y)
-			if t != IDs.T.LOG and t != IDs.T.LEAVES:
+			if t != IDs.T.TREE and t != IDs.T.LEAVES:
 				continue
 			attached[n] = true
 			queue.append(n)
-	# Всё, что осталось непривязанным, — висящая листва.
+	# Всё, что осталось непривязанным, — висящие стволы и листва.
 	for x in range(W):
 		for y in range(limit):
-			if get_tile(x, y) != IDs.T.LEAVES:
+			var t: int = get_tile(x, y)
+			if t != IDs.T.TREE and t != IDs.T.LEAVES:
 				continue
 			if not attached.has(Vector2i(x, y)):
 				bad.append(Vector2i(x, y))
 	return bad
 
 
-## Страховка после расстановки построек: убирает брёвна и листву, не связанные
+## Страховка после расстановки построек: убирает стволы и листву, не связанные
 ## с землёй. Крона, нависающая над землёй, остаётся на месте.
 func _fix_floating_trees() -> void:
 	for c in floating_tree_cells():
 		set_tile_raw(c.x, c.y, IDs.T.AIR)
+
+
+## Убирает то, что повисло после того, как игрок сломал часть дерева.
+##
+## Считает связность в окрестности скола: ствол и крона, которые больше не
+## связаны с землёй, исчезают. Смотрим только рядом с местом раскола —
+## перебирать весь мир на каждый скол слишком дорого.
+func fix_floating_near(cell: Vector2i) -> void:
+	var x0: int = maxi(cell.x - 10, 0)
+	var x1: int = mini(cell.x + 10, W - 1)
+	var y0: int = maxi(cell.y - 18, 0)
+	var y1: int = mini(cell.y + 2, H - 1)
+	var attached: Dictionary = {}
+	var roots: Array[Vector2i] = []
+	for x in range(x0, x1 + 1):
+		for y in range(y0, y1 + 1):
+			var t: int = get_tile(x, y)
+			if t != IDs.T.TREE and t != IDs.T.LEAVES:
+				continue
+			if DB.tile_solid(get_tile(x, y + 1)):
+				attached[Vector2i(x, y)] = true
+				roots.append(Vector2i(x, y))
+	var queue: Array[Vector2i] = roots.duplicate()
+	while not queue.is_empty():
+		var c: Vector2i = queue.pop_back()
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = c + d
+			if n.x < x0 or n.x > x1 or n.y < y0 or n.y > y1:
+				continue
+			if attached.has(n):
+				continue
+			var t: int = get_tile(n.x, n.y)
+			if t != IDs.T.TREE and t != IDs.T.LEAVES:
+				continue
+			attached[n] = true
+			queue.append(n)
+	for x in range(x0, x1 + 1):
+		for y in range(y0, y1 + 1):
+			var t: int = get_tile(x, y)
+			if t != IDs.T.TREE and t != IDs.T.LEAVES:
+				continue
+			if not attached.has(Vector2i(x, y)):
+				set_tile(x, y, IDs.T.AIR)
 
 
 func _flatten(cx: int, half: int) -> void:
