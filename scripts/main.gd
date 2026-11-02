@@ -55,6 +55,7 @@ func _start() -> void:
 
 	tint = CanvasModulate.new()
 	add_child(tint)
+	add_child(Emission.new())   # слой эмиссии (ADR-003 V3): свечение не темнеет под tint
 
 	player = Player.new()
 	player.look = int(Net.local_profile.get("look", 0)) & 0xFFFF   # вид из профиля (MP-B, #87)
@@ -128,9 +129,8 @@ func _print_scenarios() -> void:
 func _process(_delta: float) -> void:
 	if tint == null:
 		return
-	# Световой цикл
-	var dl: float = Game.daylight()
-	tint.color = Color(0.26, 0.30, 0.50).lerp(Color(1.0, 1.0, 1.0), dl)
+	# Световой цикл: амбиент день / сумерки / ночь (ADR-003 V3) — SkyBackdrop.ambient
+	tint.color = SkyBackdrop.ambient(Game.daylight())
 
 	if _args.has("--shot") and not _shot_taken and Game.game_time > 2.0:
 		_shot_taken = true
