@@ -1,8 +1,9 @@
 extends CanvasLayer
-## Автозагрузка интерфейса: HUD, окно инвентаря, проброс эффектов в мир.
+## Автозагрузка интерфейса: HUD, окно инвентаря, журнал (J), проброс эффектов в мир.
 
 var hud: HUD
 var panel: InventoryPanel
+var journal: JournalPanel
 var world_fx: WorldFX = null
 var player: Player = null
 
@@ -13,6 +14,8 @@ func _ready() -> void:
 	add_child(hud)
 	panel = InventoryPanel.new()
 	add_child(panel)
+	journal = JournalPanel.new()
+	add_child(journal)
 	Game.notification.connect(_on_notification)
 
 
@@ -28,8 +31,12 @@ func _input(event: InputEvent) -> void:
 		if k.keycode == KEY_I or k.keycode == KEY_TAB:
 			toggle_inventory()
 			get_viewport().set_input_as_handled()
-		elif k.keycode == KEY_ESCAPE and panel.visible:
+		elif k.keycode == KEY_J:
+			toggle_journal()
+			get_viewport().set_input_as_handled()
+		elif k.keycode == KEY_ESCAPE and (panel.visible or journal.visible):
 			panel.close()
+			journal.close()
 			get_viewport().set_input_as_handled()
 		elif k.keycode == KEY_P and world_fx:
 			world_fx.show_power = not world_fx.show_power
@@ -40,16 +47,28 @@ func toggle_inventory() -> void:
 		panel.close()
 	else:
 		if player:
+			journal.close()
 			panel.open(player)
+
+
+## J: журнал поверх игры. Окно одно за раз: инвентарь при этом закрывается.
+func toggle_journal() -> void:
+	if journal.visible:
+		journal.close()
+	else:
+		panel.close()
+		journal.open()
 
 
 func open_chest(c: Chest) -> void:
 	if player:
+		journal.close()
 		panel.open_chest(player, c)
 
 
+## Открыто окно, которое забирает ввод у мира (инвентарь или журнал).
 func blocking() -> bool:
-	return panel.visible
+	return panel.visible or journal.visible
 
 
 func _on_notification(text: String, color: Color) -> void:
