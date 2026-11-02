@@ -1,17 +1,30 @@
 extends Node
 ## Автотест игровой логики: копание, подбор, крафт, конвейер, питание, фантомы, релей.
+## Плюс секция «== Анимации ==» — общий код из tools/anim_test.gd (issue #6).
 ## Запускается из main.gd флагом `--test`.
 ##
 ## Все паузы отсчитываются по реальному времени, а не по кадрам: в headless-режиме
 ## частота кадров не гарантирована, а симуляция машин идёт по delta.
+
+## Общий код проверок анимаций: тот же самый, что и в отдельном
+## tools/anim_test.gd (issue #6). Дублирования нет — файл подключается один раз.
+const AnimTestScript = preload("res://tools/anim_test.gd")
 
 var scene: Node = null
 var step: int = 0
 var player: Node = null
 var fails: int = 0
 var checks: int = 0
+var anim: Node = null
 
 var _wait_until_ms: int = 0
+
+# Замер времени кадра (только предупреждение, провалом не считаем).
+var _frame_us: int = 0
+var _frame_n: int = 0
+var _frame_sum_ms: float = 0.0
+var _frame_max_ms: float = 0.0
+var _frame_slow: int = 0
 
 var mine_cell: Vector2i = Vector2i.ZERO
 var drill_cell: Vector2i = Vector2i.ZERO
@@ -29,6 +42,19 @@ func start(main_scene: Node) -> void:
 
 
 func _process(_delta: float) -> void:
+	# Замер времени кадра: между кадрами считаем разницу Time.get_ticks_usec.
+	# Это предупреждение, а не провал (см. секцию «== Производительность ==»).
+	var now_us: int = Time.get_ticks_usec()
+	if _frame_us > 0:
+		var ms: float = float(now_us - _frame_us) / 1000.0
+		_frame_n += 1
+		_frame_sum_ms += ms
+		if ms > _frame_max_ms:
+			_frame_max_ms = ms
+		if ms > 100.0:
+			_frame_slow += 1
+	_frame_us = now_us
+
 	if step == 0:
 		return
 	if Time.get_ticks_msec() < _wait_until_ms:
@@ -45,7 +71,9 @@ func _process(_delta: float) -> void:
 		9: _t_production_result()
 		10: _t_phantom()
 		11: _t_relay()
-		12: _t_finish()
+		12: _t_anim_start()
+		13: _t_anim_wait()
+		14: _t_finish()
 
 
 func _ok(label: String, cond: bool, extra: String = "") -> void:
@@ -361,7 +389,33 @@ func _t_relay() -> void:
 	_next(12, 0.5)
 
 
+func _t_anim_start() -> void:
+	# Секция «== Анимации ==»: те же самые проверки, что и в tools/anim_test.gd.
+	# Общий код — дублирования нет.
+	anim = AnimTestScript.Runner.new(self)
+	add_child(anim)
+	anim.start(scene)
+	_next(13, 0.2)
+
+
+func _t_anim_wait() -> void:
+	if anim == null:
+		_next(14)
+		return
+	if anim.done:
+		checks += anim.checks
+		fails += anim.fails
+		anim.queue_free()
+		anim = null
+		_next(14, 0.2)
+
+
 func _t_finish() -> void:
+	print("== Производительность ==")
+	var avg_ms: float = _frame_sum_ms / maxf(1.0, float(_frame_n))
+	# Это предупреждение, а не провал: fails здесь не растёт.
+	print("  ПРЕДУПРЕЖДЕНИЕ  время кадра: среднее %.2f мс, максимум %.2f мс, кадров > 100 мс: %d из %d (не провал)"
+			% [avg_ms, _frame_max_ms, _frame_slow, _frame_n])
 	print("== Финал ==")
 	_ok("состояние WON", Game.state == Game.State.WON, "state=%d" % Game.state)
 	print("")

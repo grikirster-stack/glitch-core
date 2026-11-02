@@ -50,10 +50,20 @@ jobs:
         timeout-minutes: 5
         run: godot --headless --path . -- --test --seed=12345
 
+      # Автотест анимаций отдельным запуском: он умеет работать и сам по себе
+      # (--script), без флага --test. Шаг ловит, что отдельная точка входа
+      # не разъехалась с общим прогоном.
+      - name: Автотест анимаций (отдельный запуск)
+        timeout-minutes: 5
+        run: godot --headless --path . --script res://tools/anim_test.gd -- --seed=31337
+
+      # Сторож фризов. Шаг роняет сборку при «жёстком» фризе — кадре длиннее
+      # 500 мс: это настоящее зависание, а не шум планировщика (локально худший
+      # кадр 12–57 мс, запас 10–40x). Мягкие фризы (> 100 мс) не роняют шаг,
+      # но остаются в артефакте freeze-report.
       - name: Сторож фризов (headless)
         timeout-minutes: 10
-        continue-on-error: true
-        run: godot --headless --path . --script res://tools/freeze_probe.gd -- --allow-hitch
+        run: godot --headless --path . --script res://tools/freeze_probe.gd -- --seed=31337
 
       - name: Отчёт о фризах
         if: always()
