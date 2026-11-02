@@ -380,37 +380,55 @@ func _compute_hint(pos: Vector2) -> String:
 	var aimed = World.machines.get(player.building_cell)
 	if aimed is Generator and aimed.global_position.distance_to(pos) < 40.0:
 		return generator_hint(aimed)
-	for t in World.terminals:
-		if World.cell_to_world(t).distance_to(pos) < HINT_TERMINAL_DIST:
-			var th: String = terminal_hint(t)
-			if th == HINT_TERMINAL:     # без питания E не работает — и рамки нет
-				_hint_target = _cell_rect(t)
-			return th
-	if World.cell_to_world(World.beacon_cell).distance_to(pos) < HINT_BEACON_DIST:
-		_hint_target = _cell_rect(World.beacon_cell)
-		return HINT_BEACON
 	# Только клетки в радиусе подсказки, а не все постройки мира.
 	var r: int = int(ceil(HINT_MACHINE_DIST / float(World.TILE))) + 1
 	var pc: Vector2i = World.world_to_cell(pos)
-	var chest: bool = false
+	# Ближайший сундук и ближайший терминал: E достаётся тому, что ближе
+	# (см. player._do_interact). Терминал руины стоит в 36 px от её тайника —
+	# раньше подсказка терминала перехватывала подсказку тайника.
+	var chest_cell: Vector2i = Vector2i(-1, -1)
+	var chest_d: float = HINT_MACHINE_DIST
 	for dy in range(-r, r + 1):
 		for dx in range(-r, r + 1):
 			var m = World.machines.get(pc + Vector2i(dx, dy))
-			if m == null or not is_instance_valid(m):
+			if m == null or not is_instance_valid(m) or not (m is Chest):
 				continue
-			if m.global_position.distance_to(pos) >= HINT_MACHINE_DIST:
+			var cd: float = m.global_position.distance_to(pos)
+			if cd >= HINT_MACHINE_DIST or cd >= chest_d:
 				continue
-			if m is Generator:
-				_hint_target = _cell_rect(m.cell)
-				return generator_hint(m)
-			if m is Inserter:
-				_hint_target = _cell_rect(m.cell)
-				return HINT_INSERTER
-			if m is Chest and not chest:
-				chest = true
-				_hint_target = _cell_rect(m.cell)
-	if chest:
+			chest_d = cd
+			chest_cell = m.cell
+	var term_cell: Vector2i = Vector2i(-1, -1)
+	var term_d: float = HINT_TERMINAL_DIST
+	for t in World.terminals:
+		var td: float = World.cell_to_world(t).distance_to(pos)
+		if td < term_d:
+			term_d = td
+			term_cell = t
+	if chest_cell.x >= 0 and (term_cell.x < 0 or chest_d < term_d):
+		_hint_target = _cell_rect(chest_cell)
 		return HINT_CHEST
+	if term_cell.x >= 0:
+		var th: String = terminal_hint(term_cell)
+		if th == HINT_TERMINAL:     # без питания E не работает — и рамки нет
+			_hint_target = _cell_rect(term_cell)
+		return th
+	if World.cell_to_world(World.beacon_cell).distance_to(pos) < HINT_BEACON_DIST:
+		_hint_target = _cell_rect(World.beacon_cell)
+		return HINT_BEACON
+	for dy2 in range(-r, r + 1):
+		for dx2 in range(-r, r + 1):
+			var m2 = World.machines.get(pc + Vector2i(dx2, dy2))
+			if m2 == null or not is_instance_valid(m2):
+				continue
+			if m2.global_position.distance_to(pos) >= HINT_MACHINE_DIST:
+				continue
+			if m2 is Generator:
+				_hint_target = _cell_rect(m2.cell)
+				return generator_hint(m2)
+			if m2 is Inserter:
+				_hint_target = _cell_rect(m2.cell)
+				return HINT_INSERTER
 	return ""
 
 
