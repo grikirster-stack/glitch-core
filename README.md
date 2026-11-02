@@ -79,7 +79,10 @@ Workflow [`Релиз`](.github/workflows/release.yml) запускается **
   Пароль хранилища — `ANDROID_KEYSTORE_PASSWORD` (у PKCS12 он же пароль ключа), алиас — `ANDROID_KEY_ALIAS`.
 
 Локальная сборка: шаблоны экспорта 4.7.2 (в редакторе «Editor → Manage Export Templates»),
-в «Editor Settings → Export → Android» — пути к Android SDK и JDK 17, затем
+в «Editor Settings → Export → Android» — пути к Android SDK и JDK 17. Для Android Godot
+требует импорт ETC2/ASTC: CI включает его только в раннере, локально — кнопка «Fix Import»
+в окне экспорта (или `rendering/textures/vram_compression/import_etc2_astc=true`; в main этот
+ключ не коммитим). Затем
 `godot --headless --path . --export-release "Android" build/android/glitch-core.apk`.
 
 ## Как запустить

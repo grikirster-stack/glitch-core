@@ -255,7 +255,10 @@ jobs:
           EOF
           cat "$HOME/.config/godot/editor_settings-4.7.tres"
 
-      # Только в раннере: в main версия не коммитится.
+      # Только в раннере: в main версия не коммитится (project.godot переписывает редактор,
+      # issue #19). Там же включаем импорт ETC2/ASTC — без него Godot не экспортирует под
+      # Android («ETC2/ASTC texture compression is required»); текстур с VRAM-сжатием в проекте
+      # нет, так что на десктоп и тесты это не влияет.
       - name: Версия ${{ env.TAG }} в project.godot и export_presets.cfg
         run: |
           set -euo pipefail
@@ -264,6 +267,10 @@ jobs:
           else
             sed -i "/^config\/name=/a config/version=\"$VERSION\"" project.godot
           fi
+          if ! grep -q '^textures/vram_compression/import_etc2_astc=' project.godot; then
+            sed -i '/^\[rendering\]/a textures/vram_compression/import_etc2_astc=true' project.godot
+          fi
+          grep -n 'import_etc2_astc' project.godot
           sed -i \
             -e "s|^version/code=.*|version/code=$CODE|" \
             -e "s|^version/name=.*|version/name=\"$VERSION\"|" \
