@@ -787,3 +787,55 @@ func _draw_mining_fx() -> void:
 
 func _make_slash_fx(p: Vector2) -> void:
 	UI.spawn_slash(p)
+
+
+# ------------------------------------------------- СОХРАНЕНИЕ (#37)
+## Позиция, здоровье, инвентарь с хотбаром (первые hotbar_size слотов) и
+## кулдауны. Копка, ремонт и прогресс терминала — по нажатию, не пишутся.
+func save_state() -> Dictionary:
+	var slots_out: Array = []
+	for s in inv.slots:
+		slots_out.append([s.id, s.count])
+	return {
+		"pos": global_position, "vel": vel, "on_ground": on_ground, "facing": facing,
+		"hp": hp, "inv": slots_out, "selected": inv.selected,
+		"hiding": hiding, "hide_timer": hide_timer, "hide_cd": hide_cd,
+		"invuln": invuln, "emp_cd": emp_cd, "slash_cd": slash_cd, "noise": noise,
+		"regen": _regen,
+	}
+
+
+func load_state(d: Dictionary) -> void:
+	global_position = d.get("pos", global_position)
+	vel = d.get("vel", Vector2.ZERO)
+	on_ground = bool(d.get("on_ground", false))
+	facing = int(d.get("facing", facing))
+	hp = float(d.get("hp", MAX_HP))
+	var src: Array = d.get("inv", [])
+	for i in inv.size:
+		var e = src[i] if i < src.size() else null
+		if e is Array and e.size() >= 2 and int(e[1]) > 0:
+			inv.slots[i] = ItemStack.new(int(e[0]), int(e[1]))
+		else:
+			inv.slots[i] = ItemStack.new()
+	inv.selected = clampi(int(d.get("selected", 0)), 0, inv.hotbar_size - 1)
+	hiding = bool(d.get("hiding", false))
+	hide_timer = float(d.get("hide_timer", 0.0))
+	hide_cd = float(d.get("hide_cd", 0.0))
+	invuln = float(d.get("invuln", 0.0))
+	emp_cd = float(d.get("emp_cd", 0.0))
+	slash_cd = float(d.get("slash_cd", 0.0))
+	noise = float(d.get("noise", 0.0))
+	_regen = float(d.get("regen", 0.0))
+	dead = false
+	mining_progress = 0.0
+	mining_cell = Vector2i(-1, -1)
+	task_progress = 0.0
+	_stun = 0.0
+	_hit_flash = 0.0
+	_shake = 0.0
+	if camera != null:
+		camera.reset_smoothing()
+	inv.changed.emit()
+	stats_changed.emit()
+	queue_redraw()

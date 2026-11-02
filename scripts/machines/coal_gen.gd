@@ -88,3 +88,15 @@ func _draw() -> void:
 		# Индикатор топлива
 		draw_rect(Rect2(-8.0, -13.0, 16.0, 2.0), Color(0, 0, 0, 0.6))
 		draw_rect(Rect2(-8.0, -13.0, 16.0 * clampf(fuel / BURN, 0.0, 1.0), 2.0), Color(1.0, 0.7, 0.2))
+
+
+# ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
+func save_state() -> Dictionary:
+	var d: Dictionary = super()
+	d["fuel"] = fuel
+	return d
+
+
+func load_state(d: Dictionary) -> void:
+	super(d)
+	fuel = float(d.get("fuel", fuel))

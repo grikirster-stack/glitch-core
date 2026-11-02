@@ -483,3 +483,70 @@ func _player() -> Node2D:
 func _player_pos() -> Vector2:
 	var pl: Node2D = _player()
 	return pl.global_position if pl != null else World.spawn_point
+
+
+# ------------------------------------------------------------------ СОХРАНЕНИЕ (#37)
+## Фантомы поштучно не сохраняются: их ИИ (путь, заморозка двойника, стая, цель
+## роя) — большая поверхность сериализации, а ночь и так случайна. Вместо этого
+## живые фантомы и те, что ждут в вентиляции, возвращаются в начало очереди ночи
+## (roster): после загрузки они заново выходят из вентиляций с телеграфом. Так
+## загрузка ночью не стирает угрозу (от ночи не спрятаться через F9) и не
+## удваивает её (бюджет ночи не пересчитывается заново).
+
+func save_state() -> Dictionary:
+	var back: Array = []
+	var packs: Dictionary = {}
+	var alive: int = 0
+	for p in get_tree().get_nodes_in_group("phantom"):
+		if not is_instance_valid(p) or not bool(p.get("alive")):
+			continue
+		alive += 1
+		var pid: int = int(p.get("pack_id"))
+		if pid > 0:
+			if packs.has(pid):
+				continue
+			packs[pid] = true
+		back.append(String(p.get("kind")))
+	for p in pending:
+		back.append(String(p["kind"]))
+	back.append_array(roster)
+	return {
+		"active": active,
+		"night_day": night_day,
+		"budget": budget,
+		"roster": back,
+		"spawn_timer": spawn_timer,
+		"spawned_total": maxi(0, spawned_total - alive),   ## вернувшиеся выйдут и посчитаются заново
+		"relay_seen": _relay_seen,
+		"pack_seq": _pack_seq,
+		"rng_state": _rng.state,
+	}
+
+
+## Фантомы текущего мира уходят без следа (не убиты: stats_kills не растёт),
+## телеграфы и гул сумерек глушатся, очередь ночи — из файла.
+func load_state(d: Dictionary) -> void:
+	for p in pending:
+		Sfx.loop_stop(int(p["hum"]))
+	pending.clear()
+	_stop_dusk_hum()
+	for p in get_tree().get_nodes_in_group("phantom"):
+		if is_instance_valid(p):
+			if p.get_parent() != null:
+				p.get_parent().remove_child(p)
+			p.queue_free()
+	active = bool(d.get("active", false))
+	night_day = int(d.get("night_day", 0))
+	budget = float(d.get("budget", 0.0))
+	roster.clear()
+	for k in d.get("roster", []):
+		if Balance.PHANTOMS.has(String(k)):
+			roster.append(String(k))
+	spawn_timer = float(d.get("spawn_timer", 0.0))
+	spawned_total = int(d.get("spawned_total", 0))
+	_relay_seen = bool(d.get("relay_seen", false))
+	_pack_seq = int(d.get("pack_seq", 0))
+	if d.has("rng_state"):
+		_rng.state = int(d["rng_state"])
+	_lights_size = -1
+	Game.phantoms_alive = 0

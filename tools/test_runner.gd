@@ -5,7 +5,8 @@ extends Node
 ## секции «== Данные ==» и «== Сутки ==» — согласованность IDs/DB/Balance и цикл смены (#24),
 ## секция «== Лор ==» — общий код из tools/lore_test.gd (issue #26),
 ## секция «== Звук ==» — общий код из tools/sfx_test.gd (issue #36),
-## секция «== Тайники руин ==» — сундуки и таблички руин (issue #35).
+## секция «== Тайники руин ==» — сундуки и таблички руин (issue #35),
+## секция «== Сохранение ==» — общий код из tools/save_test.gd (issue #37).
 ## Запускается из main.gd флагом `--test`.
 ##
 ## Все паузы отсчитываются по реальному времени, а не по кадрам: в headless-режиме
@@ -20,6 +21,8 @@ const PowerTestScript = preload("res://tools/power_test.gd")
 const LoreTestScript = preload("res://tools/lore_test.gd")
 ## Общий код проверок процедурного звука: tools/sfx_test.gd (issue #36).
 const SfxTestScript = preload("res://tools/sfx_test.gd")
+## Общий код проверок сохранения: tools/save_test.gd (issue #37).
+const SaveTestScript = preload("res://tools/save_test.gd")
 
 var scene: Node = null
 var step: int = 0
@@ -30,6 +33,7 @@ var anim: Node = null
 var power: Node = null
 var lore: Node = null
 var sfx_t: Node = null
+var save_t: Node = null
 
 var _wait_until_ms: int = 0
 
@@ -103,7 +107,9 @@ func _process(_delta: float) -> void:
 		22: _t_lore_wait()
 		23: _t_sfx_start()
 		24: _t_sfx_wait()
-		25: _t_finish()
+		25: _t_save_start()
+		26: _t_save_wait()
+		27: _t_finish()
 
 
 func _ok(label: String, cond: bool, extra: String = "") -> void:
@@ -714,6 +720,27 @@ func _t_sfx_wait() -> void:
 		sfx_t.queue_free()
 		sfx_t = null
 		_next(25, 0.1)
+
+
+# --- Сохранение (issue #37) ----------------------------------------------------
+func _t_save_start() -> void:
+	# Секция «== Сохранение ==»: те же проверки, что и в tools/save_test.gd, на сиде прогона.
+	save_t = SaveTestScript.Runner.new(self)
+	add_child(save_t)
+	save_t.start(scene, [int(scene.get("seed_value"))])
+	_next(26, 0.1)
+
+
+func _t_save_wait() -> void:
+	if save_t == null:
+		_next(27)
+		return
+	if save_t.done:
+		checks += save_t.checks
+		fails += save_t.fails
+		save_t.queue_free()
+		save_t = null
+		_next(27, 0.1)
 
 
 func _t_finish() -> void:

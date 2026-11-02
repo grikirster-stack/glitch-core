@@ -1479,3 +1479,93 @@ func _explore_tick() -> void:
 		return
 	_explore_cell = c
 	reveal_around(c, explore_radius_at(c))
+
+
+# ------------------------------------------------------------ СОХРАНЕНИЕ (#37)
+## Сетка мира для Save (scripts/core/save.gd): тайлы, уровни воды с очередью
+## пересчёта, карта исследования и списки, которые меняются по ходу забега
+## (прочитанные терминалы уходят из terminals). Постройки пишет Save сам —
+## через MachineBase.save_state(). Сжимает файл целиком Save.
+
+## Сколько клеток поменяла последняя загрузка (замер).
+var load_changed_cells: int = 0
+
+func save_state() -> Dictionary:
+	var signs: Array = []
+	for c in ruin_caches:
+		signs.append(is_instance_valid(c["sign"]) and bool(c["sign"].announced))
+	return {
+		"w": W, "h": H,
+		"tiles": tiles.duplicate(),
+		"fluid": fluid.duplicate(),
+		"fluid_queue": _fluid_queue.duplicate(),
+		"fluid_timer": _fluid_timer,
+		"explored": explored.duplicate(),
+		"surface": surface.duplicate(),
+		"terminals": Array(terminals),
+		"terminal_chapters": terminal_chapters.duplicate(),
+		"vents": Array(vents),
+		"beacon_cell": beacon_cell,
+		"spawn_point": spawn_point,
+		"ruin_signs": signs,
+	}
+
+
+## Положить сетку из файла поверх мира того же сида: тайлмап, свет и сетка пути
+## правятся в отличающихся клетках, слои тумана пересобираются по explored_reset.
+## false — размеры не сходятся.
+func load_state(d: Dictionary) -> bool:
+	var n: int = W * H
+	var t: PackedByteArray = d.get("tiles", PackedByteArray())
+	var f: PackedByteArray = d.get("fluid", PackedByteArray())
+	var e: PackedByteArray = d.get("explored", PackedByteArray())
+	if int(d.get("w", 0)) != W or int(d.get("h", 0)) != H or t.size() != n or f.size() != n \
+			or e.size() != n:
+		return false
+	# Тайлмап, сетка пути и свет уже соответствуют текущим тайлам (мир того же
+	# сида или только что сгенерирован) — правим только отличающиеся клетки.
+	# Ряды сравниваются нативно: цикл скрипта идёт лишь по изменённым рядам.
+	var old: PackedByteArray = tiles
+	tiles = t.duplicate()
+	load_changed_cells = 0
+	for y in H:
+		var row: int = y * W
+		if old.slice(row, row + W) == tiles.slice(row, row + W):
+			continue
+		for x in W:
+			if old[row + x] == tiles[row + x]:
+				continue
+			load_changed_cells += 1
+			if tilemap:
+				_set_cell_visual(x, y, tiles[row + x])
+			_update_astar(x, y)
+			_update_lights_around(x, y)
+	fluid = f.duplicate()
+	explored = e.duplicate()
+	var s: PackedInt32Array = d.get("surface", PackedInt32Array())
+	if s.size() == W:
+		surface = s.duplicate()
+	# Очередь воды — как была: вода продолжит течь с того же шага.
+	_fluid_queued.resize(n)
+	_fluid_queued.fill(0)
+	_fluid_queue = PackedInt32Array()
+	for idx in PackedInt32Array(d.get("fluid_queue", PackedInt32Array())):
+		_fluid_mark(idx)
+	_fluid_timer = float(d.get("fluid_timer", 0.0))
+	terminals.clear()
+	for c in d.get("terminals", []):
+		terminals.append(c)
+	terminal_chapters = Dictionary(d.get("terminal_chapters", terminal_chapters)).duplicate()
+	vents.clear()
+	for v in d.get("vents", []):
+		vents.append(v)
+	beacon_cell = d.get("beacon_cell", beacon_cell)
+	spawn_point = d.get("spawn_point", spawn_point)
+	var signs: Array = d.get("ruin_signs", [])
+	for i in mini(signs.size(), ruin_caches.size()):
+		if is_instance_valid(ruin_caches[i]["sign"]):
+			ruin_caches[i]["sign"].announced = bool(signs[i])
+	explore_cells = explored.count(1)
+	_explore_cell = Vector2i(-9999, -9999)
+	explored_reset.emit()
+	return true

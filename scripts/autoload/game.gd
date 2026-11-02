@@ -481,3 +481,31 @@ func try_finish() -> bool:
 	notify("РЕЛЕЙ ЗАПУЩЕН! Держитесь %d секунд." % int(RELAY_TIME), Color(0.4, 1.0, 0.8))
 	Sfx.play("power", -2.0)
 	return true
+
+
+# ------------------------------------------------- СОХРАНЕНИЕ (#37)
+## Поля забега, которые пишет Save (scripts/core/save.gd). Новое поле состояния
+## забега — допишите его имя сюда. Питание и браун-аут не пишутся: их пересчитывает
+## первая же раскладка после загрузки.
+const SAVE_FIELDS: Array[String] = [
+	"time_of_day", "day_number", "tasks_total", "tasks_done", "research", "wave",
+	"game_time", "relay_active", "relay_timer", "stats_mined", "stats_crafted",
+	"stats_kills", "stats_deaths", "objective_stage",
+]
+
+
+func save_state() -> Dictionary:
+	var d: Dictionary = {}
+	for f in SAVE_FIELDS:
+		d[f] = get(f)
+	return d
+
+
+## Неизвестные ключи игнорируются, отсутствующие — остаются как есть.
+func load_state(d: Dictionary) -> void:
+	for f in SAVE_FIELDS:
+		if d.has(f):
+			set(f, d[f])
+	set_state(State.PLAYING)
+	_power_index_size = -1          ## машины поставлены заново — индекс пересоберётся
+	_power_timer = 0.0
