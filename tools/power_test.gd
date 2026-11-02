@@ -313,8 +313,9 @@ class Runner extends Node:
 		# Мир перегенерирован: старые машины и источники питания исчезают.
 		var seed_used: int = int(world.world_seed)
 		world.generate(seed_used)
-		_ok("после перегенерации машин в мире нет", world.machines.size() == 0,
-				"машин %d" % world.machines.size())
+		# Сундуки-тайники руин (#35) ставит сама генерация — их не считаем.
+		_ok("после перегенерации машин в мире нет", world.machines.size() == world.ruin_caches.size(),
+				"машин %d, тайников руин %d" % [world.machines.size(), world.ruin_caches.size()])
 		_ok("после перегенерации питания нет нигде", not _powered_at(_pos(_in_cell)))
 		_ok("после перегенерации старый источник не питает",
 				not _powered_at(_pos(_gen_cell)))
