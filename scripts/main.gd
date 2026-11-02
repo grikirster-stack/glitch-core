@@ -57,6 +57,7 @@ func _start() -> void:
 	add_child(tint)
 
 	player = Player.new()
+	player.look = int(Net.local_profile.get("look", 0)) & 0xFFFF   # вид из профиля (MP-B, #87)
 	player.add_to_group("player")
 	add_child(player)
 	player.global_position = World.spawn_point
@@ -200,8 +201,10 @@ func _respawn() -> void:
 
 
 # ------------------------------------------------- СЕТЬ (ADR-002, MP-A #86)
-## Крюк меню (§ 4.6): без пользовательских аргументов и без сессии — меню, если его
-## сцена есть (MP-B, #87); иначе старт как раньше. Любой аргумент — немедленный старт.
+## Крюк меню (§ 4.6): без пользовательских аргументов, не под --script и без сессии —
+## меню, если его сцена есть (MP-B, #87); иначе старт как раньше. Любой аргумент —
+## немедленный старт. Инструменты --script (save_test, lore_test, …) сами грузят
+## main.tscn, часто без аргументов: у их SceneTree свой скрипт — меню им не нужно.
 ## --mp-join=ip[:порт]: сначала рукопожатие (сид приходит от хоста), мир — после него.
 ## --mp-host[=порт] [--mp-bind=ip]: сервер поднимается, когда мир готов.
 ## --mp-scenario=<имя|all>: харнесс сетевых сценариев (tools/mp/mp_runner.gd).
@@ -213,7 +216,8 @@ var _net: Dictionary = {}
 
 ## true — старт мира отложен (ждём рукопожатия) или сцена уходит в меню.
 func _net_boot() -> bool:
-	if _args.is_empty() and Net.session.is_empty() and ResourceLoader.exists(MENU_SCENE):
+	if _args.is_empty() and Net.session.is_empty() and get_tree().get_script() == null \
+			and ResourceLoader.exists(MENU_SCENE):
 		get_tree().change_scene_to_file.call_deferred(MENU_SCENE)
 		return true
 	_net = Net.parse_args(_args)

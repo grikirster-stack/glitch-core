@@ -7,7 +7,8 @@ extends Node
 ## секция «== Звук ==» — общий код из tools/sfx_test.gd (issue #36),
 ## секция «== Тайники руин ==» — сундуки и таблички руин (issue #35),
 ## секция «== Сохранение ==» — общий код из tools/save_test.gd (issue #37),
-## секция «== Небесный тайник ==» — обломок «Кербер-9» в небе (issue #60).
+## секция «== Небесный тайник ==» — обломок «Кербер-9» в небе (issue #60),
+## секция «== Меню и профиль ==» — общий код из tools/menu_test.gd (ADR-002, MP-B, #87).
 ## Запускается из main.gd флагом `--test`.
 ##
 ## Все паузы отсчитываются по реальному времени, а не по кадрам: в headless-режиме
@@ -24,6 +25,8 @@ const LoreTestScript = preload("res://tools/lore_test.gd")
 const SfxTestScript = preload("res://tools/sfx_test.gd")
 ## Общий код проверок сохранения: tools/save_test.gd (issue #37).
 const SaveTestScript = preload("res://tools/save_test.gd")
+## Общий код проверок профиля и меню: tools/menu_test.gd (ADR-002, MP-B, #87).
+const MenuTestScript = preload("res://tools/menu_test.gd")
 
 var scene: Node = null
 var step: int = 0
@@ -35,6 +38,7 @@ var power: Node = null
 var lore: Node = null
 var sfx_t: Node = null
 var save_t: Node = null
+var menu_t: Node = null   ## меню и профиль (MP-B, #87)
 
 var _wait_until_ms: int = 0
 
@@ -110,7 +114,9 @@ func _process(_delta: float) -> void:
 		24: _t_sfx_wait()
 		25: _t_save_start()
 		26: _t_save_wait()
-		27: _t_finish()
+		27: _t_menu_start()   # меню и профиль (MP-B, #87)
+		28: _t_menu_wait()
+		29: _t_finish()
 
 
 func _ok(label: String, cond: bool, extra: String = "") -> void:
@@ -744,6 +750,28 @@ func _t_save_wait() -> void:
 		save_t.queue_free()
 		save_t = null
 		_next(27, 0.1)
+
+
+# --- Меню и профиль (ADR-002, MP-B, #87) ---------------------------------------
+func _t_menu_start() -> void:
+	# Секция «== Меню и профиль ==»: те же проверки, что и в tools/menu_test.gd,
+	# без смены сцены и замера (они — только в отдельном запуске).
+	menu_t = MenuTestScript.Runner.new(self)
+	add_child(menu_t)
+	menu_t.start(scene)
+	_next(28, 0.1)
+
+
+func _t_menu_wait() -> void:
+	if menu_t == null:
+		_next(29)
+		return
+	if menu_t.done:
+		checks += menu_t.checks
+		fails += menu_t.fails
+		menu_t.queue_free()
+		menu_t = null
+		_next(29, 0.1)
 
 
 func _t_finish() -> void:
