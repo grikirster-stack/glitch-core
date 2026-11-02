@@ -495,6 +495,22 @@ func _reset_world() -> void:
 	Game.reset_run()
 	Threat.reset()
 	Game.tasks_total = World.terminals.size()
+	# Окна и зажатые клавиши прошлого сценария (#116): открытый сундук или журнал
+	# забирают ввод у мира (UI.blocking), а держание E — следующее нажатие, и один
+	# провал каскадом валил все сценарии дальше. Окна закрываем до сброса
+	# инвентаря: предмет «в руке» панель возвращает в него.
+	if UI.panel != null and UI.panel.visible:
+		UI.panel.close()
+	if UI.journal != null and UI.journal.visible:
+		UI.journal.close()
+	if UI.panel != null:
+		UI.panel.held = ItemStack.new()
+	p.touch_input = {}
+	p._e_prev = false
+	p._e_used = false
+	p._v_prev = false
+	p._repair_cd = 0.0
+	p._task_cell = Vector2i(-1, -1)
 	# Игрок заново.
 	p.test_input = {}
 	p.hp = Player.MAX_HP

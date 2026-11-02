@@ -11,6 +11,9 @@ func _init() -> void:
 
 func _process(delta: float) -> void:
 	super(delta)
+	if not Net.is_authority():   # СЕТЬ (ADR-002): топливо и активность — от хоста
+		queue_redraw()
+		return
 	power_active = enabled and Game.daylight() > Balance.SOLAR_MIN_DAYLIGHT
 	queue_redraw()
 

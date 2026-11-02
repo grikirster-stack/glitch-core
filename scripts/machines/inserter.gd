@@ -80,6 +80,8 @@ func interact(p) -> void:
 
 func _process(delta: float) -> void:
 	super(delta)
+	if not Net.is_authority():   # СЕТЬ (ADR-002): работает хост, клиент рисует по net_state
+		return
 	if not powered:
 		return
 	if held == IDs.I.NONE:
@@ -209,3 +211,24 @@ func load_state(d: Dictionary) -> void:
 	moved = int(d.get("moved", moved))
 	_swing = float(d.get("swing", _swing))
 	_idle_t = float(d.get("idle", _idle_t))
+
+
+# ------------------------------------------------------------- СЕТЬ (ADR-002, MP-E #90)
+## + dir u8 · предмет в захвате u8 · фильтр u8 (ход руки — progress базы).
+func net_state() -> PackedByteArray:
+	var b: PackedByteArray = super()
+	b.append(dir & 3)
+	b.append(held & 0xFF)
+	b.append(filter & 0xFF)
+	return b
+
+
+func apply_net_state(b: PackedByteArray) -> int:
+	var o: int = super(b)
+	if o < 0 or b.size() < o + 3:
+		return -1
+	dir = b[o] & 3
+	held = b[o + 1]
+	filter = b[o + 2]
+	queue_redraw()
+	return o + 3
