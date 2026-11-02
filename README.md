@@ -20,6 +20,73 @@
 идут на охоту) → снова день. Задания у терминалов дают данные — их нужно выполнить,
 чтобы открыть релей.
 
+## Скачать / Android
+
+Готовые сборки лежат в [Releases](https://github.com/grikirster-stack/glitch-core/releases/latest):
+
+| Файл | Что это |
+|---|---|
+| `glitch-core-vX.Y.Z-android.apk` | Android, универсальный APK: arm64-v8a, armeabi-v7a, x86_64 (телефоны, планшеты, эмуляторы) |
+| `glitch-core-vX.Y.Z-windows-x86_64.zip` | Windows: распаковать, запустить `glitch-core.exe` |
+| `glitch-core-vX.Y.Z-linux-x86_64.zip` | Linux: распаковать, запустить `./glitch-core.x86_64` |
+
+**Как поставить APK на телефон:**
+
+1. Откройте страницу релиза в браузере телефона и скачайте `...-android.apk`.
+2. Откройте скачанный файл. Android попросит разрешить установку из этого источника:
+   «Настройки» → «Приложения» → «Специальный доступ» → «Установка неизвестных приложений» →
+   выберите браузер (или файловый менеджер) → «Разрешить». Названия пунктов зависят
+   от прошивки; часто Android сам предлагает кнопку «Настройки» прямо в окне установки.
+3. Нажмите «Установить». Если Play Защита предупредит о неизвестном разработчике —
+   «Подробнее» → «Всё равно установить».
+4. Если в заметках релиза написано «подписано debug-ключом», обновление поверх прошлой
+   версии не встанет: сначала удалите старую версию игры.
+
+С компьютера: `adb install -r glitch-core-vX.Y.Z-android.apk`.
+
+> Пока игра управляется клавиатурой и мышью (их можно подключить к телефону по USB или
+> Bluetooth); сенсорное управление — [#81](https://github.com/grikirster-stack/glitch-core/issues/81).
+
+### Как выходят релизы
+
+Релиз выпускается **только вручную, по кнопке** — workflow [`Релиз`](.github/workflows/release.yml)
+(Actions → «Релиз» → Run workflow, ветка main). Он делает: автотесты на сидах 31337, 4242, 12345 → экспорт Android/Windows/Linux → проверка APK
+(`apksigner verify`, `aapt dump badging`: пакет, версия, три ABI, разрешения) → тег `vX.Y.Z`
+и GitHub Release с файлами и заметками на русском. Тесты упали — релиза нет.
+
+- **Версия** — от последнего тега `vX.Y.Z` (первый релиз — `v0.1.0`). Автоматически —
+  minor, если у PR с прошлого тега или у закрытых ими issue есть метка `gameplay` или
+  `enhancement`, иначе patch. Android `versionCode = X*10000 + Y*100 + Z`.
+  Версия прописывается в `project.godot` и `export_presets.cfg` только в раннере — в main
+  её не коммитят.
+- **Заметки** — список смерженных PR с прошлого тега по группам (геймплей / исправления /
+  прочее) и ссылка на полный diff. Посмотреть заранее: `python tools/release/plan.py --notes notes.md`.
+- **Запуск**: Actions → «Релиз» → Run workflow (выбрать `bump`: auto/patch/minor/major) или
+  `gh workflow run release.yml -f bump=auto`. Настоящий релиз — только с main и только если
+  с прошлого тега есть новые коммиты.
+- **Пробная сборка без тега и релиза**: `gh workflow run release.yml --ref <ветка> -f bump=patch -f dry_run=true`,
+  файлы — в артефакте запуска (`gh run download <id>`). PR, которые трогают `export_presets.cfg`,
+  `project.godot`, `release.yml` или `tools/release/`, проходят ту же сборку автоматически.
+- **Подпись APK** — release-ключом (сертификат `CN=Glitch Core`) из секретов репозитория
+  `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`; они уже заданы.
+  Без секретов (например, в форке) — запасной путь: debug-ключ, сгенерированный в CI, с пометкой
+  в заметках. Как ключ создавался (повторять не нужно; хранится вне репозитория):
+
+  ```bash
+  keytool -genkeypair -v -keystore glitch-core-release.keystore -storetype PKCS12 \
+    -alias glitchcore -keyalg RSA -keysize 4096 -validity 10000
+  base64 -w0 glitch-core-release.keystore   # → ANDROID_KEYSTORE_BASE64
+  ```
+
+  Пароль хранилища — `ANDROID_KEYSTORE_PASSWORD` (у PKCS12 он же пароль ключа), алиас — `ANDROID_KEY_ALIAS`.
+
+Локальная сборка: шаблоны экспорта 4.7.2 (в редакторе «Editor → Manage Export Templates»),
+в «Editor Settings → Export → Android» — пути к Android SDK и JDK 17. Для Android Godot
+требует импорт ETC2/ASTC: CI включает его только в раннере, локально — кнопка «Fix Import»
+в окне экспорта (или `rendering/textures/vram_compression/import_etc2_astc=true`; в main этот
+ключ не коммитим). Затем
+`godot --headless --path . --export-release "Android" build/android/glitch-core.apk`.
+
 ## Как запустить
 
 Нужен **Godot 4.7+** (стандартная версия, .NET не требуется).
