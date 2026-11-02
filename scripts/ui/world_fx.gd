@@ -64,6 +64,19 @@ const REDRAW_INTERVAL: float = 1.0 / REDRAW_HZ
 const STATS_FLAG: String = "--fx-stats"
 const STATS_INTERVAL: float = 2.0
 
+# ------------------------------------------------- ЦВЕТА СВЕЧЕНИЯ (ADR-003 V3)
+## Ореол источника — цветом того, что светит (палитра DB.PAL, концепт «Споровый луг»).
+## glow_texture сама тёплая (1, 0.92, 0.72): GLOW_TEX_INV снимает её тон.
+const GLOW_TEX_INV: Color = Color(1.0, 1.0 / 0.92, 1.0 / 0.72)
+const GLOW_LAMP: Color = Color("#FFE7A0")       ## фонарь, прожектор, вентиляция
+const GLOW_LAVA: Color = Color("#FF7A2E")       ## лава
+const GLOW_CRYSTAL: Color = Color("#6FF5E0")    ## кристалл глитча, кристальный блок
+const GLOW_BIO: Color = Color("#7FE6D2")        ## светокристалл, релей-ядро
+const GLOW_SCREEN: Color = Color("#8CF0C8")     ## экран терминала
+## Ночью ореол не тускнеет под амбиентом (слой эмиссии), поэтому его плотность
+## снижаем до GLOW_NIGHT_K — иначе свет терминалов заливает базу дымкой.
+const GLOW_NIGHT_K: float = 0.7
+
 # ------------------------------------------------------------ СОСТОЯНИЕ
 var chips: Array = []
 var rings: Array = []
@@ -114,10 +127,19 @@ var _stats_on: bool = false
 var _stats_t: float = 0.0
 var _redraws: int = 0
 var _dusk_acc: float = 0.0
+## Слой ореолов (ADR-003 V3): свой CanvasItem под эффектами WorldFX, чтобы
+## материал эмиссии (Emission.glow_material) снимал с ореолов CanvasModulate,
+## а частицы и пар оставались под ним.
+var _glow_node: Node2D = null
 
 
 func _ready() -> void:
 	z_index = 20
+	_glow_node = Node2D.new()
+	_glow_node.name = "Glows"
+	_glow_node.show_behind_parent = true
+	_glow_node.draw.connect(_on_glow_draw)
+	add_child(_glow_node)
 	queue_redraw()
 	_stats_on = OS.get_cmdline_user_args().has(STATS_FLAG)
 	Threat.vent_warning.connect(spawn_vent_steam)
@@ -147,6 +169,7 @@ func _process(delta: float) -> void:
 	if _dirty:
 		_dirty = false
 		queue_redraw()
+		_glow_node.queue_redraw()
 	if _stats_on:
 		_stats_t += delta
 		if _stats_t >= STATS_INTERVAL:
@@ -376,10 +399,6 @@ func _draw() -> void:
 	var cam: Camera2D = get_viewport().get_camera_2d()
 	var view: Rect2 = _view_rect(cam)
 
-	# --- Свечение источников света ------------------------------------------
-	if light_overlay and DB.glow_texture:
-		_draw_glows(cam, view)
-
 	# --- Вентиляция -----------------------------------------------------------
 	for v in World.vents:
 		var p: Vector2 = World.cell_to_world(v)
@@ -431,6 +450,19 @@ func _draw() -> void:
 		draw_arc(Vector2(s["pos"]), 14.0 + t2 * 8.0, -0.9 + t2 * 1.8, 0.9 + t2 * 1.8, 12, col2, 3.0)
 
 
+## Материал слоя ореолов (Emission, ADR-003 V3).
+func set_glow_material(m: Material) -> void:
+	_glow_node.material = m
+
+
+## Слой ореолов: свечение источников света под остальными эффектами.
+func _on_glow_draw() -> void:
+	glows_drawn = 0
+	if light_overlay and DB.glow_texture:
+		var cam: Camera2D = get_viewport().get_camera_2d()
+		_draw_glows(cam, _view_rect(cam))
+
+
 ## Рисует не больше MAX_GLOWS источников света, попадающих в кадр камеры.
 ## Если камеры нет — свет не рисуем вовсе.
 func _draw_glows(cam: Camera2D, view: Rect2) -> void:
@@ -451,17 +483,34 @@ func _draw_glows(cam: Camera2D, view: Rect2) -> void:
 		if not view.grow(GLOW_MARGIN * lr).has_point(lp):
 			continue
 		cands.append(l)
+	var k: float = lerpf(1.0, GLOW_NIGHT_K, SkyBackdrop.phase_weights(Game.daylight()).z) * 0.55
 	if cands.size() > MAX_GLOWS:
 		cands.sort_custom(func(a, b): return _light_dist2(a, center) < _light_dist2(b, center))
 		cands = cands.slice(0, MAX_GLOWS)
 	for l in cands:
 		var lp: Vector2 = l["pos"]
 		var lr: float = float(l["radius"])
-		var col: Color = Color(1.0, 0.92, 0.70, float(l["power"]) * 0.55)
-		draw_texture_rect(DB.glow_texture, Rect2(lp - Vector2(lr, lr) * 0.9,
+		var col: Color = _glow_color(lp) * GLOW_TEX_INV
+		col.a = float(l["power"]) * k
+		_glow_node.draw_texture_rect(DB.glow_texture, Rect2(lp - Vector2(lr, lr) * 0.9,
 				Vector2(lr, lr) * 1.8), false, col)
 	glows_drawn = cands.size()
 	peak_glows = maxi(peak_glows, glows_drawn)
+
+
+## Цвет ореола — по тайлу в клетке источника (≤ MAX_GLOWS поисков за перерисовку).
+func _glow_color(pos: Vector2) -> Color:
+	var c: Vector2i = World.world_to_cell(pos)
+	match World.get_tile(c.x, c.y):
+		IDs.T.LAVA:
+			return GLOW_LAVA
+		IDs.T.CRYSTAL_ORE, IDs.T.CRYSTAL_BLOCK:
+			return GLOW_CRYSTAL
+		IDs.T.LIGHT_CRYSTAL, IDs.T.RELAY_CORE:
+			return GLOW_BIO
+		IDs.T.TERMINAL:
+			return GLOW_SCREEN
+	return GLOW_LAMP
 
 
 ## Квадратичное расстояние от источника света до центра камеры (для отбора).

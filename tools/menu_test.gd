@@ -5,7 +5,9 @@ class_name MenuTest
 ## Проверяет: таблицу ников (валидные/невалидные), профиль туда-обратно во
 ## временный путь (uid создаётся один раз, битый файл не валит), Look ↔ u16 для
 ## всех индексов 0..15 каждой части, неизвестный индекс рисуется как 0, «Случайно»
-## только из Avatar.VARIANTS, меню строится и реагирует на ник/вид/заглушки.
+## только из Avatar.VARIANTS, меню строится и реагирует на ник/вид; сетевые экраны
+## (MP-H, #93): разбор адреса «По IP», форма «Создать игру», формат и совместимость
+## поиска (LanDiscovery), запрос/ответ на 127.0.0.1, кадр LOBBY, «Недавние» в профиле.
 ## Скафандр «Кербер-9» (V4, MP-L #97): 16 цветов, 4 шлема, 4 аксессуара, 4 ранца,
 ## неизвестный индекс части рисуется как 0, раскладка каждого варианта полна.
 ## Отдельный запуск сверх того: «Одиночная игра» из меню запускает мир с сидом,
@@ -237,6 +239,8 @@ class Runner extends Node:
 		_check_avatar()
 		_check_profile()
 		_check_menu()
+		_check_net_forms()     # MP-H (#93)
+		_check_discovery()     # MP-H (#93)
 		if bench:
 			_bench_start()
 			_phase = 1
@@ -461,8 +465,7 @@ class Runner extends Node:
 			in_range = in_range and Profile.Look.part(rl, i) < Avatar.VARIANTS[i]
 		_ok("«Случайно» в пределах вариантов", in_range
 				and menu.color_swatch.color == Avatar.suit_color(rl), "look=%04x" % rl)
-		menu.net_buttons[1].pressed.emit()
-		_ok("сетевые кнопки — заглушка «Скоро»", menu.status_label.text == mm.SOON_TEXT)
+		_check_net_screens(menu)   # MP-H (#93)
 		_ok("профиль меню — в Net.local_profile (uid, ник, вид)",
 				int(net.local_profile.get("uid", 0)) == menu.profile.uid
 				and String(net.local_profile.get("nick", "")) == "Аня"
@@ -479,6 +482,227 @@ class Runner extends Node:
 		menu.queue_free()
 		_menu = null
 		DirAccess.remove_absolute(TMP_PROFILE)
+
+	# --- Сетевые экраны меню (MP-H, #93): переходы, поля по умолчанию, «Недавние»
+	func _check_net_screens(menu) -> void:
+		var net: Node = get_tree().root.get_node("Net")
+		_ok("сетевые экраны построены: создать, найти, по IP, подключение, лобби",
+				menu.screens.size() == 6 and menu.current_screen == "main"
+				and not menu.screens["host"].visible and menu.screens["main"].visible)
+		menu.net_buttons[0].pressed.emit()
+		_ok("«Создать игру» — форма: имя «Экспедиция <ник>», сид пусто, мест 4, порт из профиля",
+				menu.current_screen == "host" and menu.host_name_edit.text == "Экспедиция Аня"
+				and menu.host_seed_edit.text == "" and menu.host_slots == 4
+				and menu.slot_buttons[2].button_pressed and menu.host_port_edit.text == str(menu.profile.port)
+				and not menu.screens["main"].visible)
+		menu.slot_buttons[0].pressed.emit()
+		_ok("мест: кнопка «2»", menu.host_slots == 2 and menu.slot_buttons[0].button_pressed
+				and not menu.slot_buttons[2].button_pressed)
+		menu.host_port_edit.text = "80"
+		menu.create_game()
+		_ok("неверный порт — ошибка под формой, сессии нет", menu.host_error_label.text.contains("Порт")
+				and not net.is_online() and menu.current_screen == "host", menu.host_error_label.text)
+		menu.show_screen("main")
+		menu.profile.recent_ips = PackedStringArray(["10.0.0.1", "10.0.0.2:25000", "a", "b", "c", "d", "e"])
+		menu.net_buttons[2].pressed.emit()
+		_ok("«По IP»: последние 5 адресов кнопками, поле — последний адрес",
+				menu.current_screen == "ip" and menu.recent_buttons.size() == 5
+				and menu.recent_buttons[1].text == "10.0.0.2:25000" and menu.ip_edit.text == "10.0.0.1")
+		menu.ip_edit.text = "300.1.1.1"
+		menu.connect_by_ip()
+		_ok("«По IP»: неверный адрес — ошибка, подключения нет", menu.ip_error_label.text.contains("IPv4")
+				and not net.is_online() and menu.current_screen == "ip", menu.ip_error_label.text)
+		menu.show_screen("main")
+		menu.profile.recent_ips = PackedStringArray()
+		var out: Array = []
+		for k in menu.screens:
+			menu.show_screen(k)
+			for c in menu.find_children("*", "Control", true, false):
+				var cc: Control = c
+				if cc.is_visible_in_tree() and cc.size.x > menu.size.x + 1.0:
+					out.append("%s: %s" % [k, cc.get_class()])
+		menu.show_screen("main")
+		_ok("сетевые экраны не шире окна %d px" % int(menu.size.x), out.is_empty(), str(out.slice(0, 3)))
+
+	# --- Формы: адрес «По IP», «Создать игру», «Недавние», кадр LOBBY
+	func _check_net_forms() -> void:
+		print("== Сеть: адрес, форма хоста, поиск (MP-H) ==")
+		var mm = load(MENU_SCRIPT)
+		var addr_ok: Array = [
+			["192.168.1.20", "192.168.1.20", NetScript.GAME_PORT],
+			[" 10.0.0.5:25000 ", "10.0.0.5", 25000],
+			["127.0.0.1:1", "127.0.0.1", 1],
+			["255.255.255.255:65535", "255.255.255.255", 65535],
+			["Kerber-PC", "kerber-pc", NetScript.GAME_PORT],
+			["localhost:24650", "localhost", 24650],
+			["pc.local", "pc.local", NetScript.GAME_PORT],
+		]
+		var bad: Array = []
+		for row in addr_ok:
+			var r: Dictionary = mm.parse_address(row[0])
+			if not bool(r["ok"]) or r["host"] != row[1] or int(r["port"]) != int(row[2]):
+				bad.append("%s → %s" % [row[0], str(r)])
+		_ok("адрес: IPv4[:порт] и имя хоста приняты (%d)" % addr_ok.size(), bad.is_empty(), str(bad))
+		var addr_bad: Array = ["", "  ", "256.1.1.1", "1.2.3", "1.2.3.4.5", "01.2.3.4", "1.2.3.4:0",
+				"1.2.3.4:65536", "1.2.3.4:", "1.2.3.4:abc", "1.2.3.4:-5", ":24642", "::1", "[::1]:24642",
+				"-pc", "pc-", "пк.дом", "a b", "a..b", "1.2.3.4:+80"]
+		var passed: Array = []
+		var no_reason: Array = []
+		for a in addr_bad:
+			var r: Dictionary = mm.parse_address(a)
+			if bool(r["ok"]):
+				passed.append(a)
+			elif String(r["error"]) == "":
+				no_reason.append(a)
+		_ok("адрес: неверные отклонены с причиной (%d)" % addr_bad.size(), passed.is_empty()
+				and no_reason.is_empty(), "прошли %s, без причины %s" % [str(passed), str(no_reason)])
+		# Форма хоста.
+		var f0: Dictionary = mm.host_form("Экспедиция Аня", "", 4, "")
+		var f1: Dictionary = mm.host_form("  Тест  ", "4242", 2, "25000")
+		var f2: Dictionary = mm.host_form("Тест", "Кербер", 3, "24642")
+		_ok("форма хоста: по умолчанию — порт 24642, сид случайный (−1)", bool(f0["ok"])
+				and int(f0["port"]) == NetScript.GAME_PORT and int(f0["seed"]) == -1 and int(f0["slots"]) == 4)
+		_ok("форма хоста: имя без краевых пробелов, сид числом, порт", bool(f1["ok"]) and f1["name"] == "Тест"
+				and int(f1["seed"]) == 4242 and int(f1["port"]) == 25000 and int(f1["slots"]) == 2)
+		_ok("форма хоста: сид-текст — hash() ≥ 0 (клиентам нужен --seed= ≥ 0)", bool(f2["ok"])
+				and int(f2["seed"]) == (hash("Кербер") if hash("Кербер") >= 0 else hash("Кербер") & 0x7FFFFFFF)
+				and int(f2["seed"]) >= 0)
+		var form_bad: Array = [["", "", 4, ""], ["   ", "", 4, ""], ["x".repeat(25), "", 4, ""],
+				["Тест", "", 1, ""], ["Тест", "", 5, ""], ["Тест", "", 4, "abc"], ["Тест", "", 4, "80"],
+				["Тест", "", 4, "70000"], ["Тест", "", 4, str(NetScript.DISCOVERY_PORT)], ["a\tb", "", 4, ""]]
+		var fb: Array = []
+		for row in form_bad:
+			var r: Dictionary = mm.host_form(row[0], row[1], row[2], row[3])
+			if bool(r["ok"]) or String(r["error"]) == "":
+				fb.append(str(row))
+		_ok("форма хоста: имя 1–24, мест 2–4, порт 1024–65535 и не %d — отказ с причиной (%d)"
+				% [NetScript.DISCOVERY_PORT, form_bad.size()], fb.is_empty(), str(fb))
+		_ok("длина имени — ровно 24 можно", bool(mm.host_form("x".repeat(24), "", 4, "")["ok"]))
+		# «Недавние» в профиле.
+		var p: Profile = Profile.new()
+		for a in ["1.1.1.1", "2.2.2.2", "1.1.1.1", "3.3.3.3:25000"]:
+			p.remember_ip(a)
+		_ok("«Недавние»: новые сверху, без повторов", p.recent_ips == PackedStringArray(["3.3.3.3:25000",
+				"1.1.1.1", "2.2.2.2"]), str(p.recent_ips))
+		for k in 20:
+			p.remember_ip("10.0.0.%d" % k)
+		_ok("«Недавние»: не больше %d" % Profile.RECENT_IPS_MAX, p.recent_ips.size() == Profile.RECENT_IPS_MAX
+				and p.recent_ips[0] == "10.0.0.19")
+		# Кадр LOBBY.
+		var st: Dictionary = NetCodec.decode_lobby(NetCodec.encode_lobby_state(true, [2, 7, 0xFFFFFFFF]))
+		var rd: Dictionary = NetCodec.decode_lobby(NetCodec.encode_lobby_ready(true))
+		_ok("кадр LOBBY: состояние и «Готов» туда-обратно", st.get("started") == true
+				and st.get("ready") == [2, 7, 0xFFFFFFFF] and rd.get("on") == true
+				and int(rd.get("kind", -1)) == NetCodec.LOBBY_READY)
+		_ok("кадр LOBBY: битый — {}", NetCodec.decode_lobby(PackedByteArray([0, 1, 2, 0])).is_empty()
+				and NetCodec.decode_lobby(PackedByteArray([9, 1])).is_empty()
+				and NetCodec.decode_lobby(PackedByteArray()).is_empty())
+
+	# --- Поиск: формат, совместимость, адреса, запрос/ответ на 127.0.0.1
+	func _check_discovery() -> void:
+		var q: PackedByteArray = LanDiscovery.encode_query(NetScript.PROTO)
+		_ok("запрос GCQ1 + proto u16 — 6 Б", q.size() == 6 and LanDiscovery.decode_query(q) == NetScript.PROTO
+				and q.slice(0, 4).get_string_from_ascii() == "GCQ1")
+		_ok("не запрос — −1", LanDiscovery.decode_query("GCQ2xx".to_ascii_buffer()) == -1
+				and LanDiscovery.decode_query(PackedByteArray([1, 2, 3])) == -1)
+		var full: Dictionary = {"proto": NetScript.PROTO, "build": "dev", "name": "Экспедиция Аня",
+				"host": "Аня", "n": 2, "max": 4, "port": 24642, "day": 3, "st": "game", "pw": false}
+		var ans: PackedByteArray = LanDiscovery.encode_answer(full)
+		var back: Dictionary = LanDiscovery.decode_answer(ans)
+		var same: bool = not back.is_empty()
+		for k in full:
+			same = same and back.get(k) == full[k]
+		print("  ЗАМЕР: запрос %d Б, ответ %d Б (имя «%s», ник «%s»)" % [q.size(), ans.size(), full["name"],
+				full["host"]])
+		_ok("ответ GCA1 + JSON туда-обратно, ≤ 200 Б", same and int(back["v"]) == LanDiscovery.ANSWER_V
+				and ans.size() <= 200, "%d Б %s" % [ans.size(), str(back)])
+		var junk: Array = [PackedByteArray(), "GCA1".to_ascii_buffer(), "GCA1{".to_utf8_buffer(),
+				"GCA1[1,2]".to_utf8_buffer(), "GCQ1{}".to_utf8_buffer(),
+				("GCA1" + JSON.stringify({"v": 1})).to_utf8_buffer(),
+				("GCA1" + JSON.stringify(full).replace("24642", "70000")).to_utf8_buffer(),
+				("GCA1" + JSON.stringify(full).replace("\"dev\"", "5")).to_utf8_buffer()]
+		var took: int = 0
+		for j in junk:
+			if not LanDiscovery.decode_answer(j).is_empty():
+				took += 1
+		_ok("битый ответ — {} (%d случаев)" % junk.size(), took == 0, "принято %d" % took)
+		var me: Array = [NetScript.PROTO, "0.5.0"]
+		var cases: Array = [
+			[{"proto": NetScript.PROTO, "build": "0.5.0", "n": 1, "max": 4}, ""],
+			[{"proto": NetScript.PROTO + 1, "build": "0.5.0", "n": 1, "max": 4}, "другой протокол"],
+			[{"proto": NetScript.PROTO, "build": "0.4.2", "n": 1, "max": 4}, "другая версия: у хоста 0.4.2, у вас 0.5.0"],
+			[{"proto": NetScript.PROTO, "build": "0.5.0", "n": 4, "max": 4}, NetScript.R_FULL],
+			[{"proto": NetScript.PROTO, "build": "0.5.0", "n": 1, "max": 4, "pw": true}, "парол"],
+		]
+		var wrong: Array = []
+		for c in cases:
+			var r: String = LanDiscovery.incompat_reason(c[0], me[0], me[1])
+			if (c[1] == "" and r != "") or (c[1] != "" and not r.contains(c[1])):
+				wrong.append("%s → «%s»" % [str(c[0]), r])
+		_ok("совместимость: протокол, сборка, места, пароль — причина словами", wrong.is_empty(), str(wrong))
+		_ok("две сборки dev совместимы", LanDiscovery.incompat_reason({"proto": NetScript.PROTO,
+				"build": "dev", "n": 1, "max": 2}, NetScript.PROTO, "dev") == "")
+		var v4_ok: bool = LanDiscovery.is_ipv4("0.0.0.0") and LanDiscovery.is_ipv4("192.168.1.255") \
+				and not LanDiscovery.is_ipv4("192.168.1") and not LanDiscovery.is_ipv4("192.168.01.1") \
+				and not LanDiscovery.is_ipv4("1.2.3.256") and not LanDiscovery.is_ipv4("a.b.c.d")
+		_ok("строгий IPv4", v4_ok)
+		_ok("частные диапазоны 10/8, 172.16/12, 192.168/16", LanDiscovery.is_private("10.1.2.3")
+				and LanDiscovery.is_private("172.16.0.1") and LanDiscovery.is_private("172.31.255.1")
+				and not LanDiscovery.is_private("172.32.0.1") and LanDiscovery.is_private("192.168.0.7")
+				and not LanDiscovery.is_private("8.8.8.8") and not LanDiscovery.is_private("127.0.0.1"))
+		var bt: PackedStringArray = LanDiscovery.broadcast_targets()
+		var bt_ok: bool = bt.size() >= 1 and bt[0] == "255.255.255.255"
+		for t in bt:
+			bt_ok = bt_ok and LanDiscovery.is_ipv4(t) and t.ends_with(".255") and not t.begins_with("127.")
+		_ok("цели broadcast: 255.255.255.255 и x.y.z.255 своих IPv4", bt_ok, str(bt))
+		# Запрос/ответ на петле (без окна брандмауэра): хост-ответчик и поиск в одном процессе.
+		var host_d: LanDiscovery = LanDiscovery.new()
+		var cli_d: LanDiscovery = LanDiscovery.new()
+		add_child(host_d)
+		add_child(cli_d)
+		var port: int = 0
+		var base: int = 26100 + OS.get_process_id() % 400
+		for k in 10:
+			if host_d.start_host(base + k, "127.0.0.1", func() -> Dictionary: return full) == OK:
+				port = base + k
+				break
+		_ok("ответчик поиска на 127.0.0.1", port > 0, str(port))
+		if port == 0:
+			host_d.queue_free()
+			cli_d.queue_free()
+			return
+		var t0: int = Time.get_ticks_usec()
+		var err: Error = cli_d.start_search(port, "127.0.0.1", PackedStringArray(["127.0.0.1"]))
+		var guard: int = 0
+		while cli_d.hosts.is_empty() and guard < 500:
+			host_d._poll()
+			cli_d._poll()
+			OS.delay_usec(500)
+			guard += 1
+		var ms: float = float(Time.get_ticks_usec() - t0) / 1000.0
+		var key: String = "127.0.0.1:24642"
+		var e: Dictionary = cli_d.hosts.get(key, {})
+		_ok("поиск на петле: игра в списке, поля и причина пустая", err == OK and not e.is_empty()
+				and e.get("name") == "Экспедиция Аня" and int(e.get("n", 0)) == 2 and String(e.get("reason", "?")) == ""
+				and cli_d.queries_sent == 1 and host_d.answers_sent >= 1,
+				"%.2f мс, запросов %d, ответов %d" % [ms, cli_d.queries_sent, host_d.answers_sent])
+		print("  ЗАМЕР: круг запрос → ответ на 127.0.0.1 — %.2f мс" % ms)
+		cli_d.my_build = "0.0.1-другая"
+		cli_d.refresh()
+		guard = 0
+		while cli_d.hosts.is_empty() and guard < 500:
+			host_d._poll()
+			cli_d._poll()
+			OS.delay_usec(500)
+			guard += 1
+		var row: String = ServerBrowser.row_text(cli_d.hosts.get(key, {}))
+		_ok("«Обновить» — список заново; другая сборка — с причиной", String(cli_d.hosts.get(key, {}).get("reason",
+				"")).begins_with("другая версия") and row.contains("версия dev") and row.contains("протокол %d"
+				% NetScript.PROTO) and row.contains("2/4") and row.contains("смена 3"), row.replace("\n", " | "))
+		host_d.stop()
+		cli_d.stop()
+		host_d.queue_free()
+		cli_d.queue_free()
 
 	# --- Замер: Player._draw до V4 против скафандра
 	func _bench_start() -> void:
@@ -554,6 +778,12 @@ func _process(_delta: float) -> bool:
 			if _frames >= 3:
 				_tap_menu()
 				_frames = 0
+				_step = 6
+		6:
+			_frames += 1          # экран поиска свёрстан — второй заход тапов (MP-H)
+			if _frames >= 3:
+				_tap_menu2()
+				_frames = 0
 				_step = 5
 		5:
 			_frames += 1
@@ -616,13 +846,31 @@ func _tap_menu() -> void:
 	_tap(_menu.look_arrows[1])
 	_ok("тап по ▶ цвета: цвет 6", Profile.Look.part(_menu.profile.look, Profile.Look.COLOR) == 6
 			and _menu.preview.look == _menu.profile.look, "look=%d" % _menu.profile.look)
+	_menu.net_bind = "127.0.0.1"           # MP-H: поиск только на петле — без окна брандмауэра
+	_menu.discovery_targets = PackedStringArray(["127.0.0.1:9"])
 	_tap(_menu.net_buttons[1])
-	_ok("тап по «Найти игру» — «Скоро»", _menu.status_label.text == load(MENU_SCRIPT).SOON_TEXT)
+	_ok("тап по «Найти игру» — экран поиска, поиск идёт", _menu.current_screen == "browser"
+			and _menu.browser.discovery.is_running())
+
+
+## Второй заход тапов (экран поиска уже свёрстан): «Назад», хардкор, «Одиночная игра».
+func _tap_menu2() -> void:
+	_tap(_button_in(_menu.screens["browser"], "Назад"))
+	_ok("тап по «Назад» — главный экран, поиск остановлен", _menu.current_screen == "main"
+			and not _menu.browser.discovery.is_running())
 	_tap(_menu.hardcore_box)
 	_ok("тап по «Хардкор»: включён", _menu.hardcore_box.button_pressed
 			and String(_menu.hardcore_box.text).ends_with("да"))
 	_menu.seed_edit.text = "4242"
 	_tap(_menu.single_button)
+
+
+## Кнопка с таким текстом внутри узла (первая).
+func _button_in(node: Node, text: String) -> Button:
+	for b in node.find_children("*", "Button", true, false):
+		if (b as Button).text == text:
+			return b
+	return null
 
 
 func _tap(ctrl: Control) -> void:

@@ -2,7 +2,8 @@ class_name MainMenu
 extends Control
 ## Главный экран (ADR-002 § 4.6; MP-B, #87): название, живое превью героя тем же
 ## Avatar.draw, что в игре, ник с проверкой, параметры вида, «Одиночная игра»
-## (сид, хардкор галочкой), сетевые кнопки (заглушка «Скоро» до MP-H, #93),
+## (сид, хардкор галочкой), сетевые экраны (MP-H, #93: «Создать игру», «Найти игру»,
+## «Подключиться по IP», подключение, лобби — секция «СЕТЕВЫЕ ЭКРАНЫ» в конце),
 ## номер версии в углу.
 ##
 ## Показ: main.gd открывает scenes/menu.tscn только при запуске без аргументов
@@ -31,7 +32,6 @@ const TURN_EVERY: float = 2.0
 const BUTTON_H: float = 52.0
 const COL_W: float = 360.0
 const ACCENT: Color = Color(0.40, 0.95, 0.80)
-const SOON_TEXT: String = "Скоро: сетевая игра ещё в работе"
 
 ## Откуда профиль (тесты подставляют временный путь до add_child).
 var profile_path: String = Profile.PATH
@@ -72,6 +72,7 @@ func _ready() -> void:
 	profile = Profile.load_or_create(profile_path)
 	theme = _make_theme()
 	_build()
+	_build_net_screens()   # MP-H (#93)
 	_refresh_look()
 	_on_nick_changed(nick_edit.text)
 	# Меню — сцена целиком: игровые автозагрузки спят, HUD не виден.
@@ -90,6 +91,7 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
+	_unwire_net()   # MP-H (#93)
 	_leave()
 
 
@@ -151,10 +153,6 @@ func _on_nick_changed(text: String) -> void:
 		Net.local_profile = profile.to_net()
 
 
-func _on_soon() -> void:
-	status_label.text = SOON_TEXT
-
-
 func _leave() -> void:
 	if not _paused_tree:
 		return
@@ -194,6 +192,8 @@ func _build() -> void:
 	var page: VBoxContainer = VBoxContainer.new()
 	page.add_theme_constant_override("separation", 10)
 	center.add_child(page)
+	_center = center
+	main_page = page
 
 	var title: Label = _label("ГЛИТЧ-КОРЕ", 48, ACCENT)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -270,9 +270,10 @@ func _build() -> void:
 	single_button = _button("Одиночная игра")
 	single_button.pressed.connect(start_single)
 	right.add_child(single_button)
-	for t in ["Создать игру", "Найти игру", "Подключиться по IP"]:
-		var b: Button = _button(t)
-		b.pressed.connect(_on_soon)
+	var net_actions: Array[Callable] = [show_host_form, show_browser, show_ip]
+	for k in 3:
+		var b: Button = _button(["Создать игру", "Найти игру", "Подключиться по IP"][k])
+		b.pressed.connect(net_actions[k])
 		net_buttons.append(b)
 		right.add_child(b)
 	var quit_b: Button = _button("Выход")
@@ -429,3 +430,626 @@ class AvatarPreview extends Node2D:
 	func _notification(what: int) -> void:
 		if what == NOTIFICATION_PREDELETE and is_instance_valid(_pose):
 			_pose.free()
+
+
+# ------------------------------------------------- СЕТЕВЫЕ ЭКРАНЫ (ADR-002 § 4.5, § 4.6; MP-H, #93)
+## «Создать игру» (имя, сид, места, порт) → лобби хоста; «Найти игру» (ServerBrowser:
+## поиск по локалке, несовместимые — серые с причиной) и «Подключиться по IP» (последние
+## адреса из профиля) → «Подключение…» → лобби клиента; лобби: игроки с ником и видом,
+## «Готов», «Старт» у хоста (когда готовы все). Сессию, готовность и старт ведёт NetLobby
+## (scripts/net/net_lobby.gd, узел под /root — переживает смену сцены). Всё — кнопки
+## и поля: тап по кнопке приходит кликом, поле открывает экранную клавиатуру.
+
+## Имя игры: 1–NAME_MAX символов.
+const NAME_MAX: int = 24
+## Сколько последних адресов показывает «Подключиться по IP».
+const RECENT_SHOWN: int = 5
+## Ширина сетевых экранов, px при 1280×720.
+const NET_W: float = 760.0
+const LOBBY_PREVIEW_SCALE: float = 2.5
+const ERR_COLOR: Color = Color(1.0, 0.55, 0.45)
+const DIM_COLOR: Color = Color(0.6, 0.66, 0.76)
+const READY_COLOR: Color = Color(0.45, 0.95, 0.6)
+
+## Тесты (петля, без окна брандмауэра Windows): адрес привязки сервера и поиска,
+## порт поиска хоста и цели запроса клиента ("ip:порт"; пусто — широковещательно).
+var net_bind: String = "*"
+var discovery_port: int = Net.DISCOVERY_PORT
+var discovery_targets: PackedStringArray = PackedStringArray()
+
+## Экраны: "main", "host", "browser", "ip", "connecting", "lobby".
+var screens: Dictionary = {}
+var current_screen: String = "main"
+var main_page: Control = null
+var lobby: NetLobby = null
+
+# --- «Создать игру»
+var host_name_edit: LineEdit
+var host_seed_edit: LineEdit
+var host_port_edit: LineEdit
+var slot_buttons: Array[Button] = []
+var host_slots: int = 4
+var host_error_label: Label
+var host_ips_label: Label
+var host_create_button: Button
+# --- «Найти игру»
+var browser: ServerBrowser
+# --- «Подключиться по IP»
+var ip_edit: LineEdit
+var ip_error_label: Label
+var ip_connect_button: Button
+var recent_buttons: Array[Button] = []
+var _recent_box: VBoxContainer
+# --- «Подключение…»
+var connect_label: Label
+var connect_back_button: Button
+# --- лобби
+var lobby_title: Label
+var lobby_info: Label
+var lobby_status: Label
+var lobby_list: VBoxContainer
+var ready_button: Button
+var start_button: Button
+var lobby_leave_button: Button
+## Строки игроков лобби по порядку слотов: {peer, nick, ready, look} (тесты сверяют).
+var lobby_rows: Array = []
+
+var _center: CenterContainer = null
+var _pending_addr: String = ""
+var _net_wired: bool = false
+
+
+func _build_net_screens() -> void:
+	screens["main"] = main_page
+	_build_host_screen()
+	_build_browser_screen()
+	_build_ip_screen()
+	_build_connecting_screen()
+	_build_lobby_screen()
+	for k in screens:
+		(screens[k] as Control).visible = k == "main"
+	Net.session_started.connect(_on_net_started)
+	Net.connection_failed.connect(_on_net_failed)
+	Net.session_ended.connect(_on_net_ended)
+	Net.roster_changed.connect(_refresh_lobby)
+	_net_wired = true
+	if NetLobby.last_reason != "":
+		status_label.text = "Сеть: " + NetLobby.last_reason
+		NetLobby.last_reason = ""
+
+
+func _unwire_net() -> void:
+	if browser != null:
+		browser.stop()
+	if not _net_wired:
+		return
+	_net_wired = false
+	Net.session_started.disconnect(_on_net_started)
+	Net.connection_failed.disconnect(_on_net_failed)
+	Net.session_ended.disconnect(_on_net_ended)
+	Net.roster_changed.disconnect(_refresh_lobby)
+	if lobby != null and is_instance_valid(lobby) and lobby.changed.is_connected(_refresh_lobby):
+		lobby.changed.disconnect(_refresh_lobby)
+
+
+func show_screen(screen: String) -> void:
+	if not screens.has(screen):
+		return
+	if current_screen == "browser" and screen != "browser" and browser != null:
+		browser.stop()
+	current_screen = screen
+	for k in screens:
+		(screens[k] as Control).visible = k == screen
+	if screen != "main":
+		status_label.text = ""
+
+
+func _net_page(title: String) -> VBoxContainer:
+	var page: VBoxContainer = VBoxContainer.new()
+	page.custom_minimum_size = Vector2(NET_W, 0)
+	page.add_theme_constant_override("separation", 10)
+	var t: Label = _label(title, 34, ACCENT)
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	page.add_child(t)
+	_center.add_child(page)
+	return page
+
+
+func _field_row(page: VBoxContainer, caption: String, ctrl: Control) -> void:
+	var row: HBoxContainer = HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	var l: Label = _label(caption, 19, Color(0.9, 0.93, 1.0))
+	l.custom_minimum_size = Vector2(150, 0)
+	row.add_child(l)
+	ctrl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(ctrl)
+	page.add_child(row)
+
+
+func _edit(placeholder: String) -> LineEdit:
+	var e: LineEdit = LineEdit.new()
+	e.placeholder_text = placeholder
+	e.custom_minimum_size = Vector2(0, BUTTON_H)
+	return e
+
+
+func _buttons_row(page: VBoxContainer, list: Array) -> void:
+	var row: HBoxContainer = HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	for b in list:
+		(b as Button).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(b)
+	page.add_child(row)
+
+
+func _back_button() -> Button:
+	var b: Button = _button("Назад")
+	b.pressed.connect(show_screen.bind("main"))
+	return b
+
+
+# ------------------------------------------------------------------ «СОЗДАТЬ ИГРУ»
+
+func _build_host_screen() -> void:
+	var page: VBoxContainer = _net_page("Создать игру")
+	screens["host"] = page
+	host_name_edit = _edit("Экспедиция <ник>")
+	host_name_edit.max_length = NAME_MAX + 8
+	_field_row(page, "Имя игры", host_name_edit)
+	host_seed_edit = _edit("сид: случайный")
+	_field_row(page, "Сид", host_seed_edit)
+	var slots_row: HBoxContainer = HBoxContainer.new()
+	slots_row.add_theme_constant_override("separation", 10)
+	var group: ButtonGroup = ButtonGroup.new()
+	for n in range(2, Balance.MP_MAX_PLAYERS + 1):
+		var b: Button = _button(str(n))
+		b.toggle_mode = true
+		b.button_group = group
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.pressed.connect(set_slots.bind(n))
+		slots_row.add_child(b)
+		slot_buttons.append(b)
+	_field_row(page, "Мест", slots_row)
+	host_port_edit = _edit(str(Net.GAME_PORT))
+	host_port_edit.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_NUMBER
+	_field_row(page, "Порт", host_port_edit)
+	host_error_label = _label("", 15, ERR_COLOR)
+	host_error_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	host_error_label.custom_minimum_size = Vector2(NET_W, 22)
+	page.add_child(host_error_label)
+	host_ips_label = _label("", 16, DIM_COLOR)
+	host_ips_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	host_ips_label.custom_minimum_size = Vector2(NET_W, 0)
+	page.add_child(host_ips_label)
+	host_create_button = _button("Создать")
+	host_create_button.pressed.connect(create_game)
+	_buttons_row(page, [_back_button(), host_create_button])
+
+
+func show_host_form() -> void:
+	if Net.nick_error(nick_edit.text) != "":
+		return
+	host_name_edit.text = ("Экспедиция " + profile.nick).substr(0, NAME_MAX)
+	host_seed_edit.text = ""
+	host_port_edit.text = str(profile.port)
+	set_slots(Balance.MP_MAX_PLAYERS)
+	host_error_label.text = ""
+	var ips: PackedStringArray = LanDiscovery.private_ipv4()
+	host_ips_label.text = ("Ваши адреса в локальной сети: " + ", ".join(ips)) if not ips.is_empty() \
+			else "Адресов в локальной сети не видно — подключиться смогут только с этого компьютера"
+	show_screen("host")
+
+
+func set_slots(n: int) -> void:
+	host_slots = clampi(n, 2, Balance.MP_MAX_PLAYERS)
+	for b in slot_buttons:
+		b.set_pressed_no_signal(int(b.text) == host_slots)
+
+
+## Проверка формы хоста (чистая функция — её таблицу проверяет menu_test).
+## Итог: {ok, error, name, seed (−1 — случайный), slots, port}.
+static func host_form(name_text: String, seed_text: String, slots: int, port_text: String) -> Dictionary:
+	var res: Dictionary = {"ok": false, "error": "", "name": "", "seed": -1, "slots": slots, "port": 0}
+	var nm: String = name_text.strip_edges()
+	if nm.is_empty():
+		res["error"] = "Имя игры: пусто"
+		return res
+	if nm.length() > NAME_MAX:
+		res["error"] = "Имя игры: длиннее %d символов" % NAME_MAX
+		return res
+	for i in nm.length():
+		if nm.unicode_at(i) < 0x20:
+			res["error"] = "Имя игры: недопустимый символ"
+			return res
+	if slots < 2 or slots > Balance.MP_MAX_PLAYERS:
+		res["error"] = "Мест: от 2 до %d" % Balance.MP_MAX_PLAYERS
+		return res
+	var pt: String = port_text.strip_edges()
+	var port: int = Net.GAME_PORT
+	if pt != "":
+		if not pt.is_valid_int():
+			res["error"] = "Порт: нужно число"
+			return res
+		port = int(pt)
+	if port < 1024 or port > 65535:
+		res["error"] = "Порт: от 1024 до 65535"
+		return res
+	if port == Net.DISCOVERY_PORT:
+		res["error"] = "Порт %d занят поиском игр — выберите другой" % Net.DISCOVERY_PORT
+		return res
+	var sd: int = int(session_for(seed_text, false)["seed"])
+	if sd < -1 or (sd == -1 and seed_text.strip_edges() != ""):
+		sd = sd & 0x7FFFFFFF        # клиентам нужен сид ≥ 0 (main.gd: --seed=)
+	res["ok"] = true
+	res["name"] = nm
+	res["seed"] = sd
+	res["port"] = port
+	return res
+
+
+## «Создать»: сервер, ответчик поиска и лобби хоста.
+func create_game() -> void:
+	if Net.nick_error(nick_edit.text) != "":
+		return
+	var f: Dictionary = host_form(host_name_edit.text, host_seed_edit.text, host_slots, host_port_edit.text)
+	if not bool(f["ok"]):
+		host_error_label.text = String(f["error"])
+		return
+	var sd: int = int(f["seed"]) if int(f["seed"]) >= 0 else int(_rng.randi() & 0x7FFFFFFF)
+	profile.port = int(f["port"])
+	profile.save_to(profile_path)
+	Net.local_profile = profile.to_net()
+	_use_lobby()
+	if lobby.host(int(f["port"]), net_bind, sd, String(f["name"]), int(f["slots"]), discovery_port) != OK:
+		host_error_label.text = "Не удалось создать игру: " + NetLobby.last_reason
+		lobby.queue_free()
+		lobby = null
+		return
+	show_screen("lobby")
+	_refresh_lobby()
+
+
+func _use_lobby() -> void:
+	lobby = NetLobby.ensure(get_tree())
+	if not lobby.changed.is_connected(_refresh_lobby):
+		lobby.changed.connect(_refresh_lobby)
+
+
+# ------------------------------------------------------------------ «НАЙТИ ИГРУ»
+
+func _build_browser_screen() -> void:
+	var page: VBoxContainer = _net_page("Найти игру")
+	screens["browser"] = page
+	var note: Label = _label("Игры в этой локальной сети (Wi-Fi). Серые — другая версия или нет мест.",
+			16, DIM_COLOR)
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.custom_minimum_size = Vector2(NET_W, 0)
+	page.add_child(note)
+	browser = ServerBrowser.new(NET_W)
+	browser.join_requested.connect(func(ip: String, port: int) -> void:
+			connect_to(ip, port, ip if port == Net.GAME_PORT else "%s:%d" % [ip, port]))
+	page.add_child(browser)
+	var refresh_b: Button = _button("Обновить")
+	refresh_b.pressed.connect(func() -> void: browser.refresh())
+	var by_ip: Button = _button("По IP")
+	by_ip.pressed.connect(show_ip)
+	_buttons_row(page, [_back_button(), refresh_b, by_ip])
+
+
+func show_browser() -> void:
+	if Net.nick_error(nick_edit.text) != "":
+		return
+	show_screen("browser")
+	var err: Error = browser.start(discovery_port, net_bind, discovery_targets)
+	if err != OK:
+		status_label.text = "Поиск недоступен (%s) — подключитесь по IP" % error_string(err)
+
+
+# ------------------------------------------------------------------ «ПОДКЛЮЧИТЬСЯ ПО IP»
+
+func _build_ip_screen() -> void:
+	var page: VBoxContainer = _net_page("Подключиться по IP")
+	screens["ip"] = page
+	ip_edit = _edit("192.168.1.20, 192.168.1.20:24642 или имя компьютера")
+	ip_edit.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_URL
+	ip_edit.text_submitted.connect(func(_t: String) -> void: connect_by_ip())
+	page.add_child(ip_edit)
+	ip_error_label = _label("", 15, ERR_COLOR)
+	ip_error_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ip_error_label.custom_minimum_size = Vector2(NET_W, 22)
+	page.add_child(ip_error_label)
+	page.add_child(_label("Недавние адреса", 18, ACCENT))
+	_recent_box = VBoxContainer.new()
+	_recent_box.add_theme_constant_override("separation", 6)
+	page.add_child(_recent_box)
+	var hint: Label = _label("Адрес хоста виден на его экране лобби. Порт по умолчанию — %d." % Net.GAME_PORT,
+			15, DIM_COLOR)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.custom_minimum_size = Vector2(NET_W, 0)
+	page.add_child(hint)
+	ip_connect_button = _button("Подключиться")
+	ip_connect_button.pressed.connect(connect_by_ip)
+	_buttons_row(page, [_back_button(), ip_connect_button])
+
+
+func show_ip() -> void:
+	if Net.nick_error(nick_edit.text) != "":
+		return
+	ip_error_label.text = ""
+	if ip_edit.text.strip_edges() == "" and not profile.recent_ips.is_empty():
+		ip_edit.text = profile.recent_ips[0]
+	for b in recent_buttons:
+		b.queue_free()
+	recent_buttons.clear()
+	for k in mini(RECENT_SHOWN, profile.recent_ips.size()):
+		var addr: String = profile.recent_ips[k]
+		var b: Button = _button(addr)
+		b.pressed.connect(func() -> void:
+				ip_edit.text = addr
+				connect_by_ip())
+		_recent_box.add_child(b)
+		recent_buttons.append(b)
+	if recent_buttons.is_empty():
+		var none: Button = _button("пока нет")
+		none.disabled = true
+		_recent_box.add_child(none)
+		recent_buttons.append(none)
+	show_screen("ip")
+
+
+## Разбор адреса «Подключиться по IP» (чистая функция — таблица в menu_test):
+## IPv4[:порт] или имя хоста[:порт]. Итог: {ok, host, port, error}.
+static func parse_address(text: String, default_port: int = Net.GAME_PORT) -> Dictionary:
+	var res: Dictionary = {"ok": false, "host": "", "port": default_port, "error": ""}
+	var s: String = text.strip_edges()
+	if s.is_empty():
+		res["error"] = "введите адрес"
+		return res
+	if s.count(":") > 1 or s.begins_with("["):
+		res["error"] = "IPv6 не поддерживается — введите IPv4"
+		return res
+	var h: String = s
+	var colon: int = s.find(":")
+	if colon >= 0:
+		h = s.substr(0, colon)
+		var ps: String = s.substr(colon + 1)
+		if not ps.is_valid_int() or ps.begins_with("+") or ps.begins_with("-") \
+				or int(ps) < 1 or int(ps) > 65535:
+			res["error"] = "порт — число от 1 до 65535"
+			return res
+		res["port"] = int(ps)
+	if h.is_empty():
+		res["error"] = "нет адреса перед «:»"
+		return res
+	if LanDiscovery.is_ipv4(h):
+		res["ok"] = true
+		res["host"] = h
+		return res
+	var numeric: bool = true
+	for i in h.length():
+		if not (h[i] == "." or h[i].is_valid_int()):
+			numeric = false
+			break
+	if numeric:
+		res["error"] = "неверный IPv4: нужно четыре числа 0–255 через точку"
+		return res
+	if not _valid_hostname(h):
+		res["error"] = "недопустимый адрес «%s»" % h
+		return res
+	res["ok"] = true
+	res["host"] = h.to_lower()
+	return res
+
+
+static func _valid_hostname(h: String) -> bool:
+	if h.length() > 253:
+		return false
+	for label in h.split("."):
+		if label.is_empty() or label.length() > 63 or label.begins_with("-") or label.ends_with("-"):
+			return false
+		for i in label.length():
+			var u: int = label.unicode_at(i)
+			if not ((u >= 0x30 and u <= 0x39) or (u >= 0x41 and u <= 0x5A) or (u >= 0x61 and u <= 0x7A)
+					or u == 0x2D):
+				return false
+	return true
+
+
+func connect_by_ip() -> void:
+	var a: Dictionary = parse_address(ip_edit.text)
+	if not bool(a["ok"]):
+		ip_error_label.text = "Адрес: " + String(a["error"])
+		return
+	var host: String = String(a["host"])
+	var ip: String = host
+	if not LanDiscovery.is_ipv4(host):
+		ip = IP.resolve_hostname(host, IP.TYPE_IPV4)
+		if ip == "":
+			ip_error_label.text = "Адрес: компьютер «%s» не найден" % host
+			return
+	var port: int = int(a["port"])
+	connect_to(ip, port, host if port == Net.GAME_PORT else "%s:%d" % [host, port])
+
+
+# ------------------------------------------------------------------ ПОДКЛЮЧЕНИЕ
+
+func _build_connecting_screen() -> void:
+	var page: VBoxContainer = _net_page("Подключение")
+	screens["connecting"] = page
+	connect_label = _label("", 20, Color(0.9, 0.93, 1.0))
+	connect_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	connect_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	connect_label.custom_minimum_size = Vector2(NET_W, 80)
+	page.add_child(connect_label)
+	connect_back_button = _button("Отмена")
+	connect_back_button.pressed.connect(leave_session)
+	_buttons_row(page, [connect_back_button])
+
+
+## Войти в игру ip:port; remember — что записать в «Недавние» при успехе.
+func connect_to(ip: String, port: int, remember: String = "") -> void:
+	if Net.nick_error(nick_edit.text) != "":
+		return
+	profile.save_to(profile_path)
+	Net.local_profile = profile.to_net()
+	_pending_addr = remember
+	connect_label.add_theme_color_override("font_color", Color(0.9, 0.93, 1.0))
+	connect_label.text = "Подключение к %s:%d…" % [ip, port]
+	connect_back_button.text = "Отмена"
+	show_screen("connecting")
+	_use_lobby()
+	if lobby.join(ip, port) != OK:
+		_on_net_failed(NetLobby.last_reason)
+
+
+func _on_net_started() -> void:
+	if not Net.is_client():
+		return
+	if _pending_addr != "":
+		profile.remember_ip(_pending_addr)
+		profile.save_to(profile_path)
+		_pending_addr = ""
+	show_screen("lobby")
+	_refresh_lobby()
+
+
+func _on_net_failed(reason: String) -> void:
+	_pending_addr = ""
+	lobby = null
+	connect_label.add_theme_color_override("font_color", ERR_COLOR)
+	connect_label.text = "Ошибка: " + reason
+	connect_back_button.text = "Назад"
+	show_screen("connecting")
+
+
+func _on_net_ended(reason: String) -> void:
+	lobby = null
+	show_screen("main")
+	if reason != "":
+		status_label.text = "Сеть: " + reason
+
+
+## «Отмена» / «Выйти» / «Закрыть игру»: конец сессии, главный экран.
+func leave_session() -> void:
+	if Net.is_online():
+		Net.leave()
+	elif lobby != null and is_instance_valid(lobby):
+		lobby.queue_free()
+	lobby = null
+	show_screen("main")
+
+
+# ------------------------------------------------------------------ ЛОББИ
+
+func _build_lobby_screen() -> void:
+	var page: VBoxContainer = _net_page("Лобби")
+	screens["lobby"] = page
+	lobby_title = page.get_child(0) as Label
+	lobby_info = _label("", 18, Color(1.0, 0.88, 0.55))
+	lobby_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lobby_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lobby_info.custom_minimum_size = Vector2(NET_W, 0)
+	page.add_child(lobby_info)
+	lobby_list = VBoxContainer.new()
+	lobby_list.add_theme_constant_override("separation", 4)
+	lobby_list.custom_minimum_size = Vector2(NET_W, 4 * 66.0)
+	page.add_child(lobby_list)
+	lobby_status = _label("", 16, DIM_COLOR)
+	lobby_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lobby_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lobby_status.custom_minimum_size = Vector2(NET_W, 22)
+	page.add_child(lobby_status)
+	lobby_leave_button = _button("Выйти")
+	lobby_leave_button.pressed.connect(leave_session)
+	ready_button = _button("Готов")
+	ready_button.pressed.connect(toggle_ready)
+	start_button = _button("Старт")
+	start_button.pressed.connect(start_game)
+	_buttons_row(page, [lobby_leave_button, ready_button, start_button])
+
+
+func toggle_ready() -> void:
+	if lobby != null and is_instance_valid(lobby):
+		lobby.set_ready(not lobby.my_ready)
+
+
+func start_game() -> void:
+	if lobby != null and is_instance_valid(lobby) and lobby.start_game():
+		_refresh_lobby()
+
+
+func _refresh_lobby() -> void:
+	if lobby == null or not is_instance_valid(lobby) or not Net.is_online():
+		return
+	var host: bool = Net.is_host()
+	lobby_title.text = String(Net.session.get("session_name", "Лобби"))
+	var port: int = int(Net.session.get("port", Net.GAME_PORT))
+	if host:
+		var ips: PackedStringArray = LanDiscovery.private_ipv4() if net_bind == "*" \
+				else PackedStringArray([net_bind])
+		var addrs: PackedStringArray = PackedStringArray()
+		for ip in ips:
+			addrs.append("%s:%d" % [ip, port] if port != Net.GAME_PORT else ip)
+		lobby_info.text = ("Адрес для «По IP»: " + ", ".join(addrs)) if not addrs.is_empty() \
+				else "Адресов в локальной сети нет — войти можно только с этого компьютера"
+		if lobby.discovery_error != "":
+			lobby_info.text += "\n" + lobby.discovery_error
+	else:
+		lobby_info.text = "Хост: %s:%d" % [String(Net.session.get("host_ip", "?")), port]
+	# Игроки: превью вида, ник, готовность.
+	for c in lobby_list.get_children():
+		c.queue_free()
+	lobby_rows.clear()
+	var waiting: Array = []
+	for e in Net.roster():
+		var peer: int = int(e["peer"])
+		var rdy: bool = lobby.is_ready(peer)
+		lobby_rows.append({"peer": peer, "nick": String(e["nick"]), "ready": rdy, "look": int(e["look"])})
+		lobby_list.add_child(_lobby_row(e, rdy))
+		if not rdy:
+			waiting.append(String(e["nick"]))
+	var n: int = Net.peers.size()
+	var cap: String = "%d/%d" % [n, Net.max_players] if host else "%d" % n
+	lobby_leave_button.text = "Закрыть игру" if host else "Выйти"
+	ready_button.visible = not host
+	start_button.visible = host
+	if host:
+		start_button.disabled = not lobby.can_start()
+		if lobby.is_entering():
+			lobby_status.text = "Мир строится…"
+		elif waiting.is_empty():
+			lobby_status.text = "Игроков %s. Все готовы — можно начинать (войти можно и после старта)" % cap
+		else:
+			lobby_status.text = "Игроков %s. Ждём готовности: %s" % [cap, ", ".join(waiting)]
+	else:
+		ready_button.text = "Не готов" if lobby.my_ready else "Готов"
+		lobby_status.text = "Игроков %s. %s" % [cap, "Ждём, когда хост начнёт" if lobby.my_ready
+				else "Нажмите «Готов», когда будете готовы"]
+
+
+func _lobby_row(e: Dictionary, rdy: bool) -> HBoxContainer:
+	var row: HBoxContainer = HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	row.custom_minimum_size = Vector2(NET_W, 62)
+	var stage: Control = Control.new()
+	stage.custom_minimum_size = Vector2(56, 62)
+	var pv: AvatarPreview = AvatarPreview.new()
+	pv.look = int(e["look"]) & 0xFFFF
+	pv.scale = Vector2(LOBBY_PREVIEW_SCALE, LOBBY_PREVIEW_SCALE)
+	pv.position = Vector2(28, 62 - Avatar.SIZE.y * 0.5 * LOBBY_PREVIEW_SCALE - 4.0)
+	stage.add_child(pv)
+	row.add_child(stage)
+	var peer: int = int(e["peer"])
+	var tag: String = ""
+	if peer == 1:
+		tag = "  (хост)"
+	elif peer == Net.my_id():
+		tag = "  (вы)"
+	var nl: Label = _label(String(e["nick"]) + tag, 22, Color(0.92, 0.95, 1.0))
+	nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(nl)
+	var rl: Label = _label("готов" if rdy else "ждём", 20, READY_COLOR if rdy else DIM_COLOR)
+	rl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(rl)
+	return row
