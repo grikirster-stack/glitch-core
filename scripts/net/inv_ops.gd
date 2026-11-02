@@ -383,7 +383,9 @@ func _on_chest(sender: int, payload: PackedByteArray) -> void:
 	var c: Chest = World.machines.get(NetCodec.idx_cell(int(d["cell"]))) as Chest
 	var flags: int = int(d["flags"])
 	if c == null:
-		if UI.panel != null and UI.panel.chest != null and cell_of(UI.panel.chest) == int(d["cell"]):
+		# Сундука у клиента нет (снесён): окно, открытое на нём, закрыть.
+		var open_c = UI.panel.chest if UI.panel != null else null
+		if open_c != null and (not is_instance_valid(open_c) or cell_of(open_c) == int(d["cell"])):
 			UI.panel.close()
 		return
 	var slots: Array = d["slots"]
