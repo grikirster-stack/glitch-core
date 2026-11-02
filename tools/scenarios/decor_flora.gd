@@ -25,9 +25,10 @@ func run() -> void:
 	ok("декор без коллизий и навигации",
 			not d.collision_enabled and not d.navigation_enabled
 			and d.tile_set.get_physics_layers_count() == 0)
+	await _drain(d)
 	ok("декор над тайлами, под постройками и туманом войны (z 30)",
-			d.z_index > World.tilemap.z_index and d.z_index < 3 and not d.is_processing(),
-			"z %d, _process %s" % [d.z_index, str(d.is_processing())])
+			d.z_index > World.tilemap.z_index and d.z_index < 3, "z %d" % d.z_index)
+	ok("очередь чанков пуста — _process выключен", d.pending() == 0 and not d.is_processing())
 
 	# --- 1. Туман: декор только в исследованном ------------------------------
 	var far: Vector2i = _far_unexplored()
@@ -38,8 +39,14 @@ func run() -> void:
 	if far.x >= 0:
 		ok("под туманом декора нет", not d.is_built(far) and d.decor_at(far.x, far.y) == 0
 				and not World.is_explored(far))
+		var p0: int = World.explore_us
 		World.reveal_around(far, Balance.FOG_RADIUS)
-		ok("открыли пещеру — чанк собран", d.is_built(far))
+		var queued: int = d.pending()
+		ok("открыли пещеру — чанки в очереди, не в том же кадре", queued > 0 and not d.is_built(far),
+				"в очереди %d, открытие %d мкс" % [queued, World.explore_us - p0])
+		await _drain(d)
+		ok("через кадр-другой чанк собран, _process снова выключен",
+				d.is_built(far) and not d.is_processing())
 		ok("собранный чанк — по правилам", _mismatch(d, far.x - 8, far.y - 8, 16, 16) == 0)
 
 	# --- 2. Весь мир: детерминизм, сохранение, тайлы -------------------------
@@ -118,9 +125,22 @@ func run() -> void:
 	ok("пересчёт столбца при правке клетки дешёвый", avg_us < 200.0,
 			"в среднем %.1f мкс, худший %d мкс на %d правок" % [avg_us, d.update_us_max, d.update_calls])
 	var chunks: int = maxi(1, d.chunks_built)
+	var pf: int = maxi(1, d.proc_frames)
+	ok("сборка чанков в кадре — в бюджете", float(d.proc_us) / float(pf) < 1000.0,
+			"кадров с очередью %d, в среднем %.0f мкс, худший %d мкс"
+			% [d.proc_frames, float(d.proc_us) / float(pf), d.proc_us_max])
 	print("  DECORSTATS: клеток декора %d (до прохода %d), по видам %s; чанк %.0f мкс в среднем, худший %d мкс; весь мир %.1f мс"
 			% [d.cells, lazy_cells, str(by_kind), float(d.build_us) / float(chunks), d.build_us_max, all_ms])
 	finish()
+
+
+## Ждать, пока слой разберёт очередь чанков (не дольше 60 кадров).
+func _drain(d) -> void:
+	for i in 60:
+		if d.pending() == 0:
+			break
+		await await_frame()
+	await await_frame()
 
 
 ## Дальняя неисследованная пещера (воздух под рельефом).

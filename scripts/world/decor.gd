@@ -16,7 +16,8 @@ extends TileMapLayer
 ##    как тайлы. Своих источников света у декора нет (свечение — слой эмиссии V3).
 ##
 ## Стоимость: в кадре — ноль скрипта (рисует движок, как тайлы). Чанк собирается
-## один раз, когда в нём открылась первая клетка (доли мс); новый мир или загрузка
+## один раз, когда в нём открылась первая клетка: в очередь, её разбирает _process
+## по BUILD_BUDGET_US за кадр, пустая очередь — _process выключен; новый мир или загрузка
 ## с другим рельефом сбрасывают слой (World._sync_all → reset). Правка клетки
 ## пересчитывает 8 клеток своего столбца (декор зависит только от столбца:
 ## пол/потолок над и под клеткой, ствол под шляпкой) — World._set_cell_visual.
@@ -52,18 +53,25 @@ const SALT: int = 0x44454352   # «DECR»
 
 ## Чанк сборки, клеток: мелкий — сборка при открытии не даёт пика в кадре.
 const CHUNK: int = 16
+## Сколько мкс за кадр разбирать очередь чанков (≥ 1 чанк за кадр).
+const BUILD_BUDGET_US: int = 300
 
 # ---------------------------------------------- СЧЁТЧИКИ (для замеров)
 var cells: int = 0             ## клеток с декором сейчас
 var chunks_built: int = 0      ## собранных чанков
 var build_us: int = 0          ## суммарное время сборки чанков с последнего reset, мкс
 var build_us_max: int = 0      ## самый дорогой чанк, мкс
+var proc_frames: int = 0       ## кадров, когда разбиралась очередь (_process включён)
+var proc_us: int = 0           ## их суммарное время, мкс
+var proc_us_max: int = 0       ## самый дорогой такой кадр, мкс
 var update_calls: int = 0      ## правок клеток мира (on_cell)
 var update_us: int = 0         ## суммарное время on_cell, мкс
 var update_us_max: int = 0
 
 var _code: PackedByteArray = PackedByteArray()
-var _built: PackedByteArray = PackedByteArray()     ## чанк -> 1: собран
+var _built: PackedByteArray = PackedByteArray()     ## чанк -> 0 нет, 1 собран, 2 в очереди
+var _queue: PackedInt32Array = PackedInt32Array()   ## чанки на сборку (открылись)
+var _qhead: int = 0
 var _natural: PackedByteArray = PackedByteArray()   ## id -> 1: природная твёрдая порода (пол/потолок)
 var _mix: int = 0
 var _w: int = 0                ## World.W / World.H — в горячем цикле без обращений к узлу
@@ -74,6 +82,7 @@ var _cy: int = 0
 
 func _ready() -> void:
 	name = "Decor"
+	set_process(false)
 	# Над тайлами (шляпка + стебель в просвете), под табличками (2), постройками (3),
 	# героем и фантомами (5) и туманом войны (30).
 	z_index = 1
@@ -103,6 +112,9 @@ func reset() -> void:
 	_code.fill(0)
 	_built.resize(_cx * _cy)
 	_built.fill(0)
+	_queue.clear()
+	_qhead = 0
+	set_process(false)
 	_mix = _hash3(World.world_seed, SALT, 7)
 	cells = 0
 	chunks_built = 0
@@ -116,7 +128,7 @@ func reset() -> void:
 ## Собрать весь мир сразу, без оглядки на туман (инструменты, проверки).
 func build_all() -> void:
 	for ci in _cx * _cy:
-		if _built[ci] == 0:
+		if _built[ci] != 1:
 			_build_chunk(ci)
 
 
@@ -131,7 +143,7 @@ func _on_explored_reset() -> void:
 		var y1: int = mini((cy + 1) * CHUNK, _hgt)
 		for cx in _cx:
 			var ci: int = cy * _cx + cx
-			if _built[ci] != 0:
+			if _built[ci] == 1:
 				continue
 			var x0: int = cx * CHUNK
 			var x1: int = mini(x0 + CHUNK, _w)
@@ -141,7 +153,10 @@ func _on_explored_reset() -> void:
 					break
 
 
-## Открылись клетки в прямоугольнике rect: собрать задетые чанки, если ещё нет.
+## Открылись клетки в прямоугольнике rect: задетые чанки — в очередь сборки.
+## Шаг героя в новое не платит за сборку в том же кадре: очередь разбирает
+## _process по BUILD_BUDGET_US мкс за кадр (чанк — у края тумана, задержка в
+## кадр-другой не видна).
 func _on_explored(rect: Rect2i) -> void:
 	if _built.is_empty():
 		return
@@ -151,8 +166,35 @@ func _on_explored(rect: Rect2i) -> void:
 	var cy1: int = clampi((rect.end.y - 1) / CHUNK, 0, _cy - 1)
 	for cy in range(cy0, cy1 + 1):
 		for cx in range(cx0, cx1 + 1):
-			if _built[cy * _cx + cx] == 0:
-				_build_chunk(cy * _cx + cx)
+			var ci: int = cy * _cx + cx
+			if _built[ci] == 0:
+				_built[ci] = 2
+				_queue.append(ci)
+	if not _queue.is_empty():
+		set_process(true)
+
+
+## Разбор очереди: хотя бы один чанк за кадр, следующий — только если по средней
+## цене чанка он ещё уложится в бюджет. Очередь пуста — _process выключен, в кадре
+## слой не стоит ничего.
+func _process(_delta: float) -> void:
+	var t0: int = Time.get_ticks_usec()
+	var avg: int = build_us / maxi(1, chunks_built)
+	while _qhead < _queue.size():
+		var ci: int = _queue[_qhead]
+		_qhead += 1
+		if _built[ci] == 2:
+			_build_chunk(ci)
+		if Time.get_ticks_usec() - t0 + avg >= BUILD_BUDGET_US:
+			break
+	if _qhead >= _queue.size():
+		_queue.clear()
+		_qhead = 0
+		set_process(false)
+	var us: int = Time.get_ticks_usec() - t0
+	proc_frames += 1
+	proc_us += us
+	proc_us_max = maxi(proc_us_max, us)
 
 
 ## Сборка чанка по тайлам мира. Кандидаты отсеиваются по массиву тайлов без
@@ -209,7 +251,7 @@ func on_cell(x: int, y: int) -> void:
 	var tl: PackedByteArray = World.tiles
 	var cxx: int = x / CHUNK
 	for cy in range(maxi(y - 5, 0), mini(y + 3, _hgt)):
-		if _built[(cy / CHUNK) * _cx + cxx] == 0:
+		if _built[(cy / CHUNK) * _cx + cxx] != 1:
 			continue
 		var c: int = _eval(tl, x, cy)
 		var i: int = cy * w + x
@@ -248,7 +290,12 @@ func expected_at(x: int, y: int) -> int:
 func is_built(c: Vector2i) -> bool:
 	if _built.is_empty() or c.x < 0 or c.y < 0 or c.x >= _w or c.y >= _hgt:
 		return false
-	return _built[(c.y / CHUNK) * _cx + c.x / CHUNK] != 0
+	return _built[(c.y / CHUNK) * _cx + c.x / CHUNK] == 1
+
+
+## Сколько чанков ждут сборки (0 — слой догнал туман).
+func pending() -> int:
+	return _queue.size() - _qhead
 
 
 ## Вид декора по коду клетки (-1 — пусто).
