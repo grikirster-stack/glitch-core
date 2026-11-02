@@ -18,8 +18,8 @@ extends SceneTree
 
 ## Схема протокола PROTO = SCHEMA_PROTO. Поменяли кодек, порядок IDs или таблицы DB —
 ## поднимите Net.PROTO и впишите сюда новый PROTO и хэш, который напечатает тест.
-const SCHEMA_PROTO: int = 3
-const SCHEMA_HASH: String = "012d4f358ffebf536cdbf47ed2474a87"
+const SCHEMA_PROTO: int = 4
+const SCHEMA_HASH: String = "416643e1665a961bf332343e80635b1d"
 
 const PORT_BASE: int = 24900
 const LOOP: String = "127.0.0.1"

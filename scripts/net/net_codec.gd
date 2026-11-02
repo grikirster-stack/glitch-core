@@ -36,6 +36,7 @@ enum Msg {
 	CMD_RESULT,    ## 2: ответ на команду
 	BARRIER,       ## 2: харнесс mp_*: клиент дошёл до точки синхронизации
 	BARRIER_PASS,  ## 2: харнесс mp_*: все дошли
+	LOBBY,         ## 2: лобби до старта: готовность и старт (MP-H, #93)
 }
 
 ## Типы событий EVENT. Только дописывать в конец.
@@ -918,6 +919,7 @@ static func schema_sample() -> PackedByteArray:
 	out.append_array(var_to_bytes(Fx.keys()))
 	out.append_array(var_to_bytes([IF_FACING_LEFT, IF_ON_GROUND, IF_EPOCH_SHIFT, OF_EPOCH_SHIFT, PRESS_KEYS]))
 	out.append_array(schema_sample_phantoms())   # MP-F (#92)
+	out.append_array(lobby_schema_sample())   # MP-H (#93)
 	return out
 
 
@@ -999,4 +1001,55 @@ static func schema_sample_phantoms() -> PackedByteArray:
 	out.append_array(var_to_bytes(Ent.keys()))
 	out.append_array(var_to_bytes(PHANTOM_KINDS))
 	out.append_array(var_to_bytes([PHF_ON_GROUND, PHF_MACHINE]))
+	return out
+
+
+# ------------------------------------------------------------------ ЛОББИ (MP-H, #93)
+## Кадр LOBBY (канал 2): u8 вид + данные.
+##   LOBBY_STATE (хост → клиенты): u8 флаги (бит 0 — игра идёт) · u8 n · n × u32 peer
+##     готовых игроков. Хост шлёт при каждом изменении и каждому вошедшему.
+##   LOBBY_READY (клиент → хост): u8 0/1 — «Готов».
+const LOBBY_STATE: int = 0
+const LOBBY_READY: int = 1
+const LOBBY_STARTED: int = 1
+
+
+static func encode_lobby_state(started: bool, ready_peers: Array) -> PackedByteArray:
+	var s: StreamPeerBuffer = StreamPeerBuffer.new()
+	s.put_u8(LOBBY_STATE)
+	s.put_u8(LOBBY_STARTED if started else 0)
+	var n: int = mini(ready_peers.size(), 255)
+	s.put_u8(n)
+	for i in n:
+		s.put_u32(int(ready_peers[i]) & 0xFFFFFFFF)
+	return s.data_array
+
+
+static func encode_lobby_ready(on: bool) -> PackedByteArray:
+	return PackedByteArray([LOBBY_READY, 1 if on else 0])
+
+
+## {kind: LOBBY_STATE, started, ready: Array[peer]} · {kind: LOBBY_READY, on} · {} у битого.
+static func decode_lobby(b: PackedByteArray) -> Dictionary:
+	if b.size() < 2:
+		return {}
+	match int(b[0]):
+		LOBBY_STATE:
+			if b.size() < 3 or b.size() != 3 + 4 * int(b[2]):
+				return {}
+			var s: StreamPeerBuffer = _reader(b.slice(3))
+			var ready: Array = []
+			for i in int(b[2]):
+				ready.append(s.get_u32())
+			return {"kind": LOBBY_STATE, "started": (int(b[1]) & LOBBY_STARTED) != 0, "ready": ready}
+		LOBBY_READY:
+			if b.size() != 2:
+				return {}
+			return {"kind": LOBBY_READY, "on": int(b[1]) != 0}
+	return {}
+
+
+static func lobby_schema_sample() -> PackedByteArray:
+	var out: PackedByteArray = encode_lobby_state(true, [1, 2, 0xFFFFFFFF])
+	out.append_array(encode_lobby_ready(true))
 	return out
