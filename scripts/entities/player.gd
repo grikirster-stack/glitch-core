@@ -621,7 +621,7 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 			task_progress += dt / 3.0
 			if task_progress >= 1.0:
 				task_progress = 0.0
-				Game.try_finish()
+				Game.try_finish(self)   # вклад деталей — из своего инвентаря (MP-I, #94)
 		ET_GENERATOR, ET_INSERTER:
 			# ТЭЦ: уголь — топка, иначе рубильник (#25); манипулятор: фильтр/сброс (#30).
 			tg["node"].interact(self)
@@ -648,6 +648,7 @@ func _read_terminal(t: Vector2i) -> void:
 	if chapter >= 0:
 		Tech.read_chapter(chapter)
 	_sfx_here("craft", -6.0)
+	_net_terminal_read(chapter)   # СЕТЬ (ADR-002 § 4.7): терминал — один раз на команду
 
 
 ## Ремонт хламом: +Balance.REPAIR_PER_SCRAP HP машине-цели E (ET_REPAIR) за
@@ -697,6 +698,8 @@ func _toggle_hide() -> void:
 		if World.cell_to_world(v).distance_to(global_position) < 40.0:
 			if hide_cd > 0.0:
 				_notify("Вентиляция ещё не остыла: %d с." % ceili(hide_cd), Color(0.8, 0.8, 0.8))
+				return
+			if _net_vent_busy(v):   # СЕТЬ (ADR-002 § 4.7): одна вентиляция — один герой
 				return
 			hiding = true
 			hide_timer = Balance.HIDE_MAX
@@ -755,7 +758,7 @@ func _die() -> void:
 	task_progress = 0.0
 	mining_progress = 0.0
 	Game.stats_deaths += 1
-	drop_hotbar_bag()
+	_net_own_bag(drop_hotbar_bag())   # СЕТЬ (ADR-002 § 4.7): мешок — сначала владельцу
 	died.emit()
 
 
@@ -1190,3 +1193,42 @@ func _net_puppet_tick(dt: float) -> void:
 	if mining_progress > 0.0:
 		_mine_fx_t += dt
 	queue_redraw()
+
+
+# --- MP-I (#94): кооператив — укрытие на одного, терминал команды, мешок владельца (§ 4.7)
+## uid профиля владельца героя (по нему — мешок, парковка, сохранение; 0 — одиночная).
+var net_uid: int = 0
+## Вентиляция, в которой сидит герой (пока hiding): «Вентиляция занята: Аня».
+var net_vent: Vector2i = Vector2i(-1, -1)
+## Личная статистика для экрана итогов (ведёт хост, NetCoop): {"deaths": N}.
+var net_stats: Dictionary = {"deaths": 0}
+
+
+## Вентиляцию v уже занял товарищ (только в сети): личное «Вентиляция занята: Аня».
+## false — свободна (герой сейчас в неё залезет — запоминаем, в какую).
+func _net_vent_busy(v: Vector2i) -> bool:
+	if not Net.is_online():
+		return false
+	for h in Game.players:
+		if h != self and is_instance_valid(h) and h.hiding and h.net_vent == v:
+			_notify("Вентиляция занята: %s." % String(h.nick), Color(1.0, 0.75, 0.5))
+			return true
+	net_vent = v
+	return false
+
+
+## Терминал прочитан (хост): всем — кто прочёл и где. Данные и глава — один раз на
+## команду: терминал ушёл из World.terminals, второй дочитывающий его уже не найдёт.
+func _net_terminal_read(chapter: int) -> void:
+	if not Net.is_host():
+		return
+	var place: String = Lore.chapter_place(chapter) if chapter >= 0 else ""
+	var what: String = "терминал «%s»" % place if place != "" else "терминал"
+	NetCoop.team_notify("%s: %s прочитан, +%d данных." % [nick, what, Balance.TERMINAL_DATA],
+			Color(0.4, 0.95, 0.6))
+
+
+## Мешок с хотбаром погибшего — MP_BAG_OWNER_LOCK с поднимает только владелец (по uid).
+func _net_own_bag(bag: ItemEntity) -> void:
+	if bag != null and Net.is_online():
+		bag.bag_owner = net_uid

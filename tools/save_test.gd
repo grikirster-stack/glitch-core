@@ -215,6 +215,7 @@ class Runner extends Node:
 				"наработка %.2f → %.2f с" % [_work_at_load, _total_work()])
 		if _round == 0:
 			_corrupt_case()
+			_versions_case()   # MP-I (#94): версия 1 читается, версия 2 с игроками — в одиночной
 		_after_round()
 
 
@@ -410,6 +411,47 @@ class Runner extends Node:
 		_ok("битый файл не загружается", not loaded, save_s.last_error)
 		_ok("битый файл не трогает мир", var_to_bytes(save_s.gather()) == before)
 		save_s.remove(SLOT + "_bad")
+
+
+	## Версии формата (ADR-002 § 4.9, MP-I #94): файл версии 1 (до сети, без вклада в
+	## релей) грузится как одиночный; версия 2 с разделами session и players (сетевая
+	## игра хоста) в одиночной берёт только player — чужие герои ни на что не влияют.
+	func _versions_case() -> void:
+		var p = game.player
+		var d: Dictionary = save_s.gather()
+		_ok("одиночное сохранение: версия %d, разделов сети нет" % int(save_s.VERSION),
+				int(d["version"]) == 2 and not d.has("players") and not d.has("session"))
+		var v1: Dictionary = d.duplicate(true)
+		v1["version"] = 1
+		(v1["game"] as Dictionary).erase("relay_have")
+		var b1: PackedByteArray = save_s.encode(v1)
+		b1.encode_u32(4, 1)
+		_write(SLOT + "_v1", b1)
+		var pos0: Vector2 = p.global_position
+		p.global_position += Vector2(64, 0)
+		game.relay_have = {IDs.I.IRON_PLATE: 5}
+		var ok1: bool = save_s.load_game(SLOT + "_v1")
+		_ok("файл версии 1 загружается", ok1, save_s.last_error)
+		_ok("версия 1: герой на месте, вклада в релей нет", ok1 and p.global_position.distance_to(pos0) < 0.5
+				and game.relay_have.is_empty(), str(game.relay_have))
+		var v2: Dictionary = d.duplicate(true)
+		v2["session"] = {"name": "Экспедиция", "max": 4}
+		var other: Dictionary = (d["player"] as Dictionary).duplicate(true)
+		other["pos"] = pos0 + Vector2(320, 0)
+		v2["players"] = {777: {"nick": "Аня", "look": 3, "state": other, "stats": {"deaths": 1}, "dead": false}}
+		_write(SLOT + "_v2", save_s.encode(v2))
+		p.global_position += Vector2(64, 0)
+		var ok2: bool = save_s.load_game(SLOT + "_v2")
+		_ok("версия 2 с игроками сети в одиночной: только раздел player", ok2
+				and p.global_position.distance_to(pos0) < 0.5 and scene.get_node("/root/Net").parked.is_empty(), save_s.last_error)
+		save_s.remove(SLOT + "_v1")
+		save_s.remove(SLOT + "_v2")
+
+
+	func _write(s: String, bytes: PackedByteArray) -> void:
+		var f: FileAccess = FileAccess.open(save_s.path_for(s), FileAccess.WRITE)
+		f.store_buffer(bytes)
+		f.close()
 
 
 	func _dig_near_water() -> void:

@@ -154,6 +154,12 @@ func _on_state_changed(s: int) -> void:
 
 
 func _stats() -> Array:
+	if net_coop != null:   # СЕТЬ (MP-I): итоги команды и личные по игрокам
+		return _base_stats() + net_coop.stats_lines()
+	return _base_stats()
+
+
+func _base_stats() -> Array:
 	return [
 		"Добыто блоков: %d" % Game.stats_mined,
 		"Изготовлено предметов: %d" % Game.stats_crafted,
@@ -187,11 +193,10 @@ func _setup_respawn() -> void:
 
 
 func _on_player_died() -> void:
+	if _net_coop_died():   # СЕТЬ (ADR-002 D11): смерть в сети — NetCoop, часы не двигаются
+		return
 	if hardcore:
 		Game.set_state(Game.State.DEAD)
-		return
-	if not Net.is_authority():   # СЕТЬ (ADR-002): героя клиента возрождает хост (net_respawned)
-		end_screen.show_death(Lore.epitaph(), Balance.MP_RESPAWN_DELAY)
 		return
 	end_screen.show_death(Lore.epitaph(), Balance.RESPAWN_DELAY)
 	get_tree().create_timer(Balance.RESPAWN_DELAY).timeout.connect(_respawn)
@@ -289,6 +294,9 @@ func _on_net_ended(reason: String) -> void:
 func _net_start() -> void:
 	_net_players_start()
 	_net_inv_start()
+	_net_coop_start()
+	if Net.is_host():
+		_net_load_save()   # хост из меню (лобби MP-H): сервер уже поднят
 	if _net.has("scenario"):
 		scenario_mode = true
 		Game.scenario_mode = true   # фантомов, как и в --scenario, создаёт сам сценарий
@@ -300,6 +308,7 @@ func _net_start() -> void:
 		var title: String = "Экспедиция " + String(Net.local_profile.get("nick", Net.DEFAULT_NICK))
 		if Net.host(port, bind, seed_value, title) == OK:
 			print("СЕТЬ: хост %s:%d, сид %d" % [bind, port, seed_value])
+			_net_load_save()
 		else:
 			print("СЕТЬ: " + Net.last_error)
 
@@ -355,3 +364,46 @@ func _net_inv_start() -> void:
 	net_inv = InvOps.new()
 	add_child(net_inv)
 	net_inv.start(self)
+
+
+# ------------------------------------------------- СЕТЬ: КООПЕРАТИВ (ADR-002 § 4.7, § 4.9, MP-I #94)
+## Смерть, респаун, вайп, зритель --hardcore, парковка по uid и автосохранение на
+## рассвете ведёт NetCoop (scripts/net/net_coop.gd). Без сети узла нет, а смерть,
+## респаун и сохранение — прежние (_on_player_died, _respawn, Save).
+## Загрузка сетевого сохранения — при создании игры: флаг --mp-load=<слот> или
+## Net.session["load"] (меню); F9 в сети выключена.
+var net_coop: NetCoop = null
+
+
+func _net_coop_start() -> void:
+	if net_coop != null or net_players == null:
+		return
+	net_coop = NetCoop.new()
+	add_child(net_coop)
+	net_coop.start(self)
+
+
+## true — свой герой погиб в сети: решает NetCoop (хост) или ждём хоста (клиент).
+func _net_coop_died() -> bool:
+	if not Net.is_online() or net_coop == null:
+		return false
+	if Net.is_host():
+		net_coop.on_hero_died(player)
+	else:
+		net_coop.on_own_died_client()
+	return true
+
+
+## Хост: загрузить сетевое сохранение (--mp-load=<слот> или Net.session["load"]).
+func _net_load_save() -> void:
+	var slot: String = String(Net.session.get("load", ""))
+	for a in _args:
+		if a.begins_with("--mp-load="):
+			slot = a.substr(10).strip_edges()
+	if slot == "":
+		return
+	if Save.load_net(slot):
+		print("СЕТЬ: загружено сохранение «%s» (%.1f мс), игроков ждёт %d" % [slot,
+				Save.last_load_ms, Net.parked.size()])
+	else:
+		print("СЕТЬ: сохранение «%s» не загружено: %s" % [slot, Save.last_error])
