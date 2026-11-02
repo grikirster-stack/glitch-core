@@ -1562,7 +1562,9 @@ func _defense_tick(delta: float) -> void:
 		ph.append(p.global_position)
 		if String(p.get("kind")) == "burrower":
 			burrowers.append(p.global_position)
-	if not airlocks.is_empty():
+	if not airlocks.is_empty() and Game.players.size() > 1:   # СЕТЬ (ADR-002, MP-F): шлюз — любому герою
+		update_airlocks_heroes(net_hero_positions(), ph)
+	elif not airlocks.is_empty():
 		var pl = Game.player
 		var has_pl: bool = pl != null and is_instance_valid(pl) \
 				and not bool(pl.get("dead")) and not bool(pl.get("hiding"))
@@ -2382,3 +2384,58 @@ func net_apply_fluid(idx: PackedInt32Array, val: PackedByteArray) -> void:
 		fluid[i] = mini(int(val[k]), FLUID_MAX)
 		if _fluid_open(tiles[i]):
 			_set_fluid_cell(i % W, int(i / W))
+
+
+# ------------------------------------------------------------ СЕТЬ: ШЛЮЗЫ (ADR-002, MP-F #92)
+## С товарищами шлюз открывается любому герою (живому, не в укрытии) — по тому же
+## правилу, что update_airlocks: герой в проёме — открыт; герой ближе
+## AIRLOCK_OPEN_DIST_TILES и фантомов у шлюза нет — открыт. Один герой — прежний путь.
+
+## Позиции героев, которым открываются шлюзы.
+func net_hero_positions() -> PackedVector2Array:
+	var out: PackedVector2Array = PackedVector2Array()
+	for h in Game.players:
+		if is_instance_valid(h) and not bool(h.get("dead")) and not bool(h.get("hiding")):
+			out.append((h as Node2D).global_position)
+	return out
+
+
+## Пересчёт всех шлюзов по нескольким героям (публичная — для сценариев).
+func update_airlocks_heroes(heroes: PackedVector2Array, phantoms: PackedVector2Array) -> void:
+	if heroes.size() <= 1:
+		update_airlocks(heroes[0] if heroes.size() == 1 else Vector2.ZERO, heroes.size() == 1, phantoms)
+		return
+	var t0: int = Time.get_ticks_usec()
+	if _airlock_dirty:
+		_airlock_dirty = false
+		_airlock_cells = airlocks.keys()
+		_airlock_pos = PackedVector2Array()
+		_airlock_idx = PackedInt32Array()
+		for c in _airlock_cells:
+			_airlock_pos.append(cell_to_world(c))
+			_airlock_idx.append(c.y * W + c.x)
+	var open_r: float = Balance.AIRLOCK_OPEN_DIST_TILES * TILE
+	var open_r2: float = open_r * open_r
+	var safe_r: float = Balance.AIRLOCK_SAFE_DIST_TILES * TILE
+	var safe_r2: float = safe_r * safe_r
+	var ox: float = TILE * 0.5 + 6.0
+	var oy: float = TILE * 0.5 + 11.0
+	for i in _airlock_pos.size():
+		var cp: Vector2 = _airlock_pos[i]
+		var want: bool = false
+		var near: bool = false
+		for hp in heroes:
+			if absf(cp.x - hp.x) < ox and absf(cp.y - hp.y) < oy:
+				want = true   # герой в проёме — не зажимаем
+				break
+			if cp.distance_squared_to(hp) <= open_r2:
+				near = true
+		if not want and near:
+			want = true
+			for ph in phantoms:
+				if cp.distance_squared_to(ph) < safe_r2:
+					want = false
+					break
+		if tiles[_airlock_idx[i]] != (IDs.T.AIRLOCK_OPEN if want else IDs.T.AIRLOCK):
+			_set_airlock(_airlock_cells[i], want)
+	airlock_tick_us = Time.get_ticks_usec() - t0

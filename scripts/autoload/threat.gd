@@ -20,6 +20,13 @@ extends Node
 ##
 ## Чёрный ящик, подобранный игроком, вскрывается здесь же: +данные и обрывок
 ## журнала (Tech.add_fragment, #28).
+##
+## Сеть (ADR-002 § 4.7, D9; MP-F, #92) — только на хосте, N — герои на связи:
+##   B_N = B · (1 + MP_BUDGET_PER_PLAYER·(N − 1))       — N на начало ночи
+##   cap_N = min(cap + MP_CAP_PER_PLAYER·(N − 1), MAX_PHANTOMS)   — N текущее
+##   интервал_N = clamp((7 − 0.5·T) / (1 + MP_INTERVAL_PER_PLAYER·(N − 1)), MP_SPAWN_INTERVAL_MIN, 7)
+## Спавн — у героя с наименьшим числом преследователей (ничья — дальний от базы).
+## Чёрные ящики вскрываются из инвентаря любого героя. При N = 1 всё как в ADR-001.
 
 ## Вентиляция «выдыхает»: через VENT_TELEGRAPH с отсюда выйдет фантом.
 ## FX (пар, #34) подключается к этому сигналу.
@@ -71,6 +78,7 @@ func reset() -> void:
 	spawned_total = 0
 	_relay_seen = false
 	_lights_size = -1
+	night_players = 1
 
 
 func _process(delta: float) -> void:
@@ -230,16 +238,16 @@ func tick(delta: float) -> void:
 	# Релей запустили посреди ночи — к бюджету добавляется его вклад в T.
 	if Game.relay_active and not _relay_seen:
 		_relay_seen = true
-		var extra: float = Balance.NIGHT_BUDGET_PER_T * Balance.THREAT_RELAY
+		var extra: float = Balance.NIGHT_BUDGET_PER_T * Balance.THREAT_RELAY * budget_mul(night_players)
 		budget += extra
 		roster.append_array(plan_roster(extra, night_day, true, _doppels_alive()))
 		_hurry_doppel(0)
 	spawn_timer -= delta
 	if spawn_timer > 0.0 or roster.is_empty():
 		return
-	if units_alive() + pending.size() >= cap_for(night_day, Game.relay_active):
+	if units_alive() + pending.size() >= cap_for_n(night_day, Game.relay_active, players_online()):
 		return
-	spawn_timer = interval_for(threat_level())
+	spawn_timer = interval_for_n(threat_level(), players_online())
 	var kind: String = roster.pop_front()
 	if kind == "doppel" and _doppels_alive() > 0:
 		return
@@ -252,7 +260,8 @@ func _begin_night() -> void:
 	night_day = Game.day_number
 	Game.wave += 1
 	_relay_seen = Game.relay_active
-	budget = night_budget(threat_level())
+	night_players = players_online()
+	budget = night_budget_n(threat_level(), night_players)
 	roster = plan_roster(budget, night_day, Game.relay_active, _doppels_alive())
 	# Эхо — первым (разведка), остальное вперемешку.
 	var head: Array[String] = []
@@ -263,7 +272,7 @@ func _begin_night() -> void:
 	roster = head
 	if Game.relay_active:
 		_hurry_doppel(1)
-	spawn_timer = minf(interval_for(threat_level()), 3.0)
+	spawn_timer = minf(interval_for_n(threat_level(), night_players), 3.0)
 
 
 func _end_night() -> void:
@@ -295,7 +304,7 @@ func _shuffle(a: Array[String]) -> void:
 ## Поставить фантома в очередь появления: из вентиляции — с телеграфом,
 ## иначе сразу в пещере. false — места не нашлось.
 func request_spawn(kind: String) -> bool:
-	var ppos: Vector2 = _player_pos()
+	var ppos: Vector2 = spawn_anchor()
 	var vent: Vector2i = pick_vent(ppos)
 	if vent.x >= 0:
 		var pos: Vector2 = World.cell_to_world(vent)
@@ -447,6 +456,8 @@ func _stop_dusk_hum() -> void:
 
 ## Подключаемся к инвентарю игрока: подобранный чёрный ящик вскрывается сразу.
 func _bind_inventory() -> void:
+	if Game.players.size() > 1:   # СЕТЬ (ADR-002 § 4.2.5): инвентари товарищей
+		_net_bind_inventories()
 	var pl = Game.player
 	if pl == null or not is_instance_valid(pl):
 		return
@@ -478,6 +489,9 @@ func open_black_box() -> void:
 	var text: String = Lore.fragment(_rng)
 	Tech.add_fragment(text)
 	Game.notify("Чёрный ящик: +%d данных. «%s»" % [Balance.BLACK_BOX_DATA, text], Color(0.95, 0.6, 0.35))
+	if Net.is_host():   # СЕТЬ (ADR-002 § 4.2.5): данные и обрывок — команде, уведомление всем
+		Net.send(NetCodec.Msg.EVENT, NetCodec.encode_notify(Vector2.ZERO, "Чёрный ящик: +%d данных. «%s»" % [
+				Balance.BLACK_BOX_DATA, text], Color(0.95, 0.6, 0.35)))
 
 
 # ------------------------------------------------------------------ СЛУЖЕБНОЕ
@@ -540,7 +554,7 @@ func load_state(d: Dictionary) -> void:
 	pending.clear()
 	_stop_dusk_hum()
 	for p in get_tree().get_nodes_in_group("phantom"):
-		if is_instance_valid(p):
+		if is_instance_valid(p) and not bool(p.get("net_puppet")):   # СЕТЬ: марионетки ведёт NetPhantoms
 			if p.get_parent() != null:
 				p.get_parent().remove_child(p)
 			p.queue_free()
@@ -559,3 +573,112 @@ func load_state(d: Dictionary) -> void:
 		_rng.state = int(d["rng_state"])
 	_lights_size = -1
 	Game.phantoms_alive = 0
+
+
+# ------------------------------------------------------------------ СЕТЬ (ADR-002 § 4.7, MP-F #92)
+## Формулы угрозы на N игроков (D9). При n ≤ 1 — ровно формулы ADR-001.
+
+## Героев на связи на начало этой ночи (бюджет и интервал считаются по нему).
+var night_players: int = 1
+## Инвентари товарищей, к которым подключены: instance_id инвентаря → герой.
+var _net_inv: Dictionary = {}
+
+
+## Игроки на связи (герои Game.players с net_linked). Без сети — 1.
+func players_online() -> int:
+	var n: int = 0
+	for h in Game.players:
+		if is_instance_valid(h) and bool(h.get("net_linked")):
+			n += 1
+	return maxi(1, n)
+
+
+## Множитель бюджета ночи: 1 + MP_BUDGET_PER_PLAYER·(N − 1).
+static func budget_mul(n: int) -> float:
+	if n <= 1:
+		return 1.0
+	return 1.0 + Balance.MP_BUDGET_PER_PLAYER * float(n - 1)
+
+
+static func night_budget_n(t: float, n: int) -> float:
+	if n <= 1:
+		return night_budget(t)
+	return night_budget(t) * budget_mul(n)
+
+
+## cap + MP_CAP_PER_PLAYER·(N − 1), не выше MAX_PHANTOMS (предел freeze_probe, #27).
+static func cap_for_n(day: int, relay: bool, n: int) -> int:
+	if n <= 1:
+		return cap_for(day, relay)
+	return mini(cap_for(day, relay) + Balance.MP_CAP_PER_PLAYER * (n - 1), Balance.MAX_PHANTOMS)
+
+
+## (7 − 0.5·T) / (1 + MP_INTERVAL_PER_PLAYER·(N − 1)), в пределах MP_SPAWN_INTERVAL_MIN…7 с.
+static func interval_for_n(t: float, n: int) -> float:
+	if n <= 1:
+		return interval_for(t)
+	var raw: float = Balance.SPAWN_INTERVAL_MAX - Balance.SPAWN_INTERVAL_PER_T * t
+	return clampf(raw / (1.0 + Balance.MP_INTERVAL_PER_PLAYER * float(n - 1)),
+			Balance.MP_SPAWN_INTERVAL_MIN, Balance.SPAWN_INTERVAL_MAX)
+
+
+## Сколько живых фантомов охотится на героя (Phantom.player).
+func pursuers_of(hero: Node) -> int:
+	var n: int = 0
+	for p in get_tree().get_nodes_in_group("phantom"):
+		if is_instance_valid(p) and bool(p.get("alive")) and p.get("player") == hero:
+			n += 1
+	return n
+
+
+## Герой, у которого появится следующий фантом: доступный (живой, не спрятался, на
+## связи) с наименьшим числом преследователей; ничья — дальний от базы. Один герой —
+## он сам (как ADR-001).
+func spawn_hero() -> Node2D:
+	if Game.players.size() <= 1:
+		return _player()
+	var best: Node2D = null
+	var best_n: int = 1 << 30
+	var best_d: float = -1.0
+	for h in Game.players:
+		if not is_instance_valid(h) or not h.has_method("net_targetable") or not bool(h.call("net_targetable")):
+			continue
+		var n: int = pursuers_of(h)
+		var d: float = (h as Node2D).global_position.distance_to(World.spawn_point)
+		if n < best_n or (n == best_n and d > best_d):
+			best = h
+			best_n = n
+			best_d = d
+	return best if best != null else _player()
+
+
+## Точка, у которой ищем вентиляцию для спавна.
+func spawn_anchor() -> Vector2:
+	if Game.players.size() <= 1:
+		return _player_pos()
+	var h: Node2D = spawn_hero()
+	return h.global_position if h != null else World.spawn_point
+
+
+## Подключиться к инвентарям всех героев, кроме своего (его ведёт _bind_inventory):
+## у хоста инвентари прокси авторитетны, подобранный товарищем ящик вскрывается здесь.
+func _net_bind_inventories() -> void:
+	for h in Game.players:
+		if not is_instance_valid(h) or h == Game.player:
+			continue
+		var inv = h.get("inv")
+		if inv == null or _net_inv.has(inv.get_instance_id()):
+			continue
+		_net_inv[inv.get_instance_id()] = h
+		inv.connect("changed", _net_on_inventory_changed.bind(h))
+
+
+func _net_on_inventory_changed(hero: Node) -> void:
+	if not is_instance_valid(hero) or not Net.is_authority():
+		return
+	var n: int = int(hero.inv.count_of(IDs.I.BLACK_BOX))
+	if n <= 0:
+		return
+	hero.inv.remove_id(IDs.I.BLACK_BOX, n)
+	for i in n:
+		open_black_box()

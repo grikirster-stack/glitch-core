@@ -917,6 +917,7 @@ static func schema_sample() -> PackedByteArray:
 	out.append_array(var_to_bytes(SOUNDS))
 	out.append_array(var_to_bytes(Fx.keys()))
 	out.append_array(var_to_bytes([IF_FACING_LEFT, IF_ON_GROUND, IF_EPOCH_SHIFT, OF_EPOCH_SHIFT, PRESS_KEYS]))
+	out.append_array(schema_sample_phantoms())   # MP-F (#92)
 	return out
 
 
@@ -955,3 +956,47 @@ static func sound_id(name: String) -> int:
 ## Имя звука по id ("" — неизвестный).
 static func sound_name(id: int) -> String:
 	return String(SOUNDS[id]) if id >= 0 and id < SOUNDS.size() else ""
+
+
+# ------------------------------------------------------------------ ФАНТОМЫ (MP-F, #92)
+
+## Вид сущности в SPAWN/DESPAWN (первый байт; Net.on_entity). Только дописывать в конец.
+## ITEM — предметы на земле и в полёте (MP-E, #90).
+enum Ent { NONE, PHANTOM, ITEM }
+
+## Типы фантомов по сети: 3 бита «вид» пакета фантома — индекс здесь. Тот же порядок,
+## что Phantom.KINDS (кодек не ссылается на классы сцены: его грузит net_test).
+const PHANTOM_KINDS: Array = ["echo", "swarm", "shade", "burrower", "doppel"]
+## Флаги пакета фантома (байт 11).
+const PHF_ON_GROUND: int = 1    ## пеший фантом стоит на полу
+const PHF_MACHINE: int = 2      ## цель — машина (рой, тень), а не герой
+
+
+## Появление фантома (§ 4.2.5): SPAWN вида Ent.PHANTOM, данные {kind (индекс
+## PHANTOM_KINDS), pack (стая роя), name (имя двойника), pos}.
+static func encode_phantom_spawn(id: int, d: Dictionary) -> PackedByteArray:
+	return encode_spawn(Ent.PHANTOM, id, {"kind": int(d.get("kind", 0)), "pack": int(d.get("pack", 0)),
+			"name": String(d.get("name", "")), "pos": d.get("pos", Vector2.ZERO)})
+
+
+## {id, kind, pack, name, pos} или {} у битого и чужого вида.
+static func decode_phantom_spawn(b: PackedByteArray) -> Dictionary:
+	var s: Dictionary = decode_spawn(b)
+	if s.is_empty() or int(s["kind"]) != Ent.PHANTOM:
+		return {}
+	var d: Dictionary = s["data"]
+	var k: int = int(d.get("kind", -1))
+	if k < 0 or k >= PHANTOM_KINDS.size() or typeof(d.get("pos")) != TYPE_VECTOR2:
+		return {}
+	return {"id": int(s["id"]), "kind": k, "pack": int(d.get("pack", 0)),
+			"name": String(d.get("name", "")), "pos": d["pos"]}
+
+
+## Образцы раздела для schema_sample (хэш в net_test): смена — поднять Net.PROTO.
+static func schema_sample_phantoms() -> PackedByteArray:
+	var out: PackedByteArray = encode_phantom_spawn(4097, {"kind": 4, "pack": 3, "name": "Ефим Л.",
+			"pos": Vector2(5120.25, 1400.5)})
+	out.append_array(var_to_bytes(Ent.keys()))
+	out.append_array(var_to_bytes(PHANTOM_KINDS))
+	out.append_array(var_to_bytes([PHF_ON_GROUND, PHF_MACHINE]))
+	return out

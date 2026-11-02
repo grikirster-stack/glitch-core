@@ -69,10 +69,16 @@ var _link_warned: bool = false
 var render_time: float = 0.0
 ## Клиент: peer_id → Array[{t, pos, vel, row}] — буфер интерполяции.
 var _buf: Dictionary = {}
+## Фантомы по сети (MP-F, #92): строки пакета состояния, марионетки у клиента.
+var phantoms: NetPhantoms = null
 
 
 func start(p_main: Node) -> void:
 	main = p_main
+	phantoms = NetPhantoms.new()   # MP-F (#92): фантомы по сети
+	phantoms.name = "NetPhantoms"
+	add_child(phantoms)
+	phantoms.start(self)
 	process_physics_priority = -10   # раньше героев: прокси получают ввод в этом же кадре
 	Net.session_started.connect(_begin)
 	Net.session_ended.connect(_end)
@@ -323,9 +329,12 @@ func _send_state() -> void:
 		rows.append(own.net_state_row(_slot_of(Net.my_id())))
 	for id in heroes:
 		rows.append((heroes[id] as Player).net_state_row(_slot_of(int(id))))
-	# Фантомы и летящие предметы допишут MP-F (#92) и MP-E (#90).
 	var tick: int = (_frame / STATE_EVERY) & 0xFFFF
-	Net.send(NetCodec.Msg.STATE, NetCodec.encode_state(tick, rows, [], []))
+	# MP-F (#92): пакет — каждому клиенту свой, фантомы — в зоне интереса его героя.
+	# Летящие предметы допишет MP-E (#90).
+	phantoms.host_sync()
+	for id in _st:
+		Net.send(NetCodec.Msg.STATE, NetCodec.encode_state(tick, rows, phantoms.rows_for(heroes[id]), []), int(id))
 
 
 func _send_own(id: int) -> void:
@@ -442,6 +451,7 @@ func _on_state(sender: int, payload: PackedByteArray) -> void:
 	_last_state_ms = Time.get_ticks_msec()
 	_link_warned = false
 	stats["rx_state"] = int(stats.get("rx_state", 0)) + 1
+	phantoms.on_state(t, d["phantoms"])   # MP-F (#92)
 	var me: int = Net.my_id()
 	for row in d["players"]:
 		var peer: int = _peer_of_slot(int(row["slot"]))

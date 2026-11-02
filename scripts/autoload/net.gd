@@ -33,7 +33,7 @@ signal roster_changed
 enum Role { OFFLINE, HOST, CLIENT }
 
 # --- транспорт (§ 9.2: не баланс — калибровочный PR их не трогает)
-const PROTO: int = 2                 ## версия протокола: поднимать при смене кодека, IDs, таблиц DB (2 — MP-D: HIT, звуки, Fx)
+const PROTO: int = 3                 ## версия протокола: поднимать при смене кодека, IDs, таблиц DB (2 — MP-D: HIT, звуки, Fx; 3 — MP-F: фантомы, Ent)
 const GAME_PORT: int = 24642
 const DISCOVERY_PORT: int = 24643
 const TICK_HZ: int = 20              ## пакет состояния
@@ -689,3 +689,26 @@ const THROTTLE_SCALE: int = 32       ## ENET_PEER_PACKET_THROTTLE_SCALE
 
 func _no_throttle(pp: ENetPacketPeer) -> void:
 	pp.throttle_configure(THROTTLE_INTERVAL_MS, THROTTLE_SCALE, 0)
+
+
+# ------------------------------------------------------------------ MP-F (#92): СУЩНОСТИ
+## SPAWN и DESPAWN общие для всех сущностей (фантомы — MP-F, предметы — MP-E): первый
+## байт — вид (NetCodec.Ent). Система регистрирует свои обработчики по виду:
+## on_entity(NetCodec.Ent.X, fn_spawn, fn_despawn), fn(sender, payload) — как у on().
+var _ent_spawn: Dictionary = {}      ## Ent → Callable
+var _ent_despawn: Dictionary = {}    ## Ent → Callable
+
+
+func on_entity(ent: int, spawn_fn: Callable, despawn_fn: Callable) -> void:
+	_ent_spawn[ent] = spawn_fn
+	_ent_despawn[ent] = despawn_fn
+	on(NetCodec.Msg.SPAWN, _on_entity_msg.bind(_ent_spawn))
+	on(NetCodec.Msg.DESPAWN, _on_entity_msg.bind(_ent_despawn))
+
+
+func _on_entity_msg(sender: int, payload: PackedByteArray, table: Dictionary) -> void:
+	if payload.is_empty():
+		return
+	var fn: Callable = table.get(payload.decode_u8(0), Callable())
+	if fn.is_valid():
+		fn.call(sender, payload)
