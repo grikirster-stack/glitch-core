@@ -131,6 +131,19 @@ func save_to(path: String = PATH) -> Error:
 	return cfg.save(path)
 
 
+## «Подключиться по IP» (MP-H, #93): адрес — в начало списка последних, без повторов,
+## не больше RECENT_IPS_MAX.
+func remember_ip(addr: String) -> void:
+	var a: String = addr.strip_edges()
+	if a == "":
+		return
+	var out: PackedStringArray = PackedStringArray([a])
+	for ip in recent_ips:
+		if ip != a and out.size() < RECENT_IPS_MAX:
+			out.append(ip)
+	recent_ips = out
+
+
 ## Случайные 64 бита, не 0. Свой генератор: общий randi() не трогаем.
 static func new_uid() -> int:
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
