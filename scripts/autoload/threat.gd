@@ -80,14 +80,10 @@ func _process(delta: float) -> void:
 	tick(delta)
 
 
-## Идёт ли сценарий. Game.reset_run() сбрасывает Game.scenario_mode, а раннер
-## сценариев зовёт его перед каждым сценарием, поэтому смотрим и флаг сцены
-## main.gd — он держится весь прогон (так же было у main.gd::_update_waves).
+## Идёт ли сценарий. Флаг ставит main.gd на весь прогон --scenario;
+## Game.reset_run() его больше не сбрасывает (#32), обход через флаг сцены не нужен.
 func in_scenario() -> bool:
-	if Game.scenario_mode:
-		return true
-	var sc: Node = get_tree().current_scene
-	return sc != null and sc.get("scenario_mode") == true
+	return Game.scenario_mode
 
 
 # ------------------------------------------------------------------ ФОРМУЛЫ
@@ -237,6 +233,7 @@ func tick(delta: float) -> void:
 		var extra: float = Balance.NIGHT_BUDGET_PER_T * Balance.THREAT_RELAY
 		budget += extra
 		roster.append_array(plan_roster(extra, night_day, true, _doppels_alive()))
+		_hurry_doppel(0)
 	spawn_timer -= delta
 	if spawn_timer > 0.0 or roster.is_empty():
 		return
@@ -264,6 +261,8 @@ func _begin_night() -> void:
 	_shuffle(roster)
 	head.append_array(roster)
 	roster = head
+	if Game.relay_active:
+		_hurry_doppel(1)
 	spawn_timer = minf(interval_for(threat_level()), 3.0)
 
 
@@ -271,6 +270,16 @@ func _end_night() -> void:
 	active = false
 	roster.clear()
 	_relay_seen = false
+
+
+## Удержание сигнала (§ 4.7, #32): двойник обязателен и не ждёт конца
+## перемешанного состава — ставим его на место at (после разведчика-эха).
+func _hurry_doppel(at: int) -> void:
+	var i: int = roster.find("doppel")
+	if i < 0 or i <= at:
+		return
+	roster.remove_at(i)
+	roster.insert(mini(at, roster.size()), "doppel")
 
 
 func _shuffle(a: Array[String]) -> void:
