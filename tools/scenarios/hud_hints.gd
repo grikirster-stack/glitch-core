@@ -111,17 +111,25 @@ func _check_mark(stats: Dictionary, want: String, gen: Node2D, chest: Node2D) ->
 
 
 ## Какая подсказка должна быть сейчас — по расстояниям, в том же порядке
-## важности, что у HUD: терминал, релей, ТЭЦ, сундук. Коридор базы может
-## задевать терминал — тогда ждём подсказку терминала (с учётом питания, #34).
+## важности, что у HUD: сначала сундук против терминала (E достаётся тому, что
+## ближе), потом терминал, релей, ТЭЦ. Коридор базы может задевать терминал —
+## тогда ждём подсказку терминала (с учётом питания, #34).
 func _want(gen: Node2D, chest: Node2D) -> String:
 	var p: Vector2 = player.global_position
+	var term: String = ""
+	var term_d: float = 42.0
 	for t in World.terminals:
-		if World.cell_to_world(t).distance_to(p) < 42.0:
-			return UI.hud.terminal_hint(t)
+		var d: float = World.cell_to_world(t).distance_to(p)
+		if d < term_d:
+			term_d = d
+			term = UI.hud.terminal_hint(t)
+	var chest_d: float = chest.global_position.distance_to(p)
+	if chest_d < DIST and (term == "" or chest_d < term_d):
+		return HINT_CHEST
+	if term != "":
+		return term
 	if World.cell_to_world(World.beacon_cell).distance_to(p) < 56.0:
 		return HUD.HINT_BEACON
 	if gen.global_position.distance_to(p) < DIST:
 		return UI.hud.generator_hint(gen)
-	if chest.global_position.distance_to(p) < DIST:
-		return HINT_CHEST
 	return ""
