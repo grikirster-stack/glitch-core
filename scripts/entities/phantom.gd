@@ -412,7 +412,8 @@ func _move_walking(dir: Vector2, speed: float, dt: float) -> void:
 		vel.x = move_toward(vel.x, 0.0, 900.0 * dt)
 	vel.y = minf(vel.y + 900.0 * dt, 520.0)
 
-	var res: Dictionary = World.move_body(global_position, vel * dt, body)
+	# phantom = true: шлюз для фантома стена и открытым (#31).
+	var res: Dictionary = World.move_body(global_position, vel * dt, body, true)
 	global_position = res["position"]
 	if res["hit_y"]:
 		vel.y = 0.0
@@ -431,7 +432,7 @@ func _move_flying(dir: Vector2, speed: float, dt: float) -> void:
 	if speed > 0.0:
 		want.y += sin(jitter * 7.0) * 18.0
 	vel = vel.move_toward(want, 1100.0 * dt)
-	var res: Dictionary = World.move_body(global_position, vel * dt, body)
+	var res: Dictionary = World.move_body(global_position, vel * dt, body, true)
 	global_position = res["position"]
 	_blocked_x = bool(res["hit_x"])
 	if res["hit_x"]:

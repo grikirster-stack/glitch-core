@@ -138,6 +138,7 @@ func _t_world() -> void:
 	_check_data()
 	_check_ruin_caches()
 	_check_sky_cache()
+	_check_defense()   # оборона (#31)
 	_next(2)
 
 
@@ -874,3 +875,46 @@ func _check_sky_cache() -> void:
 			and sc.get("fragment") == World.sky_fragment(), str(plan))
 	var frag: String = String(sc.get("fragment", ""))
 	_ok("в самописце обрывок журнала", frag != "" and not frag.contains("{"), "«%s»" % frag)
+# ------------------------------------------------------------- оборона (#31)
+
+## Вентиляции и оборона (#31): генератор мира ставит Balance.VENTS_RANDOM
+## вентиляций на полу пещер (раньше на сиде 31337 выходила одна), флаги тайлов
+## dig/phantom_solid, реестры шлюзов и решёток, свет прожектора.
+func _check_defense() -> void:
+	print("== Оборона ==")
+	var bad: Array = []
+	for v in World.vents:
+		if World.get_tile_v(v) != IDs.T.AIR or not World.is_solid_cell(v + Vector2i(0, 1)):
+			bad.append(v)
+	_ok("вентиляций в мире достаточно", World.vents.size() >= Balance.VENTS_RANDOM - 2,
+			"n=%d (случайных %d + база)" % [World.vents.size(), Balance.VENTS_RANDOM])
+	_ok("вентиляции стоят на полу пещер", bad.is_empty(), str(bad))
+	_ok("флаги тайлов: шлюз — стена для фантома всегда, для героя — когда закрыт",
+			DB.tile_solid(IDs.T.AIRLOCK) and not DB.tile_solid(IDs.T.AIRLOCK_OPEN)
+			and World._psolid_tbl[IDs.T.AIRLOCK_OPEN] == 1 and World._psolid_tbl[IDs.T.AIR] == 0)
+	_ok("флаг dig: камень — да, стальная стена и шлюз — нет",
+			World.is_diggable(IDs.T.STONE) and not World.is_diggable(IDs.T.STEEL_WALL)
+			and not World.is_diggable(IDs.T.AIRLOCK))
+	# Реестры заполняются через set_tile и чистятся при снятии тайла.
+	var c: Vector2i = Vector2i(World.beacon_cell.x - 15, World.beacon_cell.y - 4)
+	var t0: int = World.get_tile_v(c)
+	World.set_tile(c.x, c.y, IDs.T.AIRLOCK)
+	var in_reg: bool = World.airlocks.has(c) and World.astar.is_point_solid(c)
+	World.set_tile(c.x, c.y, IDs.T.VENT_GRATE)
+	var sealed: bool = World.vents_sealed.has(c) and not World.airlocks.has(c)
+	World.set_tile(c.x, c.y, t0)
+	_ok("реестры шлюзов и решёток следуют за set_tile", in_reg and sealed
+			and not World.airlocks.has(c) and not World.vents_sealed.has(c))
+	# Свет прожектора: публичный источник, light_at его видит, снятие — убирает.
+	var p: Vector2 = World.cell_to_world(c)
+	var far: Vector2i = c + Vector2i(8, 0)
+	var l0: float = World.light_at(far)
+	var n0: int = World.lights.size()
+	var h: Dictionary = World.add_light_source(p, Floodlight.light_radius(), Balance.FLOODLIGHT_POWER)
+	var lit: float = World.light_at(far)
+	var near: bool = World.get_lights_near(Rect2(p, Vector2(1, 1))).has(h)
+	World.remove_light_source(h)
+	_ok("add/remove_light_source: свет ≈ 10 клеток, снимается без следа",
+			is_equal_approx(lit, l0 + Balance.FLOODLIGHT_POWER) and near and World.lights.size() == n0
+			and is_equal_approx(World.light_at(far), l0),
+			"свет в 8 клетках %.2f → %.2f, источников %d → %d" % [l0, lit, n0, World.lights.size()])

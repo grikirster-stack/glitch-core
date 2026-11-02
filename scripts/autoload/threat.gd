@@ -367,7 +367,7 @@ func _spawn_now(kind: String, pos: Vector2) -> void:
 func nearest_vents(ppos: Vector2, count: int = Balance.VENT_SPAWN_COUNT) -> Array[Vector2i]:
 	var cand: Array = []
 	for v in World.vents:
-		if World.get_tile_v(v) == IDs.T.VENT_GRATE:
+		if World.is_vent_sealed(v):   # решётка (#31): World.vents_sealed
 			continue
 		var d: float = World.cell_to_world(v).distance_to(ppos)
 		if d < Balance.VENT_SPAWN_MIN_PX or d > Balance.VENT_SPAWN_MAX_PX:

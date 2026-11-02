@@ -47,6 +47,15 @@ const REPAIR_PER_SCRAP: float = 20.0   ## HP машины за единицу х
 const BURROWER_DIG_MAX_HARD: float = 1.5 ## копатель роет тайлы не твёрже этого
 const AIRLOCK_OPEN_DIST_TILES: float = 1.5 ## игрок ближе — шлюз открывается
 const AIRLOCK_SAFE_DIST_TILES: float = 3.0 ## фантом ближе — шлюз не открывается
+# --- Оборона: поведение построек (#31) ---
+const AIRLOCK_CHECK_PERIOD: float = 0.1  ## как часто World пересчитывает шлюзы, с
+const GRATE_BREAK_TIME: float = 8.0      ## копатель ломает решётку (GRATE_HP) за столько секунд
+const GRATE_REACH_PX: float = 24.0       ## копатель ближе — грызёт решётку
+## Приоритет целей турели: раньше в списке — важнее (§ 4.4).
+const TURRET_PRIORITY: Array[String] = ["shade", "burrower", "doppel", "echo", "swarm"]
+const TURRET_SCAN_PERIOD: float = 0.1    ## турель без цели ищет её не чаще, с
+const VENTS_RANDOM: int = 14             ## случайных вентиляций в пещерах (§ 1.1)
+const VENT_MIN_GAP: int = 16             ## клеток между соседними вентиляциями
 
 # ---------------------------------------------------------------- § 4.5 Враги
 ## Таблица типов фантомов. light_flee — порог света, от которого фантом
