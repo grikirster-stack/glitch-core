@@ -12,11 +12,17 @@ func _init() -> void:
 	z_index = 3
 
 
+## Нужен ли предмет хоть одному ОТКРЫТОМУ рецепту (#57) — как у плавильни.
 func input_accepts(item_id: int) -> bool:
 	for r in DB.recipes_for("assembler"):
-		if r["in"].has(item_id):
+		if r["in"].has(item_id) and DB.recipe_unlocked(r):
 			return true
 	return false
+
+
+## Без питания шестерня стоит — перерисовка каждый кадр не нужна.
+func has_time_animation() -> bool:
+	return powered
 
 
 func receive_item(item_id: int, count: int) -> int:

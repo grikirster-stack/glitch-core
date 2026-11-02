@@ -39,6 +39,10 @@ var magnet: bool = false
 var pickup_delay: float = 0.45
 ## false — предмет не исчезает по сроку жизни.
 var despawn: bool = true
+## Мешок с хотбаром после смерти (ADR-001 § 4.8, #29): [[item_id, count], ...].
+## Пустой — обычный предмет. Мешок ни с чем не сливается и подбирается целиком
+## (что не влезло в инвентарь — остаётся в мешке).
+var bag: Array = []
 
 var _ground_key: Vector3i = Vector3i(0, 0, -1)
 var _registered: bool = false
@@ -92,14 +96,21 @@ func _physics_process(delta: float) -> void:
 	var player: Node2D = _get_player()
 	if player == null:
 		return
+	# Погибший герой ничего не подбирает: мешок ждёт его на месте смерти.
+	var alive: bool = not bool(player.get("dead"))
+	if magnet and not alive:
+		magnet = false
+		grounded = false
 	var d: float = global_position.distance_to(player.global_position)
-	if d < MAGNET_DIST and pickup_delay <= 0.0 and not magnet:
+	if d < MAGNET_DIST and pickup_delay <= 0.0 and not magnet and alive:
 		magnet = true
 		_unregister()
 	if magnet:
 		var dir: Vector2 = (player.global_position - global_position).normalized()
 		global_position += dir * 340.0 * delta
-		if d < PICKUP_DIST:
+		if d < PICKUP_DIST and not bag.is_empty():
+			_collect_bag(player)
+		elif d < PICKUP_DIST:
 			var left: int = player.collect(item_id, count)
 			if left <= 0:
 				queue_free()
@@ -125,8 +136,29 @@ func _physics_process(delta: float) -> void:
 		vel.x = 0.0
 
 
+## Мешок: переложить в инвентарь всё, что влезет; остаток ждёт в мешке.
+func _collect_bag(player: Node2D) -> void:
+	var rest: Array = []
+	for e in bag:
+		var left: int = player.collect(int(e[0]), int(e[1]))
+		if left > 0:
+			rest.append([int(e[0]), left])
+	bag = rest
+	if bag.is_empty():
+		queue_free()
+		return
+	item_id = int(bag[0][0])
+	queue_redraw()
+	magnet = false
+	grounded = false
+	vel = Vector2.ZERO
+	pickup_delay = FULL_RETRY
+
+
 ## Приземлились: влиться в такой же предмет рядом или занять свою клетку.
 func _land() -> void:
+	if not bag.is_empty():
+		return
 	var c: Vector2i = World.world_to_cell(global_position)
 	for dy in range(-MERGE_CELLS, MERGE_CELLS + 1):
 		for dx in range(-MERGE_CELLS, MERGE_CELLS + 1):
@@ -174,6 +206,9 @@ func _expire() -> void:
 
 
 func _draw() -> void:
+	if not bag.is_empty():
+		_draw_bag()
+		return
 	var tex: ImageTexture = DB.item_texture(item_id)
 	if tex == null:
 		return
@@ -182,3 +217,13 @@ func _draw() -> void:
 		draw_rect(Rect2(-7.0, -9.0, 14.0, 8.0), Color(0, 0, 0, 0.45))
 		draw_string(ThemeDB.fallback_font, Vector2(-7.0, -2.5), str(count),
 				HORIZONTAL_ALIGNMENT_CENTER, 14.0, 7, Color(1, 1, 1, 0.95))
+
+
+## Мешок: тёмный куль с завязкой и иконкой первого предмета.
+func _draw_bag() -> void:
+	draw_circle(Vector2(0.0, 1.0), 7.0, Color(0.30, 0.24, 0.18))
+	draw_rect(Rect2(-3.0, -8.0, 6.0, 4.0), Color(0.30, 0.24, 0.18))
+	draw_rect(Rect2(-4.0, -5.0, 8.0, 1.5), Color(0.85, 0.30, 0.28))
+	var tex: ImageTexture = DB.item_texture(item_id)
+	if tex != null:
+		draw_texture_rect(tex, Rect2(-4.0, -2.0, 8.0, 8.0), false, Color(1, 1, 1, 0.9))
