@@ -91,6 +91,23 @@ func _check_floating_trees() -> void:
 			"минимальная %d" % int(st["min_crown"]))
 	_ok("деревьев в мире достаточно", int(st["trees"]) >= 30,
 			"деревьев %d" % int(st["trees"]))
+	_check_tree_passable()
+
+
+## Сквозь ствол дерева должен проходить игрок: лес не запирает его между
+## стволами. Проверяем клетку земли у каждого дерева — там, где стоит игрок.
+func _check_tree_passable() -> void:
+	var trunks: int = 0
+	var solid_trunks: int = 0
+	for x in range(World.W):
+		var ground: int = World.surface[x]
+		if World.get_tile(x, ground - 1) != IDs.T.TREE:
+			continue
+		trunks += 1
+		if World.rect_solid(World.cell_rect(Vector2i(x, ground - 1))):
+			solid_trunks += 1
+	_ok("ствол дерева проходимый", trunks > 0 and solid_trunks == 0,
+			"стволов %d, твёрдых %d" % [trunks, solid_trunks])
 
 
 ## Статистика по деревьям: сколько деревьев, какая минимальная высота ствола
@@ -105,7 +122,7 @@ func _tree_stats() -> Dictionary:
 		var ground: int = World.surface[x]
 		var h: int = 0
 		for y in range(ground - 1, maxi(ground - 12, 0), -1):
-			if World.get_tile(x, y) != IDs.T.LOG:
+			if World.get_tile(x, y) != IDs.T.TREE:
 				break
 			h += 1
 		if h == 0:

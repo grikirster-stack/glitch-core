@@ -28,6 +28,7 @@ enum T {
 	LIGHT_CRYSTAL,
 	MOSS,
 	RELAY_CORE,
+	TREE,          ## Ствол дерева: выглядит как бревно, но проходим насквозь.
 }
 
 enum I {
@@ -66,4 +67,4 @@ enum I {
 	CRYSTAL_BLOCK,
 }
 
-const TILE_COUNT := T.RELAY_CORE + 1
+const TILE_COUNT := T.TREE + 1

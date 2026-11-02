@@ -34,6 +34,9 @@ func _build_tile_defs() -> void:
 		IDs.T.SAND: {"solid": true, "hard": 0.4, "drop": IDs.I.SAND, "light": 0.0, "name": "Песок"},
 		IDs.T.SANDSTONE: {"solid": true, "hard": 1.2, "drop": IDs.I.STONE, "light": 0.0, "name": "Песчаник"},
 		IDs.T.LOG: {"solid": true, "hard": 1.0, "drop": IDs.I.LOG, "light": 0.0, "name": "Бревно"},
+		# Ствол дерева: выглядит как бревно, но сквозь него можно пройти —
+		# лес не должен запирать игрока в клетке между стволами.
+		IDs.T.TREE: {"solid": false, "hard": 1.0, "drop": IDs.I.LOG, "light": 0.0, "name": "Ствол дерева"},
 		IDs.T.LEAVES: {"solid": false, "hard": 0.2, "drop": 0, "light": 0.0, "name": "Листва"},
 		IDs.T.COPPER_ORE: {"solid": true, "hard": 2.0, "drop": IDs.I.COPPER_ORE, "light": 0.0, "name": "Медная руда"},
 		IDs.T.IRON_ORE: {"solid": true, "hard": 2.6, "drop": IDs.I.IRON_ORE, "light": 0.0, "name": "Железная руда"},
@@ -94,6 +97,8 @@ func tile_color(id: int) -> Color:
 		IDs.T.SANDSTONE:
 			return Color(0.76, 0.65, 0.42)
 		IDs.T.LOG:
+			return Color(0.42, 0.29, 0.17)
+		IDs.T.TREE:
 			return Color(0.42, 0.29, 0.17)
 		IDs.T.LEAVES:
 			return Color(0.24, 0.48, 0.21)
@@ -368,6 +373,15 @@ func _paint_tile(img: Image, id: int, ox: int, oy: int) -> void:
 					if x % 5 == 0:
 						bark = bark.darkened(0.18)
 					img.set_pixel(ox + x, oy + y, bark)
+			return
+		IDs.T.TREE:
+			# Тот же bark, что и у бревна: ствол дерева должен выглядеть как бревно.
+			for x in range(TILE_SIZE):
+				var bark2: Color = Color(0.42, 0.29, 0.17).lightened(rng.randf_range(-0.05, 0.05))
+				for y in range(TILE_SIZE):
+					if x % 5 == 0:
+						bark2 = bark2.darkened(0.18)
+					img.set_pixel(ox + x, oy + y, bark2)
 			return
 		IDs.T.LEAVES:
 			for y in range(TILE_SIZE):

@@ -352,6 +352,9 @@ func _break_tile(cell: Vector2i) -> void:
 	var tid: int = World.get_tile_v(cell)
 	var drop: int = DB.tile_drop(tid)
 	World.set_tile(cell.x, cell.y, IDs.T.AIR)
+	# Сломан ствол или ветка — крона, оставшаяся без опоры, падает.
+	if tid == IDs.T.TREE or tid == IDs.T.LEAVES:
+		World.fix_floating_near(cell)
 	Sfx.play("break", -8.0, randf_range(0.9, 1.15))
 	UI.spawn_chip(cell, DB.tile_color(tid))
 	Game.stats_mined += 1
