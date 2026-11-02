@@ -132,6 +132,7 @@ class Runner extends Node:
 	var _jump_min_y: float = 0.0
 	var _jump_y0: float = 0.0
 	var _progress_max: float = 0.0
+	var _mine_max_prog: float = 0.0
 	var _noise_peak: float = 0.0
 	var _noise_floor: float = 0.0
 	var _tod0: float = 0.30
@@ -183,6 +184,11 @@ class Runner extends Node:
 			_pulse_max = maxf(_pulse_max, pulse)
 		if step == ST_MAC_PROGRESS and _smelter != null and is_instance_valid(_smelter):
 			_progress_max = maxf(_progress_max, float(_smelter.progress))
+		# Прогресс копки запоминаем максимумом: тайл может пробиться раньше
+		# проверки, и тогда прогресс уже сброшен в ноль. На быстрой машине
+		# headless-цикл успевает пробить мягкий тайл за доли секунды.
+		if step == ST_MINE_CHECK and player:
+			_mine_max_prog = maxf(_mine_max_prog, float(player.mining_progress))
 		if step == ST_RUN_START and player:
 			_noise_peak = maxf(_noise_peak, float(player.noise))
 		if step == ST_RUN_CHECK and player:
@@ -370,6 +376,11 @@ class Runner extends Node:
 		if _mine_cell.x < 0:
 			_next(ST_MINE_CHECK)
 			return
+		# Убираем фантомов: если фантом окажется рядом с курсором, игрок
+		# ударит его вместо копки (см. Player._slash_at) и копать не начнёт.
+		# Свой фантом для проверок ниже тест создаёт сам.
+		for p in get_tree().get_nodes_in_group("phantom"):
+			p.queue_free()
 		# Копаем по-настоящему: мышь над тайлом + зажатая ЛКМ.
 		_pin = true
 		_pin_pos = world.cell_to_world(_mine_cell) + Vector2(26.0, -22.0)
@@ -377,6 +388,7 @@ class Runner extends Node:
 		player.vel = Vector2.ZERO
 		player.mining_cell = Vector2i(-1, -1)
 		player.mining_progress = 0.0
+		_mine_max_prog = 0.0
 		player.test_input["mouse"] = world.cell_to_world(_mine_cell)
 		_set_mouse_button(MOUSE_BUTTON_LEFT, true)
 		_next(ST_MINE_CHECK, 0.25)
@@ -386,8 +398,8 @@ class Runner extends Node:
 		if _mine_cell.x < 0:
 			_next(ST_MINE_DONE)
 			return
-		_ok("прогресс копания растёт", float(player.mining_progress) > 0.0,
-				"progress=%.3f, клетка %s" % [float(player.mining_progress), str(_mine_cell)])
+		_ok("прогресс копания растёт", _mine_max_prog > 0.0,
+				"макс. progress=%.3f, клетка %s" % [_mine_max_prog, str(_mine_cell)])
 		_next(ST_MINE_DONE, 1.0)
 
 
