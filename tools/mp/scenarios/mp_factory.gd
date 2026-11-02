@@ -174,6 +174,17 @@ func run_host() -> void:
 	ok("хост: машины идут 4 Гц (тактов сбора %d за %.1f с)" % [nm.gather_n, dt],
 			absi(nm.gather_n - roundi(dt * Net.MACHINE_HZ)) <= 1)
 	ok("хост: сбор net_state ≤ %d мкс/такт (%.0f)" % [GATHER_LIMIT_US, avg_us], avg_us <= float(GATHER_LIMIT_US))
+	# Мягкий предел (§ 4.3): сверх него машины идут раз в секунду.
+	nm.soft_budget = 256
+	var slowed: bool = await wait_until(func() -> bool: return nm.slow, 3.0)
+	var n0: int = nm.gather_n
+	var ts: float = now()
+	await wait(3.0)
+	var hz: float = float(nm.gather_n - n0) / (now() - ts)
+	ok("хост: сверх мягкого предела машины идут 1 Гц (%.1f Гц)" % hz, slowed and hz <= 1.5)
+	nm.soft_budget = Net.SOFT_BUDGET
+	var fast: bool = await wait_until(func() -> bool: return not nm.slow, 3.0)
+	ok("хост: в пределе — снова %d Гц" % Net.MACHINE_HZ, fast)
 	await barrier("measured", -1, 30.0)
 	# Сверка: тайлы, вода и постройки у клиентов как у хоста.
 	await JS.host_check(self)
