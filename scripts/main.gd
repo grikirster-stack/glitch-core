@@ -288,6 +288,7 @@ func _on_net_ended(reason: String) -> void:
 ## Мир готов: --mp-host поднимает сервер, --mp-scenario запускает харнесс.
 func _net_start() -> void:
 	_net_players_start()
+	_net_inv_start()
 	if _net.has("scenario"):
 		scenario_mode = true
 		Game.scenario_mode = true   # фантомов, как и в --scenario, создаёт сам сценарий
@@ -340,3 +341,17 @@ func _net_players_start() -> void:
 func _on_net_respawned() -> void:
 	if end_screen != null:
 		end_screen.hide_end()
+
+
+# ------------------------------------------------- СЕТЬ: ИНВЕНТАРИ (ADR-002 § 4.2.7, MP-G #91)
+## Команды инвентаря, крафта, сундуков и исследований клиента выполняет хост: InvOps
+## (scripts/net/inv_ops.gd). Без сети узла нет — панель зовёт статические функции InvOps.
+var net_inv: InvOps = null
+
+
+func _net_inv_start() -> void:
+	if net_inv != null or net_players == null:
+		return
+	net_inv = InvOps.new()
+	add_child(net_inv)
+	net_inv.start(self)

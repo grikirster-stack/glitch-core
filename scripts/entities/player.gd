@@ -966,6 +966,8 @@ func _feedback_hit(knock: Vector2) -> void:
 func _open_chest(c: Chest) -> void:
 	if net_role != NetRole.PROXY:
 		UI.open_chest(c)
+	else:
+		InvOps.host_open(self, c)
 
 
 ## Владелец: удар с хоста (событие HIT) — отбрасывание, заморозка ввода, вспышка, тряска.

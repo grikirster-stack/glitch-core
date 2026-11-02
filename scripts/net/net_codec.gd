@@ -36,6 +36,8 @@ enum Msg {
 	CMD_RESULT,    ## 2: ответ на команду
 	BARRIER,       ## 2: харнесс mp_*: клиент дошёл до точки синхронизации
 	BARRIER_PASS,  ## 2: харнесс mp_*: все дошли
+	CHEST,         ## 2: открытый сундук — тем, у кого он открыт (MP-G, #91)
+	TECH,          ## 0: исследования, главы, обрывки — всем (MP-G, #91)
 }
 
 ## Типы событий EVENT. Только дописывать в конец.
@@ -917,6 +919,8 @@ static func schema_sample() -> PackedByteArray:
 	out.append_array(var_to_bytes(SOUNDS))
 	out.append_array(var_to_bytes(Fx.keys()))
 	out.append_array(var_to_bytes([IF_FACING_LEFT, IF_ON_GROUND, IF_EPOCH_SHIFT, OF_EPOCH_SHIFT, PRESS_KEYS]))
+	# MP-G (#91): команды InvOps, сундук, исследования.
+	out.append_array(inv_schema_sample())
 	return out
 
 
@@ -955,3 +959,186 @@ static func sound_id(name: String) -> int:
 ## Имя звука по id ("" — неизвестный).
 static func sound_name(id: int) -> String:
 	return String(SOUNDS[id]) if id >= 0 and id < SOUNDS.size() else ""
+
+
+# ------------------------------------------------------------------ ИНВЕНТАРИ (MP-G, #91)
+## Слой команд InvOps (ADR-002 § 4.2.7): CMD = u8 команда · u16 номер запроса · аргументы
+## (encode_inv_args); итог — CMD_RESULT, свежий INV владельцу и CHEST подписчикам сундука.
+
+## Команды CMD. Только дописывать в конец (иначе — поднять Net.PROTO).
+enum InvOp { NONE, MOVE, SPLIT, TAKE_ALL, PUT_ALL, CRAFT, DROP, SELECT, UNLOCK, CLOSE }
+## Контейнеры команд: инвентарь героя, открытый сундук, «рука» (окно, по сети не ходит).
+enum Box { INV, CHEST, HAND }
+## События TECH. Только дописывать в конец.
+enum TechEv { NONE, UNLOCK, CHAPTER, FRAGMENT }
+## Слот «куда» = сам: стопка целиком по правилам Shift+ЛКМ панели.
+const SLOT_AUTO: int = 0xFF
+## Клетка сундука «нет».
+const CELL_NONE: int = 0xFFFFFFFF
+## Флаг MOVE: в «куда» другой предмет — обмен стопками (только если берётся вся стопка).
+const MOVE_SWAP: int = 1
+## Флаги CHEST: открыть окно сундука; окно закрыть (сундука больше нет).
+const CHEST_OPEN: int = 1
+const CHEST_CLOSED: int = 2
+
+
+## Клетка → u32 (y · WORLD_W_CELLS + x); клетка с минусом → CELL_NONE.
+static func cell_idx(c: Vector2i) -> int:
+	if c.x < 0 or c.y < 0:
+		return CELL_NONE
+	return c.y * WORLD_W_CELLS + c.x
+
+
+static func idx_cell(i: int) -> Vector2i:
+	if i == CELL_NONE or i < 0:
+		return Vector2i(-1, -1)
+	return Vector2i(i % WORLD_W_CELLS, i / WORLD_W_CELLS)
+
+
+## Аргументы команды по её виду (поля словаря — в скобках):
+##   MOVE, SPLIT — откуда u8 (from, Box) · слот u8 (fslot) · куда u8 (to) · слот u8 (tslot,
+##       SLOT_AUTO — сам) · ожидаемый предмет u8 (id) · n u16 · флаги u8 (MOVE_SWAP) ·
+##       клетка сундука u32 (cell, индекс cell_idx) — 12 Б;
+##   TAKE_ALL, PUT_ALL, CLOSE — клетка сундука u32 (cell);
+##   CRAFT — рецепт u16 (recipe, индекс DB.recipes) · раз u8 (times);
+##   DROP — откуда u8 · слот u8 · id u8 · n u16 · клетка u32;
+##   SELECT — слот u8 (slot); UNLOCK — узел u8 (node, индекс Tech.ORDER).
+static func encode_inv_args(op: int, d: Dictionary) -> PackedByteArray:
+	var s: StreamPeerBuffer = StreamPeerBuffer.new()
+	match op:
+		InvOp.MOVE, InvOp.SPLIT:
+			s.put_u8(int(d.get("from", 0)) & 0xFF)
+			s.put_u8(int(d.get("fslot", 0)) & 0xFF)
+			s.put_u8(int(d.get("to", 0)) & 0xFF)
+			s.put_u8(int(d.get("tslot", 0)) & 0xFF)
+			s.put_u8(int(d.get("id", 0)) & 0xFF)
+			s.put_u16(clampi(int(d.get("n", 0)), 0, 0xFFFF))
+			s.put_u8(int(d.get("flags", 0)) & 0xFF)
+			s.put_u32(int(d.get("cell", CELL_NONE)) & 0xFFFFFFFF)
+		InvOp.TAKE_ALL, InvOp.PUT_ALL, InvOp.CLOSE:
+			s.put_u32(int(d.get("cell", CELL_NONE)) & 0xFFFFFFFF)
+		InvOp.CRAFT:
+			s.put_u16(int(d.get("recipe", 0)) & 0xFFFF)
+			s.put_u8(clampi(int(d.get("times", 1)), 0, 0xFF))
+		InvOp.DROP:
+			s.put_u8(int(d.get("from", 0)) & 0xFF)
+			s.put_u8(int(d.get("fslot", 0)) & 0xFF)
+			s.put_u8(int(d.get("id", 0)) & 0xFF)
+			s.put_u16(clampi(int(d.get("n", 0)), 0, 0xFFFF))
+			s.put_u32(int(d.get("cell", CELL_NONE)) & 0xFFFFFFFF)
+		InvOp.SELECT:
+			s.put_u8(int(d.get("slot", 0)) & 0xFF)
+		InvOp.UNLOCK:
+			s.put_u8(int(d.get("node", 0)) & 0xFF)
+	return s.data_array
+
+
+## Размер аргументов каждой команды, Б.
+const INV_ARGS_SIZE: Dictionary = {InvOp.MOVE: 12, InvOp.SPLIT: 12, InvOp.TAKE_ALL: 4,
+		InvOp.PUT_ALL: 4, InvOp.CLOSE: 4, InvOp.CRAFT: 3, InvOp.DROP: 9, InvOp.SELECT: 1,
+		InvOp.UNLOCK: 1}
+
+
+## {} — неизвестная команда или размер не тот.
+static func decode_inv_args(op: int, b: PackedByteArray) -> Dictionary:
+	if not INV_ARGS_SIZE.has(op) or b.size() != int(INV_ARGS_SIZE[op]):
+		return {}
+	var s: StreamPeerBuffer = _reader(b)
+	match op:
+		InvOp.MOVE, InvOp.SPLIT:
+			return {"from": s.get_u8(), "fslot": s.get_u8(), "to": s.get_u8(), "tslot": s.get_u8(),
+					"id": s.get_u8(), "n": s.get_u16(), "flags": s.get_u8(), "cell": s.get_u32()}
+		InvOp.TAKE_ALL, InvOp.PUT_ALL, InvOp.CLOSE:
+			return {"cell": s.get_u32()}
+		InvOp.CRAFT:
+			return {"recipe": s.get_u16(), "times": s.get_u8()}
+		InvOp.DROP:
+			return {"from": s.get_u8(), "fslot": s.get_u8(), "id": s.get_u8(), "n": s.get_u16(),
+					"cell": s.get_u32()}
+		InvOp.SELECT:
+			return {"slot": s.get_u8()}
+	return {"node": s.get_u8()}
+
+
+## CHEST: клетка u32 · флаги u8 (CHEST_OPEN, CHEST_CLOSED) · u8 n · n × (u8 id, u16 count).
+## 24 слота — 78 Б. slots — массив [id, count].
+static func encode_chest(cell: int, flags: int, slots: Array) -> PackedByteArray:
+	var n: int = mini(slots.size(), 255)
+	var out: PackedByteArray = PackedByteArray()
+	out.resize(6 + 3 * n)
+	out.encode_u32(0, cell & 0xFFFFFFFF)
+	out.encode_u8(4, flags & 0xFF)
+	out.encode_u8(5, n)
+	for i in n:
+		out.encode_u8(6 + 3 * i, int(slots[i][0]) & 0xFF)
+		out.encode_u16(7 + 3 * i, clampi(int(slots[i][1]), 0, 0xFFFF))
+	return out
+
+
+## {cell, flags, slots} или {} у битого.
+static func decode_chest(b: PackedByteArray) -> Dictionary:
+	if b.size() < 6:
+		return {}
+	var n: int = b.decode_u8(5)
+	if b.size() != 6 + 3 * n:
+		return {}
+	var slots: Array = []
+	for i in n:
+		slots.append([b.decode_u8(6 + 3 * i), b.decode_u16(7 + 3 * i)])
+	return {"cell": int(b.decode_u32(0)), "flags": b.decode_u8(4), "slots": slots}
+
+
+## TECH: вид u8 (TechEv) · данные u16 (Game.research после события) · дальше по виду:
+## UNLOCK — узел u8 (индекс Tech.ORDER), CHAPTER — глава u8, FRAGMENT — u8 длина + UTF-8.
+static func encode_tech(kind: int, research: int, arg: int, text: String = "") -> PackedByteArray:
+	var s: StreamPeerBuffer = StreamPeerBuffer.new()
+	s.put_u8(kind & 0xFF)
+	s.put_u16(clampi(research, 0, 0xFFFF))
+	if kind == TechEv.FRAGMENT:
+		_put_str8(s, text)
+	else:
+		s.put_u8(arg & 0xFF)
+	return s.data_array
+
+
+## {kind, research, arg, text} или {} у битого.
+static func decode_tech(b: PackedByteArray) -> Dictionary:
+	var s: StreamPeerBuffer = _reader(b)
+	if s.get_available_bytes() < 4:
+		return {}
+	var kind: int = s.get_u8()
+	var research: int = s.get_u16()
+	var d: Dictionary = {"kind": kind, "research": research, "arg": 0, "text": ""}
+	if kind == TechEv.FRAGMENT:
+		var t = _get_str8(s)
+		if t == null:
+			return {}
+		d["text"] = t
+	else:
+		d["arg"] = s.get_u8()
+	if s.get_available_bytes() != 0:
+		return {}
+	return d
+
+
+## Образцы сообщений MP-G для schema_sample().
+static func inv_schema_sample() -> PackedByteArray:
+	var out: PackedByteArray = PackedByteArray()
+	var parts: Array = [
+		encode_cmd(InvOp.MOVE, 300, encode_inv_args(InvOp.MOVE, {"from": Box.CHEST, "fslot": 23,
+				"to": Box.INV, "tslot": SLOT_AUTO, "id": 9, "n": 999, "flags": MOVE_SWAP, "cell": 115199})),
+		encode_inv_args(InvOp.TAKE_ALL, {"cell": 77}),
+		encode_inv_args(InvOp.CRAFT, {"recipe": 34, "times": 2}),
+		encode_inv_args(InvOp.DROP, {"from": Box.INV, "fslot": 35, "id": 3, "n": 64, "cell": CELL_NONE}),
+		encode_inv_args(InvOp.SELECT, {"slot": 9}),
+		encode_inv_args(InvOp.UNLOCK, {"node": 5}),
+		encode_chest(cell_idx(Vector2i(320, 90)), CHEST_OPEN, [[9, 99], [0, 0], [255, 65535]]),
+		encode_tech(TechEv.UNLOCK, 12, 1),
+		encode_tech(TechEv.FRAGMENT, 0, 0, "…сигнал с глубины 40…"),
+	]
+	for p in parts:
+		out.append_array(encode_u32((p as PackedByteArray).size()))
+		out.append_array(p)
+	out.append_array(var_to_bytes([InvOp.keys(), Box.keys(), TechEv.keys(), SLOT_AUTO, CELL_NONE,
+			MOVE_SWAP, CHEST_OPEN, CHEST_CLOSED, INV_ARGS_SIZE.values()]))
+	return out
