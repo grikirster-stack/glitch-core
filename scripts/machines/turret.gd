@@ -34,6 +34,8 @@ func _init() -> void:
 
 func _process(delta: float) -> void:
 	super(delta)
+	if not Net.is_authority():   # СЕТЬ (ADR-002): работает хост, клиент рисует по net_state
+		return
 	if not powered:
 		return
 	if _cooldown > 0.0:
@@ -145,3 +147,46 @@ func load_state(d: Dictionary) -> void:
 	_aim = float(d.get("aim", _aim))
 	target = null
 	_scan_t = 0.0
+
+
+# ------------------------------------------------------------- СЕТЬ (ADR-002, MP-E #90)
+## + угол ствола u8 · выстрелов u8 (по модулю 256) · точка последнего выстрела 2×u16
+## (NetCodec.pos_u16). Выстрел хост шлёт в ближайший сетевой такт, не ждёт 4 Гц
+## (NetMachines); клиент, увидев новый счётчик, повторяет дугу (World.turret_fired)
+## и звук у себя.
+const NET_BYTES: int = 6
+var _net_to: Vector2 = Vector2.ZERO
+
+
+func net_state() -> PackedByteArray:
+	if not fired.is_connected(_net_on_fired):
+		fired.connect(_net_on_fired)        # хост: запомнить точку выстрела
+	var b: PackedByteArray = super()
+	b.append(int(roundf(fposmod(_aim, TAU) / TAU * 256.0)) & 0xFF)
+	b.append(shots & 0xFF)
+	b.resize(b.size() + 4)
+	b.encode_u16(b.size() - 4, NetCodec.pos_u16(_net_to.x))
+	b.encode_u16(b.size() - 2, NetCodec.pos_u16(_net_to.y))
+	return b
+
+
+func _net_on_fired(_from: Vector2, to: Vector2) -> void:
+	_net_to = to
+
+
+func apply_net_state(b: PackedByteArray) -> int:
+	var o: int = super(b)
+	if o < 0 or b.size() < o + NET_BYTES:
+		return -1
+	_aim = float(b[o]) / 256.0 * TAU
+	var n: int = b[o + 1]
+	var to: Vector2 = Vector2(NetCodec.u16_pos(b.decode_u16(o + 2)), NetCodec.u16_pos(b.decode_u16(o + 4)))
+	if n != shots & 0xFF:
+		shots += (n - shots) & 0xFF
+		_net_to = to
+		var from: Vector2 = global_position + Vector2(0.0, -3.0) + Vector2.from_angle(_aim) * MUZZLE
+		Sfx.play_at("turret_zap", global_position, -8.0, 1.0)
+		fired.emit(from, to)
+		World.turret_fired.emit(from, to)
+	queue_redraw()
+	return o + NET_BYTES

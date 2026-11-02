@@ -221,6 +221,8 @@ func spawn_item(item_id: int, count: int, pos: Vector2) -> void:
 
 ## Получить урон. При hp <= 0 машина разрушается.
 func take_damage(amount: float) -> void:
+	if not Net.is_authority():   # СЕТЬ (ADR-002): прочность считает хост
+		return
 	if _destroyed or amount <= 0.0:
 		return
 	hp = maxf(0.0, hp - amount)
@@ -234,6 +236,8 @@ func take_damage(amount: float) -> void:
 ## её предмет, разбросать осколки. Индекс питания в Game пересоберётся сам
 ## (число машин в мире изменилось).
 func destroy() -> void:
+	if not Net.is_authority():   # СЕТЬ (ADR-002): снос — событие от хоста (net_remove)
+		return
 	if _destroyed:
 		return
 	_destroyed = true
@@ -434,3 +438,64 @@ static func recipe_from(station: String, ref) -> Dictionary:
 		if int(r.get("out", IDs.I.NONE)) == out_id:
 			return r
 	return {}
+
+
+# ------------------------------------------------------------- СЕТЬ (ADR-002, MP-E #90)
+## Машины по сети (scripts/net/net_machines.gd, § 4.2.4). Постройка и снос — события
+## с save_state(); раз в 0.25 с хост шлёт компактный net_state() изменённых машин в
+## зоне интереса клиента, клиент кладёт его apply_net_state(). У клиента логика машин
+## не идёт (Net.is_authority() в _process наследников): ни прогресса, ни выдачи, ни
+## питания — только анимация и отрисовка по полученному состоянию.
+##
+## База — NET_BASE_BYTES: hp u8 (доля max_hp) · флаги u8 (NF_*) · efficiency u8 ·
+## progress u8. Наследник дописывает своё через super(); apply_net_state() возвращает
+## смещение после прочитанного — наследник читает дальше с него.
+
+const NET_BASE_BYTES: int = 4
+const NF_POWERED: int = 1
+const NF_ACTIVE: int = 2      ## power_active (генераторы)
+const NF_ENABLED: int = 4     ## рубильник генератора
+const NF_OVERLOAD: int = 8    ## генератор перегружен (браун-аут в радиусе)
+
+
+func net_state() -> PackedByteArray:
+	var b: PackedByteArray = PackedByteArray()
+	b.resize(NET_BASE_BYTES)
+	b[0] = net_u8(hp / maxf(max_hp, 0.001))
+	b[1] = (NF_POWERED if powered else 0) | (NF_ACTIVE if power_active else 0)
+	b[2] = net_u8(efficiency)
+	b[3] = net_u8(progress)
+	return b
+
+
+## Клиент: состояние от хоста. Итог — смещение после прочитанного (−1 — коротко).
+func apply_net_state(b: PackedByteArray) -> int:
+	if b.size() < NET_BASE_BYTES:
+		return -1
+	hp = float(b[0]) / 255.0 * max_hp
+	power_active = (b[1] & NF_ACTIVE) != 0
+	apply_power((b[1] & NF_POWERED) != 0, float(b[2]) / 255.0)
+	progress = float(b[3]) / 255.0
+	return NET_BASE_BYTES
+
+
+## Клиент: машину снёс хост — убрать без выдачи и выпадения (предметы — от хоста).
+func net_remove() -> void:
+	if _destroyed:
+		return
+	_destroyed = true
+	destroyed.emit(self)
+	if World.machines.get(cell) == self:
+		World.machines.erase(cell)
+	if World.belts.get(cell) == self:
+		World.belts.erase(cell)
+	var item: int = machine_item_id(kind)
+	var col: Color = DB.item_color(item) if item != IDs.I.NONE else Color(0.5, 0.5, 0.55)
+	for i in DESTROY_CHIPS:
+		UI.spawn_chip(cell, col)
+	Sfx.play_at("break", global_position, -6.0, 0.8)
+	queue_free()
+
+
+static func net_u8(f: float) -> int:
+	return clampi(roundi(clampf(f, 0.0, 1.0) * 255.0), 0, 255)
