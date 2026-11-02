@@ -60,6 +60,12 @@ var fluid: PackedByteArray = PackedByteArray()
 var _fluid_queue: PackedInt32Array = PackedInt32Array()  # клетки на пересчёт
 var _fluid_queued: PackedByteArray = PackedByteArray()   # флаг «уже в очереди»
 var _fluid_timer: float = 0.0
+# Замеры воды (сценарий fluid, замеры в PR): сколько стоит симуляция.
+var fluid_ticks: int = 0        # шагов симуляции с непустой очередью
+var fluid_steps: int = 0        # пересчётов клеток (вызовов _fluid_step_cell)
+var fluid_scan_cells: int = 0   # клеток, просмотренных сканированием вбок
+var fluid_tick_us: int = 0      # суммарное время шагов, мкс
+var fluid_tick_us_max: int = 0  # самый дорогой шаг, мкс
 
 
 func _ready() -> void:
@@ -626,6 +632,11 @@ func _reset_fluid() -> void:
 	_fluid_queued.fill(0)
 	_fluid_queue = PackedInt32Array()
 	_fluid_timer = 0.0
+	fluid_ticks = 0
+	fluid_steps = 0
+	fluid_scan_cells = 0
+	fluid_tick_us = 0
+	fluid_tick_us_max = 0
 
 
 ## Заливает уровни воды по готовому миру: каждая клетка с водой полная.
@@ -649,6 +660,24 @@ func fluid_level(c: Vector2i) -> int:
 	if c.x < 0 or c.x >= W or c.y < 0 or c.y >= H:
 		return 0
 	return int(fluid[c.y * W + c.x])
+
+
+## Наливает в клетку ровно lvl порций воды (0 — осушить). Клетка должна быть
+## проходимой для воды (воздух или вода). Для сценариев и будущих вёдер/насосов.
+func set_fluid(c: Vector2i, lvl: int) -> void:
+	if c.x < 0 or c.x >= W or c.y < 0 or c.y >= H:
+		return
+	var idx: int = c.y * W + c.x
+	var t: int = tiles[idx]
+	if t != IDs.T.AIR and t != IDs.T.WATER:
+		return
+	fluid[idx] = clampi(lvl, 0, FLUID_MAX)
+	_set_fluid_cell(c.x, c.y)
+	_fluid_mark(idx)
+	_fluid_mark_cell(c.x - 1, c.y)
+	_fluid_mark_cell(c.x + 1, c.y)
+	_fluid_mark_cell(c.x, c.y - 1)
+	_fluid_mark_cell(c.x, c.y + 1)
 
 
 ## Ставит клетку в очередь на пересчёт воды.
@@ -682,6 +711,7 @@ func _process(delta: float) -> void:
 func _fluid_tick() -> void:
 	if _fluid_queue.is_empty():
 		return
+	var t0: int = Time.get_ticks_usec()
 	var batch: PackedInt32Array = _fluid_queue
 	_fluid_queue = PackedInt32Array()
 	var moved: PackedInt32Array = PackedInt32Array()
@@ -690,6 +720,7 @@ func _fluid_tick() -> void:
 		_fluid_queued[idx] = 0
 		if _fluid_step_cell(idx):
 			moved.append(idx)
+	fluid_steps += batch.size()
 	# Изменилась клетка — пересчитать и её, и соседей: вода могла прийти
 	# или уйти, и их уровни теперь другие.
 	for i in moved.size():
@@ -701,6 +732,10 @@ func _fluid_tick() -> void:
 		_fluid_mark_cell(x + 1, y)
 		_fluid_mark_cell(x, y - 1)
 		_fluid_mark_cell(x, y + 1)
+	var dt: int = Time.get_ticks_usec() - t0
+	fluid_ticks += 1
+	fluid_tick_us += dt
+	fluid_tick_us_max = maxi(fluid_tick_us_max, dt)
 
 
 ## Один шаг воды в клетке: сначала вниз, потом в стороны.
