@@ -90,9 +90,6 @@ const HINT_HIDING: String = "Вы в вентиляции. [V] — вылезт�
 enum Tut { DIG, CRAFT, PLACE, POWER, TERMINAL, DONE }
 ## Сколько хлама нужно на ТЭЦ (рецепт: 2 жел. пластины + 6 хлама, db.gd).
 const TUT_SCRAP: int = 6
-## Названия этапов цели (ADR-001 § 4.7), индекс — номер этапа.
-const STAGE_NAMES: Array[String] = ["", "ЗАПИТАТЬ СТАНЦИЮ", "СОБРАТЬ ДАННЫЕ",
-		"СОБРАТЬ РЕЛЕЙ", "УДЕРЖАТЬ СИГНАЛ"]
 
 # ---------------------------------- ТРЕКЕР / ОБУЧЕНИЕ / МОЩНОСТЬ (читают сценарии)
 ## Этап цели, который показывает трекер (1..4).
@@ -473,19 +470,21 @@ func _power_line(g) -> String:
 	return _gen_name(g)
 
 
-## Этап цели и строка под ним. Этап 0 («не начато») показываем как первый.
+## Этап цели (#32: Game.objective_stage, названия — Game.OBJECTIVE_TITLES) и
+## строка под ним. Этап 0 («ещё не пересчитан») показываем как первый. Отсчёт
+## удержания — в строке под этапом (м:сс), поэтому заголовок без него.
 func _compute_tracker() -> void:
-	var st: int = clampi(Game.objective_stage, 1, 4)
+	var st: int = clampi(Game.objective_stage, 1, Game.OBJECTIVE_STAGES)
 	if Game.relay_active:
-		st = 4
+		st = Game.OBJECTIVE_STAGES
 	tracker_stage = st
-	tracker_title = "ЦЕЛЬ %d/4 · %s" % [st, STAGE_NAMES[st]]
+	tracker_title = "ЦЕЛЬ %d/%d: %s" % [st, Game.OBJECTIVE_STAGES, Game.OBJECTIVE_TITLES[st]]
 	match st:
 		1:
 			var tot: int = 0
 			var okc: int = 0
 			for c in World.terminal_chapters:
-				if int(World.terminal_chapters[c]) > 1:
+				if int(World.terminal_chapters[c]) >= Lore.BASE_TERMINALS:
 					continue      # главы 1–2 — терминалы базы, остальные — руины
 				tot += 1
 				if not World.terminals.has(c) or _terminal_powered(c):
@@ -563,7 +562,8 @@ func _base_terminal_powered() -> bool:
 	if Game.power_output_total <= 0.0:
 		return false
 	for t in World.terminals:
-		if int(World.terminal_chapters.get(t, -1)) <= 1 and _terminal_powered(t):
+		var ch: int = int(World.terminal_chapters.get(t, -1))
+		if ch >= 0 and ch < Lore.BASE_TERMINALS and _terminal_powered(t):
 			return true
 	return false
 
