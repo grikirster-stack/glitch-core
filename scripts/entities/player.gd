@@ -732,42 +732,10 @@ func _mirror(rect: Rect2) -> Rect2:
 
 
 func _draw() -> void:
-	var body_col: Color = Color(0.86, 0.22, 0.24)
-	if hiding:
-		body_col = body_col.darkened(0.45)
-	# Покраснение корпуса после урона.
-	var flash: float = _hit_flash / HIT_FLASH
-	if flash > 0.0:
-		body_col = body_col.lerp(Color(1.0, 0.74, 0.64), flash * 0.85)
-	# Фигура уже отзеркалена по facing (body_layout), рисуем как есть.
-	var lay: Dictionary = body_layout()
-	var r: Rect2 = lay["body"]
-	# Тень
-	draw_set_transform(Vector2(0, SIZE.y * 0.5), 0.0, Vector2(1.0, 0.35))
-	draw_circle(Vector2.ZERO, SIZE.x * 0.6, Color(0, 0, 0, 0.28))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	# Рюкзак
-	draw_rect(lay["backpack"], body_col.darkened(0.25))
-	# Тело
-	draw_rect(r, body_col)
-	draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 3.0), body_col.lightened(0.18))
-	draw_rect(Rect2(r.position.x, r.end.y - 3.0, r.size.x, 3.0), body_col.darkened(0.22))
-	# Ноги
-	draw_rect(lay["leg_back"], body_col.darkened(0.35))
-	draw_rect(lay["leg_front"], body_col.darkened(0.35))
-	# Визор
-	draw_rect(lay["visor"], Color(0.72, 0.86, 0.94))
-	draw_rect(lay["visor_top"], Color(0.88, 0.96, 1.0))
-	draw_rect(lay["visor_glint"], Color(1, 1, 1, 0.85))
-	# Мигающий «свет» на шлеме
-	var blink: float = 0.5 + 0.5 * sin(_breath * 6.0)
-	draw_circle(lay["light"], 1.6, Color(1.0, 0.35, 0.3, 0.5 + blink * 0.5))
-	# Контур урона
-	if flash > 0.0:
-		draw_rect(r, Color(1.0, 0.35, 0.32, flash * 0.8), false, 1.5)
-
-	if hiding:
-		draw_arc(Vector2.ZERO, 14.0, 0.0, TAU, 24, Color(0.4, 0.9, 1.0, 0.5), 1.5)
+	# Рисунок героя — шов Avatar (ADR-002 § 4.6): тот же для превью меню и
+	# товарищей по сети. Фигура уже отзеркалена по facing (body_layout).
+	Avatar.draw(self, body_layout(), look,
+			{"hiding": hiding, "flash": _hit_flash / HIT_FLASH, "breath": _breath})
 
 	# Индикатор копки живёт в мировых координатах (кирка смотрит на клетку
 	# сама) — его не зеркалим.
@@ -855,3 +823,10 @@ func load_state(d: Dictionary) -> void:
 	inv.changed.emit()
 	stats_changed.emit()
 	queue_redraw()
+
+
+# ------------------------------------------------- СЕТЬ (ADR-002)
+## Параметры вида (Profile.Look, u16): цвет скафандра, шлем, аксессуар, рюкзак.
+## Рисует Avatar.draw; 0 — прежний красный герой. Одиночная игра из меню —
+## вид из профиля (main.gd), в сети — вид пира (MP-D).
+var look: int = 0
