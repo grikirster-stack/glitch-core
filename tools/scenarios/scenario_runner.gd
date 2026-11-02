@@ -57,7 +57,7 @@ const REGISTRY: Dictionary = {
 	"relay": {
 		"file": "relay.gd",
 		"title": "релей",
-		"desc": "выдать детали, удерживать E, отсчёт и победа",
+		"desc": "выдать детали, удерживать E, этап 4, отсчёт 180 с (ускорен), победа и эпилог",
 	},
 	"night": {
 		"file": "night.gd",
@@ -221,6 +221,32 @@ const REGISTRY: Dictionary = {
 		"title": "спавн из вентиляций",
 		"desc": "три ближайшие незапечатанные вентиляции, телеграф 2 с",
 	},
+	# --- Оборона (#31, ADR-001 § 4.4) ---
+	"turret_kills_echo": {
+		"file": "turret_kills_echo.gd",
+		"title": "турель убивает эхо",
+		"desc": "efficiency 1: эхо убито за ≤ 6 с (5 разрядов), тень — приоритетная цель",
+	},
+	"turret_brownout": {
+		"file": "turret_brownout.gd",
+		"title": "турель при браун-ауте",
+		"desc": "efficiency 0.5 — эхо умирает ≈ вдвое дольше; без питания турель молчит",
+	},
+	"airlock_player_passes_phantom_blocked": {
+		"file": "airlock_player_passes_phantom_blocked.gd",
+		"title": "шлюз",
+		"desc": "герой проходит; фантом в 3 клетках держит шлюз закрытым; открытый шлюз фантом не проходит",
+	},
+	"vent_grate_blocks_spawn": {
+		"file": "vent_grate_blocks_spawn.gd",
+		"title": "решётка вентиляции",
+		"desc": "решётка закрывает спавн из вентиляции; копатель ломает её за ≈ 8 с",
+	},
+	"steel_wall_vs_burrower": {
+		"file": "steel_wall_vs_burrower.gd",
+		"title": "стальная стена и копатель",
+		"desc": "землю копатель роет, стальную стену — нет; игрок ломает её за ≈ 4 с",
+	},
 	# --- Туман войны (#59) ---
 	"fog_reveal": {
 		"file": "fog_reveal.gd",
@@ -232,6 +258,24 @@ const REGISTRY: Dictionary = {
 		"file": "save_load.gd",
 		"title": "сохранение и загрузка",
 		"desc": "фабрика, F5, мир меняется, F9 — всё как при F5, фабрика плавит дальше",
+	},
+	# --- Релей и финал (#32, ADR-001 § 4.7) ---
+	"objective_stages": {
+		"file": "objective_stages.gd",
+		"title": "этапы цели",
+		"desc": "терминалы базы → этап 2, T5 → этап 3, запуск релея → этап 4",
+	},
+	"relay_doppel_spawns": {
+		"file": "relay_doppel_spawns.gd",
+		"title": "двойник на релее",
+		"desc": "за первые 30 с удержания сигнала выходит двойник; замер p95 кадра при cap 10",
+	},
+	# --- Небесный тайник (#60) ---
+	"sky_secret": {
+		"file": "sky_secret.gd",
+		"title": "небесный тайник",
+		"desc": "с земли не допрыгнуть; бот строит лестницу из блоков, лезет на обломок и открывает тайник",
+		"timeout_ms": 120000,
 	},
 }
 

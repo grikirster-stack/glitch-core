@@ -118,8 +118,13 @@ func reset_run() -> void:
 	stats_crafted = 0
 	stats_kills = 0
 	stats_deaths = 0
-	scenario_mode = false
+	# scenario_mode НЕ сбрасывается: это режим запуска (--scenario), а не забега.
+	# Раннер сценариев зовёт reset_run() перед каждым сценарием — флаг должен
+	# пережить сброс, иначе директор угрозы просыпался посреди сценария.
 	objective_stage = 0
+	# --- Цель и релей (#32)
+	relay_speed = 1.0
+	_objective_t = 0.0
 	_power_index_size = -1          ## мир мог смениться — индекс пересоберётся
 	# --- Исследования (#28): дерево и журнал живут один забег.
 	Tech.reset()
@@ -148,12 +153,7 @@ func _process(delta: float) -> void:
 		day_number += 1
 		day_started.emit(day_number)
 		notify("Смена %d. Фантомы голоднее." % day_number, Color(0.9, 0.9, 0.7))
-	if relay_active:
-		relay_timer -= delta
-		if relay_timer <= 0.0:
-			relay_timer = 0.0
-			notify("СИГНАЛ УШЁЛ НА ОРБИТУ. ЭВАКУАЦИЯ!", Color(0.4, 1.0, 0.7))
-			set_state(State.WON)
+	_tick_objective(delta)
 
 
 func is_night() -> bool:
@@ -462,6 +462,115 @@ func _set_brownout(on: bool) -> void:
 	brownout_changed.emit(on)
 
 
+# ------------------------------------------------- ЦЕЛЬ И РЕЛЕЙ (ADR-001 § 4.7, #32)
+## Четыре этапа цели. Этап выводится из состояния забега раз в
+## OBJECTIVE_CHECK_INTERVAL и только растёт:
+##   1. Запитать станцию — оба терминала базы прочитаны (читаются они только
+##      под питанием); +10 данных и главы 1–2 дают сами терминалы, релей отзывается.
+##   2. Собрать данные — открыт узел T5: антенна релея в рецептах сборщика.
+##   3. Собрать релей — E у ядра с полным набором relay_req запускает отсчёт.
+##   4. Удержать сигнал — Balance.RELAY_TIME с; директор угрозы в режиме релея
+##      (cap RELAY_HOLD_CAP, двойник — сразу после разведчика). Победа → эпилог Lore.
+## Этап можно перескочить (данные с анализаторов, детали из тайников): сигнал
+## objective_changed тогда уходит один раз — сразу с новым номером.
+
+const OBJECTIVE_STAGES: int = 4
+const OBJECTIVE_CHECK_INTERVAL: float = 0.25
+## Названия этапов для HUD и инвентаря (индекс — номер этапа).
+const OBJECTIVE_TITLES: Array = ["", "ЗАПИТАТЬ СТАНЦИЮ", "СОБРАТЬ ДАННЫЕ", "СОБРАТЬ РЕЛЕЙ", "УДЕРЖАТЬ СИГНАЛ"]
+## Отметки отсчёта (секунд до конца), на которых игроку напоминают, сколько держаться.
+const RELAY_REMINDERS: Array = [150, 120, 90, 60, 30, 10]
+const RELAY_COLOR: Color = Color(0.4, 1.0, 0.8)
+
+## Ускорение отсчёта релея — для тестов (сценарий relay). В игре всегда 1.
+var relay_speed: float = 1.0
+var _objective_t: float = 0.0
+
+
+func _tick_objective(delta: float) -> void:
+	_objective_t -= delta
+	if _objective_t <= 0.0:
+		_objective_t = OBJECTIVE_CHECK_INTERVAL
+		update_objective()
+	if relay_active:
+		_tick_relay(delta * relay_speed)
+
+
+## Пересчитать этап цели сейчас (обычно — сам раз в 0.25 с; публичная — для тестов).
+func update_objective() -> void:
+	var target: int = objective_target()
+	if target > objective_stage:
+		_enter_stage(target)
+
+
+## Этап, до которого игрок дошёл: первый невыполненный, релей запущен — четвёртый.
+func objective_target() -> int:
+	if relay_active or state == State.WON:
+		return 4
+	if not base_terminals_done():
+		return 1
+	if not Tech.is_unlocked("T5"):
+		return 2
+	return 3
+
+
+## Оба терминала базы отработали (главы 1–2 у Lore — терминалы базы).
+## Отработавший терминал уходит из World.terminals, но остаётся в terminal_chapters.
+func base_terminals_done() -> bool:
+	var n: int = 0
+	for c in World.terminal_chapters.keys():
+		if int(World.terminal_chapters[c]) >= Lore.BASE_TERMINALS:
+			continue
+		if World.terminals.has(c):
+			return false
+		n += 1
+	return n > 0
+
+
+## Строка этапа для HUD/инвентаря: «ЦЕЛЬ 3/4: СОБРАТЬ РЕЛЕЙ», на удержании — с отсчётом.
+func objective_text() -> String:
+	var s: int = clampi(objective_stage, 1, OBJECTIVE_STAGES)
+	var head: String = "ЦЕЛЬ %d/%d: %s" % [s, OBJECTIVE_STAGES, OBJECTIVE_TITLES[s]]
+	if relay_active:
+		head += " — %d с" % ceili(relay_timer)
+	return head
+
+
+func _enter_stage(s: int) -> void:
+	set_objective_stage(s)
+	var bp: Vector2 = World.cell_to_world(World.beacon_cell)
+	match s:
+		1:
+			notify("Цель 1/4: запитать станцию — оба терминала базы под питанием.", Color(0.5, 0.95, 0.8))
+		2:
+			notify("Станция ожила: релей отзывается. Цель 2/4: открыть узел T5 «Релей».", RELAY_COLOR)
+			UI.flash_ring(bp, RELAY_COLOR)
+			Sfx.play("power", -8.0)
+		3:
+			notify("Цель 3/4: собрать релей-ядро — антенна релея в рецептах сборщика.", RELAY_COLOR)
+			UI.flash_ring(bp, RELAY_COLOR)
+		4:
+			notify("Цель 4/4: удержать сигнал %d с. Они идут." % int(RELAY_TIME), RELAY_COLOR)
+
+
+func _tick_relay(dt: float) -> void:
+	var before: float = relay_timer
+	relay_timer -= dt
+	for r in RELAY_REMINDERS:
+		if before > float(r) and relay_timer <= float(r) and relay_timer > 0.0:
+			notify("Сигнал: осталось %d с." % int(r), Color(0.6, 0.95, 1.0))
+	if relay_timer <= 0.0:
+		relay_timer = 0.0
+		relay_active = false
+		notify("СИГНАЛ УШЁЛ НА ОРБИТУ. ЭВАКУАЦИЯ!", Color(0.4, 1.0, 0.7))
+		set_state(State.WON)
+
+
+## Итоги забега для Lore.epilogue(): смены, убитые фантомы, смерти, время.
+func epilogue_stats() -> Dictionary:
+	return {"days": day_number, "kills": stats_kills, "deaths": stats_deaths, "time": game_time}
+
+
 ## Попытка запустить релей-ядро. Возвращает true, если запуск прошёл.
 func try_finish() -> bool:
 	if player == null or relay_active:
@@ -478,8 +587,9 @@ func try_finish() -> bool:
 		player.inv.remove_id(id, int(relay_req[id]))
 	relay_active = true
 	relay_timer = RELAY_TIME
-	notify("РЕЛЕЙ ЗАПУЩЕН! Держитесь %d секунд." % int(RELAY_TIME), Color(0.4, 1.0, 0.8))
+	notify("РЕЛЕЙ ЗАПУЩЕН! Держитесь %d секунд." % int(RELAY_TIME), RELAY_COLOR)
 	Sfx.play("power", -2.0)
+	update_objective()          # этап 4 — сразу, а не через 0.25 с
 	return true
 
 
@@ -491,6 +601,7 @@ const SAVE_FIELDS: Array[String] = [
 	"time_of_day", "day_number", "tasks_total", "tasks_done", "research", "wave",
 	"game_time", "relay_active", "relay_timer", "stats_mined", "stats_crafted",
 	"stats_kills", "stats_deaths", "objective_stage",
+	"relay_speed",                       # цель и релей (#32)
 ]
 
 

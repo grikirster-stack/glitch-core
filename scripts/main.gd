@@ -57,8 +57,13 @@ func _ready() -> void:
 	Game.player = player
 	UI.bind(player)
 
+	# Экран финала/смерти — в своём CanvasLayer поверх HUD (#32): под Node2D сцены
+	# он рисовался в мировых координатах и уходил под туман войны.
+	var end_layer: CanvasLayer = CanvasLayer.new()
+	end_layer.layer = EndScreen.LAYER
+	add_child(end_layer)
 	end_screen = EndScreen.new()
-	add_child(end_screen)
+	end_layer.add_child(end_screen)
 	end_screen.restart_requested.connect(_restart)
 	Game.state_changed.connect(_on_state_changed)
 	_setup_respawn()
@@ -128,8 +133,7 @@ func _on_state_changed(s: int) -> void:
 	if s == Game.State.DEAD:
 		end_screen.show_end("ТЕБЯ НАШЛИ", Lore.epitaph(), Color(0.92, 0.28, 0.34), _stats())
 	elif s == Game.State.WON:
-		end_screen.show_end("ЭВАКУАЦИЯ", "Сигнал принят на орбите. Капсула уходит вверх.",
-				Color(0.40, 1.0, 0.78), _stats())
+		end_screen.show_victory(Lore.epilogue(Game.epilogue_stats()), _stats())
 
 
 func _stats() -> Array:

@@ -85,6 +85,7 @@ func _ready() -> void:
 	_build_tileset()
 	_build_tile_light_table()
 	_build_atlas_cache()
+	_build_defense_tables()
 	_reset_light_chunks()
 	_reset_fluid()
 
@@ -128,6 +129,8 @@ func generate(p_seed: int) -> void:
 		_build_tile_light_table()
 	if _atlas_cache.size() < IDs.TILE_COUNT:
 		_build_atlas_cache()
+	if _psolid_tbl.size() < IDs.TILE_COUNT:
+		_build_defense_tables()
 	for m in machines.values():
 		if is_instance_valid(m):
 			m.queue_free()
@@ -149,6 +152,7 @@ func generate(p_seed: int) -> void:
 	_light_max_radius = 0.0
 	_light_reach = 1
 	_trees = 0
+	_defense_reset()
 
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 	rng.seed = world_seed
@@ -306,14 +310,13 @@ func generate(p_seed: int) -> void:
 	_place_base(bx)
 
 	# --- 10. Вентиляция -------------------------------------------------------
-	for i in 14:
-		var vx: int = rng.randi_range(8, W - 8)
-		var vy: int = rng.randi_range(surface[vx] + 6, H - 12)
-		if get_tile(vx, vy) == IDs.T.AIR and get_tile(vx, vy + 1) != IDs.T.AIR:
-			vents.append(Vector2i(vx, vy))
+	_place_vents(rng)
 
 	# --- 11. Страховка: ничего не должно висеть в воздухе --------------------
 	_fix_floating_trees()
+
+	# --- 11. Небесный тайник (#60): после деревьев, на своём ГСЧ -----------
+	_place_sky_cache()
 
 	# --- 11a. Вода: уровни по готовому миру ----------------------------------
 	_init_fluid_from_tiles()
@@ -353,7 +356,8 @@ func _build_astar() -> void:
 	astar.update()
 	# Локальная таблица твёрдости: раз в клетку вместо обращения к словарю DB.
 	# Прямой вызов метода быстрее, чем вызов через Callable.
-	var solid_tbl: PackedByteArray = _tile_flag_table(true)
+	# Для фантомов шлюз — стена всегда, даже открытый (#31): таблица phantom_solid.
+	var solid_tbl: PackedByteArray = _psolid_tbl
 	var grid: AStarGrid2D = astar
 	for y in range(H):
 		var row: int = y * W
@@ -367,7 +371,7 @@ func _update_astar(x: int, y: int) -> void:
 		return
 	if x < 0 or y < 0 or x >= W or y >= H:
 		return
-	astar.set_point_solid(Vector2i(x, y), DB.tile_solid(tiles[y * W + x]))
+	astar.set_point_solid(Vector2i(x, y), _psolid_tbl[tiles[y * W + x]] != 0)
 
 
 ## Кэшированная таблица свойств тайлов — быстрее словарных запросов в DB.
@@ -761,6 +765,227 @@ func _place_ruin_cache(i: int, cx: int, base: int, half: int) -> void:
 	ruin_cache_ms += float(Time.get_ticks_usec() - t0) / 1000.0
 
 
+# ------------------------------------------------------------ НЕБЕСНЫЙ ТАЙНИК
+# Высоко над рельефом висит обломок корабля «Кербер-9» (#60): стальной пол,
+# днище и корма из панелей, иллюминатор, сундук с редким грузом (Balance.SKY_LOOT)
+# и бортовой самописец с обрывком журнала (Lore.fragment). Допрыгнуть нельзя —
+# только достроиться лестницей из блоков (блоки ставятся прямо в воздух).
+# Всё считается своим ГСЧ от сида мира: поток случайных чисел генерации мира не
+# сдвигается, остальной мир остаётся прежним. Издалека обломок — тёмный силуэт
+# на фоне неба; на миникарте его нет (она рисует только рельеф World.surface).
+#
+# Форма (x0 — нос, открыт: туда приходит лестница; x1 — корма):
+#        . . . . . . . P P P P      fy-3  обрывок крыши и корма
+#        . . . . . . . . . . G      fy-2  G — иллюминатор
+#        . . . r . . . . c . P      fy-1  r — самописец, c — сундук
+#        S S S S S S S S S S S      fy    пол
+#        . . P P P P P P P . .      fy+1  днище
+#        . . . . P P P . . . .      fy+2
+# и, с шансом SKY_DEBRIS_CHANCE, малый обломок обшивки справа, выше пола.
+
+const SKY_SALT: int = 0x534B5946       # «SKYF»: свой поток случайных чисел
+const SKY_PLACES: Array = ["Грузовой отсек", "Кормовой отсек", "Шлюзовой отсек", "Рубка"]
+
+## Тайник текущего мира (пусто — обломок не поместился): {cell, chest, wreck,
+## x0, x1, floor_y, bottom, ground, clearance, debris, name, fragment}.
+var sky_cache: Dictionary = {}
+## Клетки обломков (тайлы и сундук): проверки «мир вне тайника не сдвинулся».
+var sky_cells: Array[Vector2i] = []
+var sky_cache_ms: float = 0.0          # сколько тайник добавил к gen_ms
+
+
+## Обломок: тёмный силуэт издалека, при подходе проступает; самописец с именем
+## отсека; при первом открытии сундука обрывок журнала уходит в Tech.fragments.
+class SkyWreck extends Node2D:
+	var cells: Array[Vector2i] = []
+	var bounds: Rect2 = Rect2()        # мировые координаты обломков
+	var recorder: Vector2 = Vector2.ZERO
+	var chest = null
+	var title: String = ""
+	var fragment: String = ""
+	var haze: float = Balance.SKY_HAZE_ALPHA
+	var announced: bool = false
+	var opened: bool = false
+
+	func _process(delta: float) -> void:
+		var p = UI.player
+		var near: bool = false
+		if p != null and is_instance_valid(p):
+			var q: Vector2 = p.global_position.clamp(bounds.position, bounds.end)
+			near = q.distance_to(p.global_position) < Balance.SKY_REVEAL_TILES * World.TILE
+		var a: float = move_toward(haze, 0.0 if near else Balance.SKY_HAZE_ALPHA, delta * 2.0)
+		if a != haze:
+			haze = a
+			queue_redraw()
+		if near and not announced:
+			announced = true
+			Game.notify("Обломок в небе: «%s»" % title, Color(0.8, 0.9, 1.0))
+		if not opened and chest != null and is_instance_valid(chest) \
+				and UI.panel != null and UI.panel.visible and UI.panel.chest == chest:
+			opened = true
+			if Tech.add_fragment(fragment):
+				Game.notify("Самописец: найден обрывок журнала (J).", Color(1.0, 0.85, 0.5))
+
+	func _draw() -> void:
+		var t: float = float(World.TILE)
+		var lit: float = 1.0 - haze / Balance.SKY_HAZE_ALPHA
+		var dark: Color = Color(0.04, 0.05, 0.09)
+		draw_rect(Rect2(recorder + Vector2(-5.0, 2.0), Vector2(10.0, 6.0)),
+				Color(0.85, 0.42, 0.12).lerp(dark, 1.0 - lit))
+		draw_rect(Rect2(recorder + Vector2(-5.0, 4.0), Vector2(10.0, 1.0)), Color(0.20, 0.10, 0.05))
+		for c in cells:
+			draw_rect(Rect2(Vector2(c) * t - position, Vector2(t, t)), Color(dark, haze))
+		if lit <= 0.01:
+			return
+		var font: Font = ThemeDB.fallback_font
+		var w: float = font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 8).x
+		draw_string(font, recorder + Vector2(-w * 0.5, -6.0), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 8,
+				Color(0.8, 0.9, 1.0, lit))
+
+
+func _clear_sky_cache() -> void:
+	var wreck = sky_cache.get("wreck")
+	if wreck != null and is_instance_valid(wreck):
+		wreck.queue_free()
+	sky_cache = {}
+	sky_cells.clear()
+	sky_cache_ms = 0.0
+
+
+## Верх рельефа в колонках x0..x1: самая высокая непустая клетка (с деревьями
+## и руинами). Клетки обломков не считаются — функция годится и после постройки.
+func sky_ground(x0: int, x1: int) -> int:
+	var top: int = H - 1
+	for x in range(maxi(x0, 0), mini(x1, W - 1) + 1):
+		for y in range(0, top):
+			if tiles[y * W + x] != IDs.T.AIR and not sky_cells.has(Vector2i(x, y)):
+				top = y
+				break
+	return top
+
+
+## Где и какой обломок висит: зависит только от сида мира и рельефа под ним.
+## {} — нигде не поместился (на трёх сидах CI такого нет — проверяет автотест).
+func sky_plan() -> Dictionary:
+	var r: RandomNumberGenerator = _sky_rng(0)
+	var debris: bool = r.randf() < Balance.SKY_DEBRIS_CHANCE
+	var w: int = r.randi_range(9, 11)
+	var span: int = w + (6 if debris else 1)    # колонок от носа до края обломков
+	var want: int = r.randi_range(Balance.SKY_CLEARANCE_MIN, Balance.SKY_CLEARANCE_MAX)
+	var title: String = "%s «%s»" % [SKY_PLACES[r.randi() % SKY_PLACES.size()], Lore.CREW_NAME]
+	var dx: int = r.randi_range(3, 4)
+	var dy: int = r.randi_range(1, 3)
+	for _k in Balance.SKY_TRIES:
+		var x0: int = r.randi_range(Balance.SKY_EDGE_GAP, W - 9 - span)
+		if absi(x0 + w / 2 - W / 2) < Balance.SKY_BASE_GAP:
+			continue
+		var ground: int = sky_ground(x0 - 2, x0 + span + 1)
+		# Днище — ground - clearance - 1, пол — на 2 выше, верх обломков — на 4 выше пола.
+		var fit: int = ground - 7 - Balance.SKY_TOP_MARGIN
+		if fit < Balance.SKY_CLEARANCE_MIN:
+			continue
+		var clearance: int = mini(want, fit)
+		var bottom: int = ground - clearance - 1
+		return {"x0": x0, "x1": x0 + w - 1, "floor_y": bottom - 2, "bottom": bottom,
+				"ground": ground, "clearance": clearance, "debris": debris,
+				"debris_x": x0 + w - 1 + dx, "debris_y": bottom - 2 - dy, "name": title}
+	return {}
+
+
+## Груз тайника: [[предмет, число], ...], SKY_CACHE_MIN..MAX разных предметов
+## из Balance.SKY_LOOT. Свой поток (1): раскладка обломка на груз не влияет.
+func sky_cache_loot() -> Array:
+	var pool: Array = Balance.SKY_LOOT.keys()
+	var r: RandomNumberGenerator = _sky_rng(1)
+	var n: int = mini(r.randi_range(Balance.SKY_CACHE_MIN, Balance.SKY_CACHE_MAX), pool.size())
+	for k in range(pool.size() - 1, 0, -1):
+		var j: int = r.randi_range(0, k)
+		var tmp = pool[k]
+		pool[k] = pool[j]
+		pool[j] = tmp
+	var out: Array = []
+	for k in n:
+		var span: Array = Balance.SKY_LOOT[pool[k]]
+		out.append([int(pool[k]), r.randi_range(int(span[0]), int(span[1]))])
+	return out
+
+
+## Обрывок журнала в самописце: свой поток (2), тот же сид — тот же текст.
+func sky_fragment() -> String:
+	return Lore.fragment(_sky_rng(2))
+
+
+## ГСЧ тайника: сид мира, соль и номер потока перемешаны через hash() — у соседних
+## сидов первые числа PCG почти одинаковы (на трёх сидах CI малый обломок
+## не выпадал ни разу при шансе 50 %).
+func _sky_rng(stream: int) -> RandomNumberGenerator:
+	var r: RandomNumberGenerator = RandomNumberGenerator.new()
+	r.seed = hash([world_seed, SKY_SALT, stream])
+	return r
+
+
+func _sky_set(x: int, y: int, id: int) -> void:
+	if get_tile(x, y) == IDs.T.AIR:
+		set_tile_raw(x, y, id)
+		sky_cells.append(Vector2i(x, y))
+
+
+func _place_sky_cache() -> void:
+	var t0: int = Time.get_ticks_usec()
+	_clear_sky_cache()
+	var plan: Dictionary = sky_plan()
+	if plan.is_empty():
+		push_warning("[Мир] небесный тайник не поместился (сид %d)" % world_seed)
+		return
+	var x0: int = int(plan["x0"])
+	var x1: int = int(plan["x1"])
+	var fy: int = int(plan["floor_y"])
+	for x in range(x0, x1 + 1):
+		_sky_set(x, fy, IDs.T.STEEL)
+	for x in range(x0 + 2, x1 - 1):
+		_sky_set(x, fy + 1, IDs.T.PANEL)
+	for x in range(x0 + 4, x1 - 3):
+		_sky_set(x, fy + 2, IDs.T.PANEL)
+	_sky_set(x1, fy - 1, IDs.T.PANEL)
+	_sky_set(x1, fy - 2, IDs.T.GLASS)
+	for x in range(x1 - 3, x1 + 1):
+		_sky_set(x, fy - 3, IDs.T.PANEL)
+	if plan["debris"]:
+		var ddx: int = int(plan["debris_x"])
+		var ddy: int = int(plan["debris_y"])
+		for x in range(ddx, ddx + 3):
+			_sky_set(x, ddy, IDs.T.PANEL)
+		_sky_set(ddx + 1, ddy - 1, IDs.T.GLASS)
+	var cell: Vector2i = Vector2i(x1 - 2, fy - 1)
+	var chest: Chest = null
+	if MachineBase.place_machine("Chest", cell):
+		chest = machines[cell]
+		sky_cells.append(cell)
+		for e in sky_cache_loot():
+			chest.receive_item(int(e[0]), int(e[1]))
+	var wreck: SkyWreck = SkyWreck.new()
+	var lo: Vector2i = Vector2i(x0, fy - 3)
+	var hi: Vector2i = Vector2i(x0, fy + 2)
+	for c in sky_cells:
+		lo = Vector2i(mini(lo.x, c.x), mini(lo.y, c.y))
+		hi = Vector2i(maxi(hi.x, c.x), maxi(hi.y, c.y))
+	wreck.position = Vector2(lo * TILE)
+	wreck.bounds = Rect2(Vector2(lo * TILE), Vector2((hi - lo + Vector2i.ONE) * TILE))
+	wreck.cells = sky_cells.duplicate()
+	wreck.recorder = cell_to_world(Vector2i(x0 + 3, fy - 1)) - wreck.position
+	wreck.chest = chest
+	wreck.title = String(plan["name"])
+	wreck.fragment = sky_fragment()
+	wreck.z_index = 4                  # над тайлами и сундуком, под героем
+	add_world_node(wreck)
+	sky_cache = plan.duplicate()
+	sky_cache["cell"] = cell
+	sky_cache["chest"] = chest
+	sky_cache["wreck"] = wreck
+	sky_cache["fragment"] = wreck.fragment
+	sky_cache_ms = float(Time.get_ticks_usec() - t0) / 1000.0
+
+
 func _place_base(cx: int) -> void:
 	## Открытая станция на расчищенной площадке: стальной пол, панели, лампы, терминалы, релей.
 	var base: int = surface[cx]
@@ -867,6 +1092,7 @@ func _fluid_mark_cell(x: int, y: int) -> void:
 
 func _process(delta: float) -> void:
 	_explore_tick()   # туман войны (#59): работа только при смене клетки героя
+	_defense_tick(delta)   # оборона (#31): шлюзы и решётки, раз в 0.1 с
 	_fluid_timer += delta
 	if _fluid_timer < FLUID_STEP:
 		return
@@ -1094,6 +1320,7 @@ func set_tile(x: int, y: int, id: int) -> void:
 		_set_cell_visual(x, y, id)
 	_update_astar(x, y)
 	_update_lights_around(x, y)
+	_defense_on_set_tile(Vector2i(x, y), id)
 
 
 func is_solid_cell(c: Vector2i) -> bool:
@@ -1118,20 +1345,23 @@ func cell_rect(c: Vector2i) -> Rect2:
 
 # ------------------------------------------------------------ ФИЗИКА ТАЙЛОВ
 
-func rect_solid(r: Rect2) -> bool:
+## phantom — проверка для фантома: открытый шлюз для него тоже стена (#31).
+func rect_solid(r: Rect2, phantom: bool = false) -> bool:
 	var x0: int = int(floor(r.position.x / TILE))
 	var x1: int = int(floor((r.position.x + r.size.x - 0.01) / TILE))
 	var y0: int = int(floor(r.position.y / TILE))
 	var y1: int = int(floor((r.position.y + r.size.y - 0.01) / TILE))
+	var tbl: PackedByteArray = _psolid_tbl if phantom else _solid_tbl
 	for y in range(y0, y1 + 1):
 		for x in range(x0, x1 + 1):
-			if is_solid_cell(Vector2i(x, y)):
+			if tbl[get_tile(x, y)] != 0:
 				return true
 	return false
 
 
 ## Перемещение AABB по сетке с раздельным разрешением по осям.
-func move_body(pos: Vector2, motion: Vector2, size: Vector2) -> Dictionary:
+## phantom — тело фантома: шлюз для него непроходим и открытым (#31).
+func move_body(pos: Vector2, motion: Vector2, size: Vector2, phantom: bool = false) -> Dictionary:
 	var half: Vector2 = size * 0.5
 	var p: Vector2 = pos
 	var hit_x: bool = false
@@ -1141,7 +1371,7 @@ func move_body(pos: Vector2, motion: Vector2, size: Vector2) -> Dictionary:
 	if motion.x != 0.0:
 		p.x += motion.x
 		var test: Rect2 = Rect2(p - half, size)
-		if rect_solid(test):
+		if rect_solid(test, phantom):
 			hit_x = true
 			if motion.x > 0.0:
 				p.x = floor((p.x + half.x) / TILE) * TILE - half.x - 0.01
@@ -1150,7 +1380,7 @@ func move_body(pos: Vector2, motion: Vector2, size: Vector2) -> Dictionary:
 	if motion.y != 0.0:
 		p.y += motion.y
 		var test2: Rect2 = Rect2(p - half, size)
-		if rect_solid(test2):
+		if rect_solid(test2, phantom):
 			hit_y = true
 			if motion.y > 0.0:
 				p.y = floor((p.y + half.y) / TILE) * TILE - half.y - 0.01
@@ -1158,6 +1388,306 @@ func move_body(pos: Vector2, motion: Vector2, size: Vector2) -> Dictionary:
 			else:
 				p.y = (floor((p.y - half.y) / TILE) + 1) * TILE + half.y + 0.01
 	return {"position": p, "hit_x": hit_x, "hit_y": hit_y, "on_ground": on_ground}
+
+
+# ------------------------------------------------------------ ОБОРОНА (#31)
+# ADR-001 § 4.4: стальная стена, шлюз, решётка вентиляции, свет прожекторов.
+#   * Флаги тайлов — упакованные таблицы по id: _solid_tbl (стена для тел),
+#     _psolid_tbl (phantom_solid: стена для фантомов и A*, плюс шлюз в любом
+#     состоянии), _dig_tbl (dig: копатель роет — флаг dig в DB и твёрдость
+#     не выше BURROWER_DIG_MAX_HARD).
+#   * Шлюз — тайлы AIRLOCK/AIRLOCK_OPEN. Открыт, если игрок ближе
+#     AIRLOCK_OPEN_DIST_TILES и ни одного фантома ближе AIRLOCK_SAFE_DIST_TILES
+#     (и всегда, пока игрок стоит в проёме — иначе дверь его зажмёт; фантому
+#     открытый шлюз всё равно стена). Пересчёт раз в AIRLOCK_CHECK_PERIOD
+#     только по реестру airlocks.
+#   * Решётка — тайл VENT_GRATE на клетке вентиляции; vents_sealed: клетка → HP.
+#     Threat не спавнит из запечатанных. Копатель рядом грызёт решётку:
+#     GRATE_HP за GRATE_BREAK_TIME секунд (damage_grate — для любого урона).
+#   * Свет машин — публичные add_light_source/remove_light_source (прожектор).
+
+## Выстрел турели (для FX/HUD, #34): откуда и куда.
+signal turret_fired(from: Vector2, to: Vector2)
+## Решётку сломали — вентиляция снова открыта.
+signal grate_broken(cell: Vector2i)
+
+## Шлюзы мира: клетка → true. Заполняется в set_tile.
+var airlocks: Dictionary = {}
+## Запечатанные вентиляции: клетка решётки → её HP.
+var vents_sealed: Dictionary = {}
+## Замер: время последнего пересчёта шлюзов, мкс (tools/defense_bench.gd).
+var airlock_tick_us: int = 0
+
+var _solid_tbl: PackedByteArray = PackedByteArray()
+var _psolid_tbl: PackedByteArray = PackedByteArray()
+var _dig_tbl: PackedByteArray = PackedByteArray()
+var _defense_t: float = 0.0
+## Плоское зеркало реестра шлюзов для горячего цикла (пересобирается по флагу).
+var _airlock_dirty: bool = true
+var _airlock_cells: Array = []
+var _airlock_pos: PackedVector2Array = PackedVector2Array()
+var _airlock_idx: PackedInt32Array = PackedInt32Array()
+## Источники света от машин (переживают _rebuild_lights).
+var _extra_lights: Array = []
+## Дальнобойные источники (радиус больше чанка): отдельно от чанков.
+var _big_lights: Array = []
+var _big_flat: PackedFloat32Array = PackedFloat32Array()
+var _big_rect: Rect2 = Rect2()      ## рамка кругов дальнобойных источников
+
+
+func _build_defense_tables() -> void:
+	_solid_tbl.resize(IDs.TILE_COUNT)
+	_psolid_tbl.resize(IDs.TILE_COUNT)
+	_dig_tbl.resize(IDs.TILE_COUNT)
+	for id in range(IDs.TILE_COUNT):
+		var solid: bool = DB.tile_solid(id)
+		_solid_tbl[id] = 1 if solid else 0
+		_psolid_tbl[id] = 1 if solid or id == IDs.T.AIRLOCK or id == IDs.T.AIRLOCK_OPEN else 0
+		_dig_tbl[id] = 1 if DB.tile_diggable(id) and DB.tile_hard(id) <= Balance.BURROWER_DIG_MAX_HARD else 0
+
+
+func _defense_reset() -> void:
+	airlocks.clear()
+	_airlock_dirty = true
+	vents_sealed.clear()
+	_extra_lights.clear()
+	_big_lights.clear()
+	_big_flat = PackedFloat32Array()
+	_defense_t = 0.0
+
+
+## Стена ли клетка для фантома (шлюз — всегда).
+func is_phantom_solid_cell(c: Vector2i) -> bool:
+	return _psolid_tbl[get_tile_v(c)] != 0
+
+
+## Роет ли копатель тайл с таким id.
+func is_diggable(id: int) -> bool:
+	return id >= 0 and id < _dig_tbl.size() and _dig_tbl[id] != 0
+
+
+func is_vent_sealed(c: Vector2i) -> bool:
+	return vents_sealed.has(c)
+
+
+## Можно ли поставить тайл id в клетку: решётка — только на вентиляцию.
+func tile_place_ok(c: Vector2i, id: int) -> bool:
+	if id == IDs.T.VENT_GRATE:
+		return vents.has(c)
+	return true
+
+
+## Вентиляции в пещерах: VENTS_RANDOM штук на полу пещер (воздух над твёрдым),
+## не ближе VENT_MIN_GAP клеток друг к другу и к вентиляции базы. Раньше
+## бралась случайная клетка без поиска пола — она попадала в «воздух над полом»
+## редко, и на сиде 31337 выходила одна вентиляция на весь мир.
+func _place_vents(rng: RandomNumberGenerator) -> void:
+	var placed: int = 0
+	for attempt in Balance.VENTS_RANDOM * 40:
+		if placed >= Balance.VENTS_RANDOM:
+			break
+		var vx: int = rng.randi_range(8, W - 8)
+		var vy: int = rng.randi_range(surface[vx] + 6, H - 12)
+		if get_tile(vx, vy) != IDs.T.AIR:
+			continue
+		# Опускаемся на пол пещеры.
+		while vy < H - 5 and get_tile(vx, vy + 1) == IDs.T.AIR:
+			vy += 1
+		if get_tile(vx, vy) != IDs.T.AIR or not DB.tile_solid(get_tile(vx, vy + 1)):
+			continue
+		var c: Vector2i = Vector2i(vx, vy)
+		var crowded: bool = false
+		for v in vents:
+			if absi(v.x - c.x) < Balance.VENT_MIN_GAP and absi(v.y - c.y) < Balance.VENT_MIN_GAP:
+				crowded = true
+				break
+		if crowded:
+			continue
+		vents.append(c)
+		placed += 1
+
+
+## Крюк set_tile: реестры шлюзов и решёток.
+func _defense_on_set_tile(c: Vector2i, id: int) -> void:
+	if id == IDs.T.AIRLOCK or id == IDs.T.AIRLOCK_OPEN:
+		if not airlocks.has(c):
+			airlocks[c] = true
+			_airlock_dirty = true
+	elif not airlocks.is_empty() and airlocks.erase(c):
+		_airlock_dirty = true
+	if id == IDs.T.VENT_GRATE:
+		if not vents_sealed.has(c):
+			vents_sealed[c] = Balance.GRATE_HP
+	elif not vents_sealed.is_empty():
+		vents_sealed.erase(c)
+
+
+func _defense_tick(delta: float) -> void:
+	if airlocks.is_empty() and vents_sealed.is_empty():
+		_defense_t = 0.0
+		return
+	_defense_t += delta
+	if _defense_t < Balance.AIRLOCK_CHECK_PERIOD:
+		return
+	var dt: float = _defense_t
+	_defense_t = 0.0
+	var ph: PackedVector2Array = PackedVector2Array()
+	var burrowers: PackedVector2Array = PackedVector2Array()
+	for p in get_tree().get_nodes_in_group("phantom"):
+		if not is_instance_valid(p) or not bool(p.get("alive")):
+			continue
+		ph.append(p.global_position)
+		if String(p.get("kind")) == "burrower":
+			burrowers.append(p.global_position)
+	if not airlocks.is_empty():
+		var pl = Game.player
+		var has_pl: bool = pl != null and is_instance_valid(pl) \
+				and not bool(pl.get("dead")) and not bool(pl.get("hiding"))
+		update_airlocks(pl.global_position if has_pl else Vector2.ZERO, has_pl, ph)
+	if not vents_sealed.is_empty() and not burrowers.is_empty():
+		_gnaw_grates(burrowers, dt)
+
+
+## Пересчёт всех шлюзов по положению игрока и фантомов. Публичная — для замера.
+func update_airlocks(ppos: Vector2, has_player: bool, phantoms: PackedVector2Array) -> void:
+	var t0: int = Time.get_ticks_usec()
+	if _airlock_dirty:
+		_airlock_dirty = false
+		_airlock_cells = airlocks.keys()
+		_airlock_pos = PackedVector2Array()
+		_airlock_idx = PackedInt32Array()
+		for c in _airlock_cells:
+			_airlock_pos.append(cell_to_world(c))
+			_airlock_idx.append(c.y * W + c.x)
+	var open_r: float = Balance.AIRLOCK_OPEN_DIST_TILES * TILE
+	var open_r2: float = open_r * open_r
+	var safe_r: float = Balance.AIRLOCK_SAFE_DIST_TILES * TILE
+	var safe_r2: float = safe_r * safe_r
+	# Перекрытие тела героя (12×22) с клеткой: |dx| < 8 + 6, |dy| < 8 + 11.
+	var ox: float = TILE * 0.5 + 6.0
+	var oy: float = TILE * 0.5 + 11.0
+	var np: int = phantoms.size()
+	for i in _airlock_pos.size():
+		var cp: Vector2 = _airlock_pos[i]
+		var want: bool = false
+		if has_player:
+			if absf(cp.x - ppos.x) < ox and absf(cp.y - ppos.y) < oy:
+				want = true   # игрок в проёме — не зажимаем
+			elif cp.distance_squared_to(ppos) <= open_r2:
+				want = true
+				for k in np:
+					if cp.distance_squared_to(phantoms[k]) < safe_r2:
+						want = false
+						break
+		if tiles[_airlock_idx[i]] != (IDs.T.AIRLOCK_OPEN if want else IDs.T.AIRLOCK):
+			_set_airlock(_airlock_cells[i], want)
+	airlock_tick_us = Time.get_ticks_usec() - t0
+
+
+## Открыть/закрыть шлюз: только тайл и картинка. A* не трогаем — для фантомов
+## шлюз стена в любом состоянии; вода в шлюз не течёт ни так, ни так.
+func _set_airlock(c: Vector2i, open: bool) -> void:
+	var idx: int = c.y * W + c.x
+	var id: int = IDs.T.AIRLOCK_OPEN if open else IDs.T.AIRLOCK
+	if tiles[idx] == id:
+		return
+	tiles[idx] = id
+	if tilemap:
+		_set_cell_visual(c.x, c.y, id)
+	Sfx.play_at("place", cell_to_world(c), -18.0, 0.7 if open else 0.55)
+
+
+## Копатели рядом с решётками грызут их.
+func _gnaw_grates(burrowers: PackedVector2Array, dt: float) -> void:
+	var r2: float = Balance.GRATE_REACH_PX * Balance.GRATE_REACH_PX
+	var dps: float = Balance.GRATE_HP / Balance.GRATE_BREAK_TIME
+	for c in vents_sealed.keys():
+		var cp: Vector2 = cell_to_world(c)
+		for q in burrowers:
+			if cp.distance_squared_to(q) <= r2:
+				damage_grate(c, dps * dt)
+				break
+
+
+## Урон решётке. true — решётка сломана (вентиляция снова открыта).
+func damage_grate(c: Vector2i, amount: float) -> bool:
+	if not vents_sealed.has(c):
+		return false
+	var hp: float = float(vents_sealed[c]) - amount
+	if hp > 0.0:
+		vents_sealed[c] = hp
+		return false
+	set_tile(c.x, c.y, IDs.T.AIR)
+	UI.spawn_chip(c, DB.tile_color(IDs.T.VENT_GRATE))
+	Sfx.play_at("break", cell_to_world(c), -8.0, 0.7)
+	grate_broken.emit(c)
+	return true
+
+
+## Источник света от машины (прожектор). Возвращает ручку для remove_light_source.
+## Радиус больше чанка — в отдельный короткий список, чтобы light_at во всём
+## мире не начал просматривать 5×5 чанков вместо 3×3.
+func add_light_source(pos: Vector2, radius: float, power: float) -> Dictionary:
+	var entry: Dictionary = {"pos": pos, "radius": radius, "power": power}
+	_extra_lights.append(entry)
+	_light_attach(entry)
+	return entry
+
+
+## Убрать источник, выданный add_light_source. Чужая/старая ручка — без ошибок.
+func remove_light_source(entry: Dictionary) -> void:
+	if entry.is_empty():
+		return
+	var known: bool = false
+	for i in range(_extra_lights.size()):
+		if is_same(_extra_lights[i], entry):
+			_extra_lights.remove_at(i)
+			known = true
+			break
+	if not known:
+		return   # ручка прошлого мира: generate() уже всё сбросил
+	for i in range(lights.size()):
+		if is_same(lights[i], entry):
+			lights.remove_at(i)
+			break
+	for i in range(_big_lights.size()):
+		if is_same(_big_lights[i], entry):
+			_big_lights.remove_at(i)
+			_rebuild_big_flat()
+			return
+	_light_unregister(entry, world_to_cell(entry["pos"]))
+
+
+func _light_attach(entry: Dictionary) -> void:
+	lights.append(entry)
+	if float(entry["radius"]) > float(TILE * LIGHT_CHUNK):
+		_big_lights.append(entry)
+		_rebuild_big_flat()
+	else:
+		_light_register(entry, world_to_cell(entry["pos"]))
+
+
+func _rebuild_big_flat() -> void:
+	var f: PackedFloat32Array = PackedFloat32Array()
+	for i in range(_big_lights.size()):
+		var e: Dictionary = _big_lights[i]
+		var p: Vector2 = e["pos"]
+		var r: float = float(e["radius"])
+		var box: Rect2 = Rect2(p - Vector2(r, r), Vector2(r, r) * 2.0)
+		_big_rect = box if i == 0 else _big_rect.merge(box)
+		f.push_back(p.x)
+		f.push_back(p.y)
+		f.push_back(r * r)
+		f.push_back(float(e["power"]))
+	_big_flat = f
+
+
+## После полной пересборки света — вернуть источники машин.
+func _relight_sources() -> void:
+	_big_lights.clear()
+	_big_flat = PackedFloat32Array()
+	for e in _extra_lights:
+		_light_attach(e)
 
 
 # ------------------------------------------------------------ СВЕТ
@@ -1270,6 +1800,7 @@ func _rebuild_lights() -> void:
 	for c in terminals:
 		_light_add_static(c, 40.0, 0.4)
 	_light_add_static(beacon_cell, 70.0, 0.6)
+	_relight_sources()
 
 
 ## Точечное обновление света вокруг изменённой клетки.
@@ -1310,6 +1841,18 @@ func light_at(c: Vector2i) -> float:
 				var ddy: float = cp.y - flat[o + 1]
 				if ddx * ddx + ddy * ddy < flat[o + 2]:
 					total += flat[o + 3]
+	# Дальнобойные источники (прожекторы, #31) — отдельным коротким списком:
+	# в чанки их не кладём, чтобы не раздувать _light_reach для всего мира.
+	# Рамка всех дальнобойных источников: вдали от прожекторов список не смотрим.
+	if _big_flat.is_empty() or not _big_rect.has_point(cp):
+		return total
+	var big: PackedFloat32Array = _big_flat
+	for i in range(big.size() / 4):
+		var o: int = i * 4
+		var ddx: float = cp.x - big[o]
+		var ddy: float = cp.y - big[o + 1]
+		if ddx * ddx + ddy * ddy < big[o + 2]:
+			total += big[o + 3]
 	return total
 
 
@@ -1336,6 +1879,13 @@ func get_lights_near(rect: Rect2) -> Array:
 				var dy: float = maxf(maxf(rect.position.y - p.y, p.y - rect.end.y), 0.0)
 				if dx * dx + dy * dy <= r * r:
 					out.append(l)
+	for l in _big_lights:
+		var p: Vector2 = l["pos"]
+		var r: float = float(l["radius"])
+		var dx: float = maxf(maxf(rect.position.x - p.x, p.x - rect.end.x), 0.0)
+		var dy: float = maxf(maxf(rect.position.y - p.y, p.y - rect.end.y), 0.0)
+		if dx * dx + dy * dy <= r * r:
+			out.append(l)
 	return out
 
 
@@ -1508,7 +2058,19 @@ func save_state() -> Dictionary:
 		"beacon_cell": beacon_cell,
 		"spawn_point": spawn_point,
 		"ruin_signs": signs,
+		# Оборона (#31): шлюзы и решётки с их HP (реестры, которые ведёт set_tile).
+		"airlocks": airlocks.keys(),
+		"vents_sealed": vents_sealed.duplicate(),
+		# Небесный тайник (#60): подходили ли к обломку, открыт ли сундук (обрывок выдан).
+		"sky": _sky_save(),
 	}
+
+
+func _sky_save() -> Dictionary:
+	var wreck = sky_cache.get("wreck")
+	if wreck == null or not is_instance_valid(wreck):
+		return {}
+	return {"announced": bool(wreck.announced), "opened": bool(wreck.opened)}
 
 
 ## Положить сетку из файла поверх мира того же сида: тайлмап, свет и сетка пути
@@ -1565,6 +2127,20 @@ func load_state(d: Dictionary) -> bool:
 	for i in mini(signs.size(), ruin_caches.size()):
 		if is_instance_valid(ruin_caches[i]["sign"]):
 			ruin_caches[i]["sign"].announced = bool(signs[i])
+	airlocks.clear()
+	for c in d.get("airlocks", []):
+		airlocks[c] = true
+	_airlock_dirty = true
+	vents_sealed.clear()
+	var vs = d.get("vents_sealed", {})
+	if vs is Dictionary:
+		for c in vs.keys():
+			vents_sealed[c] = vs[c]
+	var sky = d.get("sky", {})
+	var wreck = sky_cache.get("wreck")
+	if sky is Dictionary and not sky.is_empty() and wreck != null and is_instance_valid(wreck):
+		wreck.announced = bool(sky.get("announced", false))
+		wreck.opened = bool(sky.get("opened", false))
 	explore_cells = explored.count(1)
 	_explore_cell = Vector2i(-9999, -9999)
 	explored_reset.emit()

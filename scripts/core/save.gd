@@ -5,7 +5,8 @@ extends RefCounted
 ##
 ## Что пишется — по одному словарю на систему, каждая сериализует себя сама:
 ##   world    — World.save_state(): тайлы, вода (уровни и очередь), туман войны,
-##              прочитанные терминалы, вентиляции, таблички руин;
+##              прочитанные терминалы, вентиляции, таблички руин, шлюзы и решётки
+##              с HP (#31), состояние небесного тайника (#60);
 ##   machines — MachineBase.save_state() каждой постройки (общий механизм: база
 ##              пишет тип, клетку, hp, прогресс, готовое; наследник дописывает
 ##              своё через super). Сундуки тайников руин — такие же машины;
@@ -21,8 +22,9 @@ extends RefCounted
 ##
 ## Загрузка того же сида не пересоздаёт мир: тайлы кладутся поверх, постройки
 ## и предметы ставятся заново. Другой сид — сначала World.generate(сид).
-## Неизвестные поля игнорируются: новые машины (турель, прожектор) грузятся
-## хотя бы с базовыми полями, файл старой версии — с тем, что в нём есть.
+## Неизвестные поля игнорируются: новая машина грузится хотя бы с базовыми
+## полями, файл старой версии — с тем, что в нём есть. Свет прожекторов
+## возвращается сразу после раскладки питания (Floodlight.relight).
 
 ## Версия формата. Поднимать, когда старый файл уже нельзя прочитать как есть.
 const VERSION: int = 1
@@ -148,6 +150,10 @@ static func apply(d: Dictionary) -> bool:
 	Threat.load_state(d.get("threat", {}))
 	# Питание — сразу, не через 0.25 с: машины с первого кадра в том же режиме.
 	Game.update_power_budget()
+	# Свет машин (прожекторы, #31) — по новому питанию, через World.add_light_source.
+	for m in World.machines.values():
+		if m.has_method("relight"):
+			m.relight()
 	# Экран смерти — прочь: после загрузки герой жив и в мире.
 	var sc: Node = World.get_tree().current_scene
 	if sc != null:
@@ -204,6 +210,14 @@ static func _place_machines(list: Array) -> void:
 	for rc in World.ruin_caches:
 		var ch = World.machines.get(rc["cell"])
 		rc["chest"] = ch if ch is Chest else null
+	# Небесный тайник (#60) — тоже: и запись тайника, и обломок (выдача обрывка).
+	if not World.sky_cache.is_empty():
+		var sc = World.machines.get(World.sky_cache.get("cell", Vector2i(-1, -1)))
+		var sky_chest = sc if sc is Chest else null
+		World.sky_cache["chest"] = sky_chest
+		var wreck = World.sky_cache.get("wreck")
+		if wreck != null and is_instance_valid(wreck):
+			wreck.chest = sky_chest
 
 
 static func _place_items(list: Array) -> void:

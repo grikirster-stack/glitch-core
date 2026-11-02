@@ -6,7 +6,8 @@ extends Node
 ## секция «== Лор ==» — общий код из tools/lore_test.gd (issue #26),
 ## секция «== Звук ==» — общий код из tools/sfx_test.gd (issue #36),
 ## секция «== Тайники руин ==» — сундуки и таблички руин (issue #35),
-## секция «== Сохранение ==» — общий код из tools/save_test.gd (issue #37).
+## секция «== Сохранение ==» — общий код из tools/save_test.gd (issue #37),
+## секция «== Небесный тайник ==» — обломок «Кербер-9» в небе (issue #60).
 ## Запускается из main.gd флагом `--test`.
 ##
 ## Все паузы отсчитываются по реальному времени, а не по кадрам: в headless-режиме
@@ -142,6 +143,8 @@ func _t_world() -> void:
 	print("   инвентарь: ", _inv_dump())
 	_check_data()
 	_check_ruin_caches()
+	_check_sky_cache()
+	_check_defense()   # оборона (#31)
 	_next(2)
 
 
@@ -841,3 +844,104 @@ func _check_ruin_terminals() -> void:
 	chapters.sort()
 	_ok("у каждого терминала своя глава журнала", chapters == range(Lore.chapter_count()),
 			"терминалов %d, главы %s" % [World.terminals.size(), str(chapters)])
+
+
+# ------------------------------------------------------- небесный тайник (#60)
+
+## Обломок «Кербер-9» в небе: есть, каждая его клетка выше прыжка героя (с ростом)
+## над рельефом под ней, в пределах мира, миникарта (рельеф World.surface) его не
+## видит, в сундуке 3–6 предметов из Balance.SKY_LOOT, всё определено сидом.
+func _check_sky_cache() -> void:
+	print("== Небесный тайник ==")
+	var sc: Dictionary = World.sky_cache
+	var chest = sc.get("chest")
+	_ok("обломок с тайником есть", not sc.is_empty() and chest != null and is_instance_valid(chest)
+			and World.machines.get(sc.get("cell")) == chest,
+			"«%s», нос x=%d, пол y=%d, генерация %.2f мс"
+			% [String(sc.get("name", "")), int(sc.get("x0", -1)), int(sc.get("floor_y", -1)), World.sky_cache_ms])
+	if sc.is_empty():
+		return
+	# Прыжок с места: v²/2g; достать до клетки — подняться ногами на высоту роста выше неё.
+	var jump_px: float = Player.JUMP_VELOCITY * Player.JUMP_VELOCITY / (2.0 * Player.GRAVITY)
+	var reach_px: float = jump_px + Player.SIZE.y
+	var low: Array = []
+	var min_gap: int = 999
+	var out_of_world: Array = []
+	var on_map: Array = []
+	for c in World.sky_cells:
+		var gap: int = World.sky_ground(c.x, c.x) - c.y - 1
+		min_gap = mini(min_gap, gap)
+		if float(gap * World.TILE) <= reach_px:
+			low.append(c)
+		if c.y < Balance.SKY_TOP_MARGIN or c.x < 0 or c.x >= World.W:
+			out_of_world.append(c)
+		if World.surface[c.x] <= c.y:
+			on_map.append(c)
+	_ok("обломок выше прыжка над рельефом под ним", low.is_empty() and min_gap >= Balance.SKY_CLEARANCE_MIN,
+			"зазор от %d клеток (%d px) > прыжок %.0f px + рост %.0f px; низко: %s"
+			% [min_gap, min_gap * World.TILE, jump_px, Player.SIZE.y, str(low.slice(0, 4))])
+	_ok("обломок в пределах мира", out_of_world.is_empty(), str(out_of_world.slice(0, 4)))
+	_ok("миникарта (рельеф) обломок не видит", on_map.is_empty(), str(on_map.slice(0, 4)))
+	var items: Array = []
+	for s in chest.slots:
+		if not s.is_empty():
+			items.append([s.id, s.count])
+	var foreign: Array = []
+	for it in items:
+		if not Balance.SKY_LOOT.has(int(it[0])):
+			foreign.append(DB.item_name(int(it[0])))
+	_ok("в небесном тайнике 3–6 предметов", items.size() >= Balance.SKY_CACHE_MIN
+			and items.size() <= Balance.SKY_CACHE_MAX and foreign.is_empty(),
+			"%d: %s" % [items.size(), str(items)])
+	var plan: Dictionary = World.sky_plan()
+	var same: bool = not plan.is_empty()
+	for k in plan.keys():
+		if plan[k] != sc.get(k):
+			same = false
+	_ok("тайник определён сидом", same and items == World.sky_cache_loot()
+			and sc.get("fragment") == World.sky_fragment(), str(plan))
+	var frag: String = String(sc.get("fragment", ""))
+	_ok("в самописце обрывок журнала", frag != "" and not frag.contains("{"), "«%s»" % frag)
+# ------------------------------------------------------------- оборона (#31)
+
+## Вентиляции и оборона (#31): генератор мира ставит Balance.VENTS_RANDOM
+## вентиляций на полу пещер (раньше на сиде 31337 выходила одна), флаги тайлов
+## dig/phantom_solid, реестры шлюзов и решёток, свет прожектора.
+func _check_defense() -> void:
+	print("== Оборона ==")
+	var bad: Array = []
+	for v in World.vents:
+		if World.get_tile_v(v) != IDs.T.AIR or not World.is_solid_cell(v + Vector2i(0, 1)):
+			bad.append(v)
+	_ok("вентиляций в мире достаточно", World.vents.size() >= Balance.VENTS_RANDOM - 2,
+			"n=%d (случайных %d + база)" % [World.vents.size(), Balance.VENTS_RANDOM])
+	_ok("вентиляции стоят на полу пещер", bad.is_empty(), str(bad))
+	_ok("флаги тайлов: шлюз — стена для фантома всегда, для героя — когда закрыт",
+			DB.tile_solid(IDs.T.AIRLOCK) and not DB.tile_solid(IDs.T.AIRLOCK_OPEN)
+			and World._psolid_tbl[IDs.T.AIRLOCK_OPEN] == 1 and World._psolid_tbl[IDs.T.AIR] == 0)
+	_ok("флаг dig: камень — да, стальная стена и шлюз — нет",
+			World.is_diggable(IDs.T.STONE) and not World.is_diggable(IDs.T.STEEL_WALL)
+			and not World.is_diggable(IDs.T.AIRLOCK))
+	# Реестры заполняются через set_tile и чистятся при снятии тайла.
+	var c: Vector2i = Vector2i(World.beacon_cell.x - 15, World.beacon_cell.y - 4)
+	var t0: int = World.get_tile_v(c)
+	World.set_tile(c.x, c.y, IDs.T.AIRLOCK)
+	var in_reg: bool = World.airlocks.has(c) and World.astar.is_point_solid(c)
+	World.set_tile(c.x, c.y, IDs.T.VENT_GRATE)
+	var sealed: bool = World.vents_sealed.has(c) and not World.airlocks.has(c)
+	World.set_tile(c.x, c.y, t0)
+	_ok("реестры шлюзов и решёток следуют за set_tile", in_reg and sealed
+			and not World.airlocks.has(c) and not World.vents_sealed.has(c))
+	# Свет прожектора: публичный источник, light_at его видит, снятие — убирает.
+	var p: Vector2 = World.cell_to_world(c)
+	var far: Vector2i = c + Vector2i(8, 0)
+	var l0: float = World.light_at(far)
+	var n0: int = World.lights.size()
+	var h: Dictionary = World.add_light_source(p, Floodlight.light_radius(), Balance.FLOODLIGHT_POWER)
+	var lit: float = World.light_at(far)
+	var near: bool = World.get_lights_near(Rect2(p, Vector2(1, 1))).has(h)
+	World.remove_light_source(h)
+	_ok("add/remove_light_source: свет ≈ 10 клеток, снимается без следа",
+			is_equal_approx(lit, l0 + Balance.FLOODLIGHT_POWER) and near and World.lights.size() == n0
+			and is_equal_approx(World.light_at(far), l0),
+			"свет в 8 клетках %.2f → %.2f, источников %d → %d" % [l0, lit, n0, World.lights.size()])

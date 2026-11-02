@@ -47,6 +47,8 @@ class Runner extends Node:
 	var _c0: Vector2i = Vector2i.ZERO
 	var _state0: int = 0
 	var _slot0: String = "1"
+	var _grate: Vector2i = Vector2i(-1, -1)
+	var _lit_at_save: bool = false
 	var _fuel_at_load: float = 0.0
 	var _work_at_load: float = 0.0
 	var _ms_save: Array = []
@@ -120,6 +122,8 @@ class Runner extends Node:
 
 	func _s_save_and_load() -> void:
 		var p = game.player
+		var fl0 = world.machines.get(_c0 + Vector2i(8, 3))
+		_lit_at_save = fl0 != null and bool(fl0.lit)
 		_snap = save_s.gather()
 		var saved: bool = save_s.save_game(SLOT)
 		_ok("файл записан", saved, "%s %s" % [save_s.path_for(SLOT), save_s.last_error])
@@ -174,6 +178,26 @@ class Runner extends Node:
 				bag_ok = true
 		_ok("мешок после смерти вернулся", bag_ok)
 		_ok("тайники руин снова ссылаются на сундуки", _ruin_links_ok())
+		# Оборона (#31), релей (#32), небесный тайник (#60).
+		var tur = world.machines.get(_c0 + Vector2i(2, 2))
+		_ok("турель вернулась с hp и счётчиком", tur != null and String(tur.kind) == "Turret"
+				and is_equal_approx(float(tur.hp), float(_snap_machine("Turret").get("hp", -1.0))),
+				"hp %.1f" % (float(tur.hp) if tur != null else -1.0))
+		var fl = world.machines.get(_c0 + Vector2i(8, 3))
+		var fl_light: bool = fl != null and fl.lit and world.lights.has(fl._light)
+		_ok("прожектор светит, как при сохранении (свет — через add_light_source)",
+				fl != null and _lit_at_save and bool(fl.lit) and fl_light,
+				"lit %s" % str(_lit_at_save))
+		_ok("шлюз в реестре", world.airlocks.has(_c0 + Vector2i(8, 0)))
+		_ok("решётка запечатала вентиляцию с прежним HP", _grate.x < 0 or (world.is_vent_sealed(_grate)
+				and float(world.vents_sealed[_grate]) < float(Balance.GRATE_HP)),
+				"HP %s" % str(world.vents_sealed.get(_grate)))
+		_ok("этап релея вернулся", int(game.objective_stage) == 4 and bool(game.relay_active)
+				and is_equal_approx(float(game.relay_timer), float(_snap["game"]["relay_timer"])))
+		var wreck = world.sky_cache.get("wreck")
+		_ok("небесный тайник: открыт, ссылка на сундук", wreck == null or (bool(wreck.opened)
+				and wreck.chest != null and wreck.chest == world.machines.get(world.sky_cache["cell"])
+				and world.sky_cache["chest"] == wreck.chest))
 		var gen = world.machines.get(_c0 + Vector2i(3, 2))
 		_fuel_at_load = float(gen.fuel) if gen != null else 0.0
 		_work_at_load = _total_work()
@@ -210,6 +234,7 @@ class Runner extends Node:
 		var p = game.player
 		if p != null:
 			p.invuln = 0.0
+		game.relay_active = false
 		game.state = _state0
 		done = true
 		_step = 0
@@ -231,6 +256,8 @@ class Runner extends Node:
 			["Smelter", Vector2i(3, 0)], ["Belt", Vector2i(4, 0)], ["Chest", Vector2i(5, 0)],
 			["CoalGen", Vector2i(3, 2)], ["Drill", Vector2i(6, 3)], ["DeepDrill", Vector2i(7, 3)],
 			["Analyzer", Vector2i(1, 2)], ["Assembler", Vector2i(5, 2)], ["Solar", Vector2i(0, 3)],
+			# Оборона (#31)
+			["Turret", Vector2i(2, 2)], ["Floodlight", Vector2i(8, 3)], ["CoalGen", Vector2i(8, 5)],
 		]
 		var placed: int = 0
 		for e in plan:
@@ -251,6 +278,9 @@ class Runner extends Node:
 		var gen = world.machines.get(_c0 + Vector2i(3, 2))
 		if gen != null:
 			gen.add_fuel(10)
+		var gen2 = world.machines.get(_c0 + Vector2i(8, 5))   ## своя ТЭЦ прожектора
+		if gen2 != null:
+			gen2.add_fuel(10)
 		var an = world.machines.get(_c0 + Vector2i(1, 2))
 		if an != null:
 			an.receive_item(IDs.I.CRYSTAL, 3)
@@ -261,6 +291,26 @@ class Runner extends Node:
 		var sol = world.machines.get(_c0 + Vector2i(0, 3))
 		if sol != null:
 			sol.enabled = false
+		var tur = world.machines.get(_c0 + Vector2i(2, 2))
+		if tur != null:
+			tur.shots = 3
+			tur._cooldown = 0.4
+			tur.hp = 61.0
+		# Оборона (#31): шлюз в площадке и решётка на вентиляции с надкусанным HP.
+		world.set_tile(_c0.x + 8, _c0.y, IDs.T.AIRLOCK)
+		_grate = Vector2i(-1, -1)
+		for v in world.vents:
+			if world.get_tile_v(v) == IDs.T.AIR:
+				_grate = v
+				break
+		if _grate.x >= 0:
+			world.set_tile(_grate.x, _grate.y, IDs.T.VENT_GRATE)
+			world.damage_grate(_grate, 7.5)
+		# Небесный тайник (#60): сундук уже открывали, обрывок выдан.
+		var wreck = world.sky_cache.get("wreck")
+		if wreck != null:
+			wreck.opened = true
+			wreck.announced = true
 		# Вода: яма у первой лужи на поверхности — вода потечёт и встанет в очередь.
 		_dig_near_water()
 		# Туман: кусок пещер открыт.
@@ -281,7 +331,9 @@ class Runner extends Node:
 		game.time_of_day = 0.31
 		game.stats_mined = 41
 		game.tasks_done = 1
-		game.objective_stage = 2
+		game.objective_stage = 4
+		game.relay_active = true          # этап релея (#32): сигнал держится
+		game.relay_timer = 151.5
 		if not world.terminals.is_empty():
 			world.terminals.remove_at(0)
 		tech.unlocked = ["T0", "T1"]
@@ -312,6 +364,12 @@ class Runner extends Node:
 			world.generate(_seed + 1)
 		for x in range(_c0.x - 4, _c0.x + 12):
 			world.set_tile(x, _c0.y + 8, IDs.T.STONE)
+		# Шлюз снят, решётка сломана, релей «отыграл».
+		world.set_tile(_c0.x + 8, _c0.y, IDs.T.AIR)
+		if _grate.x >= 0:
+			world.damage_grate(_grate, 1.0e6)
+		game.relay_active = false
+		game.relay_timer = 0.0
 		world.reveal_around(world.beacon_cell + Vector2i(0, 60), 12)
 		var mb: GDScript = load("res://scripts/machines/machine_base.gd")
 		var victim = world.machines.get(_c0 + Vector2i(3, 0))
@@ -370,7 +428,6 @@ class Runner extends Node:
 	## Тайлмап и сетка поиска пути после загрузки — те же, что у тайлов в памяти
 	## (загрузка правит их только в изменённых клетках — проверяем весь мир).
 	func _grid_synced() -> bool:
-		var db = scene.get_node("/root/DB")
 		for y in world.H:
 			for x in world.W:
 				var id: int = world.tiles[y * world.W + x]
@@ -379,7 +436,7 @@ class Runner extends Node:
 				if world.tilemap.get_cell_atlas_coords(c) != want:
 					_grid_hint = "тайлмап в %s" % str(c)
 					return false
-				if world.astar.is_point_solid(c) != bool(db.tile_solid(id)):
+				if world.astar.is_point_solid(c) != bool(world.is_phantom_solid_cell(c)):
 					_grid_hint = "сетка пути в %s" % str(c)
 					return false
 		_grid_hint = "изменено клеток при загрузке: %d" % int(world.load_changed_cells)
@@ -392,6 +449,14 @@ class Runner extends Node:
 			if is_instance_valid(m):
 				t += float(m.work_time)
 		return t
+
+
+	## Запись машины вида kind из сохранённого снимка ({} — нет такой).
+	func _snap_machine(kind: String) -> Dictionary:
+		for md in Array(_snap.get("machines", [])):
+			if String(md.get("kind", "")) == kind:
+				return md
+		return {}
 
 
 	func _ruin_links_ok() -> bool:

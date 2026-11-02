@@ -23,7 +23,7 @@ func run() -> void:
 			World.set_tile(x, y, IDs.T.AIR)
 	var ok_place: bool = true
 	for e in [["Chest", 0, 0], ["Inserter", 1, 0], ["Belt", 2, 0], ["Smelter", 3, 0],
-			["Belt", 4, 0], ["Chest", 5, 0], ["CoalGen", 3, 2]]:
+			["Belt", 4, 0], ["Chest", 5, 0], ["CoalGen", 3, 2], ["Turret", 1, 2]]:
 		ok_place = MachineBase.place_machine(String(e[0]), c0 + Vector2i(int(e[1]), int(e[2]))) and ok_place
 	ok("фабрика поставлена", ok_place)
 	var src: Chest = World.machines.get(c0)
@@ -36,6 +36,20 @@ func run() -> void:
 		(World.belts[c] as Belt).dir = 0
 	gen.add_fuel(CoalGen.FUEL_MAX_UNITS)
 	src.receive_item(IDs.I.COPPER_ORE, 30)
+	# Оборона (#31): шлюз у фабрики, решётка на вентиляции. Релей (#32): сигнал держится.
+	var lock: Vector2i = c0 + Vector2i(7, 1)
+	World.set_tile(lock.x, lock.y, IDs.T.AIRLOCK)
+	var grate: Vector2i = Vector2i(-1, -1)
+	for v in World.vents:
+		if World.get_tile_v(v) == IDs.T.AIR:
+			grate = v
+			break
+	if grate.x >= 0:
+		World.set_tile(grate.x, grate.y, IDs.T.VENT_GRATE)
+		World.damage_grate(grate, 5.0)
+	Game.relay_active = true
+	Game.relay_timer = 170.0
+	Game.update_objective()
 	var got: bool = await wait_until(func() -> bool: return _count(dst, IDs.I.COPPER_INGOT) >= 2, 20.0)
 	ok("фабрика дала первые слитки", got, "слитков %d" % _count(dst, IDs.I.COPPER_INGOT))
 
@@ -72,6 +86,14 @@ func run() -> void:
 	player.inv.add(IDs.I.STONE, 50)
 	player.global_position += Vector2(200.0, -40.0)
 	Game.research += 25
+	var tur: MachineBase = World.machines.get(c0 + Vector2i(1, 2))
+	if tur != null:
+		tur.destroy()
+	World.set_tile(lock.x, lock.y, IDs.T.AIR)
+	if grate.x >= 0:
+		World.damage_grate(grate, 1.0e6)
+	Game.relay_active = false
+	Game.objective_stage = 1
 	await wait(0.3)
 	ok("мир изменился", World.tiles != snap["world"]["tiles"] and not World.machines.has(c0 + Vector2i(3, 0)))
 
@@ -85,6 +107,14 @@ func run() -> void:
 	print("  [замер] F9: %.1f мс, изменено клеток %d" % [Save.last_load_ms, World.load_changed_cells])
 	var after: Dictionary = cap["loaded"]
 	ok("плавильня вернулась", World.machines.get(c0 + Vector2i(3, 0)) is Smelter)
+	ok("турель вернулась", World.machines.get(c0 + Vector2i(1, 2)) is Turret)
+	ok("шлюз вернулся", World.airlocks.has(lock) and (World.get_tile_v(lock) == IDs.T.AIRLOCK
+			or World.get_tile_v(lock) == IDs.T.AIRLOCK_OPEN))
+	ok("решётка вернулась с прежним HP", grate.x < 0 or (World.is_vent_sealed(grate)
+			and World.vents_sealed[grate] == snap["world"]["vents_sealed"][grate]),
+			"HP %s" % str(World.vents_sealed.get(grate)))
+	ok("этап релея вернулся", Game.relay_active and Game.objective_stage == 4,
+			"этап %d, %.1f с" % [Game.objective_stage, Game.relay_timer])
 	for sec in ["world", "machines", "items", "player", "game", "tech", "threat"]:
 		ok("«%s» как при F5" % sec, var_to_bytes(after[sec]) == var_to_bytes(snap[sec]))
 	ok("герой там же, инвентарь тот же", after["player"]["pos"] == snap["player"]["pos"]
@@ -107,6 +137,7 @@ func _disconnect(a: Callable, b: Callable) -> void:
 
 
 func _cleanup(slot0: String) -> void:
+	Game.relay_active = false
 	Save.remove(SLOT)
 	Save.slot = slot0
 	player.invuln = 0.0
