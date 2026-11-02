@@ -9,8 +9,9 @@ extends ScenarioBase
 ##  * мощность: ближайшая ТЭЦ — нагрузка/выход; перегруз; рубильник; генератор
 ##    под курсором важнее ближайшего;
 ##  * миникарта: вентиляции только под открытым туманом;
-##  * FX: Threat.vent_warning → пар и потом пусто; spawn_arc и сигнал «fired»
-##    турели → дуга; ни одного нового узла.
+##  * миникарта: решётка (#31) рисуется решёткой, сломанная — сразу снова вентиляцией;
+##  * FX: Threat.vent_warning → пар и потом пусто; spawn_arc и World.turret_fired →
+##    дуга, ни одного нового узла; настоящая турель: дуг ровно столько, сколько выстрелов.
 
 const FRAMES_SETTLE: int = 3
 
@@ -179,8 +180,32 @@ func _minimap(hud: HUD) -> void:
 	ok("туман открыт — вентиляция на карте", hud.stat_map_vents + hud.stat_map_grates == want + 1,
 			"нарисовано %d+%d, ожидали %d" % [hud.stat_map_vents, hud.stat_map_grates, want + 1])
 	World.vents.erase(hidden)
-	if World.get("vents_sealed") == null and not World.has_method("is_vent_sealed"):
-		print("  ..   решётки (#31): World.vents_sealed ещё нет — проверка решёток пропущена")
+
+	# Решётка (#31): открытая вентиляция → решётка на карте; копатель сломал —
+	# снова вентиляция, и сразу (World.grate_broken), без ожидания сверки.
+	var gv: Vector2i = Vector2i(-1, -1)
+	for v in World.vents:
+		if hud.map_explored_at(v) and not World.is_vent_sealed(v):
+			gv = v
+			break
+	ok("есть открытая вентиляция под решётку", gv.x >= 0, str(gv))
+	if gv.x < 0:
+		return
+	var open_n: int = 0
+	for v in World.vents:
+		if hud.map_explored_at(v):
+			open_n += 1
+	World.set_tile(gv.x, gv.y, IDs.T.VENT_GRATE)
+	ok("решётка поставлена (World.vents_sealed)", World.is_vent_sealed(gv))
+	await wait_until(func() -> bool: return hud.stat_map_grates == 1, 2.5)   # сверка раз в 1 с
+	ok("решётка на миникарте", hud.stat_map_grates == 1 and hud.stat_map_vents == open_n - 1,
+			"решёток %d, вентиляций %d (открытых всего %d)" % [hud.stat_map_grates, hud.stat_map_vents, open_n])
+	ok("решётку сломали", World.damage_grate(gv, Balance.GRATE_HP + 1.0))
+	# Сигнал grate_broken → сверка в следующем кадре HUD, перерисовка — в том же.
+	for k in 4:
+		await get_tree().process_frame
+	ok("сломанная решётка ушла с миникарты за 4 кадра", hud.stat_map_grates == 0
+			and hud.stat_map_vents == open_n, "решёток %d, вентиляций %d" % [hud.stat_map_grates, hud.stat_map_vents])
 
 
 ## Клетка глубоко под землёй, чей пиксель миникарты ещё под туманом.
@@ -212,18 +237,41 @@ func _fx(fx: WorldFX) -> void:
 
 	var a0: int = fx.stat_arcs
 	fx.spawn_arc(player.global_position, player.global_position + Vector2(60, -20))
-	ok("spawn_arc → дуга", fx.arcs.size() == 1)
-	# Турель (#31) шлёт сигнал fired(from, to) — WorldFX подписан сам.
-	var gs: GDScript = GDScript.new()
-	gs.source_code = "extends MachineBase\nsignal fired(from: Vector2, to: Vector2)\n"
-	gs.reload()
-	var fake: Node2D = gs.new()
-	scene.add_child(fake)
-	fake.emit_signal("fired", player.global_position, player.global_position + Vector2(-50, 0))
-	ok("сигнал турели fired → дуга", fx.stat_arcs == a0 + 2, "дуг выпущено %d" % (fx.stat_arcs - a0))
-	scene.remove_child(fake)
-	fake.free()
+	ok("spawn_arc → дуга", fx.arcs.size() == 1 and fx.stat_arcs == a0 + 1)
+	# Глобальный World.turret_fired (#31) — ровно одна дуга на выстрел.
+	World.turret_fired.emit(player.global_position, player.global_position + Vector2(-50, 0))
+	ok("World.turret_fired → дуга", fx.stat_arcs == a0 + 2, "дуг выпущено %d" % (fx.stat_arcs - a0))
 	await wait(0.4)
 	ok("дуги гаснут", fx.arcs.is_empty(), "дуг %d" % fx.arcs.size())
 	ok("FX не создаёт узлов", get_tree().get_node_count() == nodes0,
 			"%d → %d" % [nodes0, get_tree().get_node_count()])
+	await _turret_arcs(fx)
+
+
+## Настоящая турель (#31) бьёт эхо: она шлёт и Turret.fired, и World.turret_fired —
+## дуг ровно столько, сколько выстрелов (двойной дуги нет).
+func _turret_arcs(fx: WorldFX) -> void:
+	var tk: GDScript = load("res://tools/scenarios/turret_kills_echo.gd")
+	player.invuln = 1.0e9
+	var o: Vector2i = tk.find_box_spot(self, 12, 6)
+	ok("место под турель найдено", o.x >= 0, str(o))
+	if o.x < 0:
+		return
+	var turret: Turret = tk.build_turret_box(self, o, 12, 6)
+	ok("турель поставлена", turret != null)
+	if turret == null:
+		return
+	await wait_until(func(): return turret.powered and turret.efficiency >= 0.999, 2.0)
+	var a0: int = fx.stat_arcs
+	var s0: int = turret.shots
+	var echo: Node = spawn_phantom_at(Vector2(float((o.x + 8) * World.TILE) + 8.0,
+			float((o.y + 4) * World.TILE) - 12.0), "echo")
+	ok("эхо появилось", echo != null)
+	await wait_until(func(): return turret.shots - s0 >= 2, 4.0)
+	var shots: int = turret.shots - s0
+	ok("турель стреляет", shots >= 2, "выстрелов %d" % shots)
+	ok("одна дуга на выстрел (без двойной)", fx.stat_arcs - a0 == shots,
+			"дуг %d, выстрелов %d" % [fx.stat_arcs - a0, shots])
+	if echo != null and is_instance_valid(echo):
+		echo.get_parent().remove_child(echo)
+		echo.queue_free()

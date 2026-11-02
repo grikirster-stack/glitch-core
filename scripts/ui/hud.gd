@@ -39,8 +39,9 @@ extends Control
 ##    поэтому ответ кэшируется на шаг STATE_RECHECK_SEC, а без единого
 ##    работающего генератора не спрашивается вовсе;
 ##  * отсчёт до ночи в сумерках — целые секунды в ключе (перерисовка раз в секунду);
-##  * вентиляции и решётки (#31) на миникарте — только под открытым туманом;
-##    решётки сверяются раз в MAP_CHECK_SEC.
+##  * вентиляции и решётки (#31, World.vents_sealed) на миникарте — только под
+##    открытым туманом; решётки сверяются раз в MAP_CHECK_SEC, сломанная
+##    (World.grate_broken) — сразу.
 
 ## Сколько шагов у часов за полные сутки (Balance.DAY_LENGTH).
 const CLOCK_STEPS: int = 256
@@ -183,6 +184,12 @@ func _ready() -> void:
 	# Смена этапа и браун-аут — пересчитать трекер/индикатор в этот же кадр.
 	Game.objective_changed.connect(_on_state_signal)
 	Game.brownout_changed.connect(_on_state_signal)
+	# Копатель сломал решётку — сверить миникарту в этот же кадр.
+	World.grate_broken.connect(_on_grate_broken)
+
+
+func _on_grate_broken(_cell: Vector2i) -> void:
+	_map_check_t = 0.0
 
 
 func _on_state_signal(_v = null) -> void:

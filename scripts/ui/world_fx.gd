@@ -13,9 +13,10 @@ extends Node2D
 ##    #27) вентиляция «выдыхает» VENT_TELEGRAPH секунд; в сумерках (§ 4.1)
 ##    видимые незапечатанные вентиляции слегка курятся. Клубы — те же словари
 ##    с жёстким лимитом MAX_STEAM, узлов не создаём;
-##  * дуга турели — spawn_arc(from, to): ломаная молния на ARC_LIFE секунд.
-##    Турель (#31) вызывает её сама или шлёт сигнал из TURRET_SIGNALS —
-##    WorldFX подписывается на него, когда постройка входит в дерево.
+##  * дуга турели — spawn_arc(from, to): ломаная молния на ARC_LIFE секунд по
+##    глобальному сигналу World.turret_fired (#31). Турель шлёт ещё и свой
+##    Turret.fired с теми же точками — на него НЕ подписываемся (иначе дуга
+##    двойная, и пришлось бы цепляться к каждой турели).
 
 # ------------------------------------------------------------ ЛИМИТЫ
 ## Максимум источников света, нарисованных за один кадр. В мире их тысячи,
@@ -47,9 +48,6 @@ const STEAM_LIFE: float = 1.3
 const ARC_LIFE: float = 0.14
 ## Изломов на дуге.
 const ARC_SEGMENTS: int = 7
-## Имена сигнала выстрела у турели (#31): (from: Vector2, to: Vector2) или
-## (target: Node2D | Vector2) — тогда откуда бьёт, берём позицию самой турели.
-const TURRET_SIGNALS: Array[String] = ["fired", "shot"]
 
 # ------------------------------------------------- ПАРАМЕТРЫ ОТСЕЧЕНИЯ
 ## Запас вокруг видимой области камеры в долях радиуса источника света.
@@ -123,7 +121,7 @@ func _ready() -> void:
 	queue_redraw()
 	_stats_on = OS.get_cmdline_user_args().has(STATS_FLAG)
 	Threat.vent_warning.connect(spawn_vent_steam)
-	get_tree().node_added.connect(_on_node_added)
+	World.turret_fired.connect(_on_turret_fired)
 
 
 func _process(delta: float) -> void:
@@ -361,51 +359,14 @@ func spawn_arc(from: Vector2, to: Vector2, color: Color = Color(0.55, 0.92, 1.0)
 	peak_arcs = maxi(peak_arcs, arcs.size())
 
 
-## Запечатана ли вентиляция решёткой (#31). Поле World.vents_sealed /
-## метод World.is_vent_sealed появляются вместе с обороной — до тех пор false.
+## Запечатана ли вентиляция решёткой (#31: World.vents_sealed, клетка → HP).
 static func is_vent_sealed(cell: Vector2i) -> bool:
-	if World.has_method("is_vent_sealed"):
-		return bool(World.call("is_vent_sealed", cell))
-	var vs = World.get("vents_sealed")
-	if vs is Dictionary:
-		return bool((vs as Dictionary).get(cell, false))
-	if vs is Array:
-		return (vs as Array).has(cell)
-	return false
+	return World.is_vent_sealed(cell)
 
 
-## Постройка вошла в дерево: если у неё есть сигнал выстрела (турель, #31) —
-## подписываемся на него, чтобы рисовать дугу.
-func _on_node_added(n: Node) -> void:
-	if not (n is MachineBase) or n.has_meta(&"_fx_arc"):
-		return
-	for sig in TURRET_SIGNALS:
-		if n.has_signal(sig):
-			n.set_meta(&"_fx_arc", true)
-			n.connect(sig, _on_turret_fired.bind(n))
-			return
-
-
-## Выстрел турели: (from, to, turret), (target, turret) или (turret).
-## Последний аргумент — сама турель (bind).
-func _on_turret_fired(a = null, b = null, c = null) -> void:
-	var args: Array = [a, b, c]
-	while not args.is_empty() and args.back() == null:
-		args.pop_back()
-	if args.size() < 2:
-		return
-	var turret = args.back()
-	if not (turret is Node2D) or not is_instance_valid(turret):
-		return
-	var from: Vector2 = turret.global_position
-	var to = args[args.size() - 2]
-	if args.size() >= 3 and args[0] is Vector2 and args[1] is Vector2:
-		from = args[0]
-		to = args[1]
-	if to is Node2D and is_instance_valid(to):
-		to = to.global_position
-	if to is Vector2:
-		spawn_arc(from, to)
+## Выстрел турели (World.turret_fired, #31): дуга от ствола к цели.
+func _on_turret_fired(from: Vector2, to: Vector2) -> void:
+	spawn_arc(from, to)
 
 
 # ------------------------------------------------------------ ОТРИСОВКА
