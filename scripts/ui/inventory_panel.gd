@@ -104,6 +104,11 @@ var _cells: Array = []                  ## ячейки цели этого ка
 var _cells_key: int = -1
 var _row_named: Dictionary = {}         ## имя рецепта -> входы с названиями влезают
 var _built: Dictionary = {}
+## Сенсорный тап по списку рецептов (#81): где нажали (x < 0 — нет) и сколько
+## палец проехал по вертикали; _drag_acc — остаток до следующей строки прокрутки.
+var _tap_at: Vector2 = Vector2(-1, -1)
+var _drag_y: float = 0.0
+var _drag_acc: float = 0.0
 
 
 func _ready() -> void:
@@ -168,15 +173,41 @@ func _gui_input(event: InputEvent) -> void:
 			scroll = mini(scroll + 1, _max_scroll())
 			queue_redraw()
 		elif mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+			# Тап пальцем по рецептам ждёт отпускания: палец мог начать листать (#81).
+			if mb.device == InputEvent.DEVICE_ID_EMULATION and _list_rect().has_point(mb.position):
+				_tap_at = mb.position
+				_drag_y = 0.0
+				return
 			# Позиция события — уже в координатах панели (она на весь экран), как и
 			# все прямоугольники. Раньше здесь вычиталось начало панели, и клик
 			# мышью попадал на ~(230, 125) px левее-выше нарисованного (#69).
 			_click(mb.position, false, mb.shift_pressed)
+		elif mb.button_index == MOUSE_BUTTON_LEFT and _tap_at.x >= 0.0:
+			if absf(_drag_y) < RECIPE_H * 0.5:
+				_click(_tap_at, false)
+			_tap_at = Vector2(-1, -1)
 		elif mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
 			_click(mb.position, true, mb.shift_pressed)
 	elif event is InputEventMouseMotion:
 		mouse_pos = (event as InputEventMouseMotion).position
 		queue_redraw()
+	elif event is InputEventScreenDrag:
+		# Палец листает список рецептов, как колесо: RECIPE_H px — строка (#81).
+		var dy: float = (event as InputEventScreenDrag).relative.y
+		_drag_y += dy
+		_drag_acc += dy
+		while _drag_acc >= RECIPE_H:
+			_drag_acc -= RECIPE_H
+			scroll = maxi(0, scroll - 1)
+		while _drag_acc <= -RECIPE_H:
+			_drag_acc += RECIPE_H
+			scroll = mini(scroll + 1, _max_scroll())
+		queue_redraw()
+
+
+## Список рецептов и карточек исследований: тут палец листает (#81).
+func _list_rect() -> Rect2:
+	return Rect2(_panel_pos() + Vector2(380, 104), Vector2(424, RECIPE_ROWS * RECIPE_H + 12))
 
 
 ## Вспышка строки и строка обратной связи гаснут сами; когда обе погасли,

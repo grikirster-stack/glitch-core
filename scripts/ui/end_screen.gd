@@ -78,6 +78,10 @@ func _input(event: InputEvent) -> void:
 		var k: InputEventKey = event
 		if k.keycode == KEY_R or k.keycode == KEY_ENTER or k.keycode == KEY_SPACE:
 			restart_requested.emit()
+	# На телефоне клавиш нет: тап по экрану — новая попытка (#81). Не раньше чем
+	# через 1.5 с — случайный тап в момент смерти забег не перезапускает.
+	elif event is InputEventScreenTouch and event.pressed and t > 1.5:
+		restart_requested.emit()
 
 
 func _draw() -> void:
