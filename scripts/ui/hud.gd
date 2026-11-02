@@ -156,6 +156,7 @@ var _hint_t: float = 0.0
 var _hint_pos: Vector2 = Vector2(INF, INF)
 var _hint_machines: int = -1
 var _hint_hiding: bool = false
+var _hint_cell: Vector2i = Vector2i(-1, -1)   ## клетка под курсором (подсказка зависит от неё)
 var _state_t: float = 0.0
 var _state_hash: int = 0
 var _power_cursor: Vector2i = Vector2i(-9999, -9999)
@@ -314,12 +315,14 @@ func _update_hint(delta: float) -> void:
 		return
 	var pos: Vector2 = player.global_position
 	if _hint_t > 0.0 and pos.distance_squared_to(_hint_pos) < 0.25 \
-			and World.machines.size() == _hint_machines and player.hiding == _hint_hiding:
+			and World.machines.size() == _hint_machines and player.hiding == _hint_hiding \
+			and player.building_cell == _hint_cell:
 		return
 	_hint_t = HINT_RECHECK_SEC
 	_hint_pos = pos
 	_hint_machines = World.machines.size()
 	_hint_hiding = player.hiding
+	_hint_cell = player.building_cell
 	_set_hint(_compute_hint(pos))
 
 
@@ -333,6 +336,12 @@ func _set_hint(h: String) -> void:
 func _compute_hint(pos: Vector2) -> String:
 	if player.hiding:
 		return HINT_HIDING
+	# Генератор под курсором — раньше терминала: E уходит туда, куда наведён
+	# курсор (см. player._do_interact). Иначе подсказка терминала «нет
+	# питания» перехватывала подсказку ТЭЦ, поставленного вплотную к нему.
+	var aimed = World.machines.get(player.building_cell)
+	if aimed is Generator and aimed.global_position.distance_to(pos) < 40.0:
+		return generator_hint(aimed)
 	for t in World.terminals:
 		if World.cell_to_world(t).distance_to(pos) < HINT_TERMINAL_DIST:
 			return terminal_hint(t)

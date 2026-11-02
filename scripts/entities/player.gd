@@ -437,7 +437,8 @@ func _do_place(cell: Vector2i) -> void:
 		inv.remove_at(inv.selected, 1)
 		_sfx_here("place", -10.0)
 	elif place.begins_with("machine:"):
-		var kind: String = place.substr(7)
+		# «machine:» — 8 символов, вид машины начинается с девятого.
+		var kind: String = place.substr(8)
 		if MachineBase.place_machine(kind, cell):
 			inv.remove_at(inv.selected, 1)
 			_sfx_here("place_machine", -8.0)
@@ -473,22 +474,42 @@ func _place_allowed(cell: Vector2i) -> bool:
 
 ## E — взаимодействие. fresh — первый кадр нажатия (подсказки — один раз на нажатие).
 func _do_interact(dt: float, fresh: bool = true) -> void:
-	# Терминалы: работают только под питанием (ADR-001 § 4.6, #29)
+	# Ближайший терминал: он перехватывает E в радиусе 42 px (#29).
+	var term: Vector2i = Vector2i(-1, -1)
+	var term_d: float = 42.0
 	for t in World.terminals:
 		var tw: Vector2 = World.cell_to_world(t)
-		if tw.distance_to(global_position) < 42.0:
-			if not Game.is_powered(tw):
-				task_progress = 0.0
-				if fresh:
-					_sfx_here("craft", -16.0, 0.6)
-					_notify("Терминал: нет питания. Поставьте рядом ТЭЦ или солнечную панель.",
-							Color(1.0, 0.7, 0.4))
-				return
-			task_progress += dt / 2.2
-			if task_progress >= 1.0:
-				task_progress = 0.0
-				_read_terminal(t)
+		var td: float = tw.distance_to(global_position)
+		if td < term_d:
+			term_d = td
+			term = t
+	# Генератор под курсором: E с углём — топка, без угля — рубильник (#25).
+	# Проверка идёт ПЕРЕД терминалом: раньше терминал перехватывал E всегда,
+	# и ТЭЦ, поставленное вплотную к терминалу (как и просит подсказка
+	# «поставьте рядом ТЭЦ»), было невозможно заправить углём — E до ТЭЦ
+	# не доходило, только сообщение «Терминал: нет питания».
+	# Рубильник без угля в руке терминал не перехватывает: держать E у
+	# терминала должно запускать задание, а не выключать ТЭЦ.
+	var aimed_gen = World.machines.get(building_cell)
+	if aimed_gen is Generator and aimed_gen.global_position.distance_to(global_position) < 40.0:
+		if inv.selected_stack().id == IDs.I.COAL or term.x < 0:
+			aimed_gen.interact(self)
 			return
+	# Терминалы: работают только под питанием (ADR-001 § 4.6, #29)
+	if term.x >= 0:
+		var tw2: Vector2 = World.cell_to_world(term)
+		if not Game.is_powered(tw2):
+			task_progress = 0.0
+			if fresh:
+				_sfx_here("craft", -16.0, 0.6)
+				_notify("Терминал: нет питания. Поставьте рядом ТЭЦ или солнечную панель.",
+						Color(1.0, 0.7, 0.4))
+			return
+		task_progress += dt / 2.2
+		if task_progress >= 1.0:
+			task_progress = 0.0
+			_read_terminal(term)
+		return
 	# Ремонт: E с хламом в хотбаре по повреждённой машине (§ 4.4)
 	if _try_repair() or _e_used:
 		return
