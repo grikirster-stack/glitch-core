@@ -800,6 +800,38 @@ func _drop_black_box() -> void:
 
 
 # ------------------------------------------------------------------ ОТРИСОВКА
+# Облик — концепт A «Споровый луг» (ADR-003 § 4.1, § 7.3, V5). Всё из
+# прямоугольников. Язык опасности общий: глаза/визор цвета DANGER светятся,
+# вокруг силуэта — цветовое расслоение на 1 px (красная копия, циановая копия).
+# Глитч в мире бывает только у фантомов: это и есть предупреждение.
+# Части задаются «лицом вправо» и отражаются по facing одним преобразованием (_face).
+
+const DANGER: Color = Color(0.94, 0.19, 0.42)		## #F0306A — опасность (ADR-003).
+const BIO: Color = Color(0.50, 0.90, 0.82)			## #7FE6D2 — свечение спор и мицелия.
+const PH_DARK: Color = Color(0.17, 0.13, 0.22)		## #2C2238 — ткань тени, ранец эха.
+const MOTH_WING: Color = Color(0.86, 0.80, 0.92, 0.85)	## #DCCDEA — крылья споровых мотыльков.
+const SPLIT_RED: Color = Color(1.0, 0.2, 0.35, 0.40)	## Красная копия силуэта.
+const SPLIT_CYAN: Color = Color(0.2, 0.95, 1.0, 0.35)	## Циановая копия силуэта.
+const STUN_TINT: Color = Color(0.6, 0.85, 1.0)		## Оглушённый фантом бледнеет.
+const DANGER_HALO: Color = Color(0.94, 0.19, 0.42, 0.22)	## Ореол вокруг светящегося визора.
+const DANGER_DIM: Color = Color(0.94, 0.19, 0.42, 0.6)	## Дальний глаз тени.
+const BIO_TIP: Color = Color(0.50, 0.90, 0.82, 0.75)	## Светящиеся кончики гиф и бугорки спор.
+const SHADE_RED: Color = Color(1.0, 0.2, 0.35, 0.22)	## Расслоение тени — слабее, чем у эха.
+const SHADE_CYAN: Color = Color(0.2, 0.95, 1.0, 0.18)
+const SHADE_FACE: Color = Color(0.05, 0.03, 0.07)	## Провал лица под капюшоном.
+const GLINT: Color = Color(1.0, 0.85, 0.9, 0.75)		## Блик на визоре.
+const GROUND_SHADOW: Color = Color(0, 0, 0, 0.3)
+const VISOR_RIM: Color = Color(0.16, 0.08, 0.12)		## Рамка визора двойника.
+const HERO_SUIT: Color = Color(0.86, 0.22, 0.24)	## Цвет скафандра героя (Player._draw); с V4 — из Avatar.
+const DRILL: Color = Color(0.72, 0.75, 0.80)		## Сталь бура копателя и её грани.
+const DRILL_DARK: Color = Color(0.50, 0.53, 0.56)
+const DRILL_HI: Color = Color(0.78, 0.80, 0.84)
+const ECHO_SPORE_X: Array[float] = [-4.0, -1.0, 2.0, 4.0]	## Где споры отрываются от шлема эха.
+const BURROWER_SEG_H: Array[float] = [6.0, 9.0, 10.0, 8.0]	## Высоты сегментов копателя, хвост → голова.
+
+var _name_w: float = 0.0			## Ширина имени двойника, px: меряется, когда имя сменилось.
+var _name_w_of: String = ""			## Для какого имени измерена _name_w.
+
 
 func _draw() -> void:
 	match kind:
@@ -815,41 +847,68 @@ func _draw() -> void:
 			_draw_echo()
 
 
+## Отражение рисунка относительно вертикальной оси фантома (flip) или сброс.
+## Один вызов на кадр дешевле, чем отражать каждый прямоугольник.
+func _face(flip: bool) -> void:
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2(-1.0 if flip else 1.0, 1.0))
+
+
+## Сдвиг расслоения: ±1 px, знак мигает с частотой rate.
+func _split_d(t: float, rate: float) -> float:
+	return 1.0 if sin(t * rate) > 0.0 else -1.0
+
+
+## Эхо: тёмно-фиолетовая копия скафандра, верх распадается светящимися спорами,
+## визор цвета опасности, расслоение каналов 1 px.
 func _draw_echo() -> void:
 	var t: float = jitter
-	var base: Color = Color(0.30, 0.16, 0.34)
+	var base: Color = Color(0.29, 0.23, 0.36)
 	if state == St.CHASE:
-		base = Color(0.62, 0.12, 0.42)
+		base = Color(0.46, 0.20, 0.42)
 	if stun > 0.0:
-		base = base.lerp(Color(0.6, 0.85, 1.0), 0.55)
-	var r: Rect2 = Rect2(-SIZE.x * 0.5, -SIZE.y * 0.5, SIZE.x, SIZE.y)
+		base = base.lerp(STUN_TINT, 0.55)
+	_face(facing < 0)
+	# Тень на земле — плоская полоса.
+	draw_rect(Rect2(-7.0, SIZE.y * 0.5, 14.0, 1.0), GROUND_SHADOW)
+	# Расслоение: красная копия шлема и корпуса влево, циановая вправо.
+	var d: float = _split_d(t, 9.0)
+	draw_rect(Rect2(-5.0 - d, -9.0, 10.0, 8.0), SPLIT_RED)
+	draw_rect(Rect2(-6.0 - d, -1.0, 12.0, 12.0), SPLIT_RED)
+	draw_rect(Rect2(-5.0 + d, -9.0, 10.0, 8.0), SPLIT_CYAN)
+	draw_rect(Rect2(-6.0 + d, -1.0, 12.0, 12.0), SPLIT_CYAN)
+	# Ранец, корпус, ноги (на ходу одна нога приподнята).
+	draw_rect(Rect2(-9.0, -2.0, 3.0, 8.0), PH_DARK)
+	draw_rect(Rect2(-6.0, -1.0, 12.0, 8.0), base)
+	var walking: bool = absf(vel.x) > 10.0
+	var step: bool = sin(t * 12.0) > 0.0
+	draw_rect(Rect2(-5.0, 7.0, 4.0, 3.0 if walking and step else 4.0), base.darkened(0.3))
+	draw_rect(Rect2(1.0, 7.0, 4.0, 3.0 if walking and not step else 4.0), base.darkened(0.3))
+	# Квадратный шлем; верхняя кромка уже распалась — от неё остались обрывки.
+	var helm: Color = base.lightened(0.12)
+	draw_rect(Rect2(-5.0, -8.0, 10.0, 7.0), helm)
+	draw_rect(Rect2(-5.0, -9.0, 2.0, 1.0), helm)
+	draw_rect(Rect2(-1.0, -9.0, 3.0, 1.0), helm)
+	draw_rect(Rect2(4.0, -9.0, 1.0, 1.0), helm)
+	# Визор на передней половине шлема: светится цветом опасности и мерцает.
+	var lit: bool = sin(t * 17.0) > -0.2
+	if lit:
+		draw_rect(Rect2(-1.0, -8.0, 7.0, 6.0), DANGER_HALO)
+	draw_rect(Rect2(0.0, -7.0, 5.0, 4.0), DANGER if lit else DANGER.darkened(0.55))
+	draw_rect(Rect2(1.0, -6.0, 1.0, 1.0), GLINT)
+	# Споры отрываются от шлема и тают, поднимаясь.
+	for i in ECHO_SPORE_X.size():
+		var life: float = fmod(t * 0.9 + float(i) * 0.27, 1.0)
+		var sx: float = ECHO_SPORE_X[i] + (1.0 if life > 0.5 and i % 2 == 0 else 0.0)
+		var sz: float = 2.0 if i == 1 and life < 0.3 else 1.0
+		draw_rect(Rect2(sx, -10.0 - floorf(life * 7.0), sz, sz), Color(BIO, 0.9 * (1.0 - life)))
+	_face(false)
+	_draw_status(t, -19.0)
 
-	# Фантомные «призрачные» копии со смещением каналов.
-	var shift: float = sin(t * 9.0) * 1.6
-	draw_rect(Rect2(r.position + Vector2(shift, 0), r.size), Color(0.9, 0.2, 0.4, 0.35))
-	draw_rect(Rect2(r.position - Vector2(shift, 0), r.size), Color(0.2, 0.9, 0.9, 0.30))
 
-	draw_set_transform(Vector2(0, SIZE.y * 0.5), 0.0, Vector2(1.0, 0.3))
-	draw_circle(Vector2.ZERO, SIZE.x * 0.55, Color(0, 0, 0, 0.3))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-
-	draw_rect(Rect2(-r.size.x * 0.5 - 4.0, -r.size.y * 0.5 + 3.0, 4.0, r.size.y - 6.0), base.darkened(0.3))
-	draw_rect(r, base)
-	draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 3.0), base.lightened(0.2))
-
-	var visor_x: float = -1.0 if facing > 0 else -11.0
-	var flick: bool = sin(t * 17.0) > -0.2
-	var vcol: Color = Color(0.75, 0.95, 1.0) if flick else Color(0.2, 0.1, 0.15)
-	draw_rect(Rect2(visor_x, -9.0, 11.0, 7.0), vcol)
-	draw_rect(Rect2(visor_x + 1.0, -8.0, 3.0, 2.0), Color(1, 1, 1, 0.7))
-
-	_draw_status(t, -16.0)
-
-
-## Индикатор погони, полоса hp и звёздочки оглушения — общие для всех типов.
+## Индикатор погони, полоса hp и искры оглушения — общие для всех типов.
 func _draw_status(t: float, top: float) -> void:
 	if state == St.CHASE:
-		draw_circle(Vector2(0, top), 2.2, Color(1.0, 0.25, 0.3, 0.6 + 0.4 * sin(t * 12.0)))
+		draw_rect(Rect2(-1.5, top - 1.5, 3.0, 3.0), Color(DANGER, 0.6 + 0.4 * sin(t * 12.0)))
 	if hp < max_hp:
 		var bw: float = 16.0
 		draw_rect(Rect2(-bw * 0.5, top - 5.0, bw, 2.5), Color(0, 0, 0, 0.6))
@@ -857,95 +916,172 @@ func _draw_status(t: float, top: float) -> void:
 	if stun > 0.0:
 		for i in 3:
 			var a: float = t * 6.0 + i * TAU / 3.0
-			draw_circle(Vector2(cos(a) * 11.0, top + 2.0 + sin(a) * 4.0), 1.6, Color(0.5, 0.9, 1.0, 0.8))
+			draw_rect(Rect2(roundf(cos(a) * 11.0) - 1.0, roundf(top + 2.0 + sin(a) * 4.0) - 1.0, 2.0, 2.0),
+					Color(STUN_TINT, 0.8))
 
 
-## Рой: мелкий мерцающий сгусток с крылышками.
+## Рой: пара споровых мотыльков — тельце, крылья-пиксели, глаз цвета опасности.
 func _draw_swarm() -> void:
 	var t: float = jitter
-	var col: Color = Color(0.85, 0.30, 0.55) if state == St.CHASE else Color(0.55, 0.22, 0.48)
+	var col: Color = Color(0.62, 0.30, 0.56) if state == St.CHASE else Color(0.42, 0.32, 0.50)
 	if stun > 0.0:
-		col = col.lerp(Color(0.6, 0.85, 1.0), 0.55)
-	var flap: float = absf(sin(t * 28.0)) * 3.0
-	draw_line(Vector2(-1.0, -1.0), Vector2(-5.0, -2.0 - flap), Color(0.9, 0.9, 1.0, 0.5), 1.0)
-	draw_line(Vector2(1.0, -1.0), Vector2(5.0, -2.0 - flap), Color(0.9, 0.9, 1.0, 0.5), 1.0)
-	var shift: float = sin(t * 13.0) * 1.0
-	draw_circle(Vector2(shift, 0.0), 3.6, Color(0.2, 0.9, 0.9, 0.30))
-	draw_circle(Vector2.ZERO, 3.0, col)
-	draw_circle(Vector2(float(facing) * 1.4, -0.6), 1.0, Color(1.0, 0.9, 0.5))
+		col = col.lerp(STUN_TINT, 0.55)
+	_face(facing < 0)
+	var d: float = _split_d(t, 13.0)
+	draw_rect(Rect2(-2.0 - d, -2.0, 4.0, 3.0), SPLIT_RED)
+	draw_rect(Rect2(-2.0 + d, -2.0, 4.0, 3.0), SPLIT_CYAN)
+	# Ведущий мотылёк: крылья взмахивают — то над тельцем, то вровень с ним.
+	var up: bool = sin(t * 28.0) > 0.0
+	var wy: float = -4.0 if up else -2.0
+	draw_rect(Rect2(-5.0, wy, 3.0, 2.0), MOTH_WING)
+	draw_rect(Rect2(2.0, wy, 3.0, 2.0), MOTH_WING)
+	draw_rect(Rect2(-2.0, -2.0, 4.0, 3.0), col)
+	draw_rect(Rect2(1.0, -2.0, 1.0, 1.0), DANGER)
+	# Ведомый: мельче, кружит рядом, машет в противофазе.
+	var ox: float = roundf(cos(t * 4.0 + 1.7) * 3.0) - 1.0
+	var oy: float = roundf(sin(t * 4.0 + 1.7) * 2.0) - 6.0
+	var wy2: float = oy if up else oy - 1.0
+	draw_rect(Rect2(ox - 2.0, wy2, 2.0, 1.0), MOTH_WING)
+	draw_rect(Rect2(ox + 2.0, wy2, 2.0, 1.0), MOTH_WING)
+	draw_rect(Rect2(ox, oy, 2.0, 2.0), col)
+	draw_rect(Rect2(ox + 1.0, oy, 1.0, 1.0), DANGER)
+	_face(false)
 
 
-## Тень: тёмный размытый силуэт без визора.
+## Тень: капюшон, из подола свисают гифы со светящимися кончиками, две щели глаз.
 func _draw_shade() -> void:
 	var t: float = jitter
-	var col: Color = Color(0.06, 0.05, 0.10, 0.92)
+	var col: Color = Color(PH_DARK, 0.94)
 	if stun > 0.0:
-		col = col.lerp(Color(0.6, 0.85, 1.0), 0.45)
-	var r: Rect2 = Rect2(-SIZE.x * 0.5, -SIZE.y * 0.5, SIZE.x, SIZE.y)
-	for i in 3:
-		var w: float = sin(t * 3.0 + i * 2.1) * 2.0
-		draw_rect(Rect2(r.position + Vector2(w - 1.5, -1.0), r.size + Vector2(3.0, 2.0)),
-				Color(0.15, 0.05, 0.25, 0.18))
-	draw_rect(r, col)
-	# Рваный подол
-	for i in 4:
-		var x: float = r.position.x + 1.5 + i * 3.0
-		var h: float = 3.0 + sin(t * 6.0 + i) * 1.5
-		draw_rect(Rect2(x, r.end.y, 2.0, h), Color(0.06, 0.05, 0.10, 0.7))
+		col = col.lerp(STUN_TINT, 0.45)
+	_face(facing < 0)
+	var d: float = _split_d(t, 5.0)
+	draw_rect(Rect2(-6.0 - d, -4.0, 12.0, 10.0), SHADE_RED)
+	draw_rect(Rect2(-4.0 - d, -10.0, 8.0, 6.0), SHADE_RED)
+	draw_rect(Rect2(-6.0 + d, -4.0, 12.0, 10.0), SHADE_CYAN)
+	draw_rect(Rect2(-4.0 + d, -10.0, 8.0, 6.0), SHADE_CYAN)
+	# Капюшон (верхушка, голова), покатые плечи и балахон до подола.
+	draw_rect(Rect2(-2.0, -11.0, 4.0, 1.0), col)
+	draw_rect(Rect2(-4.0, -10.0, 8.0, 3.0), col)
+	draw_rect(Rect2(-5.0, -7.0, 10.0, 3.0), col)
+	draw_rect(Rect2(-6.0, -4.0, 12.0, 10.0), col)
+	# Провал лица под капюшоном и две щели глаз (изредка моргают).
+	draw_rect(Rect2(-2.0, -8.0, 6.0, 4.0), SHADE_FACE)
+	if fmod(t, 3.1) < 2.98:
+		draw_rect(Rect2(2.0, -7.0, 2.0, 1.0), DANGER)
+		draw_rect(Rect2(-1.0, -7.0, 2.0, 1.0), DANGER_DIM)
+	# Гифы из подола: длина 2..5 px, покачиваются, кончик светится спорой.
+	for k in 6:
+		var x: float = -6.0 + float(k) * 2.0
+		var hl: float = 2.0 + float((k * 7 + 3) % 3) + (1.0 if sin(t * 3.0 + k * 1.3) > 0.3 else 0.0)
+		draw_rect(Rect2(x, 6.0, 1.0, hl), col)
+		draw_rect(Rect2(x, 6.0 + hl, 1.0, 1.0), BIO_TIP)
+	_face(false)
 	_draw_status(t, -16.0)
 
 
-## Копатель: приземистый, с вращающимся буром спереди.
+## Копатель: личинка из сегментов разной высоты со споровыми бугорками
+## и ступенчатым буром спереди; бур «вращается» чередованием граней.
 func _draw_burrower() -> void:
 	var t: float = jitter
-	var col: Color = Color(0.42, 0.26, 0.16)
+	var col: Color = Color(0.54, 0.50, 0.58)
 	if state == St.CHASE:
-		col = Color(0.60, 0.30, 0.14)
+		col = Color(0.66, 0.46, 0.60)
 	if stun > 0.0:
-		col = col.lerp(Color(0.6, 0.85, 1.0), 0.55)
-	var r: Rect2 = Rect2(-SIZE.x * 0.5, -SIZE.y * 0.5, SIZE.x, SIZE.y)
-	var shift: float = sin(t * 9.0) * 1.2
-	draw_rect(Rect2(r.position + Vector2(shift, 0), r.size), Color(0.9, 0.5, 0.2, 0.25))
-	draw_rect(r, col)
-	draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 3.0), col.lightened(0.2))
-	# Бур: треугольник с вращающимися гранями.
-	var fx: float = float(facing)
-	var tip: Vector2 = Vector2(fx * (SIZE.x * 0.5 + 9.0), 2.0)
-	var a: Vector2 = Vector2(fx * SIZE.x * 0.5, -4.0)
-	var b: Vector2 = Vector2(fx * SIZE.x * 0.5, 8.0)
-	draw_colored_polygon(PackedVector2Array([a, b, tip]), Color(0.70, 0.72, 0.78))
-	var s: float = fmod(t * 14.0, 1.0)
-	draw_line(a.lerp(tip, s), b.lerp(tip, s), Color(0.35, 0.36, 0.40), 1.0)
-	# Узкая щель визора
-	var visor_x: float = 0.0 if facing > 0 else -8.0
-	draw_rect(Rect2(visor_x, -8.0, 8.0, 3.0), Color(1.0, 0.65, 0.25))
-	_draw_status(t, -16.0)
+		col = col.lerp(STUN_TINT, 0.55)
+	var floor_y: float = SIZE.y * 0.5
+	_face(facing < 0)
+	var d: float = _split_d(t, 9.0)
+	draw_rect(Rect2(-9.0 - d, floor_y - 6.0, 16.0, 6.0), SPLIT_RED)
+	draw_rect(Rect2(-9.0 + d, floor_y - 6.0, 16.0, 6.0), SPLIT_CYAN)
+	# Сегменты от хвоста к голове; в погоне по телу бежит волна.
+	var wave: int = int(t * 6.0) if state == St.CHASE else 0
+	var col_dark: Color = col.darkened(0.18)
+	var col_hi: Color = col.lightened(0.2)
+	for k in BURROWER_SEG_H.size():
+		var h: float = BURROWER_SEG_H[k] + (1.0 if (k + wave) % 2 == 0 and wave != 0 else 0.0)
+		var x: float = -9.0 + float(k) * 4.0
+		draw_rect(Rect2(x, floor_y - h, 4.0, h), col if k % 2 == 0 else col_dark)
+		draw_rect(Rect2(x, floor_y - h, 4.0, 1.0), col_hi)
+		draw_rect(Rect2(x + 1.0, floor_y - h - 1.0, 2.0, 1.0), BIO_TIP)
+	draw_rect(Rect2(-9.0, floor_y - 1.0, 16.0, 1.0), col.darkened(0.4))
+	# Глаз на головном сегменте.
+	draw_rect(Rect2(4.0, floor_y - 6.0, 2.0, 1.0), DANGER)
+	# Бур: ступени сужаются к острию, грани меняют цвет — вращение.
+	var spin: int = int(t * 14.0) % 2
+	for k in 4:
+		draw_rect(Rect2(7.0 + k, floor_y - 8.0 + k, 1.0, 8.0 - 2.0 * k), DRILL if (k + spin) % 2 == 0 else DRILL_DARK)
+	draw_rect(Rect2(11.0, floor_y - 5.0, 1.0, 2.0), DRILL_HI)
+	_face(false)
+	_draw_status(t, floor_y - 14.0)
 
 
-## Двойник: копия скафандра игрока, визор мерцает, над головой — имя.
+## Двойник: облик героя (Player.body_layout, шов #58), но визор цвета опасности
+## и фонарь не горит. Раскладку берём у самого героя: сменится скафандр — двойник
+## сменит его вместе с ним. Под взглядом визор мерцает чаще и проступает расслоение.
 func _draw_doppel() -> void:
 	var t: float = jitter
-	var col: Color = Color(0.86, 0.22, 0.24)
+	var col: Color = HERO_SUIT
 	if stun > 0.0:
-		col = col.lerp(Color(0.6, 0.85, 1.0), 0.55)
-	var r: Rect2 = Rect2(-SIZE.x * 0.5, -SIZE.y * 0.5, SIZE.x, SIZE.y)
-	draw_set_transform(Vector2(0, SIZE.y * 0.5), 0.0, Vector2(1.0, 0.35))
-	draw_circle(Vector2.ZERO, SIZE.x * 0.6, Color(0, 0, 0, 0.28))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	draw_rect(Rect2(-r.size.x * 0.5 - 5.0, -r.size.y * 0.5 + 3.0, 5.0, r.size.y - 7.0), col.darkened(0.25))
+		col = col.lerp(STUN_TINT, 0.55)
+	var lay: Dictionary = _hero_layout()
+	var r: Rect2 = lay["body"]
+	draw_rect(Rect2(-SIZE.x * 0.5 - 1.0, SIZE.y * 0.5, SIZE.x + 2.0, 1.0), Color(0, 0, 0, 0.28))
+	# Раскладка уже повёрнута по facing героя; смотрит двойник в другую сторону — отражаем.
+	_face((int(lay["facing"]) < 0) != (facing < 0))
+	var rate: float = 31.0 if frozen else 11.0
+	if frozen and sin(t * 7.0) > 0.3:
+		draw_rect(Rect2(r.position - Vector2(1.0, 0.0), r.size), SPLIT_RED)
+		draw_rect(Rect2(r.position + Vector2(1.0, 0.0), r.size), SPLIT_CYAN)
+	draw_rect(lay["backpack"], col.darkened(0.25))
 	draw_rect(r, col)
 	draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 3.0), col.lightened(0.18))
 	draw_rect(Rect2(r.position.x, r.end.y - 3.0, r.size.x, 3.0), col.darkened(0.22))
-	# Визор мерцает: под взглядом — чаще, и выдаёт подделку.
-	var visor_x: float = -1.0 if facing > 0 else -11.0
-	var rate: float = 31.0 if frozen else 11.0
-	var flick: bool = sin(t * rate) > 0.1
-	var vcol: Color = Color(0.72, 0.86, 0.94) if flick else Color(0.95, 0.15, 0.25)
-	draw_rect(Rect2(visor_x, r.position.y + 2.0, 11.0, 7.0), vcol)
+	draw_rect(lay["leg_back"], col.darkened(0.35))
+	draw_rect(lay["leg_front"], col.darkened(0.35))
+	# Визор цвета опасности — единственное, что выдаёт подделку. Тёмная рамка
+	# отделяет его от скафандра: на красном корпусе иначе визор теряется.
+	var lit: bool = sin(t * rate) > 0.1
+	var vis: Rect2 = lay["visor"]
+	draw_rect(vis.grow(1.0), VISOR_RIM)
+	draw_rect(vis, DANGER.lightened(0.15) if lit else DANGER.darkened(0.45))
+	draw_rect(lay["visor_top"], DANGER.lightened(0.45) if lit else DANGER.darkened(0.3))
+	draw_rect(lay["visor_glint"], GLINT)
+	# Фонарь на шлеме не горит: тёмный квадрат на месте огонька.
+	var lp: Vector2 = lay["light"]
+	draw_rect(Rect2(lp.x - 1.0, lp.y - 1.0, 2.0, 2.0), Color(0.22, 0.18, 0.20))
+	_face(false)
 	if display_name != "":
 		var font: Font = ThemeDB.fallback_font
 		var fs: int = 8
-		var w: float = font.get_string_size(display_name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		draw_string(font, Vector2(-w * 0.5, -SIZE.y * 0.5 - 6.0), display_name,
+		# Меряем строку только при смене имени, а не каждый кадр.
+		if _name_w_of != display_name:
+			_name_w_of = display_name
+			_name_w = font.get_string_size(display_name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		draw_string(font, Vector2(-_name_w * 0.5, -SIZE.y * 0.5 - 6.0), display_name,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.85, 0.92, 1.0, 0.85))
 	_draw_status(t, -SIZE.y * 0.5 - 16.0)
+
+
+## Раскладка фигуры героя для двойника (Player.body_layout) и ключ "facing" —
+## куда смотрит герой, под которого она повёрнута. Героя нет (пустая сцена) —
+## простая фигура того же габарита «лицом вправо».
+func _hero_layout() -> Dictionary:
+	var hero: Node = player
+	if (hero == null or not is_instance_valid(hero)) and is_inside_tree():
+		hero = get_tree().get_first_node_in_group("player")
+	var lay: Dictionary = {}
+	if hero != null and is_instance_valid(hero) and hero.has_method("body_layout"):
+		lay = hero.body_layout()
+		var hf = hero.get("facing")
+		lay["facing"] = -1 if hf is int and int(hf) < 0 else 1
+	if not (lay.has("body") and lay.has("visor_glint") and lay.has("light")):
+		var b: Rect2 = Rect2(-SIZE * 0.5, SIZE)
+		lay = {
+			"body": b, "backpack": Rect2(b.position.x - 5.0, b.position.y + 3.0, 5.0, b.size.y - 7.0),
+			"leg_back": Rect2(-4.0, b.end.y - 3.0, 3.0, 3.0), "leg_front": Rect2(1.0, b.end.y - 3.0, 3.0, 3.0),
+			"visor": Rect2(-1.0, b.position.y + 2.0, 11.0, 7.0), "visor_top": Rect2(-1.0, b.position.y + 2.0, 11.0, 2.0),
+			"visor_glint": Rect2(0.0, b.position.y + 3.0, 3.0, 2.0), "light": Vector2(7.0, b.position.y + 2.0),
+			"facing": 1,
+		}
+	return lay
