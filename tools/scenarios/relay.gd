@@ -1,7 +1,13 @@
 extends ScenarioBase
-## Релей: выдать недостающие детали → удерживать E → отсчёт идёт → победа.
+## Релей (ADR-001 § 4.7, #32): выдать детали → удерживать E у ядра → этап 4,
+## отсчёт Balance.RELAY_TIME (180 с) → победа, на финальном экране — эпилог Lore.
+## Ждать три минуты в тесте смысла нет: отсчёт ускоряется (Game.relay_speed).
+
+const SPEED: float = 60.0          ## 180 с удержания — за 3 с реального времени
+
 
 func run() -> void:
+	player.invuln = 1.0e9
 	# Выдаём детали, которых не хватает релею.
 	for id in Game.relay_req.keys():
 		player.inv.add(int(id), int(Game.relay_req[id]) + 1)
@@ -28,10 +34,29 @@ func run() -> void:
 	var started: bool = await wait_until(func() -> bool: return Game.relay_active, 6.0)
 	release(KEY_E)
 	ok("релей запущен", started)
-	ok("таймер эвакуации идёт", Game.relay_timer > 0.0, "%.1f с" % Game.relay_timer)
+	ok("удержание — %d с" % int(Balance.RELAY_TIME), Balance.RELAY_TIME == 180.0
+			and absf(Game.relay_timer - Balance.RELAY_TIME) < 2.0, "%.1f с" % Game.relay_timer)
+	ok("этап цели 4 — удержать сигнал", Game.objective_stage == 4, Game.objective_text())
 
-	# Финал считаем сами: ждать полторы минуты в тесте смысла нет.
-	Game.relay_timer = 0.05
-	await wait(0.6)
-	ok("победа", Game.state == Game.State.WON, "state=%d" % Game.state)
+	# Ускоряем отсчёт: 180 с проходят за RELAY_TIME / SPEED реальных секунд.
+	Game.relay_speed = SPEED
+	var t0: float = Game.relay_timer
+	await wait(0.5)
+	ok("отсчёт ускорен тестом", t0 - Game.relay_timer > 10.0, "%.1f → %.1f с" % [t0, Game.relay_timer])
+	var won: bool = await wait_until(func() -> bool: return Game.state == Game.State.WON,
+			Balance.RELAY_TIME / SPEED + 4.0)
+	ok("победа", won, "state=%d" % Game.state)
+	ok("релей отработал", not Game.relay_active and Game.relay_timer == 0.0)
+
+	var es: EndScreen = scene.get("end_screen")
+	await await_frame()
+	ok("финальный экран показан", es != null and es.visible and es.title == "ЭВАКУАЦИЯ",
+			es.title if es != null else "нет экрана")
+	if es != null:
+		var want: String = Lore.epilogue(Game.epilogue_stats())
+		ok("эпилог из Lore на экране", es.epilogue != "" and es.epilogue == want,
+				es.epilogue.left(80))
+		ok("экран в CanvasLayer поверх мира", es.get_parent() is CanvasLayer
+				and (es.get_parent() as CanvasLayer).layer > UI.layer)
+	Game.relay_speed = 1.0
 	finish()
