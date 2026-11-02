@@ -20,7 +20,10 @@ const REPATH_NEAR: float = 0.45			## Интервал перестроения �
 const REPATH_FAR: float = 0.9			## Интервал перестроения пути вдали от цели, с.
 const REPATH_FAR_DIST: float = 300.0	## Дистанция, с которой путь строится реже.
 const PATH_TARGET_MOVE: float = 32.0	## Минимальный сдвиг цели для перестроения пути, px.
+const PATH_GOAL_EPS: float = 16.0	## На этом расстоянии до цели путь считаем доведённым.
 const PATH_MAX_NODES: int = 70			## Максимум узлов в одном куске пути.
+const STUCK_TIME: float = 0.8			## Сколько секунд без прогресса считать застреванием.
+const STUCK_PROGRESS: float = 6.0		## Минимальный прогресс к узлу пути за это время, px.
 const FLIP_T: float = 2.0				## Как часто фантом меняет сторону обхода, с.
 const STUN_REDRAW: float = 0.066		## Частота перерисовки оглушённого фантома, с.
 
@@ -40,10 +43,12 @@ var jitter: float = 0.0
 var player: Node2D = null
 var spawn_point: Vector2 = Vector2.ZERO
 var alive: bool = true
+var rebuilds: int = 0				## Счётчик перестроений пути — для замеров и отладки.
 
 # --- Кэши и служебное состояние ----------------------------------------------
 var _light: float = 0.0				## Кэш света в точке фантома.
 var _light_ms: int = -1000000		## Метка времени последнего пересчёта света фантома.
+var _light_sources: int = -1		## Число источников света на момент последнего пересчёта.
 var _los: bool = false				## Кэш линии видимости до игрока.
 var _los_ms: int = -1000000			## Метка времени последнего пересчёта обзора.
 var _los_player_pos: Vector2 = Vector2.ZERO
@@ -51,6 +56,8 @@ var _los_cell: Vector2i = Vector2i(-9999, -9999)
 var _path_target: Vector2 = Vector2.ZERO	## Цель на момент последнего расчёта пути.
 var _aim_pos: Vector2 = Vector2.ZERO		## Куда идти, если путь кончился (цель могла быть в стене).
 var _path_failed: bool = false		## Путь не найден — идём вбок, а не в стену.
+var _stuck_t: float = 0.0			## Время без прогресса по пути.
+var _stuck_best: float = INF		## Лучшая дистанция до узла пути с последнего прогресса.
 var _flank_side: float = 1.0		## Сторона обхода препятствия.
 var _flank_t: float = 0.0
 var _age: float = 0.0				## Возраст фантома, с.
@@ -60,6 +67,7 @@ var _redraw_t: float = 0.0			## Таймер редкой перерисовки
 # Свет игрока общий для всех фантомов: пересчитывать его на каждого — расточительно.
 static var _shared_player_light: float = 0.0
 static var _shared_player_light_ms: int = -1000000
+static var _shared_light_sources: int = -1
 
 
 func _ready() -> void:
@@ -125,10 +133,25 @@ func _physics_process(delta: float) -> void:
 		else:
 			state = St.ROAM if dist > 260.0 else St.DORMANT
 
+	# --- Куда идём ------------------------------------------------------------
+	# Цель в погоне — позиция игрока: путь строим именно к ней, и перестроение
+	# пути срабатывает по сдвигу этой цели.
+	if state == St.CHASE:
+		target_pos = player.global_position
+	elif state == St.FLEE:
+		target_pos = global_position + (global_position - World.cell_to_world(World.world_to_cell(global_position))).normalized() * 90.0
+	elif state == St.ROAM:
+		wander_t -= dt
+		if wander_t <= 0.0:
+			wander_t = randf_range(1.5, 3.5)
+			target_pos = _wander_target()
+
 	# Путь ведёт только в погоне: в других состояниях фантом идёт по своей воле.
 	if state != St.CHASE and path.size() > 0:
 		path.clear()
 		path_i = 0
+		_stuck_t = 0.0
+		_stuck_best = INF
 	# Смена режима на погоню — перестраиваем путь сразу, а не через остаток таймера.
 	if state == St.CHASE and _prev_state != St.CHASE:
 		repath = 0.0
@@ -150,17 +173,27 @@ func _physics_process(delta: float) -> void:
 		# Вдали от цели путь перестраиваем реже — цели похуже, а поиск дорог.
 		repath = REPATH_FAR if dist > REPATH_FAR_DIST else REPATH_NEAR
 		# Пересчитываем путь, только если цель заметно сдвинулась
-		# либо прежний путь кончился/не найден.
-		if _path_target.distance_to(target_pos) > PATH_TARGET_MOVE or path_i >= path.size() or _path_failed:
+		# либо прежний путь кончился/не найден/завёл в тупик.
+		# Пустой путь при уже достигнутой цели — не повод для перестроения.
+		var need_path: bool = path_i >= path.size() \
+				and global_position.distance_to(target_pos) > PATH_GOAL_EPS
+		if _path_target.distance_to(target_pos) > PATH_TARGET_MOVE \
+				or need_path or _path_failed or _stuck_t > STUCK_TIME:
 			_rebuild_path()
 	if path_i < path.size():
 		var node: Vector2i = path[path_i]
 		var np: Vector2 = World.cell_to_world(node)
-		if global_position.distance_to(np) < 12.0:
+		var dnode: float = global_position.distance_to(np)
+		if dnode < 12.0:
 			path_i += 1
+			_stuck_t = 0.0
+			_stuck_best = INF
 		else:
 			dir = (np - global_position).normalized()
+			_track_progress(dnode, dt)
 	elif state != St.DORMANT:
+		_stuck_t = 0.0
+		_stuck_best = INF
 		var to_target: Vector2 = target_pos - global_position
 		if to_target.length() > 1.0:
 			if state == St.CHASE and _path_failed and not _has_los():
@@ -226,9 +259,14 @@ func _despawn_limit() -> float:
 func _light_value() -> float:
 	## Свет в точке фантома. Источники света статичны, суммировать их каждый
 	## кадр — дорого: пересчитываем не чаще раза в LIGHT_INTERVAL.
+	## Но если набор источников изменился (поставили или сняли светящийся
+	## кристалл, пересобрался мир) — пересчитываем сразу: иначе фантом до
+	## LIGHT_INTERVAL секунд не увидит, что стало светлее или темнее.
 	var now: int = Time.get_ticks_msec()
-	if now - _light_ms >= int(LIGHT_INTERVAL * 1000.0):
+	var sources: int = _light_source_count()
+	if sources != _light_sources or now - _light_ms >= int(LIGHT_INTERVAL * 1000.0):
 		_light_ms = now
+		_light_sources = sources
 		_light = World.light_at(World.world_to_cell(global_position))
 	return _light
 
@@ -238,15 +276,28 @@ func _player_light_value(ppos: Vector2) -> float:
 	## отдельно на каждого фантома — та же самая дорогая сумма по всем
 	## источникам света, только раз за другим.
 	var now: int = Time.get_ticks_msec()
-	if now - _shared_player_light_ms >= int(PLAYER_LIGHT_INTERVAL * 1000.0):
+	var sources: int = _light_source_count()
+	if sources != _shared_light_sources or now - _shared_player_light_ms >= int(PLAYER_LIGHT_INTERVAL * 1000.0):
 		_shared_player_light_ms = now
+		_shared_light_sources = sources
 		_shared_player_light = World.light_at(World.world_to_cell(ppos))
 	return _shared_player_light
+
+
+func _light_source_count() -> int:
+	## Число источников света в мире. Меняется, когда игрок ставит или снимает
+	## светящийся кристалл, а также когда мир перегенерируется. Реестр света
+	## публичный — сверяемся с ним, чтобы вовремя сбросить кэш света.
+	if World.lights == null:
+		return -1
+	return World.lights.size()
 
 
 func _wander_target() -> Vector2:
 	## Точка блуждания. Днём фантомы уходят в глубину прочь от игрока,
 	## ночью просто кружат рядом.
+	if player == null:
+		return global_position + Vector2(randf_range(-110.0, 110.0), randf_range(-40.0, 40.0))
 	var away: Vector2 = global_position - player.global_position
 	if not Game.is_night() and away.length() > 1.0:
 		var deep: Vector2 = global_position + away.normalized() * randf_range(120.0, 200.0)
@@ -291,6 +342,16 @@ func _compute_los(from: Vector2i, to: Vector2i) -> bool:
 	return true
 
 
+func _track_progress(dnode: float, dt: float) -> void:
+	## Следим, продвигается ли фантом по пути: если к очередному узлу
+	## подобраться не удаётся, фантом застрял — прежний путь больше не годится
+	## и его надо перестроить.
+	_stuck_t += dt
+	if dnode < _stuck_best - STUCK_PROGRESS:
+		_stuck_best = dnode
+		_stuck_t = 0.0
+
+
 func _flank_dir(to_target: Vector2) -> Vector2:
 	## Обход препятствия: шаг вбок от цели, направление обхода меняем со временем.
 	var perp: Vector2 = Vector2(-to_target.y, to_target.x)
@@ -315,10 +376,13 @@ func _nearest_free_cell(c: Vector2i) -> Vector2i:
 
 
 func _rebuild_path() -> void:
+	rebuilds += 1
 	path.clear()
 	path_i = 0
 	_path_failed = false
 	_aim_pos = target_pos
+	_stuck_t = 0.0
+	_stuck_best = INF
 	if World.astar == null:
 		_path_failed = true
 		return
