@@ -71,6 +71,9 @@ func take_front(filter: int = IDs.I.NONE, accepts: Callable = Callable()) -> int
 
 func _process(delta: float) -> void:
 	super(delta)
+	if not Net.is_authority():   # СЕТЬ (ADR-002): у клиента предметы едут без передачи соседу
+		_net_glide(delta)
+		return
 	if items.is_empty():
 		return
 	# Двигаем: передний (с большим pos) идёт первым и не обгоняет следующий.
@@ -163,3 +166,56 @@ func load_state(d: Dictionary) -> void:
 			if it is Dictionary:
 				items.append({"id": int(it.get("id", IDs.I.NONE)), "count": int(it.get("count", 1)),
 						"pos": float(it.get("pos", 0.0))})
+
+
+# ------------------------------------------------------------- СЕТЬ (ADR-002, MP-E #90)
+## net_state ленты — своя раскладка (без станочной базы): hp u8 · dir u8 · n u8 +
+## n × (id u8, count u8, pos u8 — pos·255, конец ленты — 255). 3 + 3·n Б.
+## Между пакетами (4 Гц) клиент сам двигает предметы: pos += SPEED·dt, передний — не
+## дальше конца ленты, следующие — не ближе GAP; соседу не передаёт — это делает хост.
+
+const NET_MAX_ITEMS: int = 84    ## 3 + 3·84 = 255 — предел длины net_state
+
+
+func net_state() -> PackedByteArray:
+	var n: int = mini(items.size(), NET_MAX_ITEMS)
+	var b: PackedByteArray = PackedByteArray()
+	b.resize(3 + 3 * n)
+	b[0] = net_u8(hp / maxf(max_hp, 0.001))
+	b[1] = dir & 3
+	b[2] = n
+	for i in n:
+		var it: Dictionary = items[i]
+		b[3 + 3 * i] = int(it["id"]) & 0xFF
+		b[4 + 3 * i] = clampi(int(it["count"]), 1, 255)
+		b[5 + 3 * i] = net_u8(float(it["pos"]))
+	return b
+
+
+func apply_net_state(b: PackedByteArray) -> int:
+	if b.size() < 3 or b.size() < 3 + 3 * int(b[2]):
+		return -1
+	hp = float(b[0]) / 255.0 * max_hp
+	if dir != int(b[1]) & 3:
+		dir = int(b[1]) & 3
+	var n: int = b[2]
+	items = []
+	for i in n:
+		items.append({"id": int(b[3 + 3 * i]), "count": int(b[4 + 3 * i]),
+				"pos": float(b[5 + 3 * i]) / 255.0})
+	queue_redraw()
+	return 3 + 3 * n
+
+
+## Клиент: экстраполяция между пакетами хоста (items[0] — передний, как у хоста).
+func _net_glide(delta: float) -> void:
+	if items.is_empty():
+		return
+	var limit: float = 1.0
+	for it in items:
+		var p: float = float(it["pos"])
+		if p < limit:
+			p = minf(p + SPEED * delta, limit)
+		it["pos"] = p
+		limit = p - GAP
+	queue_redraw()

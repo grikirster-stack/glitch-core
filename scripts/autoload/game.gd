@@ -653,6 +653,8 @@ const NET_CLOCK_SNAP: float = 0.002
 var net_world: NetWorld = null
 ## Клиент: сколько раз часы подтянуты к хосту.
 var net_clock_snaps: int = 0
+## Узел машин и предметов по сети (scripts/net/net_machines.gd, MP-E #90).
+var net_machines: NetMachines = null
 
 
 func _enter_tree() -> void:
@@ -660,6 +662,12 @@ func _enter_tree() -> void:
 		net_world = NetWorld.new()
 		net_world.name = "NetWorld"
 		add_child.call_deferred(net_world)
+	# --- Машины и предметы по сети (MP-E, #90): после NetWorld — в физическом кадре
+	# идёт следом за ним (дельты тайлов раньше построек и предметов).
+	if net_machines == null:
+		net_machines = NetMachines.new()
+		net_machines.name = "NetMachines"
+		add_child.call_deferred(net_machines)
 
 
 ## Клиент: только часы забега (и отсчёт релея для HUD между пакетами — победу

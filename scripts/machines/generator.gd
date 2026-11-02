@@ -97,3 +97,23 @@ func load_state(d: Dictionary) -> void:
 	super(d)
 	enabled = bool(d.get("enabled", enabled))
 	power_active = bool(d.get("power_active", power_active))
+
+
+# ------------------------------------------------------------- СЕТЬ (ADR-002, MP-E #90)
+## Рубильник и перегруз — биты флагов базы. Нагрузку клиент не считает: перегруз
+## от хоста ставит power_load выше мощности (лампа и HUD — как у хоста).
+func net_state() -> PackedByteArray:
+	var b: PackedByteArray = super()
+	b[1] |= (NF_ENABLED if enabled else 0) | (NF_OVERLOAD if overloaded() else 0)
+	return b
+
+
+func apply_net_state(b: PackedByteArray) -> int:
+	var o: int = super(b)
+	if o < 0:
+		return o
+	if enabled != ((b[1] & NF_ENABLED) != 0):
+		enabled = not enabled
+		queue_redraw()
+	power_load = power_output * 2.0 if (b[1] & NF_OVERLOAD) != 0 else 0.0
+	return o

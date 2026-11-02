@@ -30,6 +30,8 @@ func reach() -> int:
 func _process(delta: float) -> void:
 	super(delta)
 	_spin += delta * (6.0 if powered else 0.6)
+	if not Net.is_authority():   # СЕТЬ (ADR-002): копает хост, клиент только крутит шнек
+		return
 	if not powered:
 		return
 	_timer -= work(delta)
@@ -108,3 +110,26 @@ func save_state() -> Dictionary:
 func load_state(d: Dictionary) -> void:
 	super(d)
 	_timer = float(d.get("timer", _timer))
+
+
+# ------------------------------------------------------------- СЕТЬ (ADR-002, MP-E #90)
+## Прогресс базы у бура — доля такта (1 − _timer / cycle()): сам бур поле progress не
+## ведёт, клиент видит, как идёт добыча (cycle_fraction()).
+func net_state() -> PackedByteArray:
+	var b: PackedByteArray = super()
+	b[3] = net_u8(cycle_fraction())
+	return b
+
+
+func apply_net_state(b: PackedByteArray) -> int:
+	var o: int = super(b)
+	if o < 0:
+		return o
+	_timer = (1.0 - progress) * cycle()
+	progress = 0.0
+	return o
+
+
+## Доля текущего такта добычи: 0 — только начал, 1 — сейчас выдаст руду.
+func cycle_fraction() -> float:
+	return clampf(1.0 - _timer / maxf(cycle(), 0.001), 0.0, 1.0)

@@ -34,6 +34,8 @@ func receive_item(item_id: int, count: int) -> int:
 
 func _process(delta: float) -> void:
 	super(delta)
+	if not Net.is_authority():   # СЕТЬ (ADR-002): работает хост, клиент рисует по net_state
+		return
 	if not powered:
 		return
 	if recipe.is_empty():
