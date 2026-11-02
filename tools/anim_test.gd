@@ -360,6 +360,102 @@ class Runner extends Node:
 		_ok("рюкзак отражён зеркально", is_equal_approx(bp_rr.position.x, -bp_lr.end.x)
 				and is_equal_approx(bp_rr.size.x, bp_lr.size.x),
 				"вправо %s, влево %s" % [str(bp_rr), str(bp_lr)])
+		_check_suit()
+
+
+	## Скафандр «Кербер-9» (V4, MP-L #97): новые ключи раскладки (шлем, рука,
+	## баллон, боты) зеркалятся тем же способом; все варианты Look во всех позах
+	## конечны и лежат в рамке Avatar.BOUNDS; фаза шага двигает ноги.
+	func _check_suit() -> void:
+		# Тот же кадр, та же поза — только facing: каждая часть — точная копия.
+		var f0: int = int(player.facing)
+		var tp0: float = float(player.task_progress)
+		player.task_progress = 0.5		# рука вперёд (работа)
+		player.facing = 1
+		var r: Dictionary = player.body_layout()
+		player.facing = -1
+		var l: Dictionary = player.body_layout()
+		player.facing = f0
+		player.task_progress = tp0
+		var miss: Array = []
+		for k in ["helmet", "arm", "glove", "tank", "torso", "boot_back", "boot_front", "chest"]:
+			if not (r.get(k) is Rect2 and l.get(k) is Rect2):
+				miss.append(k)
+		_ok("новые ключи раскладки: шлем, рука, баллон, боты", miss.is_empty(), str(miss))
+		var bad: Array = _mirror_errors(r, l)
+		_ok("все части отражены зеркально (вкл. руку, шлем, баллон)", bad.is_empty(), str(bad.slice(0, 4)))
+		var arm_r: float = (r["glove"] as Rect2).get_center().x
+		var arm_l: float = (l["glove"] as Rect2).get_center().x
+		_ok("рука с резаком впереди в обе стороны", arm_r > 5.0 and arm_l < -5.0,
+				"перчатка x: вправо %.1f, влево %.1f" % [arm_r, arm_l])
+		var tk_r: float = (r["tank"] as Rect2).get_center().x
+		var tk_l: float = (l["tank"] as Rect2).get_center().x
+		_ok("баллон за спиной в обе стороны", tk_r < 0.0 and tk_l > 0.0,
+				"баллон x: вправо %.1f, влево %.1f" % [tk_r, tk_l])
+		# Все варианты шлема/аксессуара/ранца × позы × направления.
+		var n: int = 0
+		var out: Array = []
+		var nan: Array = []
+		var unmirrored: Array = []
+		for helm in Avatar.VARIANTS[1]:
+			for acc in Avatar.VARIANTS[2]:
+				for pack in Avatar.VARIANTS[3]:
+					var look: int = Profile.Look.pack(PackedInt32Array([helm * 4 % 16, helm, acc, pack]))
+					for ph in 8:
+						for pose in 6:
+							var walk: float = float(ph) * TAU / 8.0
+							var mv: float = [0.0, 0.5, 1.0, 1.0, 0.0, 1.0][pose]
+							var air: bool = pose == 3
+							var work: bool = pose >= 4
+							var a: Dictionary = Avatar.layout(look, 1, walk, walk * 2.0, mv, air, work)
+							var b: Dictionary = Avatar.layout(look, -1, walk, walk * 2.0, mv, air, work)
+							n += 1
+							var tag: String = "look %04x фаза %d поза %d" % [look, ph, pose]
+							for lay in [a, b]:
+								for k in lay:
+									var v = lay[k]
+									if v is Rect2:
+										var rr: Rect2 = v
+										if not (rr.position.is_finite() and rr.size.is_finite()):
+											nan.append("%s %s" % [tag, k])
+										elif rr.size.x <= 0.0 or rr.size.y <= 0.0 or not Avatar.BOUNDS.encloses(rr):
+											out.append("%s %s %s" % [tag, k, str(rr)])
+									elif v is Vector2 and not (v as Vector2).is_finite():
+										nan.append("%s %s" % [tag, k])
+							if not _mirror_errors(a, b).is_empty():
+								unmirrored.append(tag)
+		_ok("варианты Look × позы: нет NaN", nan.is_empty(), "раскладок %d %s" % [n * 2, str(nan.slice(0, 3))])
+		_ok("варианты Look × позы: части в рамке Avatar.BOUNDS", out.is_empty(), str(out.slice(0, 3)))
+		_ok("варианты Look × позы: зеркальны", unmirrored.is_empty(), str(unmirrored.slice(0, 3)))
+		# Фаза шага: на ходу ноги переступают, в покое стоят.
+		var xs_walk: Dictionary = {}
+		var xs_idle: Dictionary = {}
+		for ph in 16:
+			var w: float = float(ph) * TAU / 16.0
+			xs_walk[(Avatar.layout(0, 1, w, 0.0, 1.0, false, false)["leg_front"] as Rect2).position.x] = true
+			xs_idle[(Avatar.layout(0, 1, w, 0.0, 0.0, false, false)["leg_front"] as Rect2).position.x] = true
+		_ok("фаза шага двигает ноги", xs_walk.size() >= 3 and xs_idle.size() == 1,
+				"положений ноги: на ходу %d, в покое %d" % [xs_walk.size(), xs_idle.size()])
+
+
+	## Ключи, у которых раскладка «влево» — не зеркальная копия «вправо».
+	func _mirror_errors(r: Dictionary, l: Dictionary) -> Array:
+		var bad: Array = []
+		for k in r:
+			var a = r[k]
+			var b = l.get(k)
+			if a is Rect2:
+				var ra: Rect2 = a
+				if not (b is Rect2) or not (is_equal_approx(ra.position.x, -(b as Rect2).end.x)
+						and is_equal_approx(ra.position.y, (b as Rect2).position.y)
+						and ra.size.is_equal_approx((b as Rect2).size)):
+					bad.append(k)
+			elif a is Vector2:
+				if not (b is Vector2) or not (a as Vector2).is_equal_approx(Vector2(-(b as Vector2).x, (b as Vector2).y)):
+					bad.append(k)
+		if l.size() != r.size():
+			bad.append("ключей %d / %d" % [r.size(), l.size()])
+		return bad
 
 
 	func _s_jump_ground() -> void:
