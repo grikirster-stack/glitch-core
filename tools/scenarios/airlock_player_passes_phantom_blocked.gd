@@ -66,8 +66,8 @@ func run() -> void:
 	var max_left: float = INF
 	var open_samples: int = 0
 	var samples: int = 0
-	var t0: int = Time.get_ticks_msec()
-	while Time.get_ticks_msec() - t0 < 4000:
+	var t0: float = now()
+	while now() - t0 < 4.0:
 		if is_instance_valid(ph):
 			max_left = minf(max_left, ph.global_position.x)
 		samples += 1

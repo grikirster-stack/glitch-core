@@ -25,9 +25,9 @@ func run() -> void:
 	# Идём к предмету.
 	var x0: float = player.global_position.x
 	hold(KEY_D)
-	var t0: int = Time.get_ticks_msec()
+	var t0: float = now()
 	var picked: bool = false
-	while Time.get_ticks_msec() - t0 < 8000:
+	while now() - t0 < 8.0:
 		if player.inv.count_of(item_id) > before:
 			picked = true
 			break

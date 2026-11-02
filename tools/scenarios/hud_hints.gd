@@ -73,8 +73,8 @@ func run() -> void:
 ## Идти, пока не выполнится условие, сверяя подсказку каждый кадр.
 func _walk(stats: Dictionary, gen: Node2D, chest: Node2D, done_cond: Callable, timeout: float) -> void:
 	var hud: HUD = UI.hud
-	var t0: int = Time.get_ticks_msec()
-	while Time.get_ticks_msec() - t0 < int(timeout * 1000.0) and not done_cond.call():
+	var t0: float = now()
+	while now() - t0 < timeout and not done_cond.call():
 		await get_tree().process_frame
 		var want: String = _want(gen, chest)
 		if hud.hint_text == want:

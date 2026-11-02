@@ -53,10 +53,10 @@ func run() -> void:
 	var target: Vector2i = Vector2i(_o.x + WALL_X0, _o.y + 3)
 	aim(World.cell_to_world(target))
 	press_mouse(MOUSE_BUTTON_LEFT)
-	var t0: int = Time.get_ticks_msec()
+	var t0: float = now()   # добыча идёт в физических кадрах игрока
 	var broke: bool = await wait_until(func(): return World.get_tile_v(target) == IDs.T.AIR, 7.0)
 	release_mouse(MOUSE_BUTTON_LEFT)
-	var secs: float = float(Time.get_ticks_msec() - t0) / 1000.0
+	var secs: float = now() - t0
 	ok("игрок ломает стальную стену за ≈ 4 с", broke and secs >= 3.5 and secs <= 5.0, "%.2f с" % secs)
 	finish()
 

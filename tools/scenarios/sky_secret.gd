@@ -46,8 +46,8 @@ func run() -> void:
 	var y0: float = player.global_position.y
 	var min_y: float = y0
 	hold(KEY_SPACE)
-	var t0: int = Time.get_ticks_msec()
-	while Time.get_ticks_msec() - t0 < 900:
+	var t0: float = now()   # игровые часы: под нагрузкой физика отстаёт от стены (#71)
+	while now() - t0 < 0.9:
 		min_y = minf(min_y, player.global_position.y)
 		await wait(0.02)
 	release(KEY_SPACE)

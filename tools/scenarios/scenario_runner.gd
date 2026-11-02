@@ -336,6 +336,16 @@ var checks: int = 0
 var fails: int = 0
 var scenarios_total: int = 0
 
+## Игровые часы сценариев, с: сумма delta физических кадров (с учётом
+## Engine.time_scale). Под нагрузкой физика отстаёт от часов стены (не больше
+## 8 шагов на кадр), поэтому ожидания сценариев идут по этим часам, а не по
+## Time.get_ticks_msec(): иначе сценарий проживал меньше игрового времени,
+## чем рассчитывал, и падал только в длинном/нагруженном прогоне.
+var sim_time: float = 0.0
+## То же по кадрам отрисовки (delta _process): по ним живут Game.game_time,
+## машины и SceneTreeTimer.
+var proc_time: float = 0.0
+
 var _queue: Array = []
 var _current: ScenarioBase = null
 var _started_ms: int = 0
@@ -402,7 +412,12 @@ func _summary() -> void:
 	get_tree().quit(1 if fails > 0 else 0)
 
 
-func _process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
+	sim_time += delta
+
+
+func _process(delta: float) -> void:
+	proc_time += delta
 	if _current == null or not is_instance_valid(_current):
 		return
 	if Time.get_ticks_msec() - _started_ms > _timeout_ms:
@@ -423,10 +438,11 @@ func ok(label: String, cond: bool, extra: String = "") -> void:
 		print("  FAIL %s %s" % [label, extra])
 
 
-## Подождать реальные секунды (не кадры: в headless частота не гарантирована).
+## Подождать игровые секунды (по физическим кадрам, см. sim_time; не число
+## кадров: в headless частота кадров не гарантирована).
 func wait(secs: float) -> void:
-	var deadline: int = Time.get_ticks_msec() + int(secs * 1000.0)
-	while Time.get_ticks_msec() < deadline:
+	var until: float = sim_time + secs
+	while sim_time < until:
 		await get_tree().process_frame
 
 

@@ -22,9 +22,9 @@ func run() -> void:
 		finish()
 		return
 	var fuel0: float = float(gen.fuel)
-	var t0: int = Time.get_ticks_msec()
+	var t0: float = now()
 	var drained: bool = await wait_until(func(): return int(ph.coal_drained) >= 1, 10.0)
-	var elapsed: float = float(Time.get_ticks_msec() - t0) / 1000.0
+	var elapsed: float = now() - t0
 	var lost: float = fuel0 - float(gen.fuel)
 	ok("тень пошла к ТЭЦ, а не к игроку", ph.target_machine == gen)
 	ok("тень не боится света", ph.state != Phantom.St.FLEE, "свет у ТЭЦ %.2f" % light)

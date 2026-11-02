@@ -4,7 +4,7 @@ extends ScenarioBase
 ## Заодно: браун-аут (флаг и сигнал) и прочность машины — разрушенный бур
 ## снимает нагрузку, и мощности снова хватает всем.
 
-const MEASURE_SECS: float = 3.0     ## окно замера наработки, реальные секунды
+const MEASURE_SECS: float = 3.0     ## окно замера наработки, игровые секунды
 const TOLERANCE: float = 0.03       ## допуск на замедление (± 3 %)
 
 var _brownout_log: Array = []
@@ -32,7 +32,10 @@ func run() -> void:
 		MachineBase.place_machine("Drill", c)
 		drills.append(World.machines.get(c))
 	ok("три бура поставлены", drills.size() == 3 and not drills.has(null))
-	await wait(1.0)
+	# Раскладка питания идёт раз в Balance.POWER_CHECK_INTERVAL игрового времени —
+	# ждём её результат, а не фиксированную паузу (под нагрузкой кадры длинные).
+	await wait_until(func() -> bool: return is_equal_approx(gen.power_load, 6.0), 3.0)
+	await wait(Balance.POWER_CHECK_INTERVAL * 2.0)
 
 	# Три бура: нагрузка 6 при мощности 6 — efficiency 1.0.
 	var d0: Drill = drills[0]
@@ -47,7 +50,8 @@ func run() -> void:
 	MachineBase.place_machine("Drill", c4)
 	var d4: Drill = World.machines.get(c4)
 	ok("четвёртый бур поставлен", d4 != null)
-	await wait(0.6)
+	await wait_until(func() -> bool: return is_equal_approx(gen.power_load, 8.0), 3.0)
+	await wait(Balance.POWER_CHECK_INTERVAL * 2.0)
 	ok("нагрузка ТЭЦ = 4 × 2", is_equal_approx(gen.power_load, 8.0), "load=%.2f" % gen.power_load)
 	ok("ТЭЦ: efficiency 0.75", is_equal_approx(gen.efficiency, 0.75), "eff=%.3f" % gen.efficiency)
 	var all_075: bool = true
@@ -68,7 +72,8 @@ func run() -> void:
 	ok("урон снимает hp", is_equal_approx(d4.hp, Balance.MACHINE_HP - 10.0), "hp=%.0f" % d4.hp)
 	d4.take_damage(Balance.MACHINE_HP)
 	ok("бур разрушен и убран из мира", not World.machines.has(c4))
-	await wait(0.6)
+	await wait_until(func() -> bool: return is_equal_approx(gen.power_load, 6.0) and not Game.brownout, 3.0)
+	await wait(Balance.POWER_CHECK_INTERVAL * 2.0)
 	ok("после разрушения нагрузка снова 6", is_equal_approx(gen.power_load, 6.0), "load=%.2f" % gen.power_load)
 	ok("после разрушения efficiency снова 1.0", is_equal_approx(d0.efficiency, 1.0), "eff=%.3f" % d0.efficiency)
 	ok("браун-аут снят", not Game.brownout and _brownout_log.has(false), str(_brownout_log))

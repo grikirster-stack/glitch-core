@@ -32,8 +32,8 @@ func run() -> void:
 	var hp0: float = player.hp
 	var d0: float = ph.global_position.distance_to(player.global_position)
 	var closest: float = d0
-	var t0: int = Time.get_ticks_msec()
-	while Time.get_ticks_msec() - t0 < 6000:
+	var t0: float = now()
+	while now() - t0 < 6.0:
 		closest = minf(closest, ph.global_position.distance_to(player.global_position))
 		if player.hp < hp0:
 			break
