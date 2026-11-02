@@ -56,6 +56,7 @@ func _start() -> void:
 	tint = CanvasModulate.new()
 	add_child(tint)
 	add_child(Emission.new())   # слой эмиссии (ADR-003 V3): свечение не темнеет под tint
+	add_child(GlitchFx.new())   # глитч по событию и «меньше глитча» (ADR-003 V7, #108)
 
 	player = Player.new()
 	player.look = int(Net.local_profile.get("look", 0)) & 0xFFFF   # вид из профиля (MP-B, #87)

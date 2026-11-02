@@ -270,6 +270,7 @@ func _build() -> void:
 	hardcore_box.tooltip_text = "Одна жизнь, без сохранений"
 	hardcore_box.custom_minimum_size = Vector2(0, BUTTON_H)
 	seed_row.add_child(hardcore_box)
+	right.add_child(GlitchFx.menu_toggle(_button(""), profile, profile_path))   # ADR-003 V7 (#108)
 
 	single_button = _button("Одиночная игра")
 	single_button.pressed.connect(start_single)

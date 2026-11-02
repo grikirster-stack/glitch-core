@@ -8,7 +8,8 @@ extends RefCounted
 ##             nick — ник (правила — nick_error());
 ##             look — параметры вида, Look (u16: 4 части по 4 бита);
 ##   [net]     recent_ips — последние адреса «Подключиться по IP» (MP-H, #93);
-##             port       — порт игры.
+##             port       — порт игры;
+##   [access]  less_glitch — «Меньше глитча и мерцания» (ADR-003 V7, #108): GlitchFx.calm.
 ##
 ## Чужой или битый файл не валит игру: неверный ник и тип поля — значение по
 ## умолчанию, uid 0 — новый uid. Неизвестные индексы вида хранятся как есть,
@@ -34,6 +35,8 @@ var nick: String = DEFAULT_NICK
 var look: int = 0
 var recent_ips: PackedStringArray = PackedStringArray()
 var port: int = DEFAULT_PORT
+## Меньше глитча и мерцания (доступность, ADR-003 V7): читает GlitchFx.
+var less_glitch: bool = false
 
 
 ## Параметры вида: 4 индекса по 4 бита в одном u16 (в сети — как есть).
@@ -113,6 +116,8 @@ static func load_or_create(path: String = PATH) -> Profile:
 	var v_port: Variant = cfg.get_value("net", "port", DEFAULT_PORT)
 	p.port = int(v_port) if v_port is int and int(v_port) > 0 and int(v_port) < 65536 \
 			else DEFAULT_PORT
+	var v_lg: Variant = cfg.get_value("access", "less_glitch", false)
+	p.less_glitch = v_lg if v_lg is bool else false
 	if p.uid == 0:
 		p.uid = new_uid()
 		dirty = true
@@ -128,7 +133,18 @@ func save_to(path: String = PATH) -> Error:
 	cfg.set_value("profile", "look", look & 0xFFFF)
 	cfg.set_value("net", "recent_ips", recent_ips)
 	cfg.set_value("net", "port", port)
+	cfg.set_value("access", "less_glitch", less_glitch)
 	return cfg.save(path)
+
+
+## «Меньше глитча» из файла, не создавая профиль (игра запущена без меню: --test,
+## --scenario, сеть). Нет файла или битое поле — false.
+static func read_less_glitch(path: String = PATH) -> bool:
+	var cfg: ConfigFile = ConfigFile.new()
+	if cfg.load(path) != OK:
+		return false
+	var v: Variant = cfg.get_value("access", "less_glitch", false)
+	return v if v is bool else false
 
 
 ## «Подключиться по IP» (MP-H, #93): адрес — в начало списка последних, без повторов,
