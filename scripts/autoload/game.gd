@@ -136,6 +136,9 @@ func reset_run() -> void:
 
 
 func _process(delta: float) -> void:
+	if not Net.is_authority():   # СЕТЬ (ADR-002, § 4.2.6): у клиента — только свои часы
+		_net_client_process(delta)
+		return
 	# Питание раскладывается и после смерти/победы: машины мира живут дальше.
 	_power_timer += delta
 	if _power_timer >= Balance.POWER_CHECK_INTERVAL:
@@ -342,6 +345,8 @@ static func _is_power_consumer(m) -> bool:
 ## которого попадает. Нагрузка генератора — сумма power_draw его потребителей,
 ## efficiency = clamp(output / load, 0, 1) (при нулевой нагрузке — 1).
 func update_power_budget() -> void:
+	if not Net.is_authority():   # СЕТЬ (ADR-002): питание считает хост
+		return
 	_sync_power_index()
 	# Поимённая сверка потребителей с миром — раз в POWER_VALIDATE_EVERY тиков.
 	# Добавление/снятие машин ловит проверка размера в _sync_power_index().
@@ -498,6 +503,8 @@ func _tick_objective(delta: float) -> void:
 
 ## Пересчитать этап цели сейчас (обычно — сам раз в 0.25 с; публичная — для тестов).
 func update_objective() -> void:
+	if not Net.is_authority():   # СЕТЬ (ADR-002): этап цели приходит от хоста
+		return
 	var target: int = objective_target()
 	if target > objective_stage:
 		_enter_stage(target)
@@ -573,6 +580,8 @@ func epilogue_stats() -> Dictionary:
 
 ## Попытка запустить релей-ядро. Возвращает true, если запуск прошёл.
 func try_finish() -> bool:
+	if not Net.is_authority():   # СЕТЬ (ADR-002): релей запускает хост
+		return false
 	if player == null or relay_active:
 		return false
 	var missing: Array = []
@@ -632,3 +641,74 @@ signal player_left(p)
 var players: Array = []
 ## Свой герой этого процесса (без типа — цикла зависимостей).
 var local_player = null
+
+# --- Мир по сети (MP-C, #88; § 4.2.6): часы клиента и глобальный пакет.
+## Клиент сам двигает time_of_day той же формулой и подтягивается к хосту, если
+## разница больше NET_CLOCK_SNAP цикла (0.5 с). Смена, этап, данные, релей, угроза —
+## из глобального пакета хоста (1 Гц и сразу по событию). Питание, цель и релей
+## у клиента не считаются (Net.is_authority() в update_power_budget, update_objective,
+## try_finish и в начале _process).
+const NET_CLOCK_SNAP: float = 0.002
+## Узел мира по сети (scripts/net/net_world.gd): живёт под Game, без сессии молчит.
+var net_world: NetWorld = null
+## Клиент: сколько раз часы подтянуты к хосту.
+var net_clock_snaps: int = 0
+
+
+func _enter_tree() -> void:
+	if net_world == null:
+		net_world = NetWorld.new()
+		net_world.name = "NetWorld"
+		add_child.call_deferred(net_world)
+
+
+## Клиент: только часы забега (и отсчёт релея для HUD между пакетами — победу
+## объявляет хост).
+func _net_client_process(delta: float) -> void:
+	if state != State.PLAYING:
+		return
+	game_time += delta
+	time_of_day = fmod(time_of_day + delta / DAY_LENGTH, 1.0)
+	if relay_active:
+		relay_timer = maxf(0.0, relay_timer - delta * relay_speed)
+
+
+## Хост: глобальное состояние для NetCodec.encode_global (hash кладёт NetWorld).
+func net_global() -> Dictionary:
+	return {"time": time_of_day, "day": day_number, "state": state, "research": research,
+			"stage": objective_stage, "relay_active": relay_active, "relay_timer": relay_timer,
+			"tasks_done": tasks_done, "tasks_total": tasks_total,
+			"threat": 1 if Threat.active else 0, "threat_budget": Threat.budget,
+			"brownout": brownout, "game_time": game_time}
+
+
+## Клиент: глобальный пакет хоста. Рассвет и этап цели — с теми же уведомлениями,
+## что видит хост (тексты — как в _process и _enter_stage).
+func net_apply_global(d: Dictionary) -> void:
+	var t: float = float(d["time"])
+	if absf(wrapf(t - time_of_day, -0.5, 0.5)) > NET_CLOCK_SNAP:
+		time_of_day = t
+		net_clock_snaps += 1
+	game_time = float(d["game_time"])
+	var day: int = int(d["day"])
+	var new_day: bool = day > day_number
+	day_number = day
+	if new_day:
+		day_started.emit(day)
+		notify("Смена %d. Фантомы голоднее." % day, Color(0.9, 0.9, 0.7))
+	research = int(d["research"])
+	tasks_total = int(d["tasks_total"])
+	if int(d["tasks_done"]) != tasks_done:
+		tasks_done = int(d["tasks_done"])
+		task_completed.emit(tasks_total, tasks_done)
+	relay_active = bool(d["relay_active"])
+	relay_timer = float(d["relay_timer"])
+	var stage: int = int(d["stage"])
+	if stage > objective_stage:
+		_enter_stage(stage)
+	else:
+		set_objective_stage(stage)
+	_set_brownout(bool(d["brownout"]))
+	Threat.active = (int(d["threat"]) & 1) != 0
+	Threat.budget = float(d["threat_budget"])
+	set_state(int(d["state"]))
