@@ -24,6 +24,23 @@ extends Control
 ##    игрока в World.machines (словарь по клетке) — стоимость не зависит от
 ##    размера фабрики. Пересчёт — когда игрок сдвинулся или изменилось число
 ##    построек, и не реже HINT_RECHECK_SEC.
+##
+## Трекер цели, обучение и мощность (ADR-001 § 4.1, § 4.3, § 4.7; #34):
+##  * трекер этапа цели (Game.objective_stage, #32) и цепочка подсказок первых
+##    минут (копай → крафт → ТЭЦ → питание → терминал) — строки собираются раз в
+##    STATE_RECHECK_SEC (и сразу по Game.objective_changed / brownout_changed),
+##    в ключ попадает только их хеш;
+##  * индикатор мощности: генератор под курсором, иначе ближайший в окне
+##    ±POWER_SCAN_CELLS × ±POWER_SCAN_ROWS клеток вокруг игрока (окно
+##    сканируется тем же шагом STATE_RECHECK_SEC и только если игрок сменил
+##    клетку или число построек изменилось; курсор — одна выборка из словаря за
+##    кадр); в ключ — нагрузка и выход с шагом 0.1;
+##  * «под питанием ли терминал» — Game.is_powered перебирает все генераторы,
+##    поэтому ответ кэшируется на шаг STATE_RECHECK_SEC, а без единого
+##    работающего генератора не спрашивается вовсе;
+##  * отсчёт до ночи в сумерках — целые секунды в ключе (перерисовка раз в секунду);
+##  * вентиляции и решётки (#31) на миникарте — только под открытым туманом;
+##    решётки сверяются раз в MAP_CHECK_SEC.
 
 ## Сколько шагов у часов за полные сутки (Balance.DAY_LENGTH).
 const CLOCK_STEPS: int = 256
@@ -36,11 +53,20 @@ const HINT_RECHECK_SEC: float = 0.25
 const HINT_TERMINAL_DIST: float = 42.0
 const HINT_BEACON_DIST: float = 56.0
 const HINT_MACHINE_DIST: float = 40.0
+## Трекер цели, обучение и выбор генератора пересчитываются так часто, с.
+const STATE_RECHECK_SEC: float = 0.25
+## Окно поиска «ближайшего» генератора вокруг игрока, клеток: по горизонтали —
+## радиус ТЭЦ (8), по вертикали — уровень пола ±3 (генераторы стоят рядом с героем).
+const POWER_SCAN_CELLS: int = 8
+const POWER_SCAN_ROWS: int = 3
+## Генератор под курсором выбирается, если он в досягаемости игрока (Player.REACH;
+## сам класс Player здесь не трогаем — цикл зависимостей).
+const CURSOR_GEN_REACH: float = 5.6 * 16.0
 ## Прямоугольник миникарты относительно правого верхнего угла.
 const MAP_SIZE: Vector2i = Vector2i(186, 52)
 const MAP_OFFSET: Vector2 = Vector2(200, 60)
 ## Длина ключа состояния (см. _fill_key).
-const KEY_LEN: int = 40
+const KEY_LEN: int = 48
 
 var player = null   ## Ссылка на игрока без статического типа (иначе цикл зависимостей).
 var notes: Array = []          ## [{text, color, ttl}]
@@ -48,6 +74,47 @@ var damage_flash: float = 0.0
 var panel_alpha: float = 0.0
 ## Текущая подсказка внизу экрана ("" — нет). Читают сценарии.
 var hint_text: String = ""
+
+# ------------------------------------------- ТЕКСТЫ ПОДСКАЗОК (читают сценарии)
+const HINT_TERMINAL: String = "[E] — выполнить задание (удерживать)"
+const HINT_TERMINAL_NO_POWER: String = "Терминал: нет питания — поставьте рядом ТЭЦ"
+const HINT_BEACON: String = "[E] — активировать релей-ядро (удерживать)"
+const HINT_CHEST: String = "[E] — открыть сундук"
+const HINT_GEN_COAL: String = "[E] — загрузить уголь в ТЭЦ"
+const HINT_GEN_SWITCH: String = "[E] — рубильник ТЭЦ (вкл/выкл) · уголь в руке + [E] — топка"
+const HINT_SOLAR_SWITCH: String = "[E] — рубильник генератора (вкл/выкл)"
+const HINT_INSERTER: String = "ПКМ — повернуть манипулятор · [E] с предметом — фильтр"
+const HINT_HIDING: String = "Вы в вентиляции. [V] — вылезть"
+
+## Цепочка обучения: шаги по порядку, TUT_DONE — пройдена (строка скрыта).
+enum Tut { DIG, CRAFT, PLACE, POWER, TERMINAL, DONE }
+## Сколько хлама нужно на ТЭЦ (рецепт: 2 жел. пластины + 6 хлама, db.gd).
+const TUT_SCRAP: int = 6
+## Названия этапов цели (ADR-001 § 4.7), индекс — номер этапа.
+const STAGE_NAMES: Array[String] = ["", "ЗАПИТАТЬ СТАНЦИЮ", "СОБРАТЬ ДАННЫЕ",
+		"СОБРАТЬ РЕЛЕЙ", "УДЕРЖАТЬ СИГНАЛ"]
+
+# ---------------------------------- ТРЕКЕР / ОБУЧЕНИЕ / МОЩНОСТЬ (читают сценарии)
+## Этап цели, который показывает трекер (1..4).
+var tracker_stage: int = 1
+var tracker_title: String = ""
+var tracker_detail: String = ""
+## Шаг цепочки обучения (Tut) и его строка ("" — цепочка пройдена).
+var tutorial_step: int = Tut.DIG
+var tutorial_text: String = ""
+## Секунд до ночи (целые, вверх) в сумерках; -1 — не сумерки.
+var night_countdown: int = -1
+## Генератор индикатора мощности (под курсором или ближайший), null — нет.
+var power_gen = null
+## Строка индикатора мощности ("" — индикатора нет).
+var power_text: String = ""
+## Что показывает индикатор: нагрузка и выход ×10, флаги (= ключ [42..44]).
+var power_load_x10: int = 0
+var power_out_x10: int = 0
+var power_flags: int = 0
+const POWER_ON: int = 1
+const POWER_OVER: int = 2
+const POWER_NO_FUEL: int = 4
 
 # ---------------------------------------------- СЧЁТЧИКИ (для замеров)
 ## Время в _process и всех _draw слоёв HUD, мкс (tools/hud_probe.gd).
@@ -58,6 +125,15 @@ var stat_redraws: int = 0
 var stat_map_redraws: int = 0
 var stat_map_bakes: int = 0
 var stat_cross_redraws: int = 0
+## Разбивка stat_us для hud_probe: миникарта (_update_map + слой) и подсказки,
+## трекер, обучение, выбор генератора.
+var stat_map_us: int = 0
+var stat_hint_us: int = 0
+## Сколько вентиляций и решёток нарисовано на миникарте в последний раз.
+var stat_map_vents: int = 0
+var stat_map_grates: int = 0
+## Сколько раз сканировались клетки вокруг игрока в поисках генератора.
+var stat_power_scans: int = 0
 
 # ------------------------------------------------------------ ВНУТРЕННЕЕ
 var _cross: Control = null
@@ -82,6 +158,15 @@ var _hint_t: float = 0.0
 var _hint_pos: Vector2 = Vector2(INF, INF)
 var _hint_machines: int = -1
 var _hint_hiding: bool = false
+var _state_t: float = 0.0
+var _state_hash: int = 0
+var _power_cursor: Vector2i = Vector2i(-9999, -9999)
+var _power_near = null          # ближайший генератор по последнему сканированию
+var _last_game_time: float = 0.0
+var _vent_sig: int = -1
+var _scan_cell: Vector2i = Vector2i(-9999, -9999)
+var _scan_machines: int = -1
+var _term_power: Dictionary = {}   # клетка терминала → под питанием (кэш на шаг)
 
 
 func _ready() -> void:
@@ -98,6 +183,13 @@ func _ready() -> void:
 	World.explored_changed.connect(_on_explored)
 	World.explored_reset.connect(_on_explored_reset)
 	_on_explored_reset()
+	# Смена этапа и браун-аут — пересчитать трекер/индикатор в этот же кадр.
+	Game.objective_changed.connect(_on_state_signal)
+	Game.brownout_changed.connect(_on_state_signal)
+
+
+func _on_state_signal(_v = null) -> void:
+	_state_t = 0.0
 
 
 func _make_layer(cb: Callable) -> Control:
@@ -127,7 +219,10 @@ func _process(delta: float) -> void:
 		stat_us += Time.get_ticks_usec() - t0
 		return
 
+	var th: int = Time.get_ticks_usec()
 	_update_hint(delta)
+	_update_state(delta)
+	stat_hint_us += Time.get_ticks_usec() - th
 
 	# Основной слой: каждый кадр — пока идёт анимация (и ещё один кадр после неё),
 	# иначе — только при смене ключа.
@@ -139,7 +234,9 @@ func _process(delta: float) -> void:
 		queue_redraw()
 	_animating = anim
 
+	var tm: int = Time.get_ticks_usec()
 	_update_map(delta)
+	stat_map_us += Time.get_ticks_usec() - tm
 
 	var mp: Vector2 = get_viewport().get_mouse_position()
 	if mp != _mouse:
@@ -171,6 +268,24 @@ func _fill_key() -> void:
 	_key[10] = int(Game.daylight() * 32.0)
 	_key[11] = 1 if Game.game_time < 22.0 else 0
 	_key[37] = Game.phase_name().hash()
+	_key[38] = _state_hash
+	night_countdown = _night_countdown()
+	_key[39] = night_countdown
+	_key[40] = 1 if Game.brownout else 0
+	var g = power_gen
+	if g != null and is_instance_valid(g):
+		_key[41] = g.get_instance_id() & 0x7fffffff
+		power_load_x10 = int(float(g.power_load) * 10.0)
+		power_out_x10 = int(g.current_output() * 10.0)
+		power_flags = (POWER_ON if g.enabled else 0) | (POWER_OVER if g.overloaded() else 0) 				| (POWER_NO_FUEL if _gen_no_fuel(g) else 0)
+	else:
+		_key[41] = 0
+		power_load_x10 = 0
+		power_out_x10 = 0
+		power_flags = 0
+	_key[42] = power_load_x10
+	_key[43] = power_out_x10
+	_key[44] = power_flags
 	if player == null:
 		_key[12] = 0
 		return
@@ -213,12 +328,12 @@ func _set_hint(h: String) -> void:
 
 func _compute_hint(pos: Vector2) -> String:
 	if player.hiding:
-		return "Вы в вентиляции. [V] — вылезть"
+		return HINT_HIDING
 	for t in World.terminals:
 		if World.cell_to_world(t).distance_to(pos) < HINT_TERMINAL_DIST:
-			return "[E] — выполнить задание (удерживать)"
+			return terminal_hint(t)
 	if World.cell_to_world(World.beacon_cell).distance_to(pos) < HINT_BEACON_DIST:
-		return "[E] — активировать релей-ядро (удерживать)"
+		return HINT_BEACON
 	# Только клетки в радиусе подсказки, а не все постройки мира.
 	var r: int = int(ceil(HINT_MACHINE_DIST / float(World.TILE))) + 1
 	var pc: Vector2i = World.world_to_cell(pos)
@@ -230,13 +345,234 @@ func _compute_hint(pos: Vector2) -> String:
 				continue
 			if m.global_position.distance_to(pos) >= HINT_MACHINE_DIST:
 				continue
-			if m is CoalGen:
-				return "[E] — загрузить уголь в ТЭЦ"
+			if m is Generator:
+				return generator_hint(m)
+			if m is Inserter:
+				return HINT_INSERTER
 			if m is Chest:
 				chest = true
 	if chest:
-		return "[E] — открыть сундук"
+		return HINT_CHEST
 	return ""
+
+
+## Подсказка у терминала: без питания E не работает (#29) — так и пишем.
+func terminal_hint(t: Vector2i) -> String:
+	return HINT_TERMINAL if _terminal_powered(t) else HINT_TERMINAL_NO_POWER
+
+
+## Под питанием ли терминал. Game.is_powered перебирает все генераторы мира,
+## поэтому: ни одного работающего — сразу нет; иначе ответ кэшируется до
+## следующего пересчёта состояния (STATE_RECHECK_SEC — тот же шаг, что у
+## раскладки питания).
+func _terminal_powered(t: Vector2i) -> bool:
+	if Game.power_output_total <= 0.0:
+		return false
+	var v = _term_power.get(t)
+	if v == null:
+		v = Game.is_powered(World.cell_to_world(t))
+		_term_power[t] = v
+	return bool(v)
+
+
+## Подсказка у генератора: ТЭЦ с углём в руке — топка, иначе — рубильник (#25).
+func generator_hint(g) -> String:
+	if g is CoalGen:
+		if player != null and player.inv.selected_stack().id == IDs.I.COAL:
+			return HINT_GEN_COAL
+		return HINT_GEN_SWITCH
+	return HINT_SOLAR_SWITCH
+
+
+# ------------------------------------------------ ТРЕКЕР ЦЕЛИ, ОБУЧЕНИЕ, МОЩНОСТЬ
+
+## Раз в STATE_RECHECK_SEC: трекер, шаг обучения, «ближайший» генератор.
+## Генератор под курсором проверяется каждый кадр — одной выборкой из словаря.
+func _update_state(delta: float) -> void:
+	# Новый забег (перезапуск сцены): время игры пошло заново — обучение тоже.
+	if Game.game_time < _last_game_time:
+		tutorial_step = Tut.DIG
+		_state_t = 0.0
+	_last_game_time = Game.game_time
+	_state_t -= delta
+	var cursor_changed: bool = false
+	if player != null and player.building_cell != _power_cursor:
+		_power_cursor = player.building_cell
+		cursor_changed = true
+	if _state_t <= 0.0:
+		_state_t = STATE_RECHECK_SEC
+		_term_power.clear()
+		_power_near = _scan_power_gen()
+		_compute_tracker()
+		_compute_tutorial()
+		cursor_changed = true
+	if cursor_changed:
+		power_gen = _pick_power_gen()
+		power_text = _power_line(power_gen)
+		_state_hash = hash([tracker_title, tracker_detail, tutorial_text, power_text])
+
+
+## Генератор под курсором (в досягаемости), иначе ближайший к игроку.
+func _pick_power_gen():
+	if player == null:
+		return null
+	var m = World.machines.get(_power_cursor)
+	if m is Generator and is_instance_valid(m) \
+			and m.global_position.distance_to(player.global_position) <= CURSOR_GEN_REACH:
+		return m
+	if _power_near != null and is_instance_valid(_power_near):
+		return _power_near
+	return null
+
+
+## Ближайший к игроку генератор в прямоугольнике ±POWER_SCAN_CELLS клеток по
+## горизонтали и ±POWER_SCAN_ROWS по вертикали — только клетки вокруг игрока,
+## не все постройки мира. Пока игрок в той же клетке и число построек то же —
+## прошлый ответ (сканирование — сотня выборок из словаря).
+func _scan_power_gen():
+	if player == null:
+		return null
+	var pos: Vector2 = player.global_position
+	var pc: Vector2i = World.world_to_cell(pos)
+	if pc == _scan_cell and World.machines.size() == _scan_machines 			and (_power_near == null or is_instance_valid(_power_near)):
+		return _power_near
+	_scan_cell = pc
+	_scan_machines = World.machines.size()
+	stat_power_scans += 1
+	var r: int = POWER_SCAN_CELLS
+	var best = null
+	var best_d2: float = INF
+	for dy in range(-POWER_SCAN_ROWS, POWER_SCAN_ROWS + 1):
+		for dx in range(-r, r + 1):
+			var m = World.machines.get(pc + Vector2i(dx, dy))
+			if not (m is Generator) or not is_instance_valid(m):
+				continue
+			var d2: float = m.global_position.distance_squared_to(pos)
+			if d2 < best_d2:
+				best_d2 = d2
+				best = m
+	return best
+
+
+static func _gen_no_fuel(g) -> bool:
+	return g is CoalGen and g.enabled and float(g.fuel) <= 0.0
+
+
+static func _gen_name(g) -> String:
+	if g is CoalGen:
+		return "ТЭЦ"
+	if g is Solar:
+		return "Солнечная панель"
+	return "Генератор"
+
+
+## Строка индикатора мощности (без чисел нагрузки — они рисуются из ключа).
+func _power_line(g) -> String:
+	if g == null or not is_instance_valid(g):
+		return ""
+	return _gen_name(g)
+
+
+## Этап цели и строка под ним. Этап 0 («не начато») показываем как первый.
+func _compute_tracker() -> void:
+	var st: int = clampi(Game.objective_stage, 1, 4)
+	if Game.relay_active:
+		st = 4
+	tracker_stage = st
+	tracker_title = "ЦЕЛЬ %d/4 · %s" % [st, STAGE_NAMES[st]]
+	match st:
+		1:
+			var tot: int = 0
+			var okc: int = 0
+			for c in World.terminal_chapters:
+				if int(World.terminal_chapters[c]) > 1:
+					continue      # главы 1–2 — терминалы базы, остальные — руины
+				tot += 1
+				if not World.terminals.has(c) or _terminal_powered(c):
+					okc += 1
+			tracker_detail = "терминалы базы под питанием %d/%d · данные %d" % [okc, tot, Game.research]
+		2:
+			var opened: int = 0
+			var next: String = ""
+			for n in Tech.ORDER:
+				if n == "T0":
+					continue
+				if Tech.is_unlocked(n):
+					opened += 1
+				elif next == "":
+					next = n
+			if next == "":
+				tracker_detail = "данные %d · все узлы открыты" % Game.research
+			else:
+				tracker_detail = "данные %d/%d · узлы %d/5 · следующий %s" % [
+					Game.research, Tech.cost(next), opened, next]
+		3:
+			var have_all: int = 0
+			var miss: String = ""
+			for id in Game.relay_req:
+				var need: int = int(Game.relay_req[id])
+				var have: int = player.inv.count_of(id) if player != null else 0
+				if have >= need:
+					have_all += 1
+				elif miss == "":
+					miss = " · %s %d/%d" % [DB.item_name(id), have, need]
+			tracker_detail = "детали %d/%d%s · [E] у ядра" % [have_all, Game.relay_req.size(), miss]
+		_:
+			var left: int = int(ceil(Game.relay_timer))
+			tracker_detail = "до эвакуации %d:%02d · держитесь" % [left / 60, left % 60]
+
+
+## Шаг обучения: самый дальний выполненный признак (вперёд — сразу, назад — никогда).
+func _compute_tutorial() -> void:
+	if tutorial_step == Tut.DONE:
+		tutorial_text = ""
+		return
+	var lvl: int = Tut.DIG
+	var scrap: int = 0
+	if player != null:
+		scrap = player.inv.count_of(IDs.I.SCRAP)
+	if Game.tasks_done > 0 or Game.objective_stage >= 2:
+		lvl = Tut.DONE
+	elif _base_terminal_powered():
+		lvl = Tut.TERMINAL
+	elif Game.power_output_total > 0.0:
+		lvl = Tut.POWER
+	elif _power_near != null or (player != null and player.inv.count_of(IDs.I.COAL_GEN) > 0):
+		lvl = Tut.PLACE
+	elif scrap >= TUT_SCRAP:
+		lvl = Tut.CRAFT
+	tutorial_step = maxi(tutorial_step, lvl)
+	var n: int = tutorial_step + 1
+	match tutorial_step:
+		Tut.DIG:
+			tutorial_text = "%d/5 Копай: ЛКМ по земле — хлам %d/%d на ТЭЦ" % [n, mini(scrap, TUT_SCRAP), TUT_SCRAP]
+		Tut.CRAFT:
+			tutorial_text = "%d/5 Крафт: I — «Угольная ТЭЦ»" % n
+		Tut.PLACE:
+			tutorial_text = "%d/5 ТЭЦ: ПКМ — у терминала, [E] с углём — топка" % n
+		Tut.POWER:
+			tutorial_text = "%d/5 Питание: терминал вне зоны (P — радиус)" % n
+		Tut.TERMINAL:
+			tutorial_text = "%d/5 Терминал под питанием: держите [E]" % n
+		_:
+			tutorial_text = ""
+
+
+## Под питанием ли хоть один терминал базы (главы 1–2) — обучение про них.
+func _base_terminal_powered() -> bool:
+	if Game.power_output_total <= 0.0:
+		return false
+	for t in World.terminals:
+		if int(World.terminal_chapters.get(t, -1)) <= 1 and _terminal_powered(t):
+			return true
+	return false
+
+
+## Целых секунд до ночи (вверх) в сумерках, иначе -1.
+func _night_countdown() -> int:
+	if not Game.is_dusk():
+		return -1
+	return int(ceil((Balance.NIGHT_START - Game.time_of_day) * Balance.DAY_LENGTH))
 
 
 # ------------------------------------------------------------ МИНИКАРТА
@@ -246,6 +582,12 @@ func _update_map(delta: float) -> void:
 	if _map_check_t <= 0.0:
 		_map_check_t = MAP_CHECK_SEC
 		if _bake_map_if_changed():
+			_map.queue_redraw()
+		# Решётки ставит/снимает игрок (#31), копатель их ломает — сверка раз в
+		# MAP_CHECK_SEC по ~15 вентиляциям.
+		var vs: int = _vents_signature()
+		if vs != _vent_sig:
+			_vent_sig = vs
 			_map.queue_redraw()
 	if _fog_dirty:
 		_fog_dirty = false
@@ -309,6 +651,22 @@ func _draw_map_layer() -> void:
 	c.draw_rect(r, Color(1, 1, 1, 0.25), false, 1.0)
 	var sx: float = r.size.x / float(World.W)
 	var sy: float = r.size.y / float(World.H)
+	# Вентиляции и решётки (#31) — только под открытым туманом.
+	var nv: int = 0
+	var ng: int = 0
+	for v in World.vents:
+		if not map_explored_at(v):
+			continue
+		var vp: Vector2 = (r.position + Vector2((float(v.x) + 0.5) * sx, (float(v.y) + 0.5) * sy)).floor()
+		if WorldFX.is_vent_sealed(v):
+			ng += 1
+			c.draw_rect(Rect2(vp - Vector2(2, 2), Vector2(5, 5)), Color(0.62, 0.68, 0.74))
+			c.draw_line(vp - Vector2(2, 0), vp + Vector2(3, 0), Color(0.15, 0.17, 0.2), 1.0)
+		else:
+			nv += 1
+			c.draw_rect(Rect2(vp - Vector2(2, 2), Vector2(5, 5)), Color(0.85, 0.45, 1.0))
+	stat_map_vents = nv
+	stat_map_grates = ng
 	# Релей
 	var bp: Vector2 = r.position + Vector2(World.beacon_cell.x * sx, World.beacon_cell.y * sy)
 	c.draw_rect(Rect2(bp - Vector2(3, 3), Vector2(6, 6)), Color(0.3, 0.95, 1.0))
@@ -317,7 +675,18 @@ func _draw_map_layer() -> void:
 		c.draw_circle(r.position + Vector2(_map_dot), 3.0, Color(0.95, 0.25, 0.28))
 	c.draw_string(ThemeDB.fallback_font, r.position + Vector2(4, 12), "КАРТА",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.6))
-	stat_us += Time.get_ticks_usec() - t0
+	var dt: int = Time.get_ticks_usec() - t0
+	stat_us += dt
+	stat_map_us += dt
+
+
+## Подпись состава вентиляций: число и какие запечатаны (битами по порядку).
+func _vents_signature() -> int:
+	var sig: int = World.vents.size()
+	for i in World.vents.size():
+		if WorldFX.is_vent_sealed(World.vents[i]):
+			sig = sig * 31 + i + 1
+	return sig
 
 
 # ------------------------------------------------------------ ТУМАН НА МИНИКАРТЕ (#59)
@@ -420,9 +789,8 @@ func _draw() -> void:
 		draw_string(font, emp_rect.position + Vector2(156, 8), "ИМПУЛЬС [Q]",
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.6, 0.85, 1.0, 0.85))
 
-		# Инвентарь подсказка
-		draw_string(font, Vector2(14, 66), "Задачи: %d/%d   Данные: %d" % [Game.tasks_done, Game.tasks_total, Game.research],
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.92, 1.0, 0.9))
+		# Трекер цели, мощность, обучение (#34)
+		_draw_status_block(font)
 
 	# ---- Время суток ---------------------------------------------------------
 	# Солнце ставим по квантованному времени — ровно тому, что в ключе перерисовки.
@@ -436,6 +804,18 @@ func _draw() -> void:
 	draw_circle(sun, 6.0, sky)
 	draw_string(font, Vector2(w - 176, 26), "Смена %d — %s" % [Game.day_number, Game.phase_name()],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.9, 0.92, 1.0))
+
+	# ---- Отсчёт до ночи (сумерки, § 4.1) -----------------------------------
+	if night_countdown >= 0:
+		var cd: String = "НОЧЬ ЧЕРЕЗ %d с" % night_countdown
+		var cw: float = 240.0
+		var cr: Rect2 = Rect2(w * 0.5 - cw * 0.5, 12, cw, 28)
+		draw_rect(cr, Color(0.10, 0.03, 0.05, 0.62))
+		draw_rect(cr, Color(1.0, 0.45, 0.3, 0.7), false, 1.0)
+		# Последние 5 с — ярче, мигает раз в секунду (ключ — целые секунды).
+		var hot: bool = night_countdown <= 5 and night_countdown % 2 == 1
+		draw_string(font, cr.position + Vector2(0, 20), cd, HORIZONTAL_ALIGNMENT_CENTER, cw, 16,
+				Color(1.0, 0.85, 0.6) if hot else Color(1.0, 0.55, 0.38))
 
 	# ---- Уведомления --------------------------------------------------------
 	var y: float = h - 150
@@ -456,8 +836,8 @@ func _draw() -> void:
 
 	# ---- Подсказки -----------------------------------------------------------
 	if hint_text != "":
-		draw_string(font, Vector2(size.x * 0.5 - 190, size.y - 116), hint_text,
-				HORIZONTAL_ALIGNMENT_CENTER, 380, 15, Color(1.0, 0.95, 0.75, 0.95))
+		draw_string(font, Vector2(size.x * 0.5 - 300, size.y - 116), hint_text,
+				HORIZONTAL_ALIGNMENT_CENTER, 600, 15, Color(1.0, 0.95, 0.75, 0.95))
 
 	# ---- Подсказка управления (затухает) ------------------------------------
 	if Game.game_time < 22.0:
@@ -471,6 +851,52 @@ func _draw() -> void:
 			draw_string(font, Vector2(size.x * 0.5 - 260, size.y * 0.30 + i * 20), String(lines[i]),
 					HORIZONTAL_ALIGNMENT_CENTER, 520, 14, Color(0.85, 0.92, 1.0, ta))
 	stat_us += Time.get_ticks_usec() - t0
+
+
+## Блок под здоровьем: трекер цели, мощность генератора, шаг обучения.
+## Всё, что здесь рисуется, — в ключе: _state_hash (строки), [39..44] (числа).
+func _draw_status_block(font: Font) -> void:
+	var x: float = 14.0
+	var y: float = 54.0
+	# Трекер цели
+	draw_rect(Rect2(x, y, 4, 34), Color(0.3, 0.9, 1.0, 0.85))
+	draw_string(font, Vector2(x + 10, y + 13), tracker_title,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.45, 0.92, 1.0))
+	draw_string(font, Vector2(x + 10, y + 30), tracker_detail,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.82, 0.9, 1.0, 0.9))
+	y += 44.0
+	# Мощность: выбранный/ближайший генератор (§ 4.3)
+	var g = power_gen
+	if g != null and is_instance_valid(g):
+		var out: float = g.current_output()
+		var ld: float = float(g.power_load)
+		var bar: Rect2 = Rect2(x, y + 8, 120, 7)
+		draw_rect(bar, Color(0, 0, 0, 0.55))
+		var cap: float = maxf(out, 0.001)
+		var frac: float = clampf(ld / cap, 0.0, 1.0) if out > 0.0 else (1.0 if ld > 0.0 else 0.0)
+		var over: bool = g.overloaded()
+		var col: Color = Color(1.0, 0.35, 0.25) if over else Color(1.0, 0.85, 0.3)
+		draw_rect(Rect2(bar.position + Vector2(1, 1), Vector2((bar.size.x - 2) * frac, bar.size.y - 2)), col)
+		draw_rect(bar, Color(1, 1, 1, 0.3), false, 1.0)
+		var state: String = ""
+		if not g.enabled:
+			state = " · ВЫКЛ"
+		elif _gen_no_fuel(g):
+			state = " · нет угля"
+		elif over:
+			state = " · ПЕРЕГРУЗ"
+		draw_string(font, Vector2(x + 128, y + 15), "%s: нагрузка %.1f / выход %.1f%s" % [power_text, ld, out, state],
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
+				Color(1.0, 0.55, 0.45) if (over or not g.enabled) else Color(1.0, 0.92, 0.7, 0.92))
+		y += 22.0
+	elif Game.brownout:
+		draw_string(font, Vector2(x, y + 15), "ПЕРЕГРУЗ СЕТИ — станки замедлены",
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1.0, 0.55, 0.45))
+		y += 22.0
+	# Обучение: копай → крафт → ТЭЦ → питание → терминал
+	if tutorial_text != "":
+		draw_string(font, Vector2(x, y + 14), "ОБУЧЕНИЕ " + tutorial_text,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1.0, 0.88, 0.45, 0.95))
 
 
 func _draw_hotbar(font: Font) -> void:
