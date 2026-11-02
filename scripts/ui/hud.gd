@@ -15,6 +15,10 @@ extends Control
 ##    draw_texture вместо 320 draw_line), текстура пересобирается только при
 ##    изменении рельефа (сверка раз в MAP_CHECK_SEC); сам слой перерисовывается,
 ##    когда точка игрока сдвинулась на пиксель;
+##  * туман войны на миникарте (#59) — вторая запечённая текстура поверх рельефа:
+##    пиксель чёрный, пока не исследована его клетка-представитель. Правится
+##    только по сигналу World.explored_changed (пиксели под новыми клетками),
+##    слой карты перерисовывается лишь когда пиксель тумана реально открылся;
 ##  * прицел — отдельный слой из четырёх линий, перерисовывается при движении мыши;
 ##  * подсказки не перебирают постройки мира: смотрим только клетки вокруг
 ##    игрока в World.machines (словарь по клетке) — стоимость не зависит от
@@ -64,6 +68,10 @@ var _map_sig: PackedInt32Array = PackedInt32Array()
 var _map_check_t: float = 0.0
 var _map_dot: Vector2i = Vector2i(-9999, -9999)
 var _map_rect: Rect2 = Rect2()
+var _fog_img: Image = null
+var _fog_tex: ImageTexture = null
+var _fog_dirty: bool = false
+var _fog_open: PackedByteArray = PackedByteArray()   # 1 — пиксель тумана открыт
 var _mouse: Vector2 = Vector2(-1.0, -1.0)
 var _key: PackedInt32Array = PackedInt32Array()
 var _last_key: PackedInt32Array = PackedInt32Array()
@@ -84,6 +92,12 @@ func _ready() -> void:
 	_cross = _make_layer(_draw_cross_layer)
 	_map_img = Image.create(MAP_SIZE.x, MAP_SIZE.y, false, Image.FORMAT_RGBA8)
 	_map_tex = ImageTexture.create_from_image(_map_img)
+	_fog_img = Image.create(MAP_SIZE.x, MAP_SIZE.y, false, Image.FORMAT_RGBA8)
+	_fog_tex = ImageTexture.create_from_image(_fog_img)
+	_fog_open.resize(MAP_SIZE.x * MAP_SIZE.y)
+	World.explored_changed.connect(_on_explored)
+	World.explored_reset.connect(_on_explored_reset)
+	_on_explored_reset()
 
 
 func _make_layer(cb: Callable) -> Control:
@@ -233,6 +247,10 @@ func _update_map(delta: float) -> void:
 		_map_check_t = MAP_CHECK_SEC
 		if _bake_map_if_changed():
 			_map.queue_redraw()
+	if _fog_dirty:
+		_fog_dirty = false
+		_fog_tex.update(_fog_img)
+		_map.queue_redraw()
 	var r: Rect2 = Rect2(size.x - MAP_OFFSET.x, MAP_OFFSET.y, MAP_SIZE.x, MAP_SIZE.y)
 	if r != _map_rect:
 		_map_rect = r
@@ -287,6 +305,7 @@ func _draw_map_layer() -> void:
 	var c: Control = _map
 	c.draw_rect(r, Color(0.05, 0.06, 0.09, 0.72))
 	c.draw_texture(_map_tex, r.position)
+	c.draw_texture(_fog_tex, r.position)
 	c.draw_rect(r, Color(1, 1, 1, 0.25), false, 1.0)
 	var sx: float = r.size.x / float(World.W)
 	var sy: float = r.size.y / float(World.H)
@@ -299,6 +318,62 @@ func _draw_map_layer() -> void:
 	c.draw_string(ThemeDB.fallback_font, r.position + Vector2(4, 12), "КАРТА",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.6))
 	stat_us += Time.get_ticks_usec() - t0
+
+
+# ------------------------------------------------------------ ТУМАН НА МИНИКАРТЕ (#59)
+
+## Клетка мира, по которой решается, открыт ли пиксель миникарты (центр пикселя).
+func _map_cell(px: int, py: int) -> Vector2i:
+	return Vector2i(mini(World.W - 1, int((float(px) + 0.5) * float(World.W) / float(MAP_SIZE.x))),
+			mini(World.H - 1, int((float(py) + 0.5) * float(World.H) / float(MAP_SIZE.y))))
+
+
+## Карта исследования заменена: всё чёрное, потом открываем по ней (после
+## загрузки #37 — полный проход по пикселям, при новом мире карта ещё пуста).
+func _on_explored_reset() -> void:
+	_fog_img.fill(Color(0, 0, 0, 1))
+	_fog_open.fill(0)
+	_fog_dirty = true
+	if World.explore_cells == 0:
+		return
+	for py in MAP_SIZE.y:
+		# Ряд пикселей, под которым ни одной открытой клетки, — одна нативная проверка.
+		var row: int = _map_cell(0, py).y * World.W
+		if not World.explored.slice(row, row + World.W).has(1):
+			continue
+		for px in MAP_SIZE.x:
+			_open_fog_px(px, py)
+
+
+## Открылись клетки: смотрим только пиксели миникарты под новыми клетками.
+func _on_explored(_rect: Rect2i) -> void:
+	var ww: int = World.W
+	var hh: int = World.H
+	var mw: int = MAP_SIZE.x
+	var mh: int = MAP_SIZE.y
+	var last: int = -1
+	for idx in World.explore_new:
+		var px: int = (idx % ww) * mw / ww
+		var py: int = (idx / ww) * mh / hh
+		var fi: int = py * mw + px
+		if fi == last or _fog_open[fi] != 0:
+			continue
+		last = fi
+		_open_fog_px(px, py)
+
+
+func _open_fog_px(px: int, py: int) -> void:
+	if World.is_explored(_map_cell(px, py)):
+		_fog_open[py * MAP_SIZE.x + px] = 1
+		_fog_img.set_pixel(px, py, Color(0, 0, 0, 0))
+		_fog_dirty = true
+
+
+## Открыт ли туман миникарты над клеткой мира (для сценария fog_reveal).
+func map_explored_at(c: Vector2i) -> bool:
+	var px: int = clampi(c.x * MAP_SIZE.x / World.W, 0, MAP_SIZE.x - 1)
+	var py: int = clampi(c.y * MAP_SIZE.y / World.H, 0, MAP_SIZE.y - 1)
+	return _fog_open[py * MAP_SIZE.x + px] != 0
 
 
 # ------------------------------------------------------------ ПРИЦЕЛ

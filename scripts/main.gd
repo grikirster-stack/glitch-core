@@ -45,6 +45,7 @@ func _ready() -> void:
 	world_fx = WorldFX.new()
 	add_child(world_fx)
 	UI.world_fx = world_fx
+	add_child(FogLayer.new())   # туман войны (#59), поверх мира и WorldFX
 
 	tint = CanvasModulate.new()
 	add_child(tint)

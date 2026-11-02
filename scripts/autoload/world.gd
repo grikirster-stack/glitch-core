@@ -327,6 +327,7 @@ func generate(p_seed: int) -> void:
 	_build_astar()
 	var t_end: int = Time.get_ticks_usec()
 	spawn_point = Vector2(float((bx - 4) * TILE) + TILE * 0.5, float(surface[bx] * TILE) - 12.0)
+	_reset_explored()   # туман войны (#59): закрыто всё, кроме старта
 
 	gen_stats = {
 		"gen_ms": float(t_end - t_start) / 1000.0,
@@ -866,7 +867,8 @@ func _fluid_mark_cell(x: int, y: int) -> void:
 
 
 func _process(delta: float) -> void:
-	_defense_tick(delta)
+	_explore_tick()   # туман войны (#59): работа только при смене клетки героя
+	_defense_tick(delta)   # оборона (#31): шлюзы и решётки, раз в 0.1 с
 	_fluid_timer += delta
 	if _fluid_timer < FLUID_STEP:
 		return
@@ -1698,3 +1700,108 @@ func add_world_node(n: Node) -> void:
 	if host == null:
 		host = self
 	host.add_child(n)
+
+
+# ------------------------------------------------------------ ТУМАН ВОЙНЫ (#59)
+## Битовая карта исследования: байт на клетку (0 — не видели, 1 — видели),
+## одно поле для сохранения (#37). Открывается кругом вокруг героя (радиусы —
+## Balance.FOG_*) и только при смене его клетки: стоя на месте, туман не стоит
+## ничего. Слои тумана (мир — FogLayer, миникарта — HUD) карту не перебирают:
+## они слушают explored_changed и пересчитывают только открытый прямоугольник.
+
+## Открылись новые клетки; rect — их охватывающий прямоугольник, сами клетки
+## (индексы y * W + x) — в explore_new, пока идёт рассылка сигнала.
+signal explored_changed(rect: Rect2i)
+## Карта заменена (новый мир или загрузка #37) — слоям пора пересобраться по ней.
+signal explored_reset
+
+var explored: PackedByteArray = PackedByteArray()
+var explore_new: PackedInt32Array = PackedInt32Array()
+var explore_cells: int = 0          ## сколько клеток открыто всего
+# Замеры (сценарий fog_reveal): вызовы открытия, время на них, самый дорогой.
+var explore_calls: int = 0
+var explore_us: int = 0
+var explore_us_max: int = 0
+var _explore_cell: Vector2i = Vector2i(-9999, -9999)
+
+
+## Новая карта: всё закрыто, кроме круга вокруг точки старта.
+func _reset_explored() -> void:
+	explored.resize(W * H)
+	explored.fill(0)
+	explore_cells = 0
+	_explore_cell = Vector2i(-9999, -9999)
+	explored_reset.emit()
+	var c: Vector2i = world_to_cell(spawn_point)
+	reveal_around(c, explore_radius_at(c))
+
+
+## Радиус обзора в клетке: на поверхности (и над ней) шире, под землёй уже.
+func explore_radius_at(c: Vector2i) -> int:
+	var x: int = clampi(c.x, 0, W - 1)
+	if surface.is_empty() or c.y <= surface[x] + Balance.FOG_SURFACE_DEPTH:
+		return Balance.FOG_RADIUS_SURFACE
+	return Balance.FOG_RADIUS
+
+
+func is_explored(c: Vector2i) -> bool:
+	if c.x < 0 or c.y < 0 or c.x >= W or c.y >= H or explored.is_empty():
+		return false
+	return explored[c.y * W + c.x] != 0
+
+
+## Открывает круг радиусом r клеток вокруг c. Возвращает число новых клеток.
+## Закрытые клетки ряда ищет нативный find по срезу ряда, поэтому цикл скрипта
+## идёт только по новым клеткам: ходьба по исследованному почти бесплатна,
+## шаг в новое — пропорционален краю круга, а не его площади.
+func reveal_around(c: Vector2i, r: int) -> int:
+	if explored.is_empty():
+		return 0
+	var t0: int = Time.get_ticks_usec()
+	explore_new.clear()
+	var x_lo: int = W
+	var x_hi: int = -1
+	var y_lo: int = H
+	var y_hi: int = -1
+	var rr: float = (float(r) + 0.5) * (float(r) + 0.5)
+	for y in range(maxi(0, c.y - r), mini(H - 1, c.y + r) + 1):
+		var dy: int = y - c.y
+		var hw: int = int(sqrt(rr - float(dy * dy)))
+		var x0: int = maxi(0, c.x - hw)
+		var x1: int = mini(W - 1, c.x + hw)
+		if x1 < x0:
+			continue
+		var row: int = y * W + x0
+		var seg: PackedByteArray = explored.slice(row, row + x1 - x0 + 1)
+		var i: int = seg.find(0)
+		if i < 0:
+			continue
+		y_lo = mini(y_lo, y)
+		y_hi = y
+		x_lo = mini(x_lo, x0 + i)
+		while i >= 0:
+			explored[row + i] = 1
+			explore_new.append(row + i)
+			x_hi = maxi(x_hi, x0 + i)
+			i = seg.find(0, i + 1)
+	var opened: int = explore_new.size()
+	explore_calls += 1
+	if opened > 0:
+		explore_cells += opened
+		explored_changed.emit(Rect2i(x_lo, y_lo, x_hi - x_lo + 1, y_hi - y_lo + 1))
+	var us: int = Time.get_ticks_usec() - t0
+	explore_us += us
+	explore_us_max = maxi(explore_us_max, us)
+	return opened
+
+
+## Каждый кадр — одно сравнение клетки героя; круг открываем только при смене клетки.
+func _explore_tick() -> void:
+	var p = Game.player
+	if p == null or not is_instance_valid(p) or explored.is_empty():
+		return
+	var c: Vector2i = world_to_cell(p.global_position)
+	if c == _explore_cell:
+		return
+	_explore_cell = c
+	reveal_around(c, explore_radius_at(c))
