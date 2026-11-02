@@ -441,17 +441,10 @@ func _do_interact(dt: float) -> void:
 		if m is Chest and m.global_position.distance_to(global_position) < 40.0:
 			UI.open_chest(m)
 			return
-	# ТЭЦ — загрузить уголь
+	# Генератор: ТЭЦ с углём в хотбаре — загрузить топку, иначе — рубильник (#25)
 	for m2 in World.machines.values():
-		if m2 is CoalGen and m2.global_position.distance_to(global_position) < 40.0:
-			var st: ItemStack = inv.selected_stack()
-			if st.id == IDs.I.COAL and st.count > 0:
-				m2.add_fuel(st.count)
-				inv.remove_at(inv.selected, st.count)
-				Sfx.play("craft", -12.0)
-				Game.notify("Уголь загружен в ТЭЦ.", Color(1.0, 0.8, 0.4))
-			else:
-				Game.notify("Нужен уголь в хотбаре.", Color(1.0, 0.7, 0.4))
+		if m2 is Generator and m2.global_position.distance_to(global_position) < 40.0:
+			m2.interact(self)
 			return
 	# Станции — закинуть предмет из хотбара
 	var sel: ItemStack = inv.selected_stack()

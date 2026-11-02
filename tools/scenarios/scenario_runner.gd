@@ -118,6 +118,22 @@ const REGISTRY: Dictionary = {
 		"title": "уборка предметов",
 		"desc": "одинаковые предметы сливаются, по сроку жизни мигают и исчезают",
 	},
+	# --- Питание (#25, ADR-001 § 4.3) ---
+	"power_budget": {
+		"file": "power_budget.gd",
+		"title": "бюджет мощности",
+		"desc": "1 ТЭЦ + 4 бура — efficiency 0.75, бур медленнее на 25 %, браун-аут",
+	},
+	"power_switch": {
+		"file": "power_switch.gd",
+		"title": "рубильник",
+		"desc": "E выключает ТЭЦ: 60 с без расхода угля, буры стоят",
+	},
+	"belt_coal": {
+		"file": "belt_coal.gd",
+		"title": "уголь с конвейера",
+		"desc": "уголь по ленте доезжает до топки ТЭЦ",
+	},
 }
 
 var scene: Node = null

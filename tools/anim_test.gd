@@ -875,6 +875,11 @@ class Runner extends Node:
 			var x: int = base_x + dx
 			if x < 1 or x >= world.W - 1:
 				continue
+			# Под буровой тайл копать нельзя: её шахта сама выкапывает столбец,
+			# и к моменту проверки тайла уже может не быть (в --test буровая
+			# раздела «Постройки» стоит в 30 клетках от релея).
+			if _column_has_machine(x):
+				continue
 			var top: int = world.surface[x]
 			for dy in range(1, 6):
 				var c: Vector2i = Vector2i(x, top + dy)
@@ -887,6 +892,14 @@ class Runner extends Node:
 					continue
 				_mine_cell = c
 				return
+
+
+	## Стоит ли в столбце x какая-нибудь постройка.
+	func _column_has_machine(x: int) -> bool:
+		for cell in world.machines.keys():
+			if int(cell.x) == x:
+				return true
+		return false
 
 
 	## Терминал задания — чтобы проверить рост task_progress.

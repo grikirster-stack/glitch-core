@@ -1,24 +1,49 @@
 class_name MachineBase
 extends Node2D
-## Базовый класс построек: питание, приём/выдача предметов, логистика.
+## Базовый класс построек: питание, приём/выдача предметов, логистика, прочность.
+##
+## Питание (ADR-001, § 4.3): статус `powered` и `efficiency` машине выставляет
+## Game.update_power_budget() раз в Balance.POWER_CHECK_INTERVAL — сама машина
+## питание больше не опрашивает. Станки умножают свой прогресс на efficiency
+## через work(delta).
 
-const POWER_CHECK_INTERVAL: float = 0.25   ## как часто обновлять статус питания
-## Машины, которые потребляют питание: только им нужен Game.is_powered().
+## Как часто Game раскладывает потребителей по генераторам (оставлено для
+## совместимости: значение берётся из Balance).
+const POWER_CHECK_INTERVAL: float = Balance.POWER_CHECK_INTERVAL
+## Машины, которые потребляют питание. Полная таблица потребления —
+## Balance.POWER_DRAW: всё, что в ней есть, тоже потребитель (см. consumes_power).
 ## У конвейеров и сундуков питание не используется вовсе.
 const POWER_CONSUMERS: Array[String] = ["Drill", "Smelter", "Assembler"]
 ## Машины, чья отрисовка зависит от времени (вращение, мерцание):
 ## им нужна перерисовка каждый кадр.
 const TIME_ANIMATED: Array[String] = ["Drill", "Smelter", "Assembler"]
+## Шанс, что разрушенная машина оставит свой предмет (§ 4.4).
+const DESTROY_DROP_CHANCE: float = 0.5
+## Сколько осколков разлетается при разрушении.
+const DESTROY_CHIPS: int = 4
+
+## Машина разрушена (до удаления из мира). Для угрозы/HUD/звука.
+signal destroyed(machine: MachineBase)
 
 var cell: Vector2i = Vector2i.ZERO
 var kind: String = ""
 var powered: bool = false
 var power_radius: float = 0.0
 var power_active: bool = false
+## Сколько мощности тянет потребитель (Balance.POWER_DRAW; ставится при постройке).
+var power_draw: float = 0.0
+## Доля мощности, которую машина получает: clamp(output / load, 0, 1).
+## У потребителя — от своего генератора (0 без питания); у генератора — его
+## собственное отношение мощности к нагрузке.
+var efficiency: float = 0.0
+## Наработка: секунды полезной работы с учётом efficiency (см. work()).
+var work_time: float = 0.0
+var hp: float = Balance.MACHINE_HP
+var max_hp: float = Balance.MACHINE_HP
 var progress: float = 0.0
 var anim: float = 0.0
-var _pt: float = 0.0
 var _last_progress: float = 0.0
+var _destroyed: bool = false
 
 
 static func place_machine(p_kind: String, c: Vector2i) -> bool:
@@ -48,6 +73,7 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 			return false
 	m.cell = c
 	m.kind = p_kind
+	m.power_draw = float(Balance.POWER_DRAW.get(p_kind, 0.0))
 	m.global_position = World.cell_to_world(c)
 	m.position = m.global_position
 	World.machines[c] = m
@@ -63,17 +89,6 @@ func _process(delta: float) -> void:
 	if anim > 0.0:
 		anim = maxf(0.0, anim - delta * 2.0)
 		queue_redraw()
-	# Статус питания нужен только потребителям и обновляется не чаще
-	# раза в POWER_CHECK_INTERVAL: конвейеры и сундуки — самая массовая
-	# категория построек, им питание вообще не требуется.
-	if consumes_power():
-		_pt += delta
-		if _pt >= POWER_CHECK_INTERVAL:
-			_pt = 0.0
-			var p: bool = Game.is_powered(global_position)
-			if p != powered:
-				powered = p
-				queue_redraw()
 	# Полоса прогресса у станков.
 	if progress != _last_progress:
 		_last_progress = progress
@@ -85,7 +100,25 @@ func _process(delta: float) -> void:
 
 ## Нужен ли этой машине статус питания.
 func consumes_power() -> bool:
-	return kind in POWER_CONSUMERS
+	return kind in POWER_CONSUMERS or Balance.POWER_DRAW.has(kind)
+
+
+## Итог раскладки питания для этой машины. Вызывает Game.update_power_budget().
+func apply_power(p_powered: bool, p_efficiency: float) -> void:
+	if p_powered != powered:
+		powered = p_powered
+		queue_redraw()
+	efficiency = p_efficiency if p_powered else 0.0
+
+
+## Полезная работа за кадр: delta, умноженная на efficiency (0 без питания).
+## Станки двигают прогресс на это значение вместо голого delta.
+func work(delta: float) -> float:
+	if not powered:
+		return 0.0
+	var w: float = delta * efficiency
+	work_time += w
+	return w
 
 
 ## Зависит ли отрисовка от времени (тогда нужна перерисовка каждый кадр).
@@ -124,6 +157,57 @@ func spawn_item(item_id: int, count: int, pos: Vector2) -> void:
 	e.global_position = pos
 	e.z_index = 4
 	World.add_world_node(e)
+
+
+# ------------------------------------------------------------- ПРОЧНОСТЬ (§ 4.4)
+
+## Получить урон. При hp <= 0 машина разрушается.
+func take_damage(amount: float) -> void:
+	if _destroyed or amount <= 0.0:
+		return
+	hp = maxf(0.0, hp - amount)
+	anim = 1.0
+	queue_redraw()
+	if hp <= 0.0:
+		destroy()
+
+
+## Разрушить машину: убрать из мира, с шансом DESTROY_DROP_CHANCE оставить
+## её предмет, разбросать осколки. Индекс питания в Game пересоберётся сам
+## (число машин в мире изменилось).
+func destroy() -> void:
+	if _destroyed:
+		return
+	_destroyed = true
+	destroyed.emit(self)
+	_on_destroyed()
+	if World.machines.get(cell) == self:
+		World.machines.erase(cell)
+	if World.belts.get(cell) == self:
+		World.belts.erase(cell)
+	var item: int = machine_item_id(kind)
+	if item != IDs.I.NONE and randf() < DESTROY_DROP_CHANCE:
+		spawn_item(item, 1, global_position + Vector2(0.0, -4.0))
+	var col: Color = DB.item_color(item) if item != IDs.I.NONE else Color(0.5, 0.5, 0.55)
+	for i in DESTROY_CHIPS:
+		UI.spawn_chip(cell, col)
+	Sfx.play("break", -6.0, 0.8)
+	queue_free()
+
+
+## Крюк для наследников: что сделать перед разрушением (например, высыпать
+## содержимое). В базовом классе — ничего.
+func _on_destroyed() -> void:
+	pass
+
+
+## Предмет, из которого ставится машина данного вида (NONE, если такого нет).
+static func machine_item_id(p_kind: String) -> int:
+	var place: String = "machine:" + p_kind
+	for id in DB.item_defs.keys():
+		if String(DB.item_defs[id].get("place", "")) == place:
+			return int(id)
+	return IDs.I.NONE
 
 
 func power_label() -> String:

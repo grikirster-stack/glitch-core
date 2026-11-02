@@ -34,7 +34,7 @@ func _process(delta: float) -> void:
 		recipe = _find_recipe()
 	if recipe.is_empty():
 		return
-	_timer += delta
+	_timer += work(delta)
 	progress = clampf(_timer / float(recipe["time"]), 0.0, 1.0)
 	if _timer >= float(recipe["time"]):
 		_timer = 0.0
