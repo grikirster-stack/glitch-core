@@ -11,6 +11,16 @@ const TREE_MIN_GAP: int = 6          # минимум колонок между 
 
 const FLUID_MAX: int = 8             # сколько порций воды помещается в клетке
 const FLUID_STEP: float = 0.05       # период шага симуляции воды, сек
+const FLUID_VISIBLE: int = 2         # с какого уровня вода видна: 1 порция — плёнка, тайл AIR
+## На сколько клеток вбок ищем стенку ямы, прежде чем разрешить воде
+## растекаться по ровному дну. Шире — уже не яма, а ровная земля.
+## Замер (сценарий fluid, #45): при 8 яма шириной 16 не наполняется —
+## вода стоит столбом у стенки; при 16 она заливается ровно, шаг воды
+## в среднем 0.2–0.35 мс (пик 1–3 мс) при кадре 16.7 мс. При 32 в ямах работы столько же (стенка ближе), зато на ровной
+## земле каждая проверка читает вдвое больше клеток, а «ямой» считаются
+## уже 98 % колонок поверхности (при 16 — 86 %): вода заливает слоем целые
+## долины.
+const FLUID_SCAN: int = 16
 
 const LIGHT_CHUNK: int = 8            # размер чанка пространственного хэша света (клетки)
 const LIGHT_MIN: float = 0.05         # минимальный свет тайла, дающий источник
@@ -741,9 +751,16 @@ func _fluid_tick() -> void:
 ## Один шаг воды в клетке: сначала вниз, потом в стороны.
 ## Возвращает true, если уровень в клетке изменился.
 ##
-## Вниз вода падает целиком, если под ней место. В стороны она отдаёт
-## понемногу и только тем соседям, которые заметно ниже: без этого порога
-## вода бесконечно перетекает туда-обратно между двумя клетками.
+## Вниз вода падает целиком, если под ней место. В стороны — по одной порции:
+##   * к обрыву: под соседом есть куда стечь (пусто или неполная вода), а сам
+##     сосед ниже нас. Сосед тут же стечёт вниз — туда-обратно не бывает;
+##   * по ровному — только внутри ямы: в этом ряду слева и справа не дальше
+##     FLUID_SCAN клеток стоят стенки. Иначе озеро растечётся тонкой плёнкой
+##     по всей ровной земле вокруг себя. В яме вода отдаёт соседу, который
+##     ниже на две порции, или ниже на одну, если за ним есть клетка ещё
+##     ниже: так дно заливается ровно (разброс не больше порции), а не лесенкой.
+## Одна порция — плёнка, её не видно; по ровному она стоит на месте и
+## сползает, только если в той же яме есть куда стечь вниз.
 func _fluid_step_cell(idx: int) -> bool:
 	var lvl: int = fluid[idx]
 	if lvl <= 0:
@@ -753,8 +770,7 @@ func _fluid_step_cell(idx: int) -> bool:
 	# --- вниз ---
 	if y + 1 < H:
 		var below: int = idx + W
-		var bt: int = tiles[below]
-		if bt == IDs.T.AIR or bt == IDs.T.WATER:
+		if _fluid_open(tiles[below]):
 			var space: int = FLUID_MAX - fluid[below]
 			if space > 0:
 				var give: int = mini(lvl, space)
@@ -764,39 +780,106 @@ func _fluid_step_cell(idx: int) -> bool:
 				_set_fluid_cell(x, y + 1)
 				return true
 	# --- вбок ---
-	# Растекается только вода, стоящая на твёрдом: та, что лежит на воде,
-	# утекает вниз (см. выше), а не в стороны.
-	if y + 1 >= H or not DB.tile_solid(tiles[idx + W]):
+	# Растекается только вода, стоящая на опоре (твёрдое или полная вода):
+	# та, под которой есть место, утекает вниз (см. выше).
+	if y + 1 >= H or not _fluid_supported(idx + W):
 		return false
-	for d in [-1, 1]:
-		var nx: int = x + d
-		if nx < 0 or nx >= W:
-			continue
-		var n: int = idx + d
-		var nt: int = tiles[n]
-		if nt != IDs.T.AIR and nt != IDs.T.WATER:
-			continue
-		# Вода перетекает вбок только туда, где есть куда стечь: под
-		# соседом пусто (яма) или там обрыв. Иначе озеро растечётся
-		# тонкой плёнкой по всей ровной земле вокруг себя.
-		if n + W >= fluid.size():
-			continue
-		var n_below: int = tiles[n + W]
-		if DB.tile_solid(n_below) or n_below != IDs.T.AIR:
-			continue
-		if lvl >= fluid[n] + 2:
-			fluid[idx] = lvl - 1
-			fluid[n] = fluid[n] + 1
-			_set_fluid_cell(x, y)
-			_set_fluid_cell(nx, y)
-			return true
+	# Уровни соседей; -1 — туда вода не течёт (стенка, постройка, край мира).
+	var nl: int = fluid[idx - 1] if x > 0 and _fluid_open(tiles[idx - 1]) else -1
+	var nr: int = fluid[idx + 1] if x + 1 < W and _fluid_open(tiles[idx + 1]) else -1
+	var lower_l: bool = nl >= 0 and lvl > nl
+	var lower_r: bool = nr >= 0 and lvl > nr
+	# К обрыву.
+	if lower_l and not _fluid_supported(idx - 1 + W):
+		_fluid_move_side(idx, idx - 1, x, x - 1, y)
+		return true
+	if lower_r and not _fluid_supported(idx + 1 + W):
+		_fluid_move_side(idx, idx + 1, x, x + 1, y)
+		return true
+	# По ровному: сосед ниже, и мы в яме. Плёнка (1 порция) по ровному
+	# течёт, только если в этой яме дальше есть ямка в дне — стечь туда.
+	if not (lower_l or lower_r):
+		return false
+	var sl: int = _fluid_scan_side(x, y, -1, nl, lvl - 2)
+	if sl < 0:
+		return false
+	var sr: int = _fluid_scan_side(x, y, 1, nr, lvl - 2)
+	if sr < 0:
+		return false
+	if lower_l and (lvl >= nl + 2 or sl == 1) and not (lower_r and lvl >= nr + 2 and lvl < nl + 2):
+		_fluid_move_side(idx, idx - 1, x, x - 1, y)
+		return true
+	if lower_r and (lvl >= nr + 2 or sr == 1):
+		_fluid_move_side(idx, idx + 1, x, x + 1, y)
+		return true
 	return false
+
+
+## Перелить одну порцию вбок: из клетки idx в соседнюю n.
+func _fluid_move_side(idx: int, n: int, x: int, nx: int, y: int) -> void:
+	fluid[idx] = fluid[idx] - 1
+	fluid[n] = fluid[n] + 1
+	_set_fluid_cell(x, y)
+	_set_fluid_cell(nx, y)
+
+
+## Может ли вода стоять в клетке с таким тайлом (воздух или вода).
+func _fluid_open(t: int) -> bool:
+	return t == IDs.T.AIR or t == IDs.T.WATER
+
+
+## Держит ли клетка воду над собой: твёрдое, постройка или полная вода.
+func _fluid_supported(i: int) -> bool:
+	return not _fluid_open(tiles[i]) or fluid[i] >= FLUID_MAX
+
+
+## Просматривает ряд y от клетки x в сторону d — ищет стенку ямы.
+## Стенка — любая клетка, куда вода не течёт, или край мира. Что под рядом,
+## не важно: ямка в дне яму не «открывает», вода просто стечёт в неё.
+## Возвращает:
+##   -1 — стенки нет ближе FLUID_SCAN клеток: это ровная земля, а не яма;
+##    1 — стенка есть, и за соседом (уровень nlvl) по ровному или под горку
+##        лежит клетка не выше low или ямка в дне — воде есть куда «скатиться»;
+##    0 — стенка есть, а ниже ничего нет.
+func _fluid_scan_side(x: int, y: int, d: int, nlvl: int, low: int) -> int:
+	var row: int = y * W
+	var cx: int = x
+	var state: int = 0  # 0 — ищем низину, 1 — нашли, 2 — путь к ней закрыт горкой
+	for k in FLUID_SCAN:
+		cx += d
+		if cx < 0 or cx >= W:
+			return 1 if state == 1 else 0
+		fluid_scan_cells += 1
+		var i: int = row + cx
+		var t: int = tiles[i]
+		if t != IDs.T.AIR and t != IDs.T.WATER:
+			return 1 if state == 1 else 0
+		if k > 0 and state == 0:
+			var f: int = fluid[i]
+			var bt: int = tiles[i + W]
+			if f <= low or ((bt == IDs.T.AIR or bt == IDs.T.WATER) and fluid[i + W] < FLUID_MAX):
+				state = 1
+			elif f > nlvl:
+				state = 2
+	return -1
+
+
+## Заперт ли ряд y вокруг клетки x стенками с обеих сторон — стоит ли вода
+## в яме, а не на ровной земле (см. _fluid_scan_side).
+func _fluid_bounded(x: int, y: int) -> bool:
+	return _fluid_scan_side(x, y, -1, 0, -1) >= 0 and _fluid_scan_side(x, y, 1, 0, -1) >= 0
+
+
+## Сколько клеток ждут пересчёта воды (0 — вода успокоилась).
+func fluid_pending() -> int:
+	return _fluid_queue.size()
 
 
 ## Обновляет тайл и картинку клетки по текущему уровню воды.
 func _set_fluid_cell(x: int, y: int) -> void:
 	var idx: int = y * W + x
-	var id: int = IDs.T.WATER if fluid[idx] > 0 else IDs.T.AIR
+	# Одна порция — плёнка в полклетки: её не видно, клетка остаётся воздухом.
+	var id: int = IDs.T.WATER if fluid[idx] >= FLUID_VISIBLE else IDs.T.AIR
 	if tiles[idx] == id:
 		return
 	tiles[idx] = id
@@ -838,7 +921,7 @@ func set_tile(x: int, y: int, id: int) -> void:
 	tiles[idx] = id
 	if fluid.size() == W * H:
 		if id == IDs.T.WATER:
-			if fluid[idx] == 0:
+			if fluid[idx] < FLUID_VISIBLE:
 				fluid[idx] = FLUID_MAX
 		else:
 			fluid[idx] = 0

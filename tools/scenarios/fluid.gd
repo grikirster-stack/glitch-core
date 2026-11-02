@@ -9,9 +9,10 @@ extends ScenarioBase
 ##       Вода стоит на месте: ни к стенке, ни к ямке плёнка не ползёт.
 ##   B — замкнутая яма 5×6: льём 5 порций по 8 в одну колонку — дно
 ##       заполняется ровно, целиком, а не столбиком.
-##   C — широкая яма шириной FLUID_SCAN: вода доходит до дальней стенки.
+##   C — широкая яма (WIDE = 16 клеток): вода доходит до дальней стенки,
+##       дно ровное, а не лесенкой.
 ##   D — видимость: 1 порция — тайл AIR, 2 — тайл WATER.
-##   E — источник у ямки: вода стекает, в источнике остаётся невидимая порция.
+##   E — источник у ямки: вода стекает в ямку целиком, сухо по другую сторону.
 ##
 ## В конце — нагрузка (льём в широкую яму сверху) и строка «ЗАМЕР»: шаги
 ## симуляции, клетки сканирования, время шага и кадра. Команда:
@@ -20,6 +21,10 @@ extends ScenarioBase
 const F: int = 14      # ряд пола стендов
 const TOP: int = 5     # верхний ряд расчистки
 const X0: int = 12     # левый край расчистки (база — в середине мира)
+## Ширина широкой ямы C. Не зависит от FLUID_SCAN: так замер при разных
+## FLUID_SCAN идёт на одной и той же нагрузке, а слишком малый FLUID_SCAN
+## честно проваливает «широкая яма наполняется».
+const WIDE: int = 16
 
 var scan: int = 16
 var _frame_us_max: int = 0
@@ -33,12 +38,16 @@ func run() -> void:
 	await wait(0.2)
 	var consts: Dictionary = World.get_script().get_script_constant_map()
 	scan = int(consts.get("FLUID_SCAN", 16))
-	var a0: int = X0 + 2
+	# Между стендами — больше FLUID_SCAN пустых клеток там, где проверяем
+	# «ровную землю»: иначе соседний стенд станет стенкой ямы.
+	var d0: int = X0 + scan + 2
+	var a0: int = d0 + scan + 10
 	var a_len: int = 2 * scan + 9
 	var b0: int = a0 + a_len + 4
 	var c0: int = b0 + 7 + 4
-	var e0: int = c0 + scan + 2 + 4
+	var e0: int = c0 + WIDE + 2 + 4
 	var x1: int = e0 + 8
+	_measure_terrain()
 	_clear(X0, x1, TOP, F + 2)
 	ok("стенды расчищены", _rect_is(X0, x1, TOP, F + 2, IDs.T.AIR))
 	var steps0: int = World.fluid_steps
@@ -48,11 +57,14 @@ func run() -> void:
 	_measure = true
 
 	await _stand_flat(a0, a_len)
+	_measure_scan(a0 + a_len / 2)
 	await _stand_pit(b0)
 	await _stand_wide(c0)
-	await _stand_visible(a0)
+	await _stand_visible(d0)
 	await _stand_source(e0)
 	await _stress(c0)
+	var calm: bool = await wait_until(func() -> bool: return _pending() == 0, 10.0)
+	ok("вода успокоилась: очередь пересчёта пуста", calm, "в очереди %d" % _pending())
 
 	_measure = false
 	var ticks: int = World.fluid_ticks - ticks0
@@ -71,6 +83,55 @@ func _process(_delta: float) -> void:
 		_frame_us_sum += dt
 		_frames += 1
 	_last_us = now
+
+
+# ------------------------------------------------------------------ ЗАМЕРЫ
+
+## Сколько колонок поверхности мира «в яме» при разной дальности поиска
+## стенки: вода на земле в такой колонке растекается по ровному дну.
+## Мало — широкие впадины не наполняются; много — вода заливает слоем целые
+## долины, то есть та же плёнка. По этому замеру выбран FLUID_SCAN.
+func _measure_terrain() -> void:
+	var parts: Array = []
+	for k in [4, 8, 16, 32, 64]:
+		var cols: int = 0
+		var pits: int = 0
+		for x in range(World.W):
+			var r: int = World.surface[x] - 1
+			if World.get_tile(x, r) != IDs.T.AIR or not World.is_solid_cell(Vector2i(x, r + 1)):
+				continue
+			cols += 1
+			if _wall_within(x, r, -1, int(k)) and _wall_within(x, r, 1, int(k)):
+				pits += 1
+		parts.append("%d → %.0f %%" % [int(k), 100.0 * float(pits) / float(maxi(cols, 1))])
+	print("  ЗАМЕР рельеф: доля колонок поверхности «в яме» при поиске стенки на N клеток: %s" % ", ".join(parts))
+
+
+func _wall_within(x: int, y: int, d: int, k: int) -> bool:
+	for i in range(1, k + 1):
+		var t: int = World.get_tile(x + d * i, y)
+		if t != IDs.T.AIR and t != IDs.T.WATER:
+			return true
+	return false
+
+
+## Цена одного сканирования вбок (если оно есть в World): 2000 вызовов на
+## ровной площадке A, где справа стенки нет — ряд просматривается целиком.
+func _measure_scan(x: int) -> void:
+	if not World.has_method("_fluid_bounded"):
+		return
+	_measure = false   # пачка вызовов — не кадр игры, в замер кадра не берём
+	var cells0: int = World.fluid_scan_cells
+	var t0: int = Time.get_ticks_usec()
+	for i in 2000:
+		World.call("_fluid_bounded", x, F - 1)
+	var us: int = Time.get_ticks_usec() - t0
+	var cells: int = World.fluid_scan_cells - cells0
+	World.fluid_scan_cells = cells0
+	_last_us = 0
+	_measure = true
+	print("  ЗАМЕР сканирование: %.2f мкс на вызов, %.0f нс на клетку (%d клеток за вызов)" % [
+		float(us) / 2000.0, 1000.0 * float(us) / float(maxi(cells, 1)), cells / 2000])
 
 
 # ------------------------------------------------------------------ СТЕНДЫ
@@ -122,31 +183,39 @@ func _stand_pit(b0: int) -> void:
 			"порций выше дна %d" % _sum(b0 + 1, b0 + 5, F - 6, F - 2))
 
 
-## C: широкая яма — шириной ровно FLUID_SCAN, глубиной 2. Льём у левой
-## стенки две порции на клетку дна: вода должна дойти до правой стенки.
+## C: широкая яма — WIDE клеток, глубиной 2. Льём у левой стенки две порции
+## на клетку дна: вода должна дойти до правой стенки и лечь ровно.
 func _stand_wide(c0: int) -> void:
-	_build_pit(c0, scan, 2)
+	_build_pit(c0, WIDE, 2)
 	var pour: Vector2i = Vector2i(c0 + 1, F - 2)
-	var cells: int = (2 * scan) / World.FLUID_MAX
+	var cells: int = (2 * WIDE) / World.FLUID_MAX
 	for i in cells:
 		await wait_until(func() -> bool: return World.fluid_level(pour) == 0, 3.0)
 		World.set_fluid(pour, World.FLUID_MAX)
-	var far: Vector2i = Vector2i(c0 + scan, F - 1)
+	var far: Vector2i = Vector2i(c0 + WIDE, F - 1)
 	await wait_until(func() -> bool: return World.fluid_level(far) > 0, 12.0)
 	await wait(1.0)
-	var levels: Array = _row_levels(c0 + 1, c0 + scan, F - 1)
-	ok("широкая яма (%d клеток): вода дошла до дальней стенки" % scan,
+	var levels: Array = _row_levels(c0 + 1, c0 + WIDE, F - 1)
+	ok("широкая яма (%d клеток): вода дошла до дальней стенки" % WIDE,
 			World.fluid_level(far) > 0, "дно %s" % str(levels))
-	ok("широкая яма: мокро всё дно", _row_min(c0 + 1, c0 + scan, F - 1) > 0,
+	ok("широкая яма: мокро всё дно", _row_min(c0 + 1, c0 + WIDE, F - 1) > 0,
 			"дно %s" % str(levels))
-	ok("широкая яма: вода не потерялась", _sum(c0 + 1, c0 + scan, F - 2, F - 1) == cells * World.FLUID_MAX,
-			"порций %d" % _sum(c0 + 1, c0 + scan, F - 2, F - 1))
+	var lv_min: int = _row_min(c0 + 1, c0 + WIDE, F - 1)
+	var lv_max: int = 0
+	for v in levels:
+		lv_max = maxi(lv_max, int(v))
+	ok("широкая яма: дно ровное, а не лесенкой (разброс ≤ 1 порции)", lv_max - lv_min <= 1,
+			"дно %s" % str(levels))
+	ok("широкая яма: вода не потерялась", _sum(c0 + 1, c0 + WIDE, F - 2, F - 1) == cells * World.FLUID_MAX,
+			"порций %d" % _sum(c0 + 1, c0 + WIDE, F - 2, F - 1))
 
 
-## D: видимость. На ровной площадке A (слева, далеко от источника).
-func _stand_visible(a0: int) -> void:
-	var one: Vector2i = Vector2i(a0 + 2, F - 1)
-	var two: Vector2i = Vector2i(a0 + 6, F - 1)
+## D: видимость. Отдельная ровная площадка: стенок ближе FLUID_SCAN нет.
+func _stand_visible(d0: int) -> void:
+	for x in range(d0 - 1, d0 + 10):
+		World.set_tile(x, F, IDs.T.STONE)
+	var one: Vector2i = Vector2i(d0 + 2, F - 1)
+	var two: Vector2i = Vector2i(d0 + 6, F - 1)
 	World.set_fluid(one, 1)
 	World.set_fluid(two, 2)
 	ok("1 порция — плёнка, тайл AIR", World.get_tile_v(one) == IDs.T.AIR
@@ -161,7 +230,7 @@ func _stand_visible(a0: int) -> void:
 
 
 ## E: как в основном автотесте — источник на ровном, рядом ямка в клетку.
-## Вода стекает в ямку; в источнике остаётся одна порция, и её не видно.
+## Вода стекает в ямку (последняя порция тоже — с края она капает вниз).
 func _stand_source(e0: int) -> void:
 	for x in range(e0, e0 + 6):
 		World.set_tile(x, F, IDs.T.STONE)
@@ -174,7 +243,7 @@ func _stand_source(e0: int) -> void:
 	await wait(0.5)
 	ok("источник у ямки: вода стекла в ямку", World.get_tile_v(hole) == IDs.T.WATER
 			and World.fluid_level(hole) >= 2, "уровень в ямке %d" % World.fluid_level(hole))
-	ok("источник у ямки: остаток в источнике невидим", World.get_tile_v(src) == IDs.T.AIR,
+	ok("источник у ямки: на месте источника нет видимой лужи", World.get_tile_v(src) == IDs.T.AIR,
 			"тайл %d уровень %d" % [World.get_tile_v(src), World.fluid_level(src)])
 	ok("источник у ямки: по другую сторону сухо",
 			World.fluid_level(Vector2i(src.x - 1, src.y)) == 0,
@@ -185,13 +254,19 @@ func _stand_source(e0: int) -> void:
 ## по всему дну, каждая движущаяся клетка сканирует ряд. Только замер.
 func _stress(c0: int) -> void:
 	for i in 8:
-		for x in [c0 + 1, c0 + scan / 2, c0 + scan]:
+		for x in [c0 + 1, c0 + WIDE / 2, c0 + WIDE]:
 			World.set_fluid(Vector2i(int(x), F - 2), World.FLUID_MAX)
 		await wait(0.15)
 	await wait(2.0)
 
 
 # ------------------------------------------------------------------ ПОСТРОЙКА
+
+func _pending() -> int:
+	if World.has_method("fluid_pending"):
+		return int(World.call("fluid_pending"))
+	return 0
+
 
 ## Расчистить прямоугольник (включительно).
 func _clear(x0: int, x1: int, y0: int, y1: int) -> void:
