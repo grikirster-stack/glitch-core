@@ -419,7 +419,8 @@ func _do_place(cell: Vector2i) -> void:
 		inv.remove_at(inv.selected, 1)
 		Sfx.play("place", -10.0)
 	elif place.begins_with("machine:"):
-		var kind: String = place.substr(7)
+		# «machine:» — 8 символов, вид машины начинается с девятого.
+		var kind: String = place.substr(8)
 		if MachineBase.place_machine(kind, cell):
 			inv.remove_at(inv.selected, 1)
 			Sfx.play("place_machine", -8.0)
