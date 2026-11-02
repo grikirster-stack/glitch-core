@@ -110,18 +110,39 @@ func _check_mark(stats: Dictionary, want: String, gen: Node2D, chest: Node2D) ->
 		stats["mark_bad"] = int(stats["mark_bad"]) + 1
 
 
-## Какая подсказка должна быть сейчас — по расстояниям, в том же порядке
-## важности, что у HUD: терминал, релей, ТЭЦ, сундук. Коридор базы может
-## задевать терминал — тогда ждём подсказку терминала (с учётом питания, #34).
+## Какая подсказка должна быть сейчас — по расстояниям, по правилу цели E
+## (#116): ближайший к герою объект в своём радиусе (терминал 42, релей 56,
+## ТЭЦ и сундук 40); терминал без питания — только если рядом больше ничего
+## нет. Курсор сценарий не наводит. Коридор базы может задевать терминал —
+## тогда ждём подсказку терминала (с учётом питания, #34).
 func _want(gen: Node2D, chest: Node2D) -> String:
 	var p: Vector2 = player.global_position
+	var best: String = ""
+	var best_d: float = INF
+	var off: String = ""
+	var off_d: float = INF
 	for t in World.terminals:
-		if World.cell_to_world(t).distance_to(p) < 42.0:
-			return UI.hud.terminal_hint(t)
-	if World.cell_to_world(World.beacon_cell).distance_to(p) < 56.0:
-		return HUD.HINT_BEACON
-	if gen.global_position.distance_to(p) < DIST:
-		return UI.hud.generator_hint(gen)
-	if chest.global_position.distance_to(p) < DIST:
-		return HINT_CHEST
-	return ""
+		var td: float = World.cell_to_world(t).distance_to(p)
+		if td >= 42.0:
+			continue
+		var th: String = UI.hud.terminal_hint(t)
+		if th == HUD.HINT_TERMINAL_NO_POWER:
+			if td < off_d:
+				off_d = td
+				off = th
+		elif td < best_d:
+			best_d = td
+			best = th
+	var bd: float = World.cell_to_world(World.beacon_cell).distance_to(p)
+	if bd < 56.0 and bd < best_d:
+		best_d = bd
+		best = HUD.HINT_BEACON
+	var gd: float = gen.global_position.distance_to(p)
+	if gd < DIST and gd < best_d:
+		best_d = gd
+		best = UI.hud.generator_hint(gen)
+	var cd: float = chest.global_position.distance_to(p)
+	if cd < DIST and cd < best_d:
+		best_d = cd
+		best = HINT_CHEST
+	return best if best != "" else off

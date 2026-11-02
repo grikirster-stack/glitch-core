@@ -454,84 +454,169 @@ func _place_allowed(cell: Vector2i) -> bool:
 	return true
 
 
+# ------------------------------------------------- ЦЕЛЬ E (#116)
+## Раньше E перебирала объекты жёстким порядком «терминал → … → сундук», и
+## терминал руины без питания в ~37 px от тайника забирал E: сундук рядом с
+## терминалом было не открыть. Теперь цель одна, её выбирает interact_target(),
+## и по ней же HUD рисует подсказку и рамку интерактива (V6): рамка всегда на
+## том объекте, который сработает по E.
+
+## Радиусы E — от героя до центра объекта, px.
+const E_TERMINAL: float = 42.0
+const E_BEACON: float = 56.0
+const E_MACHINE: float = 40.0      ## ТЭЦ, сундук, манипулятор рядом
+const E_STATION: float = 44.0      ## загрузка предмета в станок и ремонт хламом
+
+## Виды цели E (поле "kind" у interact_target()).
+const ET_TERMINAL: String = "terminal"          ## терминал под питанием: держать E — задание
+const ET_TERMINAL_OFF: String = "terminal_off"  ## без питания: E даёт только «нет питания»
+const ET_BEACON: String = "beacon"              ## релей-ядро: держать E
+const ET_GENERATOR: String = "generator"        ## уголь в руке — топка, иначе — рубильник
+const ET_INSERTER: String = "inserter"          ## предмет в руке — фильтр, пустая рука — сброс
+const ET_CHEST: String = "chest"                ## сундук и тайники руин / небесный тайник
+const ET_REPAIR: String = "repair"              ## хлам в руке, машина повреждена
+const ET_LOAD: String = "load"                  ## предмет в руке подходит станку
+
+## Клетка цели, по которой копится task_progress: сменилась цель — отсчёт заново.
+var _task_cell: Vector2i = Vector2i(-1, -1)
+
+
+## Цель E: {"kind": ET_*, "cell": Vector2i, "node": машина или null, "pos": Vector2}.
+## Пустой словарь — E сейчас некуда.
+## Правило: объект под курсором, если герой до него дотягивается (радиус E
+## объекта); иначе — ближайший к герою. Терминал без питания под курсором —
+## цель (E подскажет «нет питания»), а среди ближних он последний: соседний
+## сундук или ТЭЦ он не перекрывает.
+## powered — проверка питания терминала (клетка -> bool); HUD передаёт свою,
+## с кэшем; по умолчанию — Game.is_powered.
+func interact_target(powered: Callable = Callable()) -> Dictionary:
+	var pos: Vector2 = global_position
+	var aimed: Dictionary = _target_at(building_cell, pos, true, powered)
+	if not aimed.is_empty():
+		return aimed
+	var best: Dictionary = {}
+	var best_d: float = INF
+	var off: Dictionary = {}
+	var off_d: float = INF
+	for t in World.terminals:
+		var tt: Dictionary = _target_at(t, pos, false, powered)
+		if tt.is_empty():
+			continue
+		var td: float = Vector2(tt["pos"]).distance_to(pos)
+		if tt["kind"] == ET_TERMINAL_OFF:
+			if td < off_d:
+				off_d = td
+				off = tt
+		elif td < best_d:
+			best_d = td
+			best = tt
+	var bt: Dictionary = _target_at(World.beacon_cell, pos, false, powered)
+	if not bt.is_empty() and Vector2(bt["pos"]).distance_to(pos) < best_d:
+		best_d = Vector2(bt["pos"]).distance_to(pos)
+		best = bt
+	# Постройки — только клетки в радиусе E, а не все машины мира.
+	var r: int = int(ceil(E_STATION / float(World.TILE))) + 1
+	var pc: Vector2i = World.world_to_cell(pos)
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			var c: Vector2i = pc + Vector2i(dx, dy)
+			if not World.machines.has(c):
+				continue
+			var mt: Dictionary = _target_at(c, pos, false, powered)
+			if mt.is_empty():
+				continue
+			var md: float = Vector2(mt["pos"]).distance_to(pos)
+			if md < best_d:
+				best_d = md
+				best = mt
+	return best if not best.is_empty() else off
+
+
+## Что E сделает с объектом в клетке c (пусто — ничего или далеко).
+## aimed — клетка под курсором: манипулятор тогда достаётся на всю досягаемость.
+func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable) -> Dictionary:
+	if c.x < 0:
+		return {}
+	var m = World.machines.get(c)
+	if m != null and is_instance_valid(m) and not m.is_queued_for_deletion():
+		var mp: Vector2 = m.global_position
+		var d: float = mp.distance_to(pos)
+		var sel: ItemStack = inv.selected_stack()
+		var tg: Dictionary = {"cell": c, "node": m, "pos": mp}
+		if not sel.is_empty() and sel.id == IDs.I.SCRAP and m.hp < m.max_hp and d < E_STATION:
+			tg["kind"] = ET_REPAIR
+		elif m is Generator and d < E_MACHINE:
+			tg["kind"] = ET_GENERATOR
+		elif m is Inserter and (d < E_MACHINE or (aimed and d <= REACH)):
+			tg["kind"] = ET_INSERTER
+		elif m is Chest and d < E_MACHINE:
+			tg["kind"] = ET_CHEST
+		elif not sel.is_empty() and d <= E_STATION and not (m is Belt or m is Chest or m is Generator) \
+				and m.input_accepts(sel.id):
+			tg["kind"] = ET_LOAD
+		else:
+			return {}
+		return tg
+	if c == World.beacon_cell:
+		var bp: Vector2 = World.cell_to_world(c)
+		if bp.distance_to(pos) < E_BEACON:
+			return {"kind": ET_BEACON, "cell": c, "node": null, "pos": bp}
+		return {}
+	if World.terminals.has(c):
+		var tp: Vector2 = World.cell_to_world(c)
+		if tp.distance_to(pos) >= E_TERMINAL:
+			return {}
+		var on: bool = bool(powered.call(c)) if powered.is_valid() else Game.is_powered(tp)
+		return {"kind": ET_TERMINAL if on else ET_TERMINAL_OFF, "cell": c, "node": null, "pos": tp}
+	return {}
+
+
 ## E — взаимодействие. fresh — первый кадр нажатия (подсказки — один раз на нажатие).
 func _do_interact(dt: float, fresh: bool = true) -> void:
-	# Ближайший терминал: он перехватывает E в радиусе 42 px (#29).
-	var term: Vector2i = Vector2i(-1, -1)
-	var term_d: float = 42.0
-	for t in World.terminals:
-		var tw: Vector2 = World.cell_to_world(t)
-		var td: float = tw.distance_to(global_position)
-		if td < term_d:
-			term_d = td
-			term = t
-	# Генератор под курсором: E с углём — топка, без угля — рубильник (#25).
-	# Проверка идёт ПЕРЕД терминалом: раньше терминал перехватывал E всегда,
-	# и ТЭЦ, поставленное вплотную к терминалу (как и просит подсказка
-	# «поставьте рядом ТЭЦ»), было невозможно заправить углём — E до ТЭЦ
-	# не доходило, только сообщение «Терминал: нет питания».
-	# Рубильник без угля в руке терминал не перехватывает: держать E у
-	# терминала должно запускать задание, а не выключать ТЭЦ.
-	var aimed_gen = World.machines.get(building_cell)
-	if aimed_gen is Generator and aimed_gen.global_position.distance_to(global_position) < 40.0:
-		if inv.selected_stack().id == IDs.I.COAL or term.x < 0:
-			aimed_gen.interact(self)
-			return
-	# Терминалы: работают только под питанием (ADR-001 § 4.6, #29)
-	if term.x >= 0:
-		var tw2: Vector2 = World.cell_to_world(term)
-		if not Game.is_powered(tw2):
-			task_progress = 0.0
+	var tg: Dictionary = interact_target()
+	var kind: String = String(tg.get("kind", ""))
+	var cell: Vector2i = tg.get("cell", Vector2i(-1, -1))
+	# Держать E копит отсчёт только у одной цели: отошёл к другой — заново.
+	if (kind != ET_TERMINAL and kind != ET_BEACON) or cell != _task_cell:
+		task_progress = 0.0
+		_task_cell = cell if kind == ET_TERMINAL or kind == ET_BEACON else Vector2i(-1, -1)
+	# Ремонт: E с хламом в хотбаре по повреждённой машине (§ 4.4) — пока E зажата.
+	if kind == ET_REPAIR:
+		_repair(tg["node"])
+		return
+	# Нажатие уже отработало (терминал, ремонт): до отпускания E — ничего больше.
+	if _e_used:
+		return
+	match kind:
+		ET_TERMINAL_OFF:
+			# Терминалы работают только под питанием (ADR-001 § 4.6, #29).
 			if fresh:
 				Sfx.play("craft", -16.0, 0.6)
 				Game.notify("Терминал: нет питания. Поставьте рядом ТЭЦ или солнечную панель.",
 						Color(1.0, 0.7, 0.4))
-			return
-		task_progress += dt / 2.2
-		if task_progress >= 1.0:
-			task_progress = 0.0
-			_read_terminal(term)
-		return
-	# Ремонт: E с хламом в хотбаре по повреждённой машине (§ 4.4)
-	if _try_repair() or _e_used:
-		return
-	# Релей
-	if World.cell_to_world(World.beacon_cell).distance_to(global_position) < 56.0:
-		task_progress += dt / 3.0
-		if task_progress >= 1.0:
-			task_progress = 0.0
-			Game.try_finish()
-		return
-	# Манипулятор под курсором (#30): E с предметом — фильтр, пустой рукой — сброс.
-	var ins = World.machines.get(building_cell)
-	if ins is Inserter and ins.global_position.distance_to(global_position) <= REACH:
-		ins.interact(self)
-		return
-	# Сундуки
-	for m in World.machines.values():
-		if m is Chest and m.global_position.distance_to(global_position) < 40.0:
-			UI.open_chest(m)
-			return
-	# Генератор: ТЭЦ с углём в хотбаре — загрузить топку, иначе — рубильник (#25)
-	for m2 in World.machines.values():
-		if m2 is Generator and m2.global_position.distance_to(global_position) < 40.0:
-			m2.interact(self)
-			return
-	# Станции — закинуть предмет из хотбара
-	var sel: ItemStack = inv.selected_stack()
-	if not sel.is_empty():
-		for m3 in World.machines.values():
-			if m3 is Belt or m3 is Chest or m3 is CoalGen:
-				continue
-			if m3.global_position.distance_to(global_position) > 44.0:
-				continue
-			if m3.input_accepts(sel.id):
-				var left: int = m3.receive_item(sel.id, sel.count)
-				if left < sel.count:
-					inv.remove_at(inv.selected, sel.count - left)
-					Sfx.play("place", -12.0)
-					Game.notify("Загружено: %s" % DB.item_name(sel.id), Color(0.7, 0.9, 1.0))
-					return
+		ET_TERMINAL:
+			task_progress += dt / 2.2
+			if task_progress >= 1.0:
+				task_progress = 0.0
+				_read_terminal(cell)
+		ET_BEACON:
+			task_progress += dt / 3.0
+			if task_progress >= 1.0:
+				task_progress = 0.0
+				Game.try_finish()
+		ET_GENERATOR, ET_INSERTER:
+			# ТЭЦ: уголь — топка, иначе рубильник (#25); манипулятор: фильтр/сброс (#30).
+			tg["node"].interact(self)
+		ET_CHEST:
+			UI.open_chest(tg["node"])
+		ET_LOAD:
+			# Станок — закинуть предмет из хотбара.
+			var sel: ItemStack = inv.selected_stack()
+			var left: int = tg["node"].receive_item(sel.id, sel.count)
+			if left < sel.count:
+				inv.remove_at(inv.selected, sel.count - left)
+				Sfx.play("place", -12.0)
+				Game.notify("Загружено: %s" % DB.item_name(sel.id), Color(0.7, 0.9, 1.0))
 
 
 ## Терминал отработал: +данные (Game.complete_task), глава журнала этого места.
@@ -546,25 +631,11 @@ func _read_terminal(t: Vector2i) -> void:
 	Sfx.play("craft", -6.0)
 
 
-## Ремонт хламом: +Balance.REPAIR_PER_SCRAP HP ближайшей повреждённой машине за
-## единицу, пока E зажата — раз в REPAIR_GAP. true — рядом есть что чинить (E занята).
-func _try_repair() -> bool:
-	var sel: ItemStack = inv.selected_stack()
-	if sel.is_empty() or sel.id != IDs.I.SCRAP:
-		return false
-	var best: MachineBase = null
-	var best_d: float = 44.0
-	for m in World.machines.values():
-		if m.hp >= m.max_hp:
-			continue
-		var d: float = m.global_position.distance_to(global_position)
-		if d < best_d:
-			best_d = d
-			best = m
-	if best == null:
-		return false
+## Ремонт хламом: +Balance.REPAIR_PER_SCRAP HP машине-цели E (ET_REPAIR) за
+## единицу, пока E зажата — раз в REPAIR_GAP.
+func _repair(best: MachineBase) -> void:
 	if _repair_cd > 0.0:
-		return true
+		return
 	_repair_cd = REPAIR_GAP
 	_e_used = true
 	best.hp = minf(best.max_hp, best.hp + Balance.REPAIR_PER_SCRAP)
@@ -575,7 +646,6 @@ func _try_repair() -> bool:
 	UI.spawn_chip(best.cell, Color(0.75, 0.7, 0.6))
 	Game.notify("Ремонт: %s %d/%d" % [DB.item_name(MachineBase.machine_item_id(best.kind)),
 			int(best.hp), int(best.max_hp)], Color(0.7, 0.95, 0.7))
-	return true
 
 
 # ------------------------------------------------- УКРЫТИЕ (ADR-001 § 4.8)
