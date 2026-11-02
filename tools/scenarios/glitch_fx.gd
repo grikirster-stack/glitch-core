@@ -41,7 +41,7 @@ func run() -> void:
 	var n_max: int = n0
 	var f0: int = fx.stat_fired + fx.stat_calm
 	var t0: float = now_proc()
-	while now_proc() - t0 < 2.0:
+	while now_proc() - t0 < (0.5 if _shots else 2.0):
 		await get_tree().process_frame
 		n_max = maxi(n_max, get_tree().get_node_count())
 	ok("простой: эффекта нет, _process выключен", not fx.active() and not fx.is_processing()
@@ -58,7 +58,10 @@ func run() -> void:
 	await _shot_after("glitch_relay", bp)
 	await _expect_off("relay_start")
 
-	# Отметка отсчёта удержания — «приём сигнала».
+	# Отметка отсчёта удержания — «приём сигнала». Этап 4 ставим заранее: иначе
+	# Game сам перейдёт на него (relay_active) и «релей запущен» перебьёт сигнал.
+	var stage0: int = Game.objective_stage
+	Game.objective_stage = 4
 	Game.relay_active = true
 	Game.relay_timer = 30.5
 	fx._wake()
@@ -68,6 +71,7 @@ func run() -> void:
 	ok("отметка отсчёта релея → приём сигнала", got)
 	Game.relay_active = false
 	Game.relay_timer = 0.0
+	Game.objective_stage = stage0
 	await _expect_off("relay_signal")
 
 	# --- 3. Браун-аут — разрыв строк по всему экрану.
@@ -188,19 +192,18 @@ func run() -> void:
 
 	GlitchFx.set_calm(calm0)
 	release_all()
+	print("  (сценарий: %.1f с игрового времени)" % now_proc())
 	finish()
 
 
-## Ждём, пока эффект погаснет: видим не дольше MAX_SEC (с точностью до кадра).
+## Ждём, пока эффект погаснет: на экране не дольше MAX_SEC (GlitchFx.stat_last_sec).
 func _expect_off(what: String) -> void:
-	var dt: float = 0.0
 	var t0: float = now_proc()
 	while fx.active() and now_proc() - t0 < 2.0:
 		await get_tree().process_frame
-		dt = get_process_delta_time()
 	ok("%s гаснет ≤ %.1f с" % [what, GlitchFx.MAX_SEC],
-			not fx.active() and fx.stat_last_sec - dt <= GlitchFx.MAX_SEC,
-			"%.3f с (кадр %.3f)" % [fx.stat_last_sec, dt])
+			not fx.active() and fx.stat_last_sec > 0.0 and fx.stat_last_sec <= GlitchFx.MAX_SEC,
+			"%.3f с" % fx.stat_last_sec)
 
 
 # ------------------------------------------------------------------ РЕНДЕР

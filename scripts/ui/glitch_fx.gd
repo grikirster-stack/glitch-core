@@ -54,7 +54,7 @@ const DURATION: Array[float] = [0.45, 0.3, 0.4, 0.3, 0.35, 0.25]
 ## Плотность блоков (доля блоков в квадрате при полной силе); 0 — нет блоков.
 const BLOCKS: Array[float] = [0.55, 0.4, 0.0, 0.0, 0.0, 0.3]
 ## Доля сдвинутых полос при полной силе; 0 — нет разрыва строк.
-const TEAR: Array[float] = [0.0, 0.0, 0.45, 0.35, 0.16, 0.0]
+const TEAR: Array[float] = [0.0, 0.0, 0.6, 0.45, 0.2, 0.0]
 ## Полуразмер области, px мира: квадрат блоков / полоса строк вокруг точки; 0 — весь экран.
 const RADIUS: Array[float] = [64.0, 40.0, 72.0, 48.0, 0.0, 24.0]
 ## Пауза до следующего такого же события, с.
@@ -100,7 +100,8 @@ var stat_calm: int = 0
 var stat_skipped: int = 0
 ## По Kind: сколько раз включался шейдер.
 var stat_by_kind: PackedInt32Array = PackedInt32Array()
-## Длительность последнего эффекта от включения до выключения, с (по delta кадров).
+## Сколько последний эффект был на экране, с: сумма delta кадров от включения до
+## кадра выключения (сам этот кадр — уже без эффекта; затянутый кадр-рывок его не удлиняет).
 var stat_last_sec: float = 0.0
 var stat_us: int = 0
 var stat_frames: int = 0
@@ -233,10 +234,10 @@ func _process(delta: float) -> void:
 	_clock += delta
 	if active():
 		_left -= delta
-		stat_last_sec += delta
 		if _left <= 0.0:
 			stop()
 		else:
+			stat_last_sec += delta
 			_step -= delta
 			_apply()
 	_watch()
@@ -391,9 +392,9 @@ void fragment() {
 			src.x += (floor(h(b + 3.1) * 3.0) - 1.0) * bs;
 			vec4 c = texture(screen_tex, SCREEN_UV + (src - p) / rect_size);
 			float r = h(b + 7.7);
-			if (r < 0.3) {
+			if (r < 0.22) {
 				c.rgb = mix(c.rgb, danger.rgb, 0.55);
-			} else if (r < 0.55) {
+			} else if (r < 0.44) {
 				c.rgb = mix(c.rgb, bio.rgb, 0.45);
 			}
 			outc = vec4(c.rgb, 1.0);
