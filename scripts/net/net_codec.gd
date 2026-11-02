@@ -39,8 +39,8 @@ enum Msg {
 	LOBBY,         ## 2: лобби до старта: готовность и старт (MP-H, #93)
 }
 
-## Типы событий EVENT.
-enum Ev { NONE, SOUND, NOTIFY, FX }
+## Типы событий EVENT. Только дописывать в конец.
+enum Ev { NONE, SOUND, NOTIFY, FX, HIT }
 
 ## Позиция в мире: px · POS_SCALE → u16.
 const POS_SCALE: float = 4.0
@@ -649,7 +649,9 @@ static func decode_global(b: PackedByteArray) -> Dictionary:
 ## u8 тип (Ev) · координата 2×u16 · аргументы:
 ##   SOUND — id звука u8, громкость s8 (дБ), тон u8 (×100);
 ##   NOTIFY — u16 длина + текст UTF-8 + цвет u32 (RGBA8);
-##   FX — вид u8 + u8 аргумент.
+##   FX — вид u8 (Fx) + u8 аргумент;
+##   HIT — удар по своему герою (владельцу, канал 2): отбрасывание 2×s16 (px/с) +
+##         оглушение u8 (×100 с) — MP-D.
 
 static func encode_event(type: int, pos: Vector2, args: PackedByteArray) -> PackedByteArray:
 	var out: PackedByteArray = PackedByteArray()
@@ -689,6 +691,15 @@ static func encode_fx(pos: Vector2, kind: int, arg: int) -> PackedByteArray:
 	return encode_event(Ev.FX, pos, PackedByteArray([kind & 0xFF, arg & 0xFF]))
 
 
+static func encode_hit(pos: Vector2, knock: Vector2, stun: float) -> PackedByteArray:
+	var a: PackedByteArray = PackedByteArray()
+	a.resize(5)
+	a.encode_s16(0, clampi(roundi(knock.x), -32768, 32767))
+	a.encode_s16(2, clampi(roundi(knock.y), -32768, 32767))
+	a.encode_u8(4, clampi(roundi(stun * 100.0), 0, 255))
+	return encode_event(Ev.HIT, pos, a)
+
+
 ## {type, pos, ...} или {} у битого.
 static func decode_event(b: PackedByteArray) -> Dictionary:
 	if b.size() < 5:
@@ -716,6 +727,11 @@ static func decode_event(b: PackedByteArray) -> Dictionary:
 				return {}
 			d["kind"] = a[0]
 			d["arg"] = a[1]
+		Ev.HIT:
+			if a.size() != 5:
+				return {}
+			d["knock"] = Vector2(a.decode_s16(0), a.decode_s16(2))
+			d["stun"] = a.decode_u8(4) / 100.0
 		_:
 			d["args"] = a
 	return d
@@ -885,6 +901,7 @@ static func schema_sample() -> PackedByteArray:
 		encode_sound(Vector2(100, 200), 5, -6.0, 1.2),
 		encode_notify(Vector2(0, 0), "Рядом нет вентиляции", Color(1.0, 0.5, 0.25)),
 		encode_fx(Vector2(1, 2), 3, 4),
+		encode_hit(Vector2(5, 6), Vector2(-120.0, -80.0), 0.12),
 		encode_inv([[9, 99], [0, 0], [255, 65535]], 2),
 		encode_cmd(4, 77, PackedByteArray([1, 2])),
 		encode_cmd_result(77, false, "далеко"),
@@ -897,8 +914,49 @@ static func schema_sample() -> PackedByteArray:
 	out.append_array(var_to_bytes(Ev.keys()))
 	out.append_array(var_to_bytes(KEY_BITS))
 	out.append_array(var_to_bytes([POS_SCALE, WORLD_PX, WORLD_W_CELLS, BIT_LMB, BIT_RMB, BIT_WINDOW]))
+	# MP-D (#89): звуки, FX, флаги ввода и эпоха поправки.
+	out.append_array(var_to_bytes(SOUNDS))
+	out.append_array(var_to_bytes(Fx.keys()))
+	out.append_array(var_to_bytes([IF_FACING_LEFT, IF_ON_GROUND, IF_EPOCH_SHIFT, OF_EPOCH_SHIFT, PRESS_KEYS]))
 	out.append_array(lobby_schema_sample())   # MP-H (#93)
 	return out
+
+
+# ------------------------------------------------------------------ ИГРОКИ (MP-D, #89)
+
+## Звуки EVENT.SOUND: id u8 — индекс здесь. Только дописывать в конец (иначе — PROTO).
+const SOUNDS: Array = ["mine", "break", "place", "pickup", "craft", "place_machine", "hit",
+		"alarm", "power", "step", "vent_hum", "turret_zap", "swarm", "doppel_whisper", "brownout"]
+
+## Виды EVENT.FX (аргумент — в скобках). Только дописывать в конец.
+enum Fx {
+	NONE,
+	CHIP_TILE,     ## крошка тайла в клетке точки (id тайла — цвет)
+	CHIP_REPAIR,   ## крошка ремонта в клетке точки
+	RING_EMP,      ## кольцо импульса Q
+	SLASH,         ## удар по фантому
+}
+
+## Флаги пакета ввода (младшие биты u8): взгляд влево, на земле; биты 2–3 — эпоха
+## поправки: клиент повторяет эпоху последней принятой поправки, хост до этого не
+## верит позициям из пакетов (они отправлены до телепорта).
+const IF_FACING_LEFT: int = 1
+const IF_ON_GROUND: int = 2
+const IF_EPOCH_SHIFT: int = 2
+## Эпоха поправки в флагах OWN (биты 5–6).
+const OF_EPOCH_SHIFT: int = 5
+## Счётчики нажатий пакета ввода по порядку (presses_get i): E, Q, V, G.
+const PRESS_KEYS: Array = [KEY_E, KEY_Q, KEY_V, KEY_G]
+
+
+## id звука по имени (−1 — по сети не ходит).
+static func sound_id(name: String) -> int:
+	return SOUNDS.find(name)
+
+
+## Имя звука по id ("" — неизвестный).
+static func sound_name(id: int) -> String:
+	return String(SOUNDS[id]) if id >= 0 and id < SOUNDS.size() else ""
 
 
 # ------------------------------------------------------------------ ЛОББИ (MP-H, #93)

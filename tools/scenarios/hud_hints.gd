@@ -110,26 +110,39 @@ func _check_mark(stats: Dictionary, want: String, gen: Node2D, chest: Node2D) ->
 		stats["mark_bad"] = int(stats["mark_bad"]) + 1
 
 
-## Какая подсказка должна быть сейчас — по расстояниям, в том же порядке
-## важности, что у HUD: сначала сундук против терминала (E достаётся тому, что
-## ближе), потом терминал, релей, ТЭЦ. Коридор базы может задевать терминал —
+## Какая подсказка должна быть сейчас — по расстояниям, по правилу цели E
+## (#116): ближайший к герою объект в своём радиусе (терминал 42, релей 56,
+## ТЭЦ и сундук 40); терминал без питания — только если строго ближе всего
+## остального. Курсор сценарий не наводит. Коридор базы может задевать терминал —
 ## тогда ждём подсказку терминала (с учётом питания, #34).
 func _want(gen: Node2D, chest: Node2D) -> String:
 	var p: Vector2 = player.global_position
-	var term: String = ""
-	var term_d: float = 42.0
+	var best: String = ""
+	var best_d: float = INF
+	var off: String = ""
+	var off_d: float = INF
 	for t in World.terminals:
-		var d: float = World.cell_to_world(t).distance_to(p)
-		if d < term_d:
-			term_d = d
-			term = UI.hud.terminal_hint(t)
-	var chest_d: float = chest.global_position.distance_to(p)
-	if chest_d < DIST and (term == "" or chest_d < term_d):
-		return HINT_CHEST
-	if term != "":
-		return term
-	if World.cell_to_world(World.beacon_cell).distance_to(p) < 56.0:
-		return HUD.HINT_BEACON
-	if gen.global_position.distance_to(p) < DIST:
-		return UI.hud.generator_hint(gen)
-	return ""
+		var td: float = World.cell_to_world(t).distance_to(p)
+		if td >= 42.0:
+			continue
+		var th: String = UI.hud.terminal_hint(t)
+		if th == HUD.HINT_TERMINAL_NO_POWER:
+			if td < off_d:
+				off_d = td
+				off = th
+		elif td < best_d:
+			best_d = td
+			best = th
+	var bd: float = World.cell_to_world(World.beacon_cell).distance_to(p)
+	if bd < 56.0 and bd < best_d:
+		best_d = bd
+		best = HUD.HINT_BEACON
+	var gd: float = gen.global_position.distance_to(p)
+	if gd < DIST and gd < best_d:
+		best_d = gd
+		best = UI.hud.generator_hint(gen)
+	var cd: float = chest.global_position.distance_to(p)
+	if cd < DIST and cd < best_d:
+		best_d = cd
+		best = HINT_CHEST
+	return off if off_d < best_d else best
