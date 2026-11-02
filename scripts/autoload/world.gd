@@ -271,6 +271,7 @@ func generate(p_seed: int) -> void:
 			set_tile_raw(x, top - 1, IDs.T.LIGHT_CRYSTAL)
 
 	# --- 8. Руины станции -----------------------------------------------------
+	_clear_ruin_caches()
 	var ruins: int = 7
 	for i in ruins:
 		var rx: int = int((float(i) + 0.5) / float(ruins) * float(W)) + rng.randi_range(-18, 18)
@@ -586,6 +587,146 @@ func _place_ruin(cx: int, rng: RandomNumberGenerator) -> void:
 		var sy: int = base - 1
 		if get_tile(sx, sy) == IDs.T.AIR:
 			set_tile_raw(sx, sy, IDs.T.SCRAP_ORE)
+	# Тайник и табличка (ADR-001 § 4.9, #35)
+	_place_ruin_cache(ruin_caches.size(), cx, base, half)
+
+
+# ------------------------------------------------------------ ТАЙНИКИ РУИН
+# В каждой руине — сундук хозяина руины (Lore.ruin_owner) с 3–6 предметами
+# по его роли и табличка с именем места (Lore.place_name("ruin", i)).
+# Содержимое считается своим ГСЧ от сида мира и номера руины: поток случайных
+# чисел генерации мира не сдвигается, остальной мир остаётся прежним.
+
+const RUIN_CACHE_MIN: int = 3          # минимум разных предметов в тайнике
+const RUIN_CACHE_MAX: int = 6          # максимум разных предметов в тайнике
+const RUIN_CACHE_SALT: int = 0x52554E53  # «RUNS»: свой поток случайных чисел
+## Что хозяин руины хранил у себя: роль → [[предмет, мин, макс], ...]. В пуле
+## не меньше RUIN_CACHE_MAX позиций, чтобы тайник набирался без повторов.
+const RUIN_LOOT: Dictionary = {
+	"капитан": [[IDs.I.POWER_CELL, 1, 2], [IDs.I.CIRCUIT, 2, 4], [IDs.I.STEEL_PLATE, 2, 4],
+			[IDs.I.IRON_PLATE, 3, 6], [IDs.I.LAMP, 1, 3], [IDs.I.SOLAR, 1, 1]],
+	"инженер": [[IDs.I.COPPER_PLATE, 4, 8], [IDs.I.IRON_PLATE, 4, 8], [IDs.I.STEEL_PLATE, 2, 4],
+			[IDs.I.BELT, 4, 10], [IDs.I.DRILL, 1, 1], [IDs.I.ASSEMBLER, 1, 1]],
+	"медик": [[IDs.I.SCRAP, 4, 10], [IDs.I.GLASS, 3, 6], [IDs.I.SAND, 4, 8],
+			[IDs.I.LAMP, 1, 2], [IDs.I.POWER_CELL, 1, 1], [IDs.I.CRYSTAL, 1, 3]],
+	"геолог": [[IDs.I.COPPER_ORE, 6, 12], [IDs.I.IRON_ORE, 6, 12], [IDs.I.CRYSTAL, 2, 5],
+			[IDs.I.COAL, 6, 12], [IDs.I.STONE, 6, 12], [IDs.I.DRILL, 1, 1]],
+	"связист": [[IDs.I.CIRCUIT, 2, 5], [IDs.I.COPPER_PLATE, 3, 6], [IDs.I.COPPER_INGOT, 3, 6],
+			[IDs.I.CRYSTAL, 2, 4], [IDs.I.GLASS, 2, 4], [IDs.I.SOLAR, 1, 1]],
+	"пилот": [[IDs.I.COAL, 8, 16], [IDs.I.POWER_CELL, 1, 2], [IDs.I.IRON_INGOT, 3, 6],
+			[IDs.I.STEEL_PLATE, 2, 4], [IDs.I.COAL_GEN, 1, 1], [IDs.I.LAMP, 1, 3]],
+	"техник": [[IDs.I.IRON_INGOT, 3, 6], [IDs.I.COPPER_INGOT, 3, 6], [IDs.I.BELT, 6, 12],
+			[IDs.I.CHEST, 1, 2], [IDs.I.IRON_PLATE, 3, 6], [IDs.I.SMELTER, 1, 1]],
+}
+
+## Тайники текущего мира, по одному на руину, в порядке генерации:
+## {index, cell, chest, sign, sign_cell, name, role, owner}.
+var ruin_caches: Array = []
+var ruin_cache_ms: float = 0.0         # сколько генерация тайников добавила к gen_ms
+
+
+## Табличка у руины: столбик с дощечкой. Имя места проступает при подходе героя,
+## при первом подходе оно же приходит подсказкой в HUD (Game.notify).
+class RuinSign extends Node2D:
+	const SHOW_DIST: float = 160.0     # 10 клеток: руина шире 13 клеток, тайник — у середины
+	var title: String = ""
+	var alpha: float = 0.0
+	var announced: bool = false
+
+	func _process(delta: float) -> void:
+		var p = UI.player
+		var near: bool = p != null and is_instance_valid(p) \
+				and p.global_position.distance_to(global_position) < SHOW_DIST
+		var a: float = move_toward(alpha, 1.0 if near else 0.0, delta * 3.0)
+		if a != alpha:
+			alpha = a
+			queue_redraw()
+		if near and not announced:
+			announced = true
+			Game.notify("Руина: «%s»" % title, Color(1.0, 0.92, 0.7))
+
+	func _draw() -> void:
+		draw_rect(Rect2(-1.0, -3.0, 2.0, 11.0), Color(0.35, 0.33, 0.30))
+		draw_rect(Rect2(-7.0, -9.0, 14.0, 7.0), Color(0.55, 0.52, 0.45))
+		draw_rect(Rect2(-6.0, -8.0, 12.0, 1.0), Color(0.25, 0.24, 0.22))
+		draw_rect(Rect2(-6.0, -5.0, 9.0, 1.0), Color(0.25, 0.24, 0.22))
+		if alpha <= 0.01:
+			return
+		var font: Font = ThemeDB.fallback_font
+		var w: float = font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 8).x
+		draw_string(font, Vector2(-w * 0.5, -12.0), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 8,
+				Color(1.0, 0.95, 0.75, alpha))
+
+
+## Убирает тайники и таблички прошлого мира (сундуки уходят вместе с machines).
+func _clear_ruin_caches() -> void:
+	for c in ruin_caches:
+		if is_instance_valid(c["sign"]):
+			c["sign"].queue_free()
+	ruin_caches.clear()
+	ruin_cache_ms = 0.0
+
+
+## Содержимое тайника i-й руины: [[предмет, число], ...], 3–6 разных предметов
+## из пула роли хозяина. Зависит только от сида мира, номера руины и роли.
+func ruin_cache_loot(i: int, role: String) -> Array:
+	var pool: Array = (RUIN_LOOT[role] if RUIN_LOOT.has(role) else RUIN_LOOT["техник"]).duplicate()
+	var r: RandomNumberGenerator = RandomNumberGenerator.new()
+	r.seed = (world_seed ^ RUIN_CACHE_SALT) + i * 7919
+	var n: int = mini(r.randi_range(RUIN_CACHE_MIN, RUIN_CACHE_MAX), pool.size())
+	# Фишер — Йейтс на своём ГСЧ: Array.shuffle() берёт глобальный.
+	for k in range(pool.size() - 1, 0, -1):
+		var j: int = r.randi_range(0, k)
+		var tmp = pool[k]
+		pool[k] = pool[j]
+		pool[j] = tmp
+	var out: Array = []
+	for k in n:
+		var e: Array = pool[k]
+		out.append([int(e[0]), r.randi_range(int(e[1]), int(e[2]))])
+	return out
+
+
+## Первая пустая клетка над руиной в колонке x, стоящая на твёрдом; (-1, -1) — нет.
+func _ruin_top_cell(x: int, base: int) -> Vector2i:
+	for y in range(base - 1, maxi(base - 7, 0), -1):
+		if get_tile(x, y) == IDs.T.AIR and DB.tile_solid(get_tile(x, y + 1)):
+			return Vector2i(x, y)
+	return Vector2i(-1, -1)
+
+
+## Сундук с добром хозяина — на крыше руины у середины, табличка — у левого края.
+func _place_ruin_cache(i: int, cx: int, base: int, half: int) -> void:
+	var t0: int = Time.get_ticks_usec()
+	var owner: Dictionary = Lore.ruin_owner(i)
+	var role: String = String(owner.get("role", ""))
+	var cell: Vector2i = Vector2i(-1, -1)
+	for dx in [0, -1, 1, -2, 2]:
+		cell = _ruin_top_cell(cx + int(dx), base)
+		if cell.x >= 0:
+			break
+	if cell.x < 0:
+		# Над руиной вода или деревья — вырезаем нишу в стене над стальным полом.
+		cell = Vector2i(cx, base - 1)
+		set_tile_raw(cell.x, cell.y, IDs.T.AIR)
+	var chest: Chest = null
+	if MachineBase.place_machine("Chest", cell):
+		chest = machines[cell]
+		for e in ruin_cache_loot(i, role):
+			chest.receive_item(int(e[0]), int(e[1]))
+	var sign_cell: Vector2i = _ruin_top_cell(cx - half, base)
+	if sign_cell.x < 0:
+		sign_cell = cell + Vector2i(-1, 0)
+	var sign: RuinSign = RuinSign.new()
+	sign.title = Lore.place_name("ruin", i)
+	sign.z_index = 2
+	sign.position = cell_to_world(sign_cell)
+	add_world_node(sign)
+	ruin_caches.append({
+		"index": i, "cell": cell, "chest": chest, "sign": sign, "sign_cell": sign_cell,
+		"name": sign.title, "role": role, "owner": String(owner.get("full", "")),
+	})
+	ruin_cache_ms += float(Time.get_ticks_usec() - t0) / 1000.0
 
 
 func _place_base(cx: int) -> void:

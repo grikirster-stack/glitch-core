@@ -3,7 +3,8 @@ extends Node
 ## Плюс секция «== Анимации ==» — общий код из tools/anim_test.gd (issue #6),
 ## секция «== Индекс питания ==» — общий код из tools/power_test.gd (issue #11),
 ## секции «== Данные ==» и «== Сутки ==» — согласованность IDs/DB/Balance и цикл смены (#24),
-## секция «== Лор ==» — общий код из tools/lore_test.gd (issue #26).
+## секция «== Лор ==» — общий код из tools/lore_test.gd (issue #26),
+## секция «== Тайники руин ==» — сундуки и таблички руин (issue #35).
 ## Запускается из main.gd флагом `--test`.
 ##
 ## Все паузы отсчитываются по реальному времени, а не по кадрам: в headless-режиме
@@ -128,6 +129,7 @@ func _t_world() -> void:
 	_check_floating_trees()
 	print("   инвентарь: ", _inv_dump())
 	_check_data()
+	_check_ruin_caches()
 	_next(2)
 
 
@@ -694,3 +696,65 @@ func _t_finish() -> void:
 	print("")
 	print("ИТОГ: проверок %d, провалов %d" % [checks, fails])
 	get_tree().quit(1 if fails > 0 else 0)
+
+
+# ------------------------------------------------------------------ тайники руин (#35)
+
+## В каждой руине — сундук с 3–6 предметами по роли хозяина (Lore.ruin_owner)
+## и табличка с именем из Lore. Содержимое и имена детерминированы сидом мира.
+func _check_ruin_caches() -> void:
+	print("== Тайники руин ==")
+	var caches: Array = World.ruin_caches
+	_ok("у каждой руины есть тайник", caches.size() == Lore.RUIN_COUNT,
+			"%d из %d, генерация %.2f мс" % [caches.size(), Lore.RUIN_COUNT, World.ruin_cache_ms])
+	var no_chest: Array = []
+	var bad_n: Array = []
+	var bad_role: Array = []
+	var bad_det: Array = []
+	var bad_name: Array = []
+	var names: Array = []
+	for c in caches:
+		var i: int = int(c["index"])
+		var chest = c["chest"]
+		if chest == null or not is_instance_valid(chest) or World.machines.get(c["cell"]) != chest:
+			no_chest.append(i)
+			continue
+		var items: Array = []
+		for s in chest.slots:
+			if not s.is_empty():
+				items.append([s.id, s.count])
+		if items.size() < World.RUIN_CACHE_MIN or items.size() > World.RUIN_CACHE_MAX:
+			bad_n.append("%d:%d" % [i, items.size()])
+		var role: String = String(Lore.ruin_owner(i)["role"])
+		var allowed: Array = []
+		for e in World.RUIN_LOOT.get(role, []):
+			allowed.append(int(e[0]))
+		for it in items:
+			if c["role"] != role or not allowed.has(int(it[0])):
+				bad_role.append("%d:%s:%s" % [i, role, DB.item_name(int(it[0]))])
+		if items != World.ruin_cache_loot(i, role):
+			bad_det.append(i)
+		var nm: String = Lore.place_name("ruin", i)
+		if nm == "" or c["name"] != nm or not is_instance_valid(c["sign"]) or c["sign"].title != nm:
+			bad_name.append(i)
+		names.append(nm)
+	_ok("в каждом тайнике сундук", no_chest.is_empty(), str(no_chest))
+	_ok("в тайнике 3–6 предметов", bad_n.is_empty(), str(bad_n))
+	_ok("предметы по роли хозяина руины", bad_role.is_empty(), str(bad_role))
+	_ok("содержимое тайника определено сидом", bad_det.is_empty(), str(bad_det))
+	_ok("табличка с именем места из Lore", bad_name.is_empty(), str(bad_name))
+	# Имена по сиду: тот же сид — те же имена, другой сид — другие. Lore после
+	# проверки возвращаем к сиду мира.
+	var quiet0: bool = Lore.quiet
+	Lore.quiet = true
+	var other: Array = []
+	Lore.generate(World.world_seed + 1)
+	for i in Lore.RUIN_COUNT:
+		other.append(Lore.place_name("ruin", i))
+	Lore.generate(World.world_seed)
+	var again: Array = []
+	for i in Lore.RUIN_COUNT:
+		again.append(Lore.place_name("ruin", i))
+	Lore.quiet = quiet0
+	_ok("имена мест детерминированы сидом", again == names, str(names))
+	_ok("другой сид — другие имена мест", other != names, str(other))
