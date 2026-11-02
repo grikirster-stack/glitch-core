@@ -102,6 +102,9 @@ var _e_used: bool = false
 
 func _ready() -> void:
 	inv = Inventory.new(36, 10)
+	if not _net_view():   # СЕТЬ (ADR-002): камера только у своего героя
+		z_index = 5
+		return
 	camera = Camera2D.new()
 	camera.zoom = Vector2(2.2, 2.2)
 	camera.position_smoothing_enabled = true
@@ -119,6 +122,9 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	if dead:
 		return
+	if net_role == NetRole.PUPPET:   # СЕТЬ (ADR-002): марионетку двигает NetPlayers
+		_net_puppet_tick(delta)
+		return
 	var dt: float = delta
 	invuln = maxf(0.0, invuln - dt)
 	slash_cd = maxf(0.0, slash_cd - dt)
@@ -128,12 +134,49 @@ func _physics_process(delta: float) -> void:
 	_step_gap = maxf(0.0, _step_gap - dt)
 	noise = maxf(0.0, noise - dt * 40.0)
 	_repair_cd = maxf(0.0, _repair_cd - dt)
-	_tick_hide(dt)
-	_regen += dt
-	if _regen > 6.0 and hp < MAX_HP:
-		_regen = 0.0
-		hp = minf(MAX_HP, hp + 6.0)
+	if net_role != NetRole.OWNER:   # СЕТЬ (ADR-002): укрытие и HP героя клиента считает хост
+		_tick_hide(dt)
+		_regen += dt
+		if _regen > 6.0 and hp < MAX_HP:
+			_regen = 0.0
+			hp = minf(MAX_HP, hp + 6.0)
 
+	var sprint: bool = _key(KEY_SHIFT)
+	if net_role != NetRole.PROXY:   # СЕТЬ (ADR-002): прокси не интегрирует — позиция из сети
+		_integrate(dt, sprint)
+
+	# Урон от лавы
+	var here: int = World.get_tile_v(World.world_to_cell(global_position))
+	if here == IDs.T.LAVA:
+		damage(18.0 * dt, Vector2.ZERO)
+
+	var prev_phase: float = walk_anim
+	walk_anim += absf(vel.x) * dt * 0.08
+	_breath += dt * (2.0 if absf(vel.x) > 10.0 else 1.0)
+
+	# Шаги: звук по фазе шага, громче и выше на бегу. Стоящий игрок молчит.
+	_update_step(prev_phase, walk_anim, sprint)
+
+	# Шум: покой — тишина, ходьба — тихо, бег — громко (сравнимо с копкой).
+	var noise_target: float = 0.0
+	if not hiding and absf(vel.x) > MOVE_EPS:
+		noise_target = NOISE_RUN if sprint else NOISE_WALK
+	_noise_level = move_toward(_noise_level, noise_target, NOISE_RAMP * dt)
+	if noise_target > 0.0:
+		# Идём или бежим: держим шум на своём уровне.
+		noise = maxf(noise, _noise_level)
+	else:
+		# Стоим: шум гаснет быстрее обычного затухания.
+		noise = maxf(0.0, noise - dt * NOISE_RAMP)
+
+	_update_shake(dt)
+
+	_handle_input(dt)
+	queue_redraw()
+
+
+## Ввод движения → скорость → World.move_body (свой герой; прокси хоста не интегрирует).
+func _integrate(dt: float, sprint: bool) -> void:
 	# Прыжок ловим по фронту нажатия: кладём нажатие в буфер и ждём
 	# либо приземления, либо конца койот-тайма.
 	var jump_held: bool = _key(KEY_SPACE) or _key(KEY_W) or _key(KEY_UP)
@@ -149,7 +192,6 @@ func _physics_process(delta: float) -> void:
 		if _key(KEY_D) or _key(KEY_RIGHT):
 			move_dir += 1.0
 
-	var sprint: bool = _key(KEY_SHIFT)
 	var target_speed: float = SPRINT_SPEED if sprint else SPEED
 	if hiding:
 		target_speed = SPEED * 0.4
@@ -191,38 +233,12 @@ func _physics_process(delta: float) -> void:
 	else:
 		_coyote = maxf(0.0, _coyote - dt)
 
-	# Урон от лавы
-	var here: int = World.get_tile_v(World.world_to_cell(global_position))
-	if here == IDs.T.LAVA:
-		damage(18.0 * dt, Vector2.ZERO)
-
-	var prev_phase: float = walk_anim
-	walk_anim += absf(vel.x) * dt * 0.08
-	_breath += dt * (2.0 if absf(vel.x) > 10.0 else 1.0)
-
-	# Шаги: звук по фазе шага, громче и выше на бегу. Стоящий игрок молчит.
-	_update_step(prev_phase, walk_anim, sprint)
-
-	# Шум: покой — тишина, ходьба — тихо, бег — громко (сравнимо с копкой).
-	var noise_target: float = 0.0
-	if not hiding and absf(vel.x) > MOVE_EPS:
-		noise_target = NOISE_RUN if sprint else NOISE_WALK
-	_noise_level = move_toward(_noise_level, noise_target, NOISE_RAMP * dt)
-	if noise_target > 0.0:
-		# Идём или бежим: держим шум на своём уровне.
-		noise = maxf(noise, _noise_level)
-	else:
-		# Стоим: шум гаснет быстрее обычного затухания.
-		noise = maxf(0.0, noise - dt * NOISE_RAMP)
-
-	_update_shake(dt)
-
-	_handle_input(dt)
-	queue_redraw()
-
 
 ## Короткая трясучка камеры после урона — читается, но не мешает играть.
 func _update_shake(dt: float) -> void:
+	if camera == null:   # СЕТЬ (ADR-002): у чужого героя камеры нет
+		_shake = 0.0
+		return
 	if _shake > 0.0:
 		_shake = maxf(0.0, _shake - dt)
 		var amp: float = 4.0 * (_shake / HIT_SHAKE)
@@ -242,9 +258,9 @@ func _update_step(prev_phase: float, phase: float, sprint: bool) -> void:
 		return
 	_step_gap = STEP_MIN_GAP
 	if sprint:
-		Sfx.play("step", -11.0, randf_range(1.10, 1.24))
+		_sfx_self("step", -11.0, randf_range(1.10, 1.24))
 	else:
-		Sfx.play("step", -19.0, randf_range(0.86, 1.00))
+		_sfx_self("step", -19.0, randf_range(0.86, 1.00))
 
 
 func _handle_input(dt: float) -> void:
@@ -258,7 +274,9 @@ func _handle_input(dt: float) -> void:
 	if _key(KEY_0):
 		inv.selected = 9
 
-	if UI.blocking():
+	if net_role == NetRole.OWNER:   # СЕТЬ (ADR-002): действия своего героя клиента — у хоста
+		return
+	if _ui_blocking():
 		return
 
 	var mouse: Vector2 = _mouse_pos()
@@ -343,7 +361,7 @@ func _slash_at(mouse: Vector2) -> bool:
 	for p in get_tree().get_nodes_in_group("phantom"):
 		if p.global_position.distance_to(mouse) < 20.0:
 			slash_cd = 0.45
-			_sfx("hit", -6.0, 1.4)
+			_sfx_here("hit", -6.0, 1.4)
 			p.take_damage(38.0, global_position)
 			_make_slash_fx(mouse)
 			return true
@@ -352,8 +370,8 @@ func _slash_at(mouse: Vector2) -> bool:
 
 func _empulse() -> void:
 	emp_cd = emp_max
-	Sfx.play("power", -8.0)
-	UI.flash_ring(global_position, Color(0.4, 0.9, 1.0))
+	_sfx_here("power", -8.0)
+	_fx(NetCodec.Fx.RING_EMP, global_position)
 	for p in get_tree().get_nodes_in_group("phantom"):
 		if p.global_position.distance_to(global_position) < 130.0:
 			p.apply_stun(3.0)
@@ -374,8 +392,8 @@ func _do_mining(cell: Vector2i, dt: float) -> void:
 	_mine_fx_t += dt
 	noise = maxf(noise, 46.0)
 	if fmod(mining_progress, 0.35) < dt:
-		Sfx.play("mine", -14.0, randf_range(0.85, 1.2))
-		UI.spawn_chip(cell, DB.tile_color(tid))
+		_sfx_here("mine", -14.0, randf_range(0.85, 1.2))
+		_fx(NetCodec.Fx.CHIP_TILE, World.cell_to_world(cell), tid)
 	if mining_progress >= 1.0:
 		mining_progress = 0.0
 		_break_tile(cell)
@@ -388,8 +406,8 @@ func _break_tile(cell: Vector2i) -> void:
 	# Сломан ствол или ветка — крона, оставшаяся без опоры, падает.
 	if tid == IDs.T.TREE or tid == IDs.T.LEAVES:
 		World.fix_floating_near(cell)
-	Sfx.play("break", -8.0, randf_range(0.9, 1.15))
-	UI.spawn_chip(cell, DB.tile_color(tid))
+	_sfx_here("break", -8.0, randf_range(0.9, 1.15))
+	_fx(NetCodec.Fx.CHIP_TILE, World.cell_to_world(cell), tid)
 	Game.stats_mined += 1
 	if drop != IDs.I.NONE:
 		spawn_item(drop, 1, World.cell_to_world(cell))
@@ -400,7 +418,7 @@ func _do_place(cell: Vector2i) -> void:
 	var turnable = World.machines.get(cell)
 	if turnable is Belt or turnable is Inserter:
 		turnable.turn()
-		Sfx.play("place", -14.0, 1.3)
+		_sfx_here("place", -14.0, 1.3)
 		return
 	var stack: ItemStack = inv.selected_stack()
 	if stack.is_empty():
@@ -413,19 +431,19 @@ func _do_place(cell: Vector2i) -> void:
 	if place.begins_with("tile:"):
 		var tid: int = int(place.substr(5))
 		if not World.tile_place_ok(cell, tid):   # решётка — только на вентиляцию (#31)
-			Game.notify("Решётку ставят на вентиляцию.", Color(1.0, 0.6, 0.5))
+			_notify("Решётку ставят на вентиляцию.", Color(1.0, 0.6, 0.5))
 			return
 		World.set_tile(cell.x, cell.y, tid)
 		inv.remove_at(inv.selected, 1)
-		Sfx.play("place", -10.0)
+		_sfx_here("place", -10.0)
 	elif place.begins_with("machine:"):
 		var kind: String = place.substr(7)
 		if MachineBase.place_machine(kind, cell):
 			inv.remove_at(inv.selected, 1)
-			Sfx.play("place_machine", -8.0)
+			_sfx_here("place_machine", -8.0)
 			_auto_orient(cell, kind)
 		else:
-			Game.notify("Сюда нельзя поставить.", Color(1.0, 0.6, 0.5))
+			_notify("Сюда нельзя поставить.", Color(1.0, 0.6, 0.5))
 
 
 ## Конвейер сразу встаёт в сторону ближайшей принимающей постройки.
@@ -462,8 +480,8 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 			if not Game.is_powered(tw):
 				task_progress = 0.0
 				if fresh:
-					Sfx.play("craft", -16.0, 0.6)
-					Game.notify("Терминал: нет питания. Поставьте рядом ТЭЦ или солнечную панель.",
+					_sfx_here("craft", -16.0, 0.6)
+					_notify("Терминал: нет питания. Поставьте рядом ТЭЦ или солнечную панель.",
 							Color(1.0, 0.7, 0.4))
 				return
 			task_progress += dt / 2.2
@@ -489,7 +507,7 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 	# Сундуки
 	for m in World.machines.values():
 		if m is Chest and m.global_position.distance_to(global_position) < 40.0:
-			UI.open_chest(m)
+			_open_chest(m)
 			return
 	# Генератор: ТЭЦ с углём в хотбаре — загрузить топку, иначе — рубильник (#25)
 	for m2 in World.machines.values():
@@ -508,8 +526,8 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 				var left: int = m3.receive_item(sel.id, sel.count)
 				if left < sel.count:
 					inv.remove_at(inv.selected, sel.count - left)
-					Sfx.play("place", -12.0)
-					Game.notify("Загружено: %s" % DB.item_name(sel.id), Color(0.7, 0.9, 1.0))
+					_sfx_here("place", -12.0)
+					_notify("Загружено: %s" % DB.item_name(sel.id), Color(0.7, 0.9, 1.0))
 					return
 
 
@@ -522,7 +540,7 @@ func _read_terminal(t: Vector2i) -> void:
 	Game.complete_task()
 	if chapter >= 0:
 		Tech.read_chapter(chapter)
-	Sfx.play("craft", -6.0)
+	_sfx_here("craft", -6.0)
 
 
 ## Ремонт хламом: +Balance.REPAIR_PER_SCRAP HP ближайшей повреждённой машине за
@@ -550,9 +568,9 @@ func _try_repair() -> bool:
 	best.anim = 1.0
 	best.queue_redraw()
 	inv.remove_at(inv.selected, 1)
-	Sfx.play("place", -10.0, 1.2)
-	UI.spawn_chip(best.cell, Color(0.75, 0.7, 0.6))
-	Game.notify("Ремонт: %s %d/%d" % [DB.item_name(MachineBase.machine_item_id(best.kind)),
+	_sfx_here("place", -10.0, 1.2)
+	_fx(NetCodec.Fx.CHIP_REPAIR, World.cell_to_world(best.cell))
+	_notify("Ремонт: %s %d/%d" % [DB.item_name(MachineBase.machine_item_id(best.kind)),
 			int(best.hp), int(best.max_hp)], Color(0.7, 0.95, 0.7))
 	return true
 
@@ -568,7 +586,7 @@ func _tick_hide(dt: float) -> void:
 	hide_timer = maxf(0.0, hide_timer - dt)
 	if hide_timer <= 0.0:
 		_leave_vent()
-		Game.notify("Вентиляция вытолкнула вас наружу.", Color(1.0, 0.75, 0.5))
+		_notify("Вентиляция вытолкнула вас наружу.", Color(1.0, 0.75, 0.5))
 
 
 func _leave_vent() -> void:
@@ -576,7 +594,7 @@ func _leave_vent() -> void:
 	hide_timer = 0.0
 	hide_cd = Balance.HIDE_COOLDOWN
 	invuln = minf(invuln, 0.6)
-	Sfx.play("power", -16.0, 0.8)
+	_sfx_here("power", -16.0, 0.8)
 
 
 func _toggle_hide() -> void:
@@ -586,17 +604,17 @@ func _toggle_hide() -> void:
 	for v in World.vents:
 		if World.cell_to_world(v).distance_to(global_position) < 40.0:
 			if hide_cd > 0.0:
-				Game.notify("Вентиляция ещё не остыла: %d с." % ceili(hide_cd), Color(0.8, 0.8, 0.8))
+				_notify("Вентиляция ещё не остыла: %d с." % ceili(hide_cd), Color(0.8, 0.8, 0.8))
 				return
 			hiding = true
 			hide_timer = Balance.HIDE_MAX
 			invuln = Balance.HIDE_MAX + 0.6
 			vel = Vector2.ZERO
-			Sfx.play("power", -14.0)
-			Game.notify("Вы в вентиляции: %d с, фантомы вас не видят." % int(Balance.HIDE_MAX),
+			_sfx_here("power", -14.0)
+			_notify("Вы в вентиляции: %d с, фантомы вас не видят." % int(Balance.HIDE_MAX),
 					Color(0.6, 0.9, 1.0))
 			return
-	Game.notify("Рядом нет вентиляции.", Color(0.8, 0.8, 0.8))
+	_notify("Рядом нет вентиляции.", Color(0.8, 0.8, 0.8))
 
 
 func spawn_item(item_id: int, count: int, pos: Vector2) -> void:
@@ -611,13 +629,13 @@ func spawn_item(item_id: int, count: int, pos: Vector2) -> void:
 func collect(item_id: int, count: int) -> int:
 	var left: int = inv.add(item_id, count)
 	if left < count:
-		Sfx.play("pickup", -16.0, randf_range(0.95, 1.15))
+		_sfx_here("pickup", -16.0, randf_range(0.95, 1.15))
 		stats_changed.emit()
 	return left
 
 
 func damage(amount: float, knock: Vector2) -> void:
-	if invuln > 0.0 or dead:
+	if invuln > 0.0 or dead or not _net_takes_damage():   # СЕТЬ: урон считает хост
 		return
 	hp -= amount
 	invuln = 0.6
@@ -628,7 +646,7 @@ func damage(amount: float, knock: Vector2) -> void:
 	_hit_flash = HIT_FLASH
 	_stun = HIT_STUN
 	_shake = HIT_SHAKE
-	UI.flash_damage()
+	_feedback_hit(knock)
 	if hp <= 0.0:
 		_die()
 
@@ -688,7 +706,7 @@ func respawn_at(pos: Vector2) -> void:
 
 
 func _sfx(n: String, v: float = 0.0, p: float = 1.0) -> void:
-	Sfx.play(n, v, p)
+	_sfx_here(n, v, p)
 
 
 ## Раскладка частей фигуры в локальных координатах героя (issue #58).
@@ -770,7 +788,7 @@ func _draw_mining_fx() -> void:
 
 
 func _make_slash_fx(p: Vector2) -> void:
-	UI.spawn_slash(p)
+	_fx(NetCodec.Fx.SLASH, p)
 
 
 # ------------------------------------------------- СОХРАНЕНИЕ (#37)
@@ -840,3 +858,241 @@ var look: int = 0
 var nick: String = ""
 ## Огонёк ответа на перекличку (G), с (MP-J).
 var rollcall_t: float = 0.0
+
+# --- MP-D (#89): роли, обёртки обратной связи, поправки (§ 4.2.3, § 4.4)
+## Прокси на связи: ввод от владельца не старше NetPlayers.LINK_LOST. «Без связи» —
+## стоит, урона не получает, целью не служит (net_targetable).
+var net_linked: bool = true
+## У владельца прокси открыто окно (бит BIT_WINDOW ввода) — вместо UI.blocking() хоста.
+var net_window_open: bool = false
+## Марионетка: предмет в руке (id), бег (громкость шагов).
+var net_held: int = 0
+var net_sprint: bool = false
+## Эпоха последней поправки позиции (NetCodec.IF_EPOCH_SHIFT / OF_EPOCH_SHIFT).
+var net_epoch: int = 0
+## Свой герой клиента возрождён хостом (main.gd прячет экран смерти).
+signal net_respawned
+
+
+## Свой герой этого процесса: камера, HUD, звук без позиции.
+func _net_view() -> bool:
+	return net_role == NetRole.LOCAL or net_role == NetRole.OWNER
+
+
+## Урон, смерть, укрытие считает этот процесс (одиночная, свой герой хоста, прокси на связи).
+func _net_takes_damage() -> bool:
+	return net_role == NetRole.LOCAL or (net_role == NetRole.PROXY and net_linked)
+
+
+## Может ли герой быть целью фантома (MP-F): живой, не спрятался, на связи.
+func net_targetable() -> bool:
+	return not dead and not hiding and net_linked
+
+
+## Открыто ли окно, забирающее ввод у мира: у прокси — по пакету ввода владельца.
+func _ui_blocking() -> bool:
+	if net_role == NetRole.PROXY:
+		return net_window_open
+	return UI.blocking()
+
+
+## Звук действия героя. Свой герой — как раньше (Sfx.play); хост ещё рассылает его
+## клиентам в точке героя (канал 0, Sfx.play_at у тех, кто слышит). Прокси: хост
+## слышит в точке, клиенты (и владелец) — событием.
+func _sfx_here(id: String, v: float = 0.0, p: float = 1.0) -> void:
+	if _net_view():
+		Sfx.play(id, v, p)
+	else:
+		Sfx.play_at(id, global_position, v, p)
+	if Net.is_host() and (net_role == NetRole.LOCAL or net_role == NetRole.PROXY):
+		NetPlayers.send_sound(global_position, id, v, p)
+
+
+## Звук, который каждый процесс играет сам и по сети не шлёт (шаги: скорость есть
+## у всех — у прокси из пакета ввода, у марионетки из состояния).
+func _sfx_self(id: String, v: float = 0.0, p: float = 1.0) -> void:
+	if _net_view():
+		Sfx.play(id, v, p)
+	else:
+		Sfx.play_at(id, global_position, v, p)
+
+
+## Личное уведомление: видит только этот игрок. Прокси — владельцу (канал 2).
+func _notify(text: String, color: Color = Color(0.85, 0.9, 1.0)) -> void:
+	if net_role == NetRole.PROXY:
+		NetPlayers.send_notify(peer_id, global_position, text, color)
+	elif _net_view():
+		Game.notify(text, color)
+
+
+## Эффект в мире (крошка, кольцо, удар): видят все — хост рисует и рассылает.
+func _fx(kind: int, pos: Vector2, arg: int = 0) -> void:
+	NetPlayers.play_fx(kind, pos, arg)
+	if Net.is_host() and (net_role == NetRole.LOCAL or net_role == NetRole.PROXY):
+		NetPlayers.send_fx(kind, pos, arg)
+
+
+## Удар по герою: вспышка экрана и тряска — своему; прокси шлёт владельцу удар
+## с отбрасыванием (движение у владельца, § 4.2.3).
+func _feedback_hit(knock: Vector2) -> void:
+	if net_role == NetRole.PROXY:
+		NetPlayers.send_hit(peer_id, global_position, knock, HIT_STUN)
+	elif _net_view():
+		UI.flash_damage()
+
+
+## Сундук рядом по E: у прокси окно открывается у владельца — слой команд MP-G (#91).
+func _open_chest(c: Chest) -> void:
+	if net_role != NetRole.PROXY:
+		UI.open_chest(c)
+
+
+## Владелец: удар с хоста (событие HIT) — отбрасывание, заморозка ввода, вспышка, тряска.
+func net_on_hit(knock: Vector2, stun: float) -> void:
+	if net_role != NetRole.OWNER or dead:
+		return
+	vel += knock
+	_hit_flash = HIT_FLASH
+	_stun = maxf(_stun, stun)
+	_shake = HIT_SHAKE
+	UI.flash_damage()
+
+
+## Владелец: ввод из шва (клавиатура, сценарий, сенсор #81) для пакета ввода.
+func net_input_sample() -> Dictionary:
+	var keys: Dictionary = {}
+	for code in NetCodec.KEY_BITS:
+		keys[code] = _key(int(code))
+	return {"keys": keys, "mouse": _mouse_pos(), "buttons": {
+		MOUSE_BUTTON_LEFT: _mouse_down(MOUSE_BUTTON_LEFT),
+		MOUSE_BUTTON_RIGHT: _mouse_down(MOUSE_BUTTON_RIGHT)}}
+
+
+## Строка пакета состояния (NetCodec, игрок 18 Б).
+func net_state_row(slot: int) -> Dictionary:
+	var flags: int = 0
+	if facing < 0:
+		flags |= NetCodec.PF_FACING_LEFT
+	if on_ground:
+		flags |= NetCodec.PF_ON_GROUND
+	if hiding:
+		flags |= NetCodec.PF_HIDING
+	if dead:
+		flags |= NetCodec.PF_DEAD
+	if _key(KEY_SHIFT) and absf(vel.x) > MOVE_EPS:
+		flags |= NetCodec.PF_SPRINT
+	if _stun > 0.0:
+		flags |= NetCodec.PF_STUN
+	if _hit_flash > 0.0:
+		flags |= NetCodec.PF_HIT
+	if rollcall_t > 0.0:
+		flags |= NetCodec.PF_ROLLCALL
+	var mc: int = NetCodec.NO_CELL
+	if mining_cell.x >= 0 and mining_progress > 0.0:
+		mc = mining_cell.y * NetCodec.WORLD_W_CELLS + mining_cell.x
+	return {"slot": slot, "pos": global_position, "vel": vel, "flags": flags, "hp": hp / MAX_HP,
+		"mine_cell": mc, "mine": mining_progress, "held": inv.selected_stack().id,
+		"anim": fposmod(walk_anim, TAU) / TAU, "noise": noise}
+
+
+## Личное состояние прокси для владельца (OWN); эпоху и поправку ведёт NetPlayers.
+func net_own(seq_ack: int, epoch: int, correction: bool) -> Dictionary:
+	var flags: int = (epoch & 3) << NetCodec.OF_EPOCH_SHIFT
+	if hiding:
+		flags |= NetCodec.OF_HIDING
+	if dead:
+		flags |= NetCodec.OF_DEAD
+	if _stun > 0.0:
+		flags |= NetCodec.OF_STUN
+	if invuln > 0.0:
+		flags |= NetCodec.OF_INVULN
+	var d: Dictionary = {"hp": hp / MAX_HP, "flags": flags, "hide_timer": hide_timer,
+		"emp_cd": emp_cd, "seq_ack": seq_ack}
+	if correction:
+		d["correction"] = global_position
+	return d
+
+
+## Владелец: личное состояние с хоста. Поправка с новой эпохой — телепорт; смерть и
+## возрождение — по флагу (место возрождения приходит поправкой).
+func net_apply_own(d: Dictionary) -> void:
+	var flags: int = int(d["flags"])
+	var epoch: int = (flags >> NetCodec.OF_EPOCH_SHIFT) & 3
+	var new_hp: float = float(d["hp"]) * MAX_HP
+	if absf(new_hp - hp) > 0.01:
+		hp = new_hp
+		stats_changed.emit()
+	hiding = (flags & NetCodec.OF_HIDING) != 0
+	hide_timer = float(d["hide_timer"])
+	emp_cd = float(d["emp_cd"])
+	if (flags & NetCodec.OF_STUN) != 0:
+		_stun = maxf(_stun, 1.0 / float(Net.TICK_HZ))
+	if (flags & NetCodec.OF_INVULN) != 0:
+		invuln = maxf(invuln, 1.0 / float(Net.TICK_HZ))
+	if d.has("correction") and epoch != net_epoch:
+		net_epoch = epoch
+		global_position = d["correction"]
+		vel = Vector2.ZERO
+		_jump_buffer = 0.0
+		if camera != null:
+			camera.reset_smoothing()
+	var now_dead: bool = (flags & NetCodec.OF_DEAD) != 0
+	if now_dead and not dead:
+		dead = true
+		hiding = false
+		vel = Vector2.ZERO
+		task_progress = 0.0
+		mining_progress = 0.0
+		died.emit()
+	elif dead and not now_dead:
+		dead = false
+		_stun = 0.0
+		stats_changed.emit()
+		net_respawned.emit()
+
+
+## Владелец: своя строка состояния — копка и предмет в руке (рисует индикатор копки).
+func net_apply_own_row(row: Dictionary) -> void:
+	_net_apply_mining(row)
+
+
+## Марионетка: интерполированная позиция и состояние из пакета (§ 4.2.3, D6).
+func net_apply_puppet(pos: Vector2, v: Vector2, row: Dictionary) -> void:
+	global_position = pos
+	vel = v
+	var flags: int = int(row["flags"])
+	facing = -1 if (flags & NetCodec.PF_FACING_LEFT) != 0 else 1
+	on_ground = (flags & NetCodec.PF_ON_GROUND) != 0
+	hiding = (flags & NetCodec.PF_HIDING) != 0
+	dead = (flags & NetCodec.PF_DEAD) != 0
+	net_sprint = (flags & NetCodec.PF_SPRINT) != 0
+	if (flags & NetCodec.PF_HIT) != 0 and _hit_flash <= 0.0:
+		_hit_flash = HIT_FLASH
+	rollcall_t = 1.0 if (flags & NetCodec.PF_ROLLCALL) != 0 else 0.0
+	hp = float(row["hp"]) * MAX_HP
+	net_held = int(row["held"])
+	_net_apply_mining(row)
+
+
+func _net_apply_mining(row: Dictionary) -> void:
+	var mc: int = int(row["mine_cell"])
+	if mc == NetCodec.NO_CELL:
+		mining_cell = Vector2i(-1, -1)
+		mining_progress = 0.0
+	else:
+		mining_cell = Vector2i(mc % NetCodec.WORLD_W_CELLS, mc / NetCodec.WORLD_W_CELLS)
+		mining_progress = float(row["mine"])
+	queue_redraw()
+
+
+## Кадр марионетки: позицию ставит NetPlayers; здесь анимация, шаги, вспышка.
+func _net_puppet_tick(dt: float) -> void:
+	_hit_flash = maxf(0.0, _hit_flash - dt)
+	_step_gap = maxf(0.0, _step_gap - dt)
+	var prev_phase: float = walk_anim
+	walk_anim += absf(vel.x) * dt * 0.08
+	_breath += dt * (2.0 if absf(vel.x) > 10.0 else 1.0)
+	_update_step(prev_phase, walk_anim, net_sprint)
+	if mining_progress > 0.0:
+		_mine_fx_t += dt
+	queue_redraw()

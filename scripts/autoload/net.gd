@@ -33,7 +33,7 @@ signal roster_changed
 enum Role { OFFLINE, HOST, CLIENT }
 
 # --- транспорт (§ 9.2: не баланс — калибровочный PR их не трогает)
-const PROTO: int = 1                 ## версия протокола: поднимать при смене кодека, IDs, таблиц DB
+const PROTO: int = 2                 ## версия протокола: поднимать при смене кодека, IDs, таблиц DB (2 — MP-D: HIT, звуки, Fx)
 const GAME_PORT: int = 24642
 const DISCOVERY_PORT: int = 24643
 const TICK_HZ: int = 20              ## пакет состояния
@@ -378,6 +378,7 @@ func _on_peer_authenticating(id: int) -> void:
 		var pp: ENetPacketPeer = _peer.get_peer(id) if _peer != null else null
 		if pp != null:
 			pp.set_timeout(PEER_TIMEOUT_LIMIT, PEER_TIMEOUT_MIN_MS, PEER_TIMEOUT_MAX_MS)
+			_no_throttle(pp)   # MP-D (#89)
 		return
 	if id == 1:
 		var hello: Dictionary = {"proto": hello_proto, "build": build_id(),
@@ -422,6 +423,8 @@ func _on_peer_disconnected(id: int) -> void:
 
 func _on_connected_to_server() -> void:
 	join_ms = Time.get_ticks_msec() - _join_t0
+	if _peer != null and _peer.get_peer(1) != null:
+		_no_throttle(_peer.get_peer(1))   # MP-D (#89)
 	session_started.emit()
 
 
@@ -670,3 +673,19 @@ func apply_args(o: Dictionary) -> void:
 		local_profile["uid"] = int(o["uid"])
 	if o.has("proto"):
 		hello_proto = int(o["proto"])
+
+
+# ------------------------------------------------------------------ MP-D (#89): ДРОССЕЛЬ ENet
+## ENet по умолчанию «дросселирует» ненадёжные пакеты: стоит RTT подскочить (клиент
+## секунду строит мир после входа, машина занята), он выбрасывает до 100 % пакетов
+## состояния и ввода и возвращает их по 2/32 за интервал — замер mp_move: после входа
+## RTT 420 мс, дроссель 0/32, до нормы ≈ 5 с, ввод доходил через раз. Состоянию и вводу
+## (новое затирает старое) дроссель не нужен: снижение запрещаем (deceleration 0),
+## возврат — сразу (acceleration = PACKET_THROTTLE_SCALE). Команда уходит и второй
+## стороне соединения.
+const THROTTLE_INTERVAL_MS: int = 1000
+const THROTTLE_SCALE: int = 32       ## ENET_PEER_PACKET_THROTTLE_SCALE
+
+
+func _no_throttle(pp: ENetPacketPeer) -> void:
+	pp.throttle_configure(THROTTLE_INTERVAL_MS, THROTTLE_SCALE, 0)
