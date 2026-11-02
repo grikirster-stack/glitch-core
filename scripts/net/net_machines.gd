@@ -298,7 +298,8 @@ func send_states() -> void:
 			pd["full"] = false
 			pd["rect"] = rect
 			for idx in _machines:
-				if has_c[0] and not rect.has_point(_machines[idx].global_position):
+				var m = _machines[idx]
+				if not is_instance_valid(m) or (has_c[0] and not rect.has_point(m.global_position)):
 					continue
 				var st = _last.get(idx)
 				if st == null or cache.get(idx) == st:
