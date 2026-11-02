@@ -136,6 +136,8 @@ class Runner extends Node:
 	var _noise_peak: float = 0.0
 	var _noise_floor: float = 0.0
 	var _tod0: float = 0.30
+	## Раскладка фигуры при взгляде вправо (issue #58).
+	var _lay_right: Dictionary = {}
 
 
 	func _init(p_host: Node = null) -> void:
@@ -317,6 +319,7 @@ class Runner extends Node:
 
 	func _s_face_left() -> void:
 		_ok("взгляд вправо при движении вправо", int(player.facing) == 1, "facing=%d" % int(player.facing))
+		_lay_right = player.body_layout()
 		_set_key(KEY_D, false)
 		_set_key(KEY_A, true)
 		_next(ST_JUMP_SETUP, 0.25)
@@ -324,6 +327,7 @@ class Runner extends Node:
 
 	func _s_jump_setup() -> void:
 		_ok("взгляд влево при движении влево", int(player.facing) == -1, "facing=%d" % int(player.facing))
+		_check_mirror(_lay_right, player.body_layout())
 		_set_key(KEY_A, false)
 		# Прыжок проверяем на настоящей земле: игрок встаёт на площадку базы.
 		_pin = false
@@ -333,6 +337,29 @@ class Runner extends Node:
 		_jump_min_y = player.global_position.y
 		_jump_y0 = player.global_position.y
 		_next(ST_JUMP_GROUND, 0.6)
+
+
+	## Issue #58: при взгляде влево отзеркалена вся фигура, а не только визор.
+	## Рюкзак — за спиной (по другую сторону от центра), визор и огонёк — впереди.
+	func _check_mirror(right: Dictionary, left: Dictionary) -> void:
+		var bp_r: float = (right["backpack"] as Rect2).get_center().x
+		var bp_l: float = (left["backpack"] as Rect2).get_center().x
+		_ok("рюкзак за спиной в обе стороны", bp_r < 0.0 and bp_l > 0.0,
+				"центр рюкзака x: вправо %.1f, влево %.1f" % [bp_r, bp_l])
+		var vi_r: float = (right["visor"] as Rect2).get_center().x
+		var vi_l: float = (left["visor"] as Rect2).get_center().x
+		_ok("визор впереди в обе стороны", vi_r > 0.0 and vi_l < 0.0,
+				"центр визора x: вправо %.1f, влево %.1f" % [vi_r, vi_l])
+		var li_r: float = (right["light"] as Vector2).x
+		var li_l: float = (left["light"] as Vector2).x
+		_ok("огонёк шлема впереди в обе стороны", li_r > 0.0 and li_l < 0.0,
+				"огонёк x: вправо %.1f, влево %.1f" % [li_r, li_l])
+		# Рюкзак и визор — зеркальные копии (ось героя x = 0), а не просто сдвиг.
+		var bp_rr: Rect2 = right["backpack"]
+		var bp_lr: Rect2 = left["backpack"]
+		_ok("рюкзак отражён зеркально", is_equal_approx(bp_rr.position.x, -bp_lr.end.x)
+				and is_equal_approx(bp_rr.size.x, bp_lr.size.x),
+				"вправо %s, влево %s" % [str(bp_rr), str(bp_lr)])
 
 
 	func _s_jump_ground() -> void:
