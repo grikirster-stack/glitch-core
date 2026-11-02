@@ -276,3 +276,7 @@ func _watcher() -> void:
 	var term: Vector2 = World.cell_to_world(_plan["term"])
 	ok("c1: звук прочитанного терминала дошёл в точке", await wait_until(func() -> bool:
 		return events_near(NetCodec.Ev.SOUND, "sound", "craft", term, 64.0) > 0, 2.0))
+	if has_world_deltas():
+		var tc: Vector2i = _plan["term"]
+		ok("c1: терминал отработал и у второго клиента (MP-C)", await wait_until(func() -> bool:
+			return World.get_tile_v(tc) == IDs.T.PANEL, 3.0))
