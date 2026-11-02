@@ -675,14 +675,14 @@ func _sfx(n: String, v: float = 0.0, p: float = 1.0) -> void:
 	Sfx.play(n, v, p)
 
 
-func _draw() -> void:
-	var body_col: Color = Color(0.86, 0.22, 0.24)
-	if hiding:
-		body_col = body_col.darkened(0.45)
-	# Покраснение корпуса после урона.
-	var flash: float = _hit_flash / HIT_FLASH
-	if flash > 0.0:
-		body_col = body_col.lerp(Color(1.0, 0.74, 0.64), flash * 0.85)
+## Раскладка частей фигуры в локальных координатах героя (issue #58).
+## Все части задаются «лицом вправо», а при facing = -1 каждая отражается
+## относительно вертикальной оси героя (x = 0): рюкзак уходит за спину,
+## визор и огонёк — вперёд, ноги меняются местами вместе с фазой шага.
+## Вынесено из _draw, чтобы anim_test проверял ровно то, что рисуется.
+## Ключи: body, backpack, leg_back, leg_front, visor, visor_top, visor_glint —
+## Rect2; light — Vector2 (центр огонька на шлеме).
+func body_layout() -> Dictionary:
 	# Живое покойное дыхание + лёгкий подскок корпуса на шаге.
 	var idle_amt: float = clampf(1.0 - absf(vel.x) / 60.0, 0.0, 1.0)
 	var move_amt: float = clampf(absf(vel.x) / SPEED, 0.0, 1.0)
@@ -691,30 +691,61 @@ func _draw() -> void:
 	# Низ корпуса неподвижен — дыхание растягивает корпус вверх.
 	var body_h: float = SIZE.y * (1.0 + 0.03 * breathe)
 	var r: Rect2 = Rect2(-SIZE.x * 0.5, SIZE.y * 0.5 - body_h + bounce, SIZE.x, body_h)
+	var step: float = sin(walk_anim) * 2.0
+	var visor: Rect2 = Rect2(-1.0, r.position.y + 2.0, 11.0, 7.0)
+	var light: Vector2 = Vector2(visor.position.x + 8.0, visor.position.y)
+	var f: float = -1.0 if facing < 0 else 1.0
+	return {
+		"body": r,
+		# Рюкзак за спиной: при взгляде вправо — слева от корпуса.
+		"backpack": _mirror(Rect2(-r.size.x * 0.5 - 5.0, -r.size.y * 0.5 + 3.0, 5.0, r.size.y - 7.0)),
+		"leg_back": _mirror(Rect2(-4.0, r.end.y - 3.0, 3.0, 3.0 + step)),
+		"leg_front": _mirror(Rect2(1.0, r.end.y - 3.0, 3.0, 3.0 - step)),
+		"visor": _mirror(visor),
+		"visor_top": _mirror(Rect2(visor.position.x, visor.position.y, visor.size.x, 2.0)),
+		"visor_glint": _mirror(Rect2(visor.position.x + 1.0, visor.position.y + 1.0, 3.0, 2.0)),
+		"light": Vector2(light.x * f, light.y),
+	}
+
+
+## Отражение прямоугольника относительно оси героя, если он смотрит влево.
+func _mirror(rect: Rect2) -> Rect2:
+	if facing >= 0:
+		return rect
+	return Rect2(-rect.end.x, rect.position.y, rect.size.x, rect.size.y)
+
+
+func _draw() -> void:
+	var body_col: Color = Color(0.86, 0.22, 0.24)
+	if hiding:
+		body_col = body_col.darkened(0.45)
+	# Покраснение корпуса после урона.
+	var flash: float = _hit_flash / HIT_FLASH
+	if flash > 0.0:
+		body_col = body_col.lerp(Color(1.0, 0.74, 0.64), flash * 0.85)
+	# Фигура уже отзеркалена по facing (body_layout), рисуем как есть.
+	var lay: Dictionary = body_layout()
+	var r: Rect2 = lay["body"]
 	# Тень
 	draw_set_transform(Vector2(0, SIZE.y * 0.5), 0.0, Vector2(1.0, 0.35))
 	draw_circle(Vector2.ZERO, SIZE.x * 0.6, Color(0, 0, 0, 0.28))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	# Рюкзак
-	draw_rect(Rect2(-r.size.x * 0.5 - 5.0, -r.size.y * 0.5 + 3.0, 5.0, r.size.y - 7.0), body_col.darkened(0.25))
+	draw_rect(lay["backpack"], body_col.darkened(0.25))
 	# Тело
 	draw_rect(r, body_col)
 	draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 3.0), body_col.lightened(0.18))
 	draw_rect(Rect2(r.position.x, r.end.y - 3.0, r.size.x, 3.0), body_col.darkened(0.22))
 	# Ноги
-	var step: float = sin(walk_anim) * 2.0
-	draw_rect(Rect2(-4.0, r.end.y - 3.0, 3.0, 3.0 + step), body_col.darkened(0.35))
-	draw_rect(Rect2(1.0, r.end.y - 3.0, 3.0, 3.0 - step), body_col.darkened(0.35))
+	draw_rect(lay["leg_back"], body_col.darkened(0.35))
+	draw_rect(lay["leg_front"], body_col.darkened(0.35))
 	# Визор
-	var visor_x: float = -1.0 if facing > 0 else -11.0
-	var visor_y: float = r.position.y + 2.0
-	var visor: Rect2 = Rect2(visor_x, visor_y, 11.0, 7.0)
-	draw_rect(visor, Color(0.72, 0.86, 0.94))
-	draw_rect(Rect2(visor.position.x, visor.position.y, visor.size.x, 2.0), Color(0.88, 0.96, 1.0))
-	draw_rect(Rect2(visor.position.x + 1.0, visor.position.y + 1.0, 3.0, 2.0), Color(1, 1, 1, 0.85))
+	draw_rect(lay["visor"], Color(0.72, 0.86, 0.94))
+	draw_rect(lay["visor_top"], Color(0.88, 0.96, 1.0))
+	draw_rect(lay["visor_glint"], Color(1, 1, 1, 0.85))
 	# Мигающий «свет» на шлеме
 	var blink: float = 0.5 + 0.5 * sin(_breath * 6.0)
-	draw_circle(Vector2(visor_x + 8.0, visor_y), 1.6, Color(1.0, 0.35, 0.3, 0.5 + blink * 0.5))
+	draw_circle(lay["light"], 1.6, Color(1.0, 0.35, 0.3, 0.5 + blink * 0.5))
 	# Контур урона
 	if flash > 0.0:
 		draw_rect(r, Color(1.0, 0.35, 0.32, flash * 0.8), false, 1.5)
@@ -722,6 +753,8 @@ func _draw() -> void:
 	if hiding:
 		draw_arc(Vector2.ZERO, 14.0, 0.0, TAU, 24, Color(0.4, 0.9, 1.0, 0.5), 1.5)
 
+	# Индикатор копки живёт в мировых координатах (кирка смотрит на клетку
+	# сама) — его не зеркалим.
 	_draw_mining_fx()
 
 
