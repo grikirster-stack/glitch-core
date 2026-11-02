@@ -148,7 +148,8 @@ func _stands(at: Vector2) -> Array:
 	return out
 
 
-## Терминал ближе 42 px перехватывает E (выбор цели E — #116): такие места не берём.
+## Терминал рядом может стать целью E (Player.interact_target, #116) — такие места не берём:
+## сценарий проверяет сундук по сети, а не выбор цели.
 static func _no_terminal(p: Vector2) -> bool:
 	for t in World.terminals:
 		if World.cell_to_world(t).distance_to(p) < 44.0:
