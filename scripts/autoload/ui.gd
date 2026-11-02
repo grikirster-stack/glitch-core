@@ -140,3 +140,37 @@ func spawn_chip(cell: Vector2i, color: Color) -> void:
 func spawn_slash(world_pos: Vector2) -> void:
 	if world_fx:
 		world_fx.spawn_slash(world_pos)
+
+
+# ------------------------------------------------- СЕТЬ (ADR-002 § 4.2.3, MP-D #89)
+## События обратной связи с хоста (NetCodec.Msg.EVENT; канал 0 — всем, 2 — лично):
+## звук в точке (Sfx.play_at — тише с расстоянием), уведомление, эффект в мире, удар
+## по своему герою. Обработчик ставит NetPlayers; свой герой — player (bind).
+const NET_EVENT_LOG: int = 64
+## Последние принятые события {type, pos, sound | text | kind} — для сценариев mp_*.
+var net_events: Array = []
+
+
+func net_event(_sender: int, payload: PackedByteArray) -> void:
+	var e: Dictionary = NetCodec.decode_event(payload)
+	if e.is_empty():
+		return
+	var rec: Dictionary = {"type": int(e["type"]), "pos": e["pos"]}
+	match int(e["type"]):
+		NetCodec.Ev.SOUND:
+			var id: String = NetCodec.sound_name(int(e["sound"]))
+			rec["sound"] = id
+			if id != "":
+				Sfx.play_at(id, e["pos"], float(e["volume_db"]), float(e["pitch"]))
+		NetCodec.Ev.NOTIFY:
+			rec["text"] = String(e["text"])
+			Game.notify(String(e["text"]), e["color"])
+		NetCodec.Ev.FX:
+			rec["kind"] = int(e["kind"])
+			NetPlayers.play_fx(int(e["kind"]), e["pos"], int(e["arg"]))
+		NetCodec.Ev.HIT:
+			if player != null:
+				player.net_on_hit(e["knock"], float(e["stun"]))
+	net_events.append(rec)
+	if net_events.size() > NET_EVENT_LOG:
+		net_events.pop_front()
