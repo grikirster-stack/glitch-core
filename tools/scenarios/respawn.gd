@@ -23,7 +23,7 @@ func run() -> void:
 
 	player.invuln = 0.0
 	player.damage(Player.MAX_HP * 2.0, Vector2.ZERO)
-	var t0: int = Time.get_ticks_msec()
+	var t0: float = now_proc()   # респаун — SceneTreeTimer, он идёт по кадрам отрисовки
 	await await_frame()
 	ok("герой погиб", player.dead)
 	ok("смерть посчитана", Game.stats_deaths == deaths0 + 1, "%d → %d" % [deaths0, Game.stats_deaths])
@@ -49,7 +49,7 @@ func run() -> void:
 	ok("погибший герой мешок не подобрал", is_instance_valid(bag) and player.dead)
 
 	var back: bool = await wait_until(func() -> bool: return not player.dead, Balance.RESPAWN_DELAY + 3.0)
-	var secs: float = float(Time.get_ticks_msec() - t0) / 1000.0
+	var secs: float = now_proc() - t0
 	ok("респаун через %.0f с" % Balance.RESPAWN_DELAY, back and absf(secs - Balance.RESPAWN_DELAY) < 0.7,
 			"%.2f с" % secs)
 	ok("респаун на базе", player.global_position.distance_to(World.spawn_point) < 24.0,

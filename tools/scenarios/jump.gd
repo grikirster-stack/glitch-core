@@ -11,8 +11,8 @@ func run() -> void:
 	# Держим пробел: прыжок должен быть ровно один (кнопка ловится по фронту).
 	var min_y: float = y0
 	hold(KEY_SPACE)
-	var t0: int = Time.get_ticks_msec()
-	while Time.get_ticks_msec() - t0 < 1200:
+	var t0: float = now()
+	while now() - t0 < 1.2:
 		min_y = minf(min_y, player.global_position.y)
 		await wait(0.03)
 	release(KEY_SPACE)
@@ -22,8 +22,8 @@ func run() -> void:
 
 	# Ждём приземления.
 	var landed: bool = false
-	var t1: int = Time.get_ticks_msec()
-	while Time.get_ticks_msec() - t1 < 3000:
+	var t1: float = now()
+	while now() - t1 < 3.0:
 		if player.on_ground and player.global_position.y >= y0 - 1.0:
 			landed = true
 			break

@@ -9,8 +9,8 @@ func run() -> void:
 	# Ходьба: шум набирается до «шагов» (14).
 	var walk_peak: float = 0.0
 	hold(KEY_D)
-	var t0: int = Time.get_ticks_msec()
-	while Time.get_ticks_msec() - t0 < 700:
+	var t0: float = now()
+	while now() - t0 < 0.7:
 		walk_peak = maxf(walk_peak, player.noise)
 		await wait(0.03)
 	release_all()
@@ -24,8 +24,8 @@ func run() -> void:
 	var run_peak: float = 0.0
 	hold(KEY_SHIFT)
 	hold(KEY_A)
-	var t1: int = Time.get_ticks_msec()
-	while Time.get_ticks_msec() - t1 < 700:
+	var t1: float = now()
+	while now() - t1 < 0.7:
 		run_peak = maxf(run_peak, player.noise)
 		await wait(0.03)
 	release_all()

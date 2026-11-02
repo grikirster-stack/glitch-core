@@ -96,7 +96,9 @@ func _scenario_args() -> Array:
 			continue
 		for part in String(a.substr(11)).split(",", false):
 			var name: String = String(part).strip_edges()
-			if name != "":
+			if name == "all":   # --scenario=all — весь реестр по порядку (для CI)
+				out.append_array(ScenarioRunner.scenario_names())
+			elif name != "":
 				out.append(name)
 	return out
 

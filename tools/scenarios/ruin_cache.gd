@@ -25,8 +25,15 @@ func run() -> void:
 	# Подойти к тайнику и открыть его, как человек: держать E.
 	var cache: Dictionary = caches[0]
 	var spot: Vector2 = World.cell_to_world(cache["cell"])
-	var placed: bool = place_near(spot, [Vector2(0, -4), Vector2(16, -4), Vector2(-16, -4),
-			Vector2(0, -20), Vector2(16, -20), Vector2(-16, -20)])
+	# Терминал руины без питания перехватывает E в радиусе 42 px (player.gd::_do_interact),
+	# поэтому встаём с той стороны сундука, где терминала рядом нет (сид 12345: терминал
+	# в двух клетках от тайника).
+	var offsets: Array = []
+	for o in [Vector2(0, -4), Vector2(16, -4), Vector2(-16, -4), Vector2(24, -4), Vector2(-24, -4),
+			Vector2(0, -20), Vector2(16, -20), Vector2(-16, -20)]:
+		if not _near_terminal(spot + o):
+			offsets.append(o)
+	var placed: bool = place_near(spot, offsets)
 	ok("герой встал у тайника", placed, str(cache["cell"]))
 	hold(KEY_E)
 	var opened: bool = await wait_until(func() -> bool:
@@ -53,6 +60,14 @@ func run() -> void:
 	player.global_position = World.spawn_point
 	player.vel = Vector2.ZERO
 	finish()
+
+
+## Точка в зоне терминала (там E достаётся терминалу, а не сундуку).
+func _near_terminal(p: Vector2) -> bool:
+	for t in World.terminals:
+		if World.cell_to_world(t).distance_to(p) < 44.0:
+			return true
+	return false
 
 
 ## Предметы сундука: [[id, число], ...] по непустым слотам.

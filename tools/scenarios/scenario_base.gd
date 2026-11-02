@@ -6,8 +6,9 @@ extends Node
 ## (test_input) и смотрит, как на это отреагировала игра. Никаких прямых
 ## вызовов внутренних методов игрока — только управление, как у человека.
 ##
-## Ожидания отсчитываются по реальному времени: в headless частота кадров
-## не гарантирована, а физика идёт по delta.
+## Ожидания отсчитываются по игровому времени (сумма delta физических кадров,
+## ScenarioRunner.sim_time): в headless частота кадров не гарантирована, а под
+## нагрузкой физика отстаёт от часов стены — сценарий не должен от этого зависеть.
 
 signal done
 
@@ -43,19 +44,31 @@ func ok(label: String, cond: bool, extra: String = "") -> void:
 	runner.ok(label, cond, extra)
 
 
-## Подождать реальные секунды.
+## Подождать игровые секунды (часы раннера sim_time).
 func wait(secs: float) -> void:
 	await runner.wait(secs)
 
 
-## Подождать, пока условие не станет истинным (или не выйдет время).
+## Подождать, пока условие не станет истинным (или не выйдет игровое время).
+## Под Engine.time_scale игровое время идёт быстрее — таймаут тоже в игровых секундах.
 func wait_until(cond: Callable, timeout: float) -> bool:
-	var t0: int = Time.get_ticks_msec()
-	while Time.get_ticks_msec() - t0 < int(timeout * 1000.0):
+	var t0: float = now()
+	while now() - t0 < timeout:
 		if cond.call():
 			return true
 		await wait(0.05)
 	return bool(cond.call())
+
+
+## Игровые часы, с — по физическим кадрам (игрок, фантомы, укрытие).
+## Замеры длительности в сценариях — по ним, а не по Time.get_ticks_msec().
+func now() -> float:
+	return runner.sim_time
+
+
+## Игровые часы по кадрам отрисовки, с (машины, SceneTreeTimer, Game.game_time).
+func now_proc() -> float:
+	return runner.proc_time
 
 
 # ------------------------------------------------------------------ ВВОД

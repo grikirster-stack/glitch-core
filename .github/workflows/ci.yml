@@ -97,3 +97,58 @@ jobs:
           name: freeze-report
           path: .tools/freeze_report.txt
           if-no-files-found: ignore
+
+  # Игровые сценарии (tools/scenarios, issue #71): бот играет через шов ввода.
+  # Весь реестр (--scenario=all) идёт ~4–5 мин на сид, поэтому сиды — параллельными
+  # джобами матрицы, а не шагами одной джобы. fail-fast выключен: провал на одном
+  # сиде не должен прятать результат остальных.
+  scenarios:
+    name: Сценарии (сид ${{ matrix.seed }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [31337, 4242, 12345]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Скачать Godot ${{ env.GODOT_VERSION }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          curl -fsSL "$url" -o godot.zip
+          unzip -q godot.zip
+          mv "Godot_v${GODOT_VERSION}_linux.x86_64" /usr/local/bin/godot
+          chmod +x /usr/local/bin/godot
+          godot --version
+
+      - name: Импорт проекта (регистрация class_name)
+        timeout-minutes: 5
+        run: godot --headless --path . --import
+
+      # Лог — в файл и в артефакт: при провале видно весь прогон, а в конце шага
+      # печатаются только провалы с именем сценария.
+      - name: Все сценарии (сид ${{ matrix.seed }})
+        timeout-minutes: 12
+        run: |
+          set +e -o pipefail   # не выходить на провале: сначала напечатать сводку
+          mkdir -p .tools
+          godot --headless --path . -- --scenario=all --seed=${{ matrix.seed }} 2>&1 \
+            | tee .tools/scenarios_${{ matrix.seed }}.log
+          rc=$?
+          echo "--- провалы:"
+          awk '/== Сценарий/{sc=$0} /FAIL|SCRIPT ERROR/{print sc " :: " $0}' .tools/scenarios_${{ matrix.seed }}.log
+          grep -q "^ИТОГ: сценариев" .tools/scenarios_${{ matrix.seed }}.log || { echo "нет строки ИТОГ — прогон оборвался"; exit 1; }
+          # Ошибка скрипта не всегда даёт FAIL (корутина сценария просто обрывается) —
+          # роняем шаг и на ней.
+          if grep -q "SCRIPT ERROR" .tools/scenarios_${{ matrix.seed }}.log; then echo "в прогоне есть SCRIPT ERROR"; exit 1; fi
+          exit $rc
+
+      - name: Лог сценариев
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenarios-${{ matrix.seed }}
+          path: .tools/scenarios_${{ matrix.seed }}.log
+          if-no-files-found: ignore

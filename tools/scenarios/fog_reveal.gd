@@ -57,8 +57,8 @@ func run() -> void:
 	var fog_fr0: int = fog.stat_frames
 	var path: Array = []
 	hold(KEY_D)
-	var t0: int = Time.get_ticks_msec()
-	while Time.get_ticks_msec() - t0 < 1600:
+	var t0: float = now()
+	while now() - t0 < 1.6:
 		await await_frame()
 		var pc: Vector2i = World.world_to_cell(player.global_position)
 		if path.is_empty() or path[path.size() - 1] != pc:

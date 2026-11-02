@@ -57,8 +57,8 @@ func run() -> void:
 	ok("свежий предмет не мигает", not s.is_warning() and s.modulate.a >= 0.99)
 	s.age = ItemEntity.LIFETIME - ItemEntity.WARN_TIME + 1.0
 	var min_a: float = 1.0
-	var t0: int = Time.get_ticks_msec()
-	while Time.get_ticks_msec() - t0 < 800:
+	var t0: float = now_proc()   # мигание идёт по кадрам отрисовки
+	while now_proc() - t0 < 0.8:
 		await get_tree().process_frame
 		min_a = minf(min_a, s.modulate.a)
 	ok("перед исчезновением предмет мигает", s.is_warning() and min_a < 0.8,

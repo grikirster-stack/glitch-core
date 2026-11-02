@@ -58,7 +58,7 @@ func run() -> void:
 	var t0: float = Game.game_time
 	Engine.time_scale = TIME_SCALE
 	var passed: bool = await wait_until(func() -> bool: return Game.game_time - t0 >= OFF_GAME_SECS,
-			OFF_GAME_SECS / TIME_SCALE * 3.0)
+			OFF_GAME_SECS * 1.5)   # игровые секунды: под time_scale это ~18 с стены
 	Engine.time_scale = 1.0
 	ok("прошло 60 игровых секунд", passed, "%.1f с" % (Game.game_time - t0))
 	ok("выключенная ТЭЦ не тратит уголь", is_equal_approx(gen.fuel, fuel0), "fuel %.2f → %.2f" % [fuel0, gen.fuel])
