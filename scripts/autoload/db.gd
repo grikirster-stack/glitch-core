@@ -16,24 +16,31 @@ var atlas_of_tile: Dictionary = {}
 
 
 func _ready() -> void:
+	var t0: int = Time.get_ticks_usec()
 	_build_tile_defs()
 	_build_item_defs()
 	_build_recipes()
 	_build_atlas()
 	_build_glow()
+	print("[DB] тайлов=%d предметов=%d рецептов=%d за %.1f мс" % [
+			tile_defs.size(), item_defs.size(), recipes.size(),
+			float(Time.get_ticks_usec() - t0) / 1000.0])
 
 
 # ---------------------------------------------------------------- ТАЙЛЫ
 
+## Поля тайла: solid — стена для тел; hard — секунды копки игроком; drop — предмет;
+## light — сила свечения; dig — роет ли его копатель (ADR-001 § 4.4): природная
+## порода не твёрже Balance.BURROWER_DIG_MAX_HARD — да, всё построенное — нет.
 func _build_tile_defs() -> void:
 	tile_defs = {
 		IDs.T.AIR: {"solid": false, "hard": 0.0, "drop": 0, "light": 0.0, "name": "Воздух"},
-		IDs.T.STONE: {"solid": true, "hard": 1.4, "drop": IDs.I.STONE, "light": 0.0, "name": "Камень"},
-		IDs.T.DIRT: {"solid": true, "hard": 0.5, "drop": IDs.I.SCRAP, "light": 0.0, "name": "Земля"},
-		IDs.T.GRASS: {"solid": true, "hard": 0.6, "drop": IDs.I.SCRAP, "light": 0.0, "name": "Трава"},
-		IDs.T.SAND: {"solid": true, "hard": 0.4, "drop": IDs.I.SAND, "light": 0.0, "name": "Песок"},
-		IDs.T.SANDSTONE: {"solid": true, "hard": 1.2, "drop": IDs.I.STONE, "light": 0.0, "name": "Песчаник"},
-		IDs.T.LOG: {"solid": true, "hard": 1.0, "drop": IDs.I.LOG, "light": 0.0, "name": "Бревно"},
+		IDs.T.STONE: {"solid": true, "hard": 1.4, "drop": IDs.I.STONE, "light": 0.0, "name": "Камень", "dig": true},
+		IDs.T.DIRT: {"solid": true, "hard": 0.5, "drop": IDs.I.SCRAP, "light": 0.0, "name": "Земля", "dig": true},
+		IDs.T.GRASS: {"solid": true, "hard": 0.6, "drop": IDs.I.SCRAP, "light": 0.0, "name": "Трава", "dig": true},
+		IDs.T.SAND: {"solid": true, "hard": 0.4, "drop": IDs.I.SAND, "light": 0.0, "name": "Песок", "dig": true},
+		IDs.T.SANDSTONE: {"solid": true, "hard": 1.2, "drop": IDs.I.STONE, "light": 0.0, "name": "Песчаник", "dig": true},
+		IDs.T.LOG: {"solid": true, "hard": 1.0, "drop": IDs.I.LOG, "light": 0.0, "name": "Бревно", "dig": true},
 		# Ствол дерева: выглядит как бревно, но сквозь него можно пройти —
 		# лес не должен запирать игрока в клетке между стволами.
 		IDs.T.TREE: {"solid": false, "hard": 1.0, "drop": IDs.I.LOG, "light": 0.0, "name": "Ствол дерева"},
@@ -42,7 +49,7 @@ func _build_tile_defs() -> void:
 		IDs.T.IRON_ORE: {"solid": true, "hard": 2.6, "drop": IDs.I.IRON_ORE, "light": 0.0, "name": "Железная руда"},
 		IDs.T.CRYSTAL_ORE: {"solid": true, "hard": 3.4, "drop": IDs.I.CRYSTAL, "light": 0.15, "name": "Кристалл глитча"},
 		IDs.T.COAL_ORE: {"solid": true, "hard": 1.8, "drop": IDs.I.COAL, "light": 0.0, "name": "Уголь"},
-		IDs.T.SCRAP_ORE: {"solid": true, "hard": 1.0, "drop": IDs.I.SCRAP, "light": 0.0, "name": "Хлам"},
+		IDs.T.SCRAP_ORE: {"solid": true, "hard": 1.0, "drop": IDs.I.SCRAP, "light": 0.0, "name": "Хлам", "dig": true},
 		IDs.T.WATER: {"solid": false, "hard": 999.0, "drop": 0, "light": 0.0, "name": "Вода"},
 		IDs.T.LAVA: {"solid": false, "hard": 999.0, "drop": 0, "light": 0.4, "name": "Лава"},
 		IDs.T.BEDROCK: {"solid": true, "hard": 999.0, "drop": 0, "light": 0.0, "name": "Коренная порода"},
@@ -54,8 +61,13 @@ func _build_tile_defs() -> void:
 		IDs.T.IRON_BLOCK: {"solid": true, "hard": 2.8, "drop": IDs.I.IRON_BLOCK, "light": 0.0, "name": "Железный блок"},
 		IDs.T.CRYSTAL_BLOCK: {"solid": true, "hard": 2.6, "drop": IDs.I.CRYSTAL_BLOCK, "light": 0.2, "name": "Кристальный блок"},
 		IDs.T.LIGHT_CRYSTAL: {"solid": true, "hard": 0.6, "drop": IDs.I.LAMP, "light": 1.0, "name": "Светокристалл"},
-		IDs.T.MOSS: {"solid": true, "hard": 0.6, "drop": IDs.I.SCRAP, "light": 0.0, "name": "Мох"},
+		IDs.T.MOSS: {"solid": true, "hard": 0.6, "drop": IDs.I.SCRAP, "light": 0.0, "name": "Мох", "dig": true},
 		IDs.T.RELAY_CORE: {"solid": true, "hard": 999.0, "drop": 0, "light": 0.5, "name": "Релей-ядро"},
+		# --- ADR-001 § 4.4: оборона базы. Поведение шлюза и решётки — #31, здесь только данные.
+		IDs.T.STEEL_WALL: {"solid": true, "hard": Balance.STEEL_WALL_HARD, "drop": IDs.I.STEEL_WALL, "light": 0.0, "name": "Стальная стена"},
+		IDs.T.AIRLOCK: {"solid": true, "hard": 3.0, "drop": IDs.I.AIRLOCK, "light": 0.0, "name": "Шлюз"},
+		IDs.T.AIRLOCK_OPEN: {"solid": false, "hard": 3.0, "drop": IDs.I.AIRLOCK, "light": 0.0, "name": "Шлюз (открыт)"},
+		IDs.T.VENT_GRATE: {"solid": false, "hard": 1.0, "drop": IDs.I.VENT_GRATE, "light": 0.0, "name": "Решётка вентиляции"},
 	}
 
 
@@ -81,6 +93,12 @@ func tile_light(id: int) -> float:
 
 func tile_name(id: int) -> String:
 	return String(tile_def(id).get("name", "?"))
+
+
+## Роет ли копатель этот тайл (ADR-001 § 4.4). Флаг "dig" задаётся явно в tile_defs:
+## природная порода — да, построенное (блоки, сталь, стена) — нет.
+func tile_diggable(id: int) -> bool:
+	return bool(tile_def(id).get("dig", false))
 
 
 ## Базовый цвет тайла — используется для частиц при добыче.
@@ -138,6 +156,12 @@ func tile_color(id: int) -> Color:
 			return Color(1.0, 0.91, 0.64)
 		IDs.T.RELAY_CORE:
 			return Color(0.35, 0.95, 0.65)
+		IDs.T.STEEL_WALL:
+			return Color(0.58, 0.62, 0.68)
+		IDs.T.AIRLOCK, IDs.T.AIRLOCK_OPEN:
+			return Color(0.85, 0.70, 0.20)
+		IDs.T.VENT_GRATE:
+			return Color(0.50, 0.55, 0.60)
 		_:
 			return Color(0.60, 0.60, 0.65)
 
@@ -204,15 +228,27 @@ func _build_item_defs() -> void:
 	_add_item_def(IDs.I.SAND, "Песок", Color(0.85, 0.75, 0.48), "pile", 99, "tile:%d" % IDs.T.SAND)
 	_add_item_def(IDs.I.LOG, "Бревно", Color(0.42, 0.29, 0.17), "log", 99, "tile:%d" % IDs.T.LOG)
 
-	# Требования релей-ядра
-	_add_relay(IDs.I.IRON_PLATE, 8)
-	_add_relay(IDs.I.STEEL_PLATE, 4)
-	_add_relay(IDs.I.CIRCUIT, 4)
-	_add_relay(IDs.I.POWER_CELL, 2)
+	# --- ADR-001 (#24): новые предметы по явным id, чтобы порядок _item() выше не сдвигался.
+	# Машины ставятся через MachineBase.place_machine — свои ветки в match добавят
+	# #30 (манипулятор, анализатор, глубинный бур) и #31 (турель, прожектор).
+	# До этого постройка отвечает «Сюда нельзя поставить».
+	# Автоматизация (§ 4.2)
+	_add_item_def(IDs.I.INSERTER, "Манипулятор", Color(0.80, 0.62, 0.30), "inserter", 30, "machine:Inserter")
+	_add_item_def(IDs.I.ANALYZER, "Анализатор", Color(0.40, 0.75, 0.70), "analyzer", 3, "machine:Analyzer")
+	_add_item_def(IDs.I.DEEP_DRILL, "Глубинный бур", Color(0.40, 0.44, 0.52), "deep_drill", 3, "machine:DeepDrill")
+	# Оборона (§ 4.4)
+	_add_item_def(IDs.I.TURRET, "Турель-разрядник", Color(0.55, 0.60, 0.70), "turret", 5, "machine:Turret")
+	_add_item_def(IDs.I.FLOODLIGHT, "Прожектор", Color(0.95, 0.90, 0.60), "floodlight", 10, "machine:Floodlight")
+	_add_item_def(IDs.I.STEEL_WALL, "Стальная стена", Color(0.58, 0.62, 0.68), "wall", 99, "tile:%d" % IDs.T.STEEL_WALL)
+	_add_item_def(IDs.I.AIRLOCK, "Шлюз", Color(0.85, 0.70, 0.20), "airlock", 10, "tile:%d" % IDs.T.AIRLOCK)
+	_add_item_def(IDs.I.VENT_GRATE, "Решётка вентиляции", Color(0.50, 0.55, 0.60), "grate", 20, "tile:%d" % IDs.T.VENT_GRATE)
+	# Релей и лор (§ 4.7, § 4.9) — не ставятся, только носятся.
+	_add_item_def(IDs.I.RELAY_ANTENNA, "Антенна релея", Color(0.35, 0.95, 0.80), "antenna", 1, "")
+	_add_item_def(IDs.I.BLACK_BOX, "Чёрный ящик", Color(0.90, 0.35, 0.20), "blackbox", 20, "")
+	_add_item_def(IDs.I.LOOT_BAG, "Мешок", Color(0.45, 0.38, 0.30), "bag", 1, "")
 
-
-func _add_relay(id: int, n: int) -> void:
-	relay_req[id] = n
+	# Требования релей-ядра — из Balance (§ 4.7).
+	relay_req = Balance.RELAY_REQ.duplicate()
 
 func _add_item_def(id: int, p_name: String, p_color: Color, p_shape: String,
 		p_stack: int, p_place: String, p_fuel: int = 0) -> void:
@@ -248,16 +284,22 @@ func item_color(id: int) -> Color:
 
 # ---------------------------------------------------------------- РЕЦЕПТЫ
 
-func _recipe(out: int, amount: int, inputs: Dictionary, station: String, time: float, name: String) -> void:
+## tech — узел дерева технологий (ключ Balance.TECH_COST), с которого рецепт
+## открыт; "T0" — доступен с самого начала (ADR-001 § 4.6). Дерево и трату
+## данных ведёт #28; пока Tech.is_unlocked() отвечает «да» на всё, и крафт
+## ведёт себя как раньше.
+func _recipe(out: int, amount: int, inputs: Dictionary, station: String, time: float, name: String,
+		tech: String = "T0") -> void:
 	recipes.append({
 		"out": out, "amount": amount, "in": inputs,
-		"station": station, "time": time, "name": name,
+		"station": station, "time": time, "name": name, "tech": tech,
 	})
 
 
 func _build_recipes() -> void:
 	# --- Ручной крафт: с чего начать -----------------------------------------
 	# Ручная выплавка — грубая (2 руды на слиток), зато доступна без станций.
+	# Правило ADR-001 D3: у всего есть машинный рецепт, ручной — дороже или медленнее.
 	_recipe(IDs.I.COPPER_INGOT, 1, {IDs.I.COPPER_ORE: 2}, "hand", 1.0, "Ручная выплавка меди")
 	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 2}, "hand", 1.2, "Ковка железа")
 	_recipe(IDs.I.GLASS, 1, {IDs.I.SAND: 2}, "hand", 1.0, "Обжиг стекла")
@@ -271,20 +313,36 @@ func _build_recipes() -> void:
 	_recipe(IDs.I.SOLAR, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.GLASS: 1}, "hand", 2.0, "Солнечная панель")
 	_recipe(IDs.I.SMELTER, 1, {IDs.I.STONE: 6, IDs.I.SCRAP: 4}, "hand", 2.0, "Плавильня")
 	_recipe(IDs.I.COAL_GEN, 1, {IDs.I.IRON_PLATE: 2, IDs.I.SCRAP: 6}, "hand", 2.5, "Угольная ТЭЦ")
-	_recipe(IDs.I.ASSEMBLER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.COPPER_PLATE: 2}, "hand", 3.0, "Сборщик")
+	_recipe(IDs.I.ASSEMBLER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.COPPER_PLATE: 2}, "hand", 3.0, "Сборщик", "T1")
+	# Конвейер и сундук доступны с первой смены руками (T0): сборщик делает их выгоднее.
+	_recipe(IDs.I.BELT, 1, {IDs.I.IRON_PLATE: 1}, "hand", 1.5, "Конвейер вручную")
+	_recipe(IDs.I.CHEST, 1, {IDs.I.IRON_PLATE: 4}, "hand", 2.5, "Сундук вручную")
 
 	# --- Плавильня: вдвое больше слитков за ту же руду -----------------------
 	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 1}, "smelter", 2.0, "Выплавка железа")
 	_recipe(IDs.I.COPPER_INGOT, 1, {IDs.I.COPPER_ORE: 1}, "smelter", 1.6, "Выплавка меди")
 	_recipe(IDs.I.GLASS, 1, {IDs.I.SAND: 2}, "smelter", 2.2, "Плавка стекла")
 	_recipe(IDs.I.STEEL_PLATE, 1, {IDs.I.IRON_INGOT: 2, IDs.I.COAL: 1}, "smelter", 3.5, "Стальная пластина")
+	# Пластины на плавильне — чтобы цепочка «руда → релей» собиралась без рук (§ 4.2).
+	_recipe(IDs.I.COPPER_PLATE, 1, {IDs.I.COPPER_INGOT: 2}, "smelter", 2.0, "Прокат меди", "T1")
+	_recipe(IDs.I.IRON_PLATE, 1, {IDs.I.IRON_INGOT: 2}, "smelter", 2.0, "Прокат железа", "T1")
+	_recipe(IDs.I.STEEL_WALL, 4, {IDs.I.STEEL_PLATE: 2}, "smelter", 2.0, "Стальная стена", "T2")
 
 	# --- Сборщик: сложные изделия ------------------------------------------
-	_recipe(IDs.I.CIRCUIT, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.CRYSTAL: 2}, "assembler", 3.0, "Микросхема")
-	_recipe(IDs.I.POWER_CELL, 1, {IDs.I.IRON_PLATE: 1, IDs.I.CRYSTAL: 1}, "assembler", 3.0, "Энергоячейка")
-	_recipe(IDs.I.BELT, 2, {IDs.I.IRON_PLATE: 1}, "assembler", 1.5, "Конвейер")
-	_recipe(IDs.I.CHEST, 1, {IDs.I.IRON_PLATE: 3}, "assembler", 2.0, "Сундук")
-	_recipe(IDs.I.DRILL, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 4.0, "Буровая станция")
+	_recipe(IDs.I.CIRCUIT, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.CRYSTAL: 2}, "assembler", 3.0, "Микросхема", "T1")
+	_recipe(IDs.I.POWER_CELL, 1, {IDs.I.IRON_PLATE: 1, IDs.I.CRYSTAL: 1}, "assembler", 3.0, "Энергоячейка", "T1")
+	_recipe(IDs.I.BELT, 2, {IDs.I.IRON_PLATE: 1}, "assembler", 1.5, "Конвейер", "T1")
+	_recipe(IDs.I.CHEST, 1, {IDs.I.IRON_PLATE: 3}, "assembler", 2.0, "Сундук", "T1")
+	_recipe(IDs.I.DRILL, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 4.0, "Буровая станция", "T3")
+	# ADR-001: автоматизация (§ 4.2), оборона (§ 4.4), релей (§ 4.7).
+	_recipe(IDs.I.INSERTER, 1, {IDs.I.IRON_PLATE: 1, IDs.I.COPPER_PLATE: 1}, "assembler", 2.0, "Манипулятор", "T1")
+	_recipe(IDs.I.TURRET, 1, {IDs.I.STEEL_PLATE: 3, IDs.I.CIRCUIT: 2, IDs.I.POWER_CELL: 1}, "assembler", 5.0, "Турель-разрядник", "T2")
+	_recipe(IDs.I.AIRLOCK, 1, {IDs.I.STEEL_PLATE: 2, IDs.I.CIRCUIT: 1}, "assembler", 3.0, "Шлюз", "T2")
+	_recipe(IDs.I.ANALYZER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2, IDs.I.GLASS: 2}, "assembler", 4.0, "Анализатор", "T3")
+	_recipe(IDs.I.FLOODLIGHT, 1, {IDs.I.COPPER_PLATE: 2, IDs.I.GLASS: 1, IDs.I.CRYSTAL: 1}, "assembler", 2.5, "Прожектор", "T3")
+	_recipe(IDs.I.VENT_GRATE, 1, {IDs.I.IRON_PLATE: 2}, "assembler", 1.5, "Решётка вентиляции", "T4")
+	_recipe(IDs.I.DEEP_DRILL, 1, {IDs.I.DRILL: 1, IDs.I.STEEL_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 6.0, "Глубинный бур", "T4")
+	_recipe(IDs.I.RELAY_ANTENNA, 1, {IDs.I.COPPER_PLATE: 6, IDs.I.GLASS: 4, IDs.I.CRYSTAL_BLOCK: 2}, "assembler", 8.0, "Антенна релея", "T5")
 
 
 func recipes_for(station: String) -> Array:
@@ -293,6 +351,11 @@ func recipes_for(station: String) -> Array:
 		if String(r["station"]) == station:
 			out.append(r)
 	return out
+
+
+## Открыт ли рецепт по дереву технологий. Панель крафта (#28) серит закрытые.
+func recipe_unlocked(r: Dictionary) -> bool:
+	return Tech.is_unlocked(String(r.get("tech", "T0")))
 
 
 func find_recipe_for(item_id: int) -> Dictionary:
@@ -488,6 +551,38 @@ func _paint_tile(img: Image, id: int, ox: int, oy: int) -> void:
 			for y in range(4, 12):
 				for x in range(4, 12):
 					img.set_pixel(ox + x, oy + y, Color(0.25, 0.85, 0.95))
+			return
+		IDs.T.STEEL_WALL:
+			# Клёпаная стальная плита: шов посередине, заклёпки по углам.
+			_paint_block(img, ox, oy, rng, Color(0.58, 0.62, 0.68))
+			for p in [Vector2i(2, 2), Vector2i(13, 2), Vector2i(2, 13), Vector2i(13, 13)]:
+				img.set_pixel(ox + p.x, oy + p.y, Color(0.82, 0.85, 0.90))
+			for x in range(TILE_SIZE):
+				img.set_pixel(ox + x, oy + 8, Color(0.42, 0.46, 0.52))
+			return
+		IDs.T.AIRLOCK:
+			# Закрытая дверь: тёмная плита с жёлто-чёрной полосой посередине.
+			_paint_block(img, ox, oy, rng, Color(0.30, 0.33, 0.38))
+			for x in range(TILE_SIZE):
+				var stripe: Color = Color(0.85, 0.70, 0.20) if int(x / 4) % 2 == 0 else Color(0.12, 0.12, 0.14)
+				img.set_pixel(ox + x, oy + 7, stripe)
+				img.set_pixel(ox + x, oy + 8, stripe)
+			return
+		IDs.T.AIRLOCK_OPEN:
+			# Открытая дверь: только рама, середина прозрачна.
+			for y in range(TILE_SIZE):
+				for x in range(TILE_SIZE):
+					if x < 2 or x > 13 or y < 2 or y > 13:
+						img.set_pixel(ox + x, oy + y, Color(0.30, 0.33, 0.38))
+			for x in range(2, 14):
+				img.set_pixel(ox + x, oy + 1, Color(0.85, 0.70, 0.20))
+			return
+		IDs.T.VENT_GRATE:
+			# Решётка: горизонтальные планки, между ними темнота шахты.
+			for y in range(TILE_SIZE):
+				for x in range(TILE_SIZE):
+					var slat: bool = y % 4 < 2
+					img.set_pixel(ox + x, oy + y, Color(0.50, 0.55, 0.60) if slat else Color(0.06, 0.07, 0.09, 0.85))
 			return
 	return
 
@@ -713,6 +808,87 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 					_px(img, x, y, c)
 			for x in range(4, 12):
 				_px(img, x, 11, c.darkened(0.4))
+		# --- ADR-001 (#24): иконки новых предметов ---
+		"inserter":
+			# Стойка и рука с захватом.
+			for y in range(9, 14):
+				for x in range(5, 11):
+					_px(img, x, y, Color(0.35, 0.37, 0.42))
+			for i in 6:
+				_px(img, 7 + i, 8 - i, c)
+				_px(img, 8 + i, 8 - i, c.darkened(0.2))
+			_px(img, 13, 2, c.lightened(0.3))
+			_px(img, 12, 3, c.lightened(0.3))
+		"analyzer":
+			for y in range(3, 13):
+				for x in range(3, 13):
+					_px(img, x, y, c.darkened(0.35))
+			for y in range(5, 11):
+				for x in range(5, 11):
+					_px(img, x, y, c)
+			_px(img, 8, 8, Color(1.0, 1.0, 1.0, 0.9))
+		"turret":
+			for y in range(9, 14):
+				for x in range(3, 13):
+					_px(img, x, y, c.darkened(0.3))
+			for y in range(5, 9):
+				for x in range(5, 11):
+					_px(img, x, y, c)
+			for x in range(9, 15):
+				_px(img, x, 6, c.lightened(0.3))
+			_px(img, 14, 5, Color(0.5, 0.9, 1.0))
+		"floodlight":
+			for y in range(8, 14):
+				_px(img, 7, y, Color(0.40, 0.42, 0.48))
+				_px(img, 8, y, Color(0.40, 0.42, 0.48))
+			for y in range(2, 8):
+				for x in range(3, 13):
+					_px(img, x, y, c if y > 3 else c.lightened(0.3))
+		"wall":
+			_paint_item(img, "block", c, rng)
+			for p in [Vector2i(2, 2), Vector2i(13, 2), Vector2i(2, 13), Vector2i(13, 13)]:
+				_px(img, p.x, p.y, c.lightened(0.4))
+			for x in range(TILE_SIZE):
+				_px(img, x, 8, c.darkened(0.3))
+		"airlock":
+			_paint_item(img, "block", Color(0.30, 0.33, 0.38), rng)
+			for x in range(TILE_SIZE):
+				var stripe: Color = c if int(x / 4) % 2 == 0 else Color(0.12, 0.12, 0.14)
+				_px(img, x, 7, stripe)
+				_px(img, x, 8, stripe)
+		"grate":
+			for y in range(2, 14):
+				for x in range(2, 14):
+					_px(img, x, y, c if y % 4 < 2 else Color(0.06, 0.07, 0.09))
+		"deep_drill":
+			_paint_item(img, "drill", c, rng)
+			for y in range(3, 9):
+				for x in range(3, 13):
+					_px(img, x, y, c)
+			_px(img, 5, 5, Color(0.4, 1.0, 0.5))
+		"antenna":
+			for y in range(6, 15):
+				_px(img, 7, y, Color(0.55, 0.58, 0.63))
+				_px(img, 8, y, Color(0.55, 0.58, 0.63))
+			for i in 4:
+				_px(img, 4 + i, 6 - i, c)
+				_px(img, 11 - i, 6 - i, c)
+			_px(img, 7, 2, c.lightened(0.4))
+			_px(img, 8, 2, c.lightened(0.4))
+		"blackbox":
+			for y in range(5, 12):
+				for x in range(3, 13):
+					_px(img, x, y, c)
+			for x in range(3, 13):
+				_px(img, x, 5, c.lightened(0.25))
+			_px(img, 11, 7, Color(0.3, 1.0, 0.4))
+		"bag":
+			for y in range(5, 14):
+				var half: int = 5 - int(absf(float(y) - 10.0) * 0.5)
+				for x in range(8 - half, 8 + half):
+					_px(img, x, y, c.lightened(rng.randf_range(-0.05, 0.08)))
+			for x in range(6, 10):
+				_px(img, x, 4, c.darkened(0.3))
 
 
 func _px(img: Image, x: int, y: int, c: Color) -> void:
