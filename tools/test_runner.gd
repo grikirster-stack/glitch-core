@@ -1,7 +1,8 @@
 extends Node
 ## Автотест игровой логики: копание, подбор, крафт, конвейер, питание, фантомы, релей.
-## Плюс секция «== Анимации ==» — общий код из tools/anim_test.gd (issue #6)
-## и секция «== Индекс питания ==» — общий код из tools/power_test.gd (issue #11).
+## Плюс секция «== Анимации ==» — общий код из tools/anim_test.gd (issue #6),
+## секция «== Индекс питания ==» — общий код из tools/power_test.gd (issue #11),
+## секции «== Данные ==» и «== Сутки ==» — согласованность IDs/DB/Balance и цикл смены (#24).
 ## Запускается из main.gd флагом `--test`.
 ##
 ## Все паузы отсчитываются по реальному времени, а не по кадрам: в headless-режиме
@@ -41,6 +42,9 @@ var prod_chest2_cell: Vector2i = Vector2i.ZERO
 var water_hole: Vector2i = Vector2i(-1, -1)
 var water_src: Vector2i = Vector2i(-1, -1)
 
+var _day0: int = 0            ## смена на момент проверки суток
+var _day_signals: int = 0     ## сколько раз пришёл Game.day_started
+
 
 func start(main_scene: Node) -> void:
 	scene = main_scene
@@ -76,14 +80,17 @@ func _process(_delta: float) -> void:
 		8: _t_production()
 		9: _t_production_result()
 		10: _t_phantom()
-		11: _t_relay()
-		12: _t_water_dig()
-		13: _t_water_check()
-		14: _t_anim_start()
-		15: _t_anim_wait()
-		16: _t_power_start()
-		17: _t_power_wait()
-		18: _t_finish()
+		11: _t_day_noon()
+		12: _t_day_dawn()
+		13: _t_day_result()
+		14: _t_relay()
+		15: _t_water_dig()
+		16: _t_water_check()
+		17: _t_anim_start()
+		18: _t_anim_wait()
+		19: _t_power_start()
+		20: _t_power_wait()
+		21: _t_finish()
 
 
 func _ok(label: String, cond: bool, extra: String = "") -> void:
@@ -114,6 +121,7 @@ func _t_world() -> void:
 	_ok("задачи назначены", Game.tasks_total == World.terminals.size())
 	_check_floating_trees()
 	print("   инвентарь: ", _inv_dump())
+	_check_data()
 	_next(2)
 
 
@@ -388,6 +396,164 @@ func _t_phantom() -> void:
 	_next(11)
 
 
+# ------------------------------------------------------------ данные (ADR-001, #24)
+
+## Согласованность данных: id предметов совпадают с IDs.I, рецепты ссылаются
+## на существующие предметы и узлы технологий, у каждого тайла и предмета есть
+## текстура, константы Balance положительные.
+func _check_data() -> void:
+	print("== Данные ==")
+	# IDs.I ↔ DB.item_defs: каждый id описан, лишних нет.
+	var missing: Array = []
+	for v in IDs.I.values():
+		if not DB.item_defs.has(int(v)):
+			missing.append(int(v))
+	_ok("все IDs.I описаны в DB", missing.is_empty() and DB.item_defs.size() == IDs.I.size(),
+			"нет %s, в DB %d, в IDs %d" % [str(missing), DB.item_defs.size(), IDs.I.size()])
+	# Рецепты: выход и входы существуют, узел технологий известен Balance.
+	var techs: Array = Balance.TECH_COST.keys()
+	techs.append("T0")
+	var bad: Array = []
+	for r in DB.recipes:
+		if not DB.item_defs.has(int(r["out"])):
+			bad.append(String(r["name"]) + ":out")
+		for k in r["in"].keys():
+			if not DB.item_defs.has(int(k)):
+				bad.append(String(r["name"]) + ":in")
+		if not techs.has(String(r.get("tech", ""))):
+			bad.append(String(r["name"]) + ":tech")
+	_ok("рецепты ссылаются на существующие предметы и технологии", bad.is_empty(), str(bad))
+	_ok("рецептов достаточно", DB.recipes.size() >= 30, "n=%d" % DB.recipes.size())
+	# Релей: только существующие предметы, количества положительные.
+	var bad_relay: bool = false
+	for id in DB.relay_req.keys():
+		if not DB.item_defs.has(int(id)) or int(DB.relay_req[id]) <= 0:
+			bad_relay = true
+	_ok("требования релея корректны", not bad_relay and DB.relay_req.size() >= 4, str(DB.relay_req))
+	# Текстуры предметов: у каждого есть непрозрачные пиксели — ловит забытую форму.
+	var blank_items: Array = []
+	for id in DB.item_defs.keys():
+		if int(id) == IDs.I.NONE:
+			continue
+		if _opaque_pixels(DB.item_texture(int(id)).get_image(), Vector2i.ZERO) == 0:
+			blank_items.append(DB.item_name(int(id)))
+	_ok("у каждого предмета есть текстура", blank_items.is_empty(), str(blank_items))
+	# Атлас: каждый тайл, кроме воздуха, нарисован.
+	var atlas: Image = DB.atlas_texture.get_image()
+	var blank_tiles: Array = []
+	for id in range(1, IDs.TILE_COUNT):
+		var a: Vector2i = DB.atlas_of_tile[id]
+		if _opaque_pixels(atlas, a * DB.TILE_SIZE) == 0:
+			blank_tiles.append(DB.tile_name(id))
+	_ok("каждый тайл нарисован", blank_tiles.is_empty(), str(blank_tiles))
+	# Копаемость для копателя (§ 4.4): порода — да, построенное — нет.
+	_ok("копатель роет породу, но не постройки",
+			DB.tile_diggable(IDs.T.STONE) and DB.tile_diggable(IDs.T.DIRT)
+			and not DB.tile_diggable(IDs.T.IRON_BLOCK) and not DB.tile_diggable(IDs.T.STEEL_WALL))
+	# Balance: все числа положительные (INF — «никогда» — тоже положительное).
+	var consts: Dictionary = load("res://scripts/core/balance.gd").get_script_constant_map()
+	var nonpos: Array = []
+	for k in consts.keys():
+		_collect_nonpositive(consts[k], String(k), nonpos)
+	_ok("константы Balance положительные", consts.size() >= 30 and nonpos.is_empty(),
+			"констант %d, плохих %s" % [consts.size(), str(nonpos)])
+
+
+## Число непрозрачных пикселей в квадрате TILE_SIZE от origin.
+func _opaque_pixels(img: Image, origin: Vector2i) -> int:
+	if img == null:
+		return 0
+	var n: int = 0
+	for y in DB.TILE_SIZE:
+		for x in DB.TILE_SIZE:
+			if img.get_pixel(origin.x + x, origin.y + y).a > 0.05:
+				n += 1
+	return n
+
+
+## Собирает пути к неположительным числам внутри константы (словари — рекурсивно).
+func _collect_nonpositive(v, path: String, out: Array) -> void:
+	if v is Dictionary:
+		for k in v.keys():
+			_collect_nonpositive(v[k], "%s.%s" % [path, str(k)], out)
+	elif v is int or v is float:
+		if not (float(v) > 0.0):
+			out.append(path)
+
+
+# ------------------------------------------------------------- сутки (ADR-001, #24)
+
+func _t_day_noon() -> void:
+	print("== Сутки ==")
+	var ns: float = Balance.NIGHT_START
+	var ne: float = Balance.NIGHT_END
+	_ok("ночь начинается с NIGHT_START", _night_at(ns) and not _night_at(ns - 0.01), "%.2f" % ns)
+	_ok("ночь кончается на NIGHT_END", _night_at(ne - 0.01) and not _night_at(ne), "%.2f" % ne)
+	var jump: float = _daylight_max_jump()
+	_ok("свет без скачков", jump < 0.2, "макс. скачок за сотую цикла %.3f" % jump)
+	_ok("солнце гаснет ровно к ночи",
+			_daylight_at(ns) <= Balance.SOLAR_MIN_DAYLIGHT + 0.001
+			and _daylight_at(ns - 0.02) > Balance.SOLAR_MIN_DAYLIGHT,
+			"daylight(%.2f)=%.2f" % [ns, _daylight_at(ns)])
+	_ok("цикл суток 240 с", Game.DAY_LENGTH >= 240.0, "%.0f с" % Game.DAY_LENGTH)
+	# Полдень: смена меняться не должна. Регресс: раньше day_number = 1 + int(t * 2)
+	# прыгал на t = 0.5 и дважды за цикл слал «Смена N».
+	_day0 = Game.day_number
+	_day_signals = 0
+	Game.day_started.connect(_on_day_started)
+	Game.time_of_day = 0.499
+	_next(12, 0.6)   # 0.6 с = 0.0025 цикла → t ≈ 0.5015, полдень пройден
+
+
+func _t_day_dawn() -> void:
+	_ok("смена не меняется в полдень", Game.day_number == _day0 and _day_signals == 0,
+			"t=%.3f смена %d" % [Game.time_of_day, Game.day_number])
+	# Рассвет: ставим время за 0.001 цикла (0.24 с) до конца ночи —
+	# через 0.7 с смена должна вырасти ровно на единицу.
+	Game.time_of_day = Balance.NIGHT_END - 0.001
+	_next(13, 0.7)
+
+
+func _t_day_result() -> void:
+	_ok("смена растёт на рассвете", Game.day_number == _day0 + 1,
+			"было %d, стало %d, t=%.3f" % [_day0, Game.day_number, Game.time_of_day])
+	_ok("day_started пришёл один раз", _day_signals == 1, "n=%d" % _day_signals)
+	Game.day_started.disconnect(_on_day_started)
+	_next(14)
+
+
+func _on_day_started(_day: int) -> void:
+	_day_signals += 1
+
+
+## is_night() в заданный момент цикла, не трогая текущее время.
+func _night_at(t: float) -> bool:
+	var saved: float = Game.time_of_day
+	Game.time_of_day = t
+	var r: bool = Game.is_night()
+	Game.time_of_day = saved
+	return r
+
+
+func _daylight_at(t: float) -> float:
+	var saved: float = Game.time_of_day
+	Game.time_of_day = t
+	var r: float = Game.daylight()
+	Game.time_of_day = saved
+	return r
+
+
+## Максимальный скачок daylight() между соседними сотыми цикла.
+func _daylight_max_jump() -> float:
+	var worst: float = 0.0
+	var prev: float = _daylight_at(0.0)
+	for i in range(1, 100):
+		var cur: float = _daylight_at(float(i) / 100.0)
+		worst = maxf(worst, absf(cur - prev))
+		prev = cur
+	return worst
+
+
 func _t_relay() -> void:
 	print("== Релей ==")
 	for id in Game.relay_req.keys():
@@ -396,7 +562,7 @@ func _t_relay() -> void:
 	_ok("релей запущен", ok)
 	_ok("таймер идёт", Game.relay_active and Game.relay_timer > 0.0)
 	Game.relay_timer = 0.05
-	_next(12, 0.5)
+	_next(15, 0.5)
 
 
 ## Вода должна течь. Ставим воду на ровную землю, рядом копаем настоящую яму
@@ -424,14 +590,14 @@ func _t_water_dig() -> void:
 	_ok("нашлась ровная площадка под воду", found,
 			"источник %s, яма %s" % [str(water_src), str(water_hole)])
 	if not found:
-		_next(13, 1.0)
+		_next(16, 1.0)
 		return
 	World.set_tile(water_src.x, water_src.y, IDs.T.WATER)
 	# Яма: копаем клетку земли у соседней колонки.
 	World.set_tile(water_hole.x, water_hole.y, IDs.T.AIR)
 	_ok("вода поставлена", World.get_tile_v(water_src) == IDs.T.WATER)
 	_ok("яма выкопана", World.get_tile_v(water_hole) == IDs.T.AIR)
-	_next(13, 1.0)
+	_next(16, 1.0)
 
 
 func _t_water_check() -> void:
@@ -445,7 +611,7 @@ func _t_water_check() -> void:
 	_ok("вода не растеклась по ровной земле",
 			World.get_tile_v(flat) != IDs.T.WATER and World.fluid_level(flat) == 0,
 			"клетка %s тайл %d" % [str(flat), World.get_tile_v(flat)])
-	_next(14)
+	_next(17)
 
 
 func _t_anim_start() -> void:
@@ -454,19 +620,19 @@ func _t_anim_start() -> void:
 	anim = AnimTestScript.Runner.new(self)
 	add_child(anim)
 	anim.start(scene)
-	_next(15, 0.2)
+	_next(18, 0.2)
 
 
 func _t_anim_wait() -> void:
 	if anim == null:
-		_next(16)
+		_next(19)
 		return
 	if anim.done:
 		checks += anim.checks
 		fails += anim.fails
 		anim.queue_free()
 		anim = null
-		_next(16, 0.2)
+		_next(19, 0.2)
 
 
 func _t_power_start() -> void:
@@ -475,19 +641,19 @@ func _t_power_start() -> void:
 	power = PowerTestScript.Runner.new(self)
 	add_child(power)
 	power.start(scene)
-	_next(17, 0.2)
+	_next(20, 0.2)
 
 
 func _t_power_wait() -> void:
 	if power == null:
-		_next(18)
+		_next(21)
 		return
 	if power.done:
 		checks += power.checks
 		fails += power.fails
 		power.queue_free()
 		power = null
-		_next(18, 0.2)
+		_next(21, 0.2)
 
 
 func _t_finish() -> void:

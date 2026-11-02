@@ -73,6 +73,7 @@ func _ready() -> void:
 	# Игровые сценарии: godot --path . -- --scenario=walk,mining
 	if not scenarios.is_empty():
 		scenario_mode = true
+		Game.scenario_mode = true   # директор угрозы (#27) читает флаг отсюда
 		var srunner: ScenarioRunner = ScenarioRunner.new()
 		add_child(srunner)
 		srunner.start(self, scenarios)
