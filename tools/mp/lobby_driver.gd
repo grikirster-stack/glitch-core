@@ -135,14 +135,21 @@ func _host() -> void:
 	for id in net.peers:
 		if int(id) != 1:
 			guest = int(id)
+	# «Старт» неактивен, пока гость не готов — проверяем в тот же кадр, в котором
+	# гость появился. Гость раньше нажать «Готов» не мог: о лобби он узнаёт из
+	# нашего ROSTER/LOBBY_STATE, а его «Готов» придёт следующим кадром — значит,
+	# к моменту проверки гость ещё не готов, а «Старт» обязан быть неактивен.
+	# Проверять позже (через кадры) — гонка: гость успевал нажать «Готов» раньше,
+	# и проверка падала в CI.
+	ok("«Старт» неактивен, пока гость не готов", menu.start_button.visible and menu.start_button.disabled
+			and not menu.ready_button.visible and not lobby.is_ready(guest),
+			"строки %s" % str(menu.lobby_rows))
 	await frames(3)
 	var nicks: Array = []
 	for r in menu.lobby_rows:
 		nicks.append(String(r["nick"]))
 	ok("в лобби хоста оба: ники и вид", menu.lobby_rows.size() == 2 and nicks == ["Хост", "Гость"]
 			and int(menu.lobby_rows[1]["look"]) == GUEST_LOOK, str(menu.lobby_rows))
-	ok("«Старт» неактивен, пока гость не готов", menu.start_button.visible and menu.start_button.disabled
-			and not menu.ready_button.visible)
 	got = await until(func() -> bool: return lobby.is_ready(guest), 20.0)
 	await frames(2)
 	ok("гость нажал «Готов» — «Старт» активен", got and not menu.start_button.disabled
