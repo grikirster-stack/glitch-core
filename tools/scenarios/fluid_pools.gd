@@ -31,6 +31,13 @@ func run() -> void:
 	var g: int = World.surface[x]
 	_build_platform(x, g)
 
+	# --- Замер: насколько широкая яма ещё наполняется ---
+	# Известное ограничение правила: вода растекается по ряду только если
+	# стенка ямы ближе FLUID_SCAN клеток. Поэтому яма шире FLUID_SCAN
+	# наполняется не целиком: вода стоит у края. Замер идёт первым, пока
+	# площадка сухая, и по окончании возвращает её как была.
+	await _measure_wide_pit(x, g)
+
 	# --- (а) вода не расползается плёнкой по ровной сухой земле ---
 	var film_src: Vector2i = Vector2i(x + FILM_X, g - 1)
 	World.set_fluid(film_src, World.FLUID_MAX)
@@ -131,6 +138,49 @@ func _stress_water(x: int, g: int) -> void:
 	ok("замер: озеро 25x4 — худший кадр %.1f мс, средний %.1f мс, шагов воды %d, просмотрено клеток %d" % [
 			worst, sum / 180.0, World.fluid_steps - steps,
 			World.fluid_scan_cells - scans], true)
+
+
+## Меряет, сколько клеток дна наполнено в яме разной ширины: по мере роста
+## ширины дно перестаёт заливаться целиком — это граница правила FLUID_SCAN.
+## Яма строится целиком из тайлов, чтобы замер не зависел от рельефа.
+func _measure_wide_pit(x: int, g: int) -> void:
+	const WIDTHS: Array = [12, 16, 24]
+	var parts: Array = []
+	for w in WIDTHS:
+		var width: int = int(w)
+		var x0: int = x - PAD_L + 1          # левый край ямы
+		var x1: int = x0 + width - 1         # правый край ямы
+		# Пол, стенки и пустота внутри.
+		for c in range(x0 - 1, x1 + 2):
+			World.set_tile(c, g + 2, IDs.T.DIRT)
+		for y in [g, g + 1]:
+			World.set_tile(x0 - 1, y, IDs.T.GRASS)
+			World.set_tile(x1 + 1, y, IDs.T.GRASS)
+		for c in range(x0, x1 + 1):
+			World.set_tile(c, g, IDs.T.AIR)
+			World.set_tile(c, g + 1, IDs.T.AIR)
+		# Вода падает в яму у левого края и должна залить дно. Льём столько,
+		# чтобы хватило на полный ряд дна (по две порции на клетку).
+		var pours: int = maxi(1, (2 * width) / World.FLUID_MAX)
+		for i in pours:
+			await wait_until(func() -> bool: return World.fluid_level(Vector2i(x0, g)) == 0, 1.5)
+			World.set_fluid(Vector2i(x0, g), World.FLUID_MAX)
+		await wait(2.5)
+		var wet: int = 0
+		for c in range(x0, x1 + 1):
+			if World.fluid_level(Vector2i(c, g + 1)) >= 2:
+				wet += 1
+		parts.append("%d клеток → %d из %d" % [width, wet, width])
+		# Возвращаем площадку как было.
+		for c in range(x0 - 1, x1 + 2):
+			World.set_tile(c, g, IDs.T.GRASS)
+			World.set_tile(c, g + 1, IDs.T.DIRT)
+			World.set_fluid(Vector2i(c, g - 1), 0)
+			World.set_fluid(Vector2i(c, g), 0)
+			World.set_fluid(Vector2i(c, g + 1), 0)
+		World.set_fluid(Vector2i(x0, g), 0)
+		await wait(0.3)
+	print("  ЗАМЕР ширина ямы (мокрых клеток дна): %s" % ", ".join(parts))
 
 
 ## Ищем сухое ровное место подальше от базы: рядом не должно быть ни
