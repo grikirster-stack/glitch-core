@@ -22,6 +22,8 @@ const TEXT_W: float = 508.0
 var selected: int = -1
 ## Сдвиг списка обрывков (колесо мыши над правым нижним блоком).
 var frag_scroll: int = 0
+## Остаток сенсорной прокрутки до следующего обрывка, px (#81).
+var _drag_acc: float = 0.0
 
 
 func _ready() -> void:
@@ -73,6 +75,14 @@ func _gui_input(event: InputEvent) -> void:
 		elif mb.button_index == MOUSE_BUTTON_LEFT:
 			_click(mb.position)
 	elif event is InputEventMouseMotion:
+		queue_redraw()
+	elif event is InputEventScreenDrag:
+		# Палец листает обрывки, как колесо: 24 px — один обрывок (#81).
+		_drag_acc += (event as InputEventScreenDrag).relative.y
+		while absf(_drag_acc) >= 24.0:
+			var step: int = -1 if _drag_acc > 0.0 else 1
+			_drag_acc -= 24.0 * float(-step)
+			frag_scroll = clampi(frag_scroll + step, 0, maxi(0, Tech.fragments.size() - 1))
 		queue_redraw()
 
 

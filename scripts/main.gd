@@ -67,6 +67,7 @@ func _ready() -> void:
 	end_screen.restart_requested.connect(_restart)
 	Game.state_changed.connect(_on_state_changed)
 	_setup_respawn()
+	add_child(TouchControls.new())   # сенсорное управление (#81): сенсорный экран или --touch
 
 	# Стартовый набор
 	player.inv.add(IDs.I.LAMP, 3)
