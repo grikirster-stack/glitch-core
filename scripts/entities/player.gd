@@ -806,58 +806,43 @@ func _sfx(n: String, v: float = 0.0, p: float = 1.0) -> void:
 
 ## Раскладка частей фигуры в локальных координатах героя (issue #58).
 ## Все части задаются «лицом вправо», а при facing = -1 каждая отражается
-## относительно вертикальной оси героя (x = 0): рюкзак уходит за спину,
-## визор и огонёк — вперёд, ноги меняются местами вместе с фазой шага.
-## Вынесено из _draw, чтобы anim_test проверял ровно то, что рисуется.
-## Ключи: body, backpack, leg_back, leg_front, visor, visor_top, visor_glint —
-## Rect2; light — Vector2 (центр огонька на шлеме).
+## относительно вертикальной оси героя (x = 0): ранец уходит за спину,
+## визор, фонарь и рука — вперёд, ноги меняются местами вместе с фазой шага.
+## Считает Avatar.layout() (скафандр «Кербер-9», V4/MP-L #97) по виду героя
+## и его позе; отдельно от _draw, чтобы anim_test проверял ровно то, что рисуется.
+## Ключи — см. Avatar.layout: body, torso, helmet, visor*, arm, glove, backpack,
+## tank, leg_*, boot_* — Rect2; light — Vector2 (место фонаря на шлеме).
 func body_layout() -> Dictionary:
-	# Живое покойное дыхание + лёгкий подскок корпуса на шаге.
-	var idle_amt: float = clampf(1.0 - absf(vel.x) / 60.0, 0.0, 1.0)
-	var move_amt: float = clampf(absf(vel.x) / SPEED, 0.0, 1.0)
-	var breathe: float = sin(_breath * 1.8) * idle_amt
-	var bounce: float = -absf(sin(walk_anim)) * 1.4 * move_amt
-	# Низ корпуса неподвижен — дыхание растягивает корпус вверх.
-	var body_h: float = SIZE.y * (1.0 + 0.03 * breathe)
-	var r: Rect2 = Rect2(-SIZE.x * 0.5, SIZE.y * 0.5 - body_h + bounce, SIZE.x, body_h)
-	var step: float = sin(walk_anim) * 2.0
-	var visor: Rect2 = Rect2(-1.0, r.position.y + 2.0, 11.0, 7.0)
-	var light: Vector2 = Vector2(visor.position.x + 8.0, visor.position.y)
-	var f: float = -1.0 if facing < 0 else 1.0
-	return {
-		"body": r,
-		# Рюкзак за спиной: при взгляде вправо — слева от корпуса.
-		"backpack": _mirror(Rect2(-r.size.x * 0.5 - 5.0, -r.size.y * 0.5 + 3.0, 5.0, r.size.y - 7.0)),
-		"leg_back": _mirror(Rect2(-4.0, r.end.y - 3.0, 3.0, 3.0 + step)),
-		"leg_front": _mirror(Rect2(1.0, r.end.y - 3.0, 3.0, 3.0 - step)),
-		"visor": _mirror(visor),
-		"visor_top": _mirror(Rect2(visor.position.x, visor.position.y, visor.size.x, 2.0)),
-		"visor_glint": _mirror(Rect2(visor.position.x + 1.0, visor.position.y + 1.0, 3.0, 2.0)),
-		"light": Vector2(light.x * f, light.y),
-	}
+	var air: bool = not on_ground and not hiding and absf(vel.y) > 40.0
+	return Avatar.layout(look, facing, walk_anim, _breath, absf(vel.x) / SPEED, air, _works_ahead())
 
 
-## Отражение прямоугольника относительно оси героя, если он смотрит влево.
-func _mirror(rect: Rect2) -> Rect2:
-	if facing >= 0:
-		return rect
-	return Rect2(-rect.end.x, rect.position.y, rect.size.x, rect.size.y)
+## Рука вытянута вперёд: копает клетку перед собой (или над/под собой) либо
+## чинит/читает терминал. Клетка за спиной — рука опущена, кирка тянется назад.
+func _works_ahead() -> bool:
+	if task_progress > 0.0:
+		return true
+	if mining_cell.x < 0 or mining_progress <= 0.0:
+		return false
+	return (World.cell_to_world(mining_cell).x - global_position.x) * float(facing) > -4.0
 
 
 func _draw() -> void:
-	# Рисунок героя — шов Avatar (ADR-002 § 4.6): тот же для превью меню и
-	# товарищей по сети. Фигура уже отзеркалена по facing (body_layout).
-	Avatar.draw(self, body_layout(), look,
+	# Рисунок героя — шов Avatar (ADR-002 § 4.6): тот же для превью меню,
+	# товарищей по сети и двойника. Фигура уже отзеркалена по facing (body_layout).
+	var lay: Dictionary = body_layout()
+	Avatar.draw(self, lay, look,
 			{"hiding": hiding, "flash": _hit_flash / HIT_FLASH, "breath": _breath})
 
 	# Индикатор копки живёт в мировых координатах (кирка смотрит на клетку
-	# сама) — его не зеркалим.
-	_draw_mining_fx()
+	# сама) — его не зеркалим. Кирка — из перчатки.
+	_draw_mining_fx((lay["glove"] as Rect2).get_center())
 
 
 ## Индикатор копки: контур клетки, полоса прогресса и дрожащая кирка.
 ## Читается за долю секунды: видно ЧТО копают и СКОЛЬКО осталось.
-func _draw_mining_fx() -> void:
+## pivot — откуда растёт кирка (перчатка героя).
+func _draw_mining_fx(pivot: Vector2) -> void:
 	if mining_cell.x < 0 or mining_progress <= 0.0:
 		return
 	var cell_pos: Vector2 = World.cell_to_world(mining_cell) - global_position
@@ -872,7 +857,6 @@ func _draw_mining_fx() -> void:
 	draw_rect(Rect2(bar_x, bar_y, bar_w, 2.5), Color(0.0, 0.0, 0.0, 0.65))
 	draw_rect(Rect2(bar_x, bar_y, bar_w * clampf(mining_progress, 0.0, 1.0), 2.5), Color(1.0, 0.78, 0.28))
 	# Дрожащая кирка — видно, что копает игрок.
-	var pivot: Vector2 = Vector2(0.0, -6.0)
 	var to_cell: Vector2 = cell_pos - pivot
 	var ang: float = to_cell.angle() + sin(_mine_fx_t * 26.0) * 0.35
 	var reach: float = clampf(to_cell.length(), 10.0, 30.0)
