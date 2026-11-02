@@ -60,6 +60,7 @@ func _ready() -> void:
 	add_child(end_screen)
 	end_screen.restart_requested.connect(_restart)
 	Game.state_changed.connect(_on_state_changed)
+	_setup_respawn()
 
 	# Стартовый набор
 	player.inv.add(IDs.I.LAMP, 3)
@@ -124,8 +125,7 @@ func _restart() -> void:
 
 func _on_state_changed(s: int) -> void:
 	if s == Game.State.DEAD:
-		end_screen.show_end("ТЕБЯ НАШЛИ", "Фантомы добрались до экипажа. Станция запомнит.",
-				Color(0.92, 0.28, 0.34), _stats())
+		end_screen.show_end("ТЕБЯ НАШЛИ", Lore.epitaph(), Color(0.92, 0.28, 0.34), _stats())
 	elif s == Game.State.WON:
 		end_screen.show_end("ЭВАКУАЦИЯ", "Сигнал принят на орбите. Капсула уходит вверх.",
 				Color(0.40, 1.0, 0.78), _stats())
@@ -137,6 +137,7 @@ func _stats() -> Array:
 		"Изготовлено предметов: %d" % Game.stats_crafted,
 		"Уничтожено фантомов: %d" % Game.stats_kills,
 		"Выполнено заданий: %d из %d" % [Game.tasks_done, Game.tasks_total],
+		"Смертей: %d" % Game.stats_deaths,
 		"Время в игре: %d:%02d" % [int(Game.game_time) / 60, int(Game.game_time) % 60],
 	]
 
@@ -148,3 +149,35 @@ func _take_screenshot() -> void:
 	img.save_png(path)
 	print("SCREENSHOT: ", path)
 	get_tree().quit()
+
+
+# ------------------------------------------------- СМЕРТЬ И РЕСПАУН (ADR-001 § 4.8, #29)
+## --hardcore — пермасмерть: смерть заканчивает забег (экран с эпитафией и итогами).
+## Без флага: экран «ТЕБЯ НАШЛИ» с эпитафией, через Balance.RESPAWN_DELAY — респаун
+## в капсуле на базе, время прыгает к рассвету (ночь проиграна). Мешок с хотбаром
+## остаётся на месте смерти (Player.drop_hotbar_bag).
+var hardcore: bool = false
+
+
+func _setup_respawn() -> void:
+	hardcore = _args.has("--hardcore")
+	player.died.connect(_on_player_died)
+
+
+func _on_player_died() -> void:
+	if hardcore:
+		Game.set_state(Game.State.DEAD)
+		return
+	end_screen.show_death(Lore.epitaph(), Balance.RESPAWN_DELAY)
+	get_tree().create_timer(Balance.RESPAWN_DELAY).timeout.connect(_respawn)
+
+
+func _respawn() -> void:
+	if not player.dead or Game.state != Game.State.PLAYING:
+		return
+	player.respawn_at(World.spawn_point)
+	end_screen.hide_end()
+	# К рассвету: ставим время чуть раньше конца ночи — Game сам перейдёт рубеж
+	# и начнёт новую смену (day_number, «Смена N», роспуск фантомов — по сигналу).
+	Game.time_of_day = Balance.NIGHT_END - 0.0005
+	Game.notify("Капсула на базе. Мешок с вещами остался на месте гибели.", Color(1.0, 0.85, 0.6))

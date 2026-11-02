@@ -1,6 +1,7 @@
 class_name EndScreen
 extends Control
-## Экран победы/поражения с итогами забега.
+## Экран победы/поражения с итогами забега. Он же — экран смерти с эпитафией
+## из Lore и отсчётом до респауна (ADR-001 § 4.8, #29): тогда R не перезапускает.
 
 signal restart_requested
 
@@ -9,6 +10,8 @@ var subtitle: String = ""
 var color: Color = Color.WHITE
 var stats: Array = []
 var t: float = 0.0
+## Экран смерти перед респауном: сколько секунд показывать (< 0 — финальный экран).
+var respawn_delay: float = -1.0
 
 
 func _ready() -> void:
@@ -22,9 +25,21 @@ func show_end(p_title: String, p_subtitle: String, p_color: Color, p_stats: Arra
 	subtitle = p_subtitle
 	color = p_color
 	stats = p_stats
+	respawn_delay = -1.0
 	visible = true
 	t = 0.0
 	queue_redraw()
+
+
+## Экран смерти с эпитафией и отсчётом до респауна в капсуле.
+func show_death(p_epitaph: String, delay: float) -> void:
+	show_end("ТЕБЯ НАШЛИ", p_epitaph, Color(0.92, 0.28, 0.34), [])
+	respawn_delay = delay
+
+
+func hide_end() -> void:
+	visible = false
+	respawn_delay = -1.0
 
 
 func _process(delta: float) -> void:
@@ -34,7 +49,7 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if not visible:
+	if not visible or respawn_delay >= 0.0:
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k: InputEventKey = event
@@ -55,5 +70,10 @@ func _draw() -> void:
 		draw_string(font, Vector2(0, y), String(s), HORIZONTAL_ALIGNMENT_CENTER, size.x, 18, Color(0.8, 0.85, 0.95, a))
 		y += 26
 	var blink: float = 0.55 + 0.45 * sin(t * 4.0)
+	if respawn_delay >= 0.0:
+		var left: int = ceili(maxf(0.0, respawn_delay - t))
+		draw_string(font, Vector2(0, size.y * 0.78), "Капсула на базе через %d с…" % left,
+				HORIZONTAL_ALIGNMENT_CENTER, size.x, 22, Color(1.0, 0.95, 0.7, a))
+		return
 	draw_string(font, Vector2(0, size.y * 0.78), "[R] — новая попытка",
 			HORIZONTAL_ALIGNMENT_CENTER, size.x, 22, Color(1.0, 0.95, 0.7, a * blink))
