@@ -74,6 +74,14 @@ func _panel_pos() -> Vector2:
 	return Vector2((size.x - 820.0) * 0.5, (size.y - 470.0) * 0.5)
 
 
+## Верх сетки инвентаря игрока. С открытым сундуком панель выше: сундук
+## занимает место сверху, инвентарь игрока уезжает вниз.
+## Рисование и клик берут эту координату отсюда, иначе слоты кликаются
+## не там, где нарисованы.
+func _inv_y() -> float:
+	return 268.0 if chest else 92.0
+
+
 func _draw() -> void:
 	if player == null:
 		return
@@ -101,9 +109,7 @@ func _draw() -> void:
 			_draw_slot(cr, chest.slots[i], font, false)
 
 	# ---- Инвентарь игрока ----------------------------------------------------
-	var inv_y: float = 100.0 if chest else 92.0
-	if chest:
-		inv_y = 268.0
+	var inv_y: float = _inv_y()
 	draw_string(font, origin + Vector2(16, inv_y - 6), "ВЫ", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.7, 0.9, 1.0))
 	for i in player.inv.size:
 		var ir: Rect2 = Rect2(origin + Vector2(16 + (i % INV_COLS) * SLOT, inv_y + 6 + int(i / INV_COLS) * SLOT), Vector2(SLOT - 4, SLOT - 4))
@@ -230,8 +236,7 @@ func _click(pos: Vector2, right: bool) -> void:
 				return
 	# Инвентарь
 	for i in player.inv.size:
-		var ir: Rect2 = Rect2(_panel_pos() + Vector2(16 + (i % INV_COLS) * SLOT, 268 + int(i / INV_COLS) * SLOT) if chest
-				else Rect2(_panel_pos() + Vector2(16 + (i % INV_COLS) * SLOT, 98 + int(i / INV_COLS) * SLOT), Vector2(SLOT - 4, SLOT - 4)),
+		var ir: Rect2 = Rect2(_panel_pos() + Vector2(16 + (i % INV_COLS) * SLOT, _inv_y() + 6 + int(i / INV_COLS) * SLOT),
 				Vector2(SLOT - 4, SLOT - 4))
 		if ir.has_point(pos):
 			_click_inv(i, right)

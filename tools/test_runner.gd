@@ -202,6 +202,17 @@ func _t_craft() -> void:
 		var ore_after: int = player.inv.count_of(IDs.I.COPPER_ORE)
 		_ok("руда списана", ore_after < ore_before + 5,
 				"было %d, стало %d" % [ore_before, ore_after])
+		# Регресс: клик мышью по рецепту (не прямой вызов) не должен падать.
+		# Раньше прямоугольник слота считался тернарником внутри вызова Rect2,
+		# и без сундука получалось Rect2(Rect2, Vector2) — «Nonexistent 'Rect2'
+		# constructor»: выплавка меди на клик не работала.
+		var ing_before: int = player.inv.count_of(IDs.I.COPPER_INGOT)
+		panel.scroll = 0
+		var pp: Vector2 = panel._panel_pos()
+		panel._click(pp + Vector2(390, 126), false)
+		var ing_after: int = player.inv.count_of(IDs.I.COPPER_INGOT)
+		_ok("клик по рецепту крафтит и не падает", ing_after > ing_before,
+				"до %d, после %d" % [ing_before, ing_after])
 		panel.close()
 	_next(5)
 
