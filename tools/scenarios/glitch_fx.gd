@@ -34,6 +34,7 @@ func run() -> void:
 		return
 	var calm0: bool = GlitchFx.calm
 	GlitchFx.set_calm(false)
+	fx.reset()   # паузы событий от прошлых сценариев (релей, питание) — долой
 	await wait(0.6)
 
 	# --- 1. Простой: эффект не идёт, _process выключен, новых узлов нет.
@@ -149,7 +150,8 @@ func run() -> void:
 			and ph._split_d(0.1, 9.0) == ph._split_d(0.4, 9.0))
 	if ph != null and is_instance_valid(ph):
 		ph.take_damage(1000.0, player.global_position)
-	await wait(1.1)   # пауза события «релей запущен»
+	await wait(0.2)
+	fx.reset()   # пауза события «релей запущен» — проверена выше
 	var fired0: int = fx.stat_fired
 	var calm0n: int = fx.stat_calm
 	await _shot_before()

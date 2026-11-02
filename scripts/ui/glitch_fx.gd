@@ -83,7 +83,6 @@ var _world_at: Vector2 = Vector2.ZERO
 var _local: bool = false
 var _seed: float = 0.0
 var _next_ok: PackedFloat32Array = PackedFloat32Array()
-var _clock: float = 0.0
 var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
 ## Двойники на сцене и раскрыт ли уже каждый (параллельные массивы).
@@ -182,7 +181,8 @@ func _on_phantom(ph: Node) -> void:
 ## Запустить эффект вида kind в мировой точке at (для браун-аута точка не нужна).
 ## true — эффект (глитч или спокойная вспышка) включился.
 func fire(kind: int, at: Vector2) -> bool:
-	if _clock < _next_ok[kind]:
+	var now: float = _now()
+	if now < _next_ok[kind]:
 		stat_skipped += 1
 		return false
 	if active() and PRIORITY[kind] < PRIORITY[_kind]:
@@ -195,7 +195,7 @@ func fire(kind: int, at: Vector2) -> bool:
 	if calm and not CALM_FLASH[kind]:
 		stat_skipped += 1
 		return false
-	_next_ok[kind] = _clock + COOLDOWN[kind]
+	_next_ok[kind] = now + COOLDOWN[kind]
 	_kind = kind
 	_dur = minf(DURATION[kind], MAX_SEC)
 	_left = _dur
@@ -218,6 +218,18 @@ func fire(kind: int, at: Vector2) -> bool:
 	return true
 
 
+## Часы пауз между событиями, с. Не delta из _process: в простое он выключен,
+## и пауза, начатая перед простоем, иначе не кончилась бы никогда.
+static func _now() -> float:
+	return float(Time.get_ticks_msec()) * 0.001
+
+
+## Сбросить паузы событий и погасить эффект (сценарии — с чистого листа).
+func reset() -> void:
+	_next_ok.fill(0.0)
+	stop()
+
+
 ## Погасить эффект сразу.
 func stop() -> void:
 	_left = 0.0
@@ -231,7 +243,6 @@ func stop() -> void:
 func _process(delta: float) -> void:
 	var t0: int = Time.get_ticks_usec()
 	stat_frames += 1
-	_clock += delta
 	if active():
 		_left -= delta
 		if _left <= 0.0:
