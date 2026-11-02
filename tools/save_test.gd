@@ -432,7 +432,8 @@ class Runner extends Node:
 			for x in world.W:
 				var id: int = world.tiles[y * world.W + x]
 				var c: Vector2i = Vector2i(x, y)
-				var want: Vector2i = Vector2i(-1, -1) if id == IDs.T.AIR else world._atlas_cache[id]
+				# Вариант клетки (биом, маска соседей — ADR-003 V1) считает сам мир.
+				var want: Vector2i = Vector2i(-1, -1) if id == IDs.T.AIR else world.cell_atlas(x, y)
 				if world.tilemap.get_cell_atlas_coords(c) != want:
 					_grid_hint = "тайлмап в %s" % str(c)
 					return false

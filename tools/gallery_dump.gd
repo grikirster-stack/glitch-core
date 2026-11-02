@@ -9,6 +9,8 @@ extends SceneTree
 ##      прогон с окном ЗА ПРЕДЕЛАМИ ЭКРАНА и без звука; скрипт сам выходит:
 ##      godot --path . --audio-driver Dummy --windowed --position -10000,-10000 \
 ##            --resolution 960x540 --script res://tools/gallery_dump.gd -- --seed=31337
+##      (флаги после «--»: --no-world — только скриншоты, без вида машин и фантомов;
+##       --shots-after=<имя> — досъёмка скриншотов, следующих за shots/<имя>.png)
 ##
 ## Всё перебирается по данным, поэтому инструмент можно перезапускать, когда
 ## появятся новые объекты:
@@ -103,7 +105,12 @@ func _run() -> void:
 	_dump_tiles()
 	_print_md()
 	if windowed:
-		await _dump_world_views()
+		# --no-world: только скриншоты (вид машин/фантомов не менялся) — прогон короче.
+		if not OS.get_cmdline_user_args().has("--no-world"):
+			await _dump_world_views()
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with("--shots-after="):
+				_shots_after = a.substr(14)
 		await _dump_shots()
 	else:
 		print("headless: вид в мире и скриншоты пропущены (нужен прогон с окном за экраном)")
@@ -176,6 +183,35 @@ func _dump_tiles() -> void:
 			continue
 		_save(_upscale(_tile_image(int(id)), PIXEL_SCALE), "tiles/%s.png" % _tile_slug(int(id)))
 	print("тайлов: %d" % (ids.size() - 1))
+	_dump_tile_variants(ids)
+
+
+## ADR-003 V1: лист вариантов атласа — строки тайлов, столбцы: 3 биома по глубине ×
+## маски открытых сторон (закрыт, верх, низ-потолок, все стороны). Без окна.
+func _dump_tile_variants(ids: Array) -> void:
+	if not db.has_method("variant_image"):
+		return
+	var masks: Array = [0, 1, 4, 15]
+	var ts: int = db.TILE_SIZE
+	var gap: int = 2
+	var cols: int = 3 * masks.size()
+	var rows: Array = []
+	for id in ids:
+		if int(id) != IDs.T.AIR:
+			rows.append(int(id))
+	var img: Image = Image.create_empty(cols * (ts + gap) + gap * 3, rows.size() * (ts + gap) + gap, false,
+			Image.FORMAT_RGBA8)
+	img.fill(Color("#1a1420"))
+	for r in rows.size():
+		var id: int = rows[r]
+		for bio in 3:
+			for k in masks.size():
+				var x: int = gap + (bio * masks.size() + k) * (ts + gap) + bio * gap
+				var y: int = gap + r * (ts + gap)
+				var t: Image = db.variant_image(id, bio, 0, int(masks[k]))
+				img.blend_rect(t, Rect2i(0, 0, ts, ts), Vector2i(x, y))
+	_save(_upscale(img, 4), "tiles_variants.png")
+	print("лист вариантов тайлов: %d строк × %d столбцов" % [rows.size(), cols])
 
 
 func _item_slug(id: int) -> String:
@@ -423,12 +459,24 @@ func _dump_world_views() -> void:
 
 # ------------------------------------------------------------------ СКРИНШОТЫ
 
+## --shots-after=<имя>: досъёмка — кадры до этого скриншота (включительно) не снимаются
+## и не ждут кадров (состояние игры всё равно готовится); нужно, когда окно за экраном
+## рисует медленно и прогон не укладывается в лимит.
+var _shots_after: String = ""
+
+
 func _frames(n: int) -> void:
+	if _shots_after != "":
+		return
 	for i in n:
 		await process_frame
 
 
 func _grab(rel: String, crop: bool) -> void:
+	if _shots_after != "":
+		if rel.get_file().get_basename() == _shots_after:
+			_shots_after = ""
+		return
 	await RenderingServer.frame_post_draw
 	var img: Image = root.get_texture().get_image()
 	if crop:
