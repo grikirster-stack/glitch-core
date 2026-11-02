@@ -1,14 +1,23 @@
 class_name Phantom
 extends Node2D
-## Фантом — копия экипажа из глубины. Охотится на игрока, боится света.
+## Фантом — копия экипажа из глубины. Пять типов (ADR-001, § 4.5):
+##   * echo     — эхо: охотится на игрока по шуму и обзору, боится света;
+##   * swarm    — рой: мелкая летучая стая, идёт на работающий бур/сборщик;
+##   * shade    — тень: свет ей безразличен, дренирует ТЭЦ, гасит солнце;
+##   * burrower — копатель: роет природную породу к игроку;
+##   * doppel   — двойник: копия игрока, замирает, пока игрок на него смотрит.
+## Числа — в Balance.PHANTOMS и разделе «поведение типов» Balance.
+## Тип задаётся до добавления в дерево: Phantom.create("swarm").
 
 enum St { DORMANT, ROAM, CHASE, FLEE }
 
 const SIZE: Vector2 = Vector2(12.0, 22.0)
-const MAX_HP: float = 100.0
+const SWARM_SIZE: Vector2 = Vector2(8.0, 8.0)	## Тело роя: мелкое и летучее.
+const MAX_HP: float = 100.0			## hp эха; у остальных типов — из Balance.PHANTOMS.
+const KINDS: Array[String] = ["echo", "swarm", "shade", "burrower", "doppel"]
 
 # --- Лимиты и тайминги ------------------------------------------------------
-const MAX_PHANTOMS: int = 12			## Больше стольких копий в сцене не держим.
+const MAX_PHANTOMS: int = Balance.MAX_PHANTOMS	## Больше стольких копий в сцене не держим.
 const DESPAWN_DIST: float = 900.0		## Дальше этой дистанции фантом растворяется.
 const DESPAWN_DIST_NIGHT: float = 2000.0	## Ночью порог выше — ночь должна пугать.
 const SPAWN_GRACE: float = 5.0			## Свежий фантом первые секунды не растворяется.
@@ -26,8 +35,22 @@ const STUCK_TIME: float = 0.8			## Сколько секунд без прогр
 const STUCK_PROGRESS: float = 6.0		## Минимальный прогресс к узлу пути за это время, px.
 const FLIP_T: float = 2.0				## Как часто фантом меняет сторону обхода, с.
 const STUN_REDRAW: float = 0.066		## Частота перерисовки оглушённого фантома, с.
+const ECHO_SPEED: float = 160.0			## Скорость эха из таблицы: от неё масштабируются остальные.
+const SEEK_INTERVAL: float = 0.5		## Как часто рой и тень ищут машину-цель, с.
+const MACHINE_REACH: float = 20.0		## С этой дистанции фантом бьёт машину, px.
+const DOPPEL_HUNT_PX: float = 1400.0	## Двойник всегда знает, где игрок, ближе этого.
+const BUZZ_MIN: float = 1.2				## Пауза между жужжанием роя, с (случайная).
+const BUZZ_MAX: float = 2.4
 
+var kind: String = "echo"
 var hp: float = MAX_HP
+var max_hp: float = MAX_HP
+var dmg: float = 24.0				## Урон по игроку за удар.
+var light_flee: float = 0.55		## Порог света, от которого фантом убегает (INF — не боится).
+var speed_mul: float = 1.0			## Скорость типа относительно эха.
+var body: Vector2 = SIZE			## Размер тела для столкновений.
+var flying: bool = false			## Рой летает: без гравитации, путь по обеим осям.
+var pack_id: int = 0				## Номер стаи (рой): для лимита директора угрозы стая — одна единица.
 var vel: Vector2 = Vector2.ZERO
 var state: int = St.DORMANT
 var on_ground: bool = false
@@ -37,13 +60,19 @@ var path_i: int = 0
 var repath: float = 0.0
 var stun: float = 0.0
 var target_pos: Vector2 = Vector2.ZERO
+var target_machine: Node2D = null	## Машина-цель роя и тени (null — цель игрок).
 var alert: float = 0.0
 var wander_t: float = 0.0
 var jitter: float = 0.0
 var player: Node2D = null
 var spawn_point: Vector2 = Vector2.ZERO
 var alive: bool = true
+var frozen: bool = false			## Двойник замер под взглядом игрока.
+var display_name: String = ""		## Имя над головой двойника (Lore.impostor).
 var rebuilds: int = 0				## Счётчик перестроений пути — для замеров и отладки.
+var machine_hits: int = 0			## Ударов по машинам — для сценариев.
+var coal_drained: int = 0			## Сожжено угля у ТЭЦ (тень) — для сценариев.
+var tiles_dug: int = 0				## Вырыто клеток (копатель) — для сценариев.
 
 # --- Кэши и служебное состояние ----------------------------------------------
 var _light: float = 0.0				## Кэш света в точке фантома.
@@ -63,11 +92,24 @@ var _flank_t: float = 0.0
 var _age: float = 0.0				## Возраст фантома, с.
 var _prev_state: int = St.DORMANT	## Состояние в прошлом кадре — для смены режима.
 var _redraw_t: float = 0.0			## Таймер редкой перерисовки оглушённого фантома.
+var _seek_t: float = 0.0			## Таймер поиска машины-цели.
+var _hit_t: float = 0.0				## Таймер удара по машине.
+var _drain_t: float = Balance.SHADE_DRAIN_PERIOD	## Таймер дренажа ТЭЦ (тень).
+var _dig_t: float = 0.0				## Таймер копания (копатель).
+var _buzz_t: float = 0.0			## Таймер жужжания роя.
+var _blocked_x: bool = false		## В прошлом кадре упёрлись в стену по горизонтали.
 
 # Свет игрока общий для всех фантомов: пересчитывать его на каждого — расточительно.
 static var _shared_player_light: float = 0.0
 static var _shared_player_light_ms: int = -1000000
 static var _shared_light_sources: int = -1
+
+
+## Фантом нужного типа (ещё не в дереве). Неизвестный тип — эхо.
+static func create(p_kind: String) -> Phantom:
+	var p: Phantom = Phantom.new()
+	p.kind = p_kind if Balance.PHANTOMS.has(p_kind) else "echo"
+	return p
 
 
 func _ready() -> void:
@@ -81,6 +123,24 @@ func _ready() -> void:
 	z_index = 5
 	jitter = randf() * 10.0
 	_flank_side = 1.0 if randf() < 0.5 else -1.0
+	_apply_kind()
+
+
+## Параметры типа из Balance.PHANTOMS.
+func _apply_kind() -> void:
+	if not Balance.PHANTOMS.has(kind):
+		kind = "echo"
+	var spec: Dictionary = Balance.PHANTOMS[kind]
+	max_hp = float(spec["hp"])
+	hp = max_hp
+	dmg = float(spec["dmg"])
+	light_flee = float(spec["light_flee"])
+	speed_mul = float(spec["speed"]) / ECHO_SPEED
+	flying = kind == "swarm"
+	body = SWARM_SIZE if flying else SIZE
+	_buzz_t = randf_range(0.0, BUZZ_MAX)
+	if kind == "doppel":
+		display_name = String(Lore.impostor.get("full", ""))
 
 
 func _physics_process(delta: float) -> void:
@@ -112,32 +172,22 @@ func _physics_process(delta: float) -> void:
 
 	# --- Свет (кэш) ----------------------------------------------------------
 	# Источники света статичны, суммировать их каждый кадр слишком дорого.
-	var light: float = _light_value()
-	var player_light: float = _player_light_value(player.global_position)
+	# Тем, кто света не боится (рой, тень, двойник), он не нужен вовсе.
+	var fears_light: bool = light_flee < INF
+	var light: float = _light_value() if fears_light else 0.0
+	var player_light: float = _player_light_value(player.global_position) if fears_light else 0.0
 
 	# --- Решения -------------------------------------------------------------
 	if stun > 0.0:
 		state = St.DORMANT
 	else:
-		if light > 0.55:
-			state = St.FLEE
-		elif dist < (170.0 if Game.is_night() else 120.0) and _has_los():
-			state = St.CHASE
-			alert = 3.0
-		elif player.noise > 28.0 and dist < 260.0:
-			state = St.CHASE
-			alert = 2.0
-			target_pos = player.global_position
-		elif alert > 0.0 and dist < 420.0:
-			state = St.CHASE
-		else:
-			state = St.ROAM if dist > 260.0 else St.DORMANT
+		_decide(dt, dist, light)
 
 	# --- Куда идём ------------------------------------------------------------
-	# Цель в погоне — позиция игрока: путь строим именно к ней, и перестроение
-	# пути срабатывает по сдвигу этой цели.
+	# Цель в погоне — позиция игрока (или машины): путь строим именно к ней,
+	# и перестроение пути срабатывает по сдвигу этой цели.
 	if state == St.CHASE:
-		target_pos = player.global_position
+		target_pos = _chase_goal()
 	elif state == St.FLEE:
 		target_pos = global_position + (global_position - World.cell_to_world(World.world_to_cell(global_position))).normalized() * 90.0
 	elif state == St.ROAM:
@@ -157,19 +207,21 @@ func _physics_process(delta: float) -> void:
 		repath = 0.0
 	_prev_state = state
 
-	# --- Движение ------------------------------------------------------------
-	var speed: float = 150.0
-	if state == St.CHASE:
-		speed = 172.0 if player_light < 0.3 else 138.0
-	elif state == St.FLEE:
-		speed = 175.0
+	# --- Двойник под взглядом -------------------------------------------------
+	if kind == "doppel":
+		var was: bool = frozen
+		frozen = stun <= 0.0 and _gazed_at(dist)
+		if frozen and not was:
+			Sfx.play("doppel_whisper", -10.0)
 
-	if stun > 0.0:
+	# --- Движение ------------------------------------------------------------
+	var speed: float = _move_speed(player_light)
+	if stun > 0.0 or frozen:
 		speed = 0.0
 
 	repath -= dt
 	var dir: Vector2 = Vector2.ZERO
-	if state == St.CHASE and repath <= 0.0:
+	if state == St.CHASE and repath <= 0.0 and not frozen:
 		# Вдали от цели путь перестраиваем реже — цели похуже, а поиск дорог.
 		repath = REPATH_FAR if dist > REPATH_FAR_DIST else REPATH_NEAR
 		# Пересчитываем путь, только если цель заметно сдвинулась
@@ -196,45 +248,45 @@ func _physics_process(delta: float) -> void:
 		_stuck_best = INF
 		var to_target: Vector2 = target_pos - global_position
 		if to_target.length() > 1.0:
-			if state == St.CHASE and _path_failed and not _has_los():
+			if state == St.CHASE and _path_failed and not _has_los() and kind != "burrower":
 				# Пути нет — обходим препятствие вбок, а не упираемся лбом в стену.
+				# Копатель не обходит: он роет напрямую (см. _burrow).
 				dir = _flank_dir(to_target)
 			else:
 				# Цель могла оказаться в сплошной клетке: тогда идём к ближайшей
 				# проходимой точке, а не в стену.
 				var aim: Vector2 = _aim_pos if state == St.CHASE else target_pos
+				if kind == "burrower" and state == St.CHASE:
+					aim = target_pos
 				var to_aim: Vector2 = aim - global_position
 				if to_aim.length() > 1.0:
 					dir = to_aim.normalized()
 
-	if dir.length() > 0.01:
+	if dir.length() > 0.01 and absf(dir.x) > 0.05:
 		facing = 1 if dir.x > 0.0 else -1
 
-	# Прыжки через препятствия
-	if on_ground and absf(dir.x) > 0.2 and _blocked_ahead():
-		vel.y = -280.0
-		on_ground = false
+	if flying:
+		_move_flying(dir, speed, dt)
+	else:
+		_move_walking(dir, speed, dt)
 
-	vel.x = move_toward(vel.x, dir.x * speed, 900.0 * dt)
-	if stun > 0.0:
-		vel.x = move_toward(vel.x, 0.0, 900.0 * dt)
-	vel.y = minf(vel.y + 900.0 * dt, 520.0)
-
-	var res: Dictionary = World.move_body(global_position, vel * dt, SIZE)
-	global_position = res["position"]
-	if res["hit_y"]:
-		vel.y = 0.0
-		if res["on_ground"]:
-			on_ground = true
-	if res["hit_x"]:
-		vel.x = 0.0
-	if not res["hit_y"]:
-		on_ground = false
+	# --- Работа по типу -----------------------------------------------------
+	if stun <= 0.0:
+		match kind:
+			"swarm":
+				_swarm_tick(dt)
+			"shade":
+				_shade_tick(dt)
+			"burrower":
+				if state == St.CHASE:
+					_burrow(dt)
 
 	# --- Атака ---------------------------------------------------------------
-	if state == St.CHASE and dist < 22.0 and stun <= 0.0 and player.has_method("damage"):
+	# Бьём игрока, только если цель — он сам (у роя и тени цель бывает машиной).
+	if state == St.CHASE and target_machine == null and not frozen and dist < 22.0 \
+			and stun <= 0.0 and player.has_method("damage"):
 		var knock: Vector2 = (player.global_position - global_position).normalized() * 190.0
-		player.damage(24.0, knock)
+		player.damage(dmg, knock)
 		Sfx.play("hit", -4.0, 0.8)
 		alert = 3.0
 
@@ -250,6 +302,280 @@ func _physics_process(delta: float) -> void:
 		_redraw_t = STUN_REDRAW
 		queue_redraw()
 
+
+# ------------------------------------------------------------------ РЕШЕНИЯ
+
+## Состояние на этот кадр — по типу фантома.
+func _decide(dt: float, dist: float, light: float) -> void:
+	if light > light_flee:
+		state = St.FLEE
+		target_machine = null
+		return
+	match kind:
+		"swarm":
+			_seek_machine(dt, Balance.SWARM_SEEK_PX)
+			if target_machine != null:
+				state = St.CHASE
+			elif dist < 420.0:
+				state = St.CHASE
+				alert = 2.0
+			else:
+				state = St.ROAM
+		"shade":
+			_seek_machine(dt, Balance.SHADE_SEEK_PX)
+			if target_machine != null:
+				state = St.CHASE
+			else:
+				_decide_hunter(dist)
+		"burrower":
+			# Копатель чует игрока сквозь породу и роет к нему напрямую.
+			if dist < Balance.BURROWER_HUNT_PX:
+				state = St.CHASE
+				alert = 2.0
+			else:
+				state = St.ROAM
+		"doppel":
+			state = St.CHASE if dist < DOPPEL_HUNT_PX else St.ROAM
+		_:
+			_decide_hunter(dist)
+
+
+## Охота эха: обзор, шум, память о недавней погоне.
+func _decide_hunter(dist: float) -> void:
+	if dist < (170.0 if Game.is_night() else 120.0) and _has_los():
+		state = St.CHASE
+		alert = 3.0
+	elif player.noise > 28.0 and dist < 260.0:
+		state = St.CHASE
+		alert = 2.0
+		target_pos = player.global_position
+	elif alert > 0.0 and dist < 420.0:
+		state = St.CHASE
+	else:
+		state = St.ROAM if dist > 260.0 else St.DORMANT
+
+
+## Куда идём в погоне: к машине-цели или к игроку.
+func _chase_goal() -> Vector2:
+	if target_machine != null and is_instance_valid(target_machine):
+		return target_machine.global_position
+	target_machine = null
+	return player.global_position
+
+
+## Скорость по состоянию. Эхо и копатель медленнее на свету игрока
+## (как было у эха), остальным свет безразличен.
+func _move_speed(player_light: float) -> float:
+	if light_flee < INF:
+		var s: float = 150.0
+		if state == St.CHASE:
+			s = 172.0 if player_light < 0.3 else 138.0
+		elif state == St.FLEE:
+			s = 175.0
+		return s * speed_mul
+	var base_speed: float = ECHO_SPEED * speed_mul
+	return base_speed if state == St.CHASE else base_speed * 0.6
+
+
+## Смотрит ли игрок на двойника: лицом к нему, ближе DOPPEL_GAZE_PX, прямая
+## видимость. Копает или крафтит — значит, не смотрит (§ 4.5).
+func _gazed_at(dist: float) -> bool:
+	if dist >= Balance.DOPPEL_GAZE_PX:
+		return false
+	var dx: float = global_position.x - player.global_position.x
+	var pf = player.get("facing")
+	if absf(dx) > 4.0 and pf is int and (1 if dx > 0.0 else -1) != int(pf):
+		return false
+	var mc = player.get("mining_cell")
+	if mc is Vector2i and mc.x >= 0:
+		return false
+	if UI.blocking():
+		return false
+	return _has_los()
+
+
+# ------------------------------------------------------------------ ДВИЖЕНИЕ
+
+func _move_walking(dir: Vector2, speed: float, dt: float) -> void:
+	# Прыжки через препятствия
+	if on_ground and absf(dir.x) > 0.2 and _blocked_ahead():
+		vel.y = -280.0
+		on_ground = false
+
+	vel.x = move_toward(vel.x, dir.x * speed, 900.0 * dt)
+	if stun > 0.0 or frozen:
+		vel.x = move_toward(vel.x, 0.0, 900.0 * dt)
+	vel.y = minf(vel.y + 900.0 * dt, 520.0)
+
+	var res: Dictionary = World.move_body(global_position, vel * dt, body)
+	global_position = res["position"]
+	if res["hit_y"]:
+		vel.y = 0.0
+		if res["on_ground"]:
+			on_ground = true
+	_blocked_x = bool(res["hit_x"])
+	if res["hit_x"]:
+		vel.x = 0.0
+	if not res["hit_y"]:
+		on_ground = false
+
+
+## Полёт роя: без гравитации, по обеим осям, лёгкое покачивание.
+func _move_flying(dir: Vector2, speed: float, dt: float) -> void:
+	var want: Vector2 = dir * speed
+	if speed > 0.0:
+		want.y += sin(jitter * 7.0) * 18.0
+	vel = vel.move_toward(want, 1100.0 * dt)
+	var res: Dictionary = World.move_body(global_position, vel * dt, body)
+	global_position = res["position"]
+	_blocked_x = bool(res["hit_x"])
+	if res["hit_x"]:
+		vel.x = 0.0
+	if res["hit_y"]:
+		vel.y = 0.0
+	on_ground = bool(res["on_ground"])
+
+
+# ------------------------------------------------------------------ ТИПЫ
+
+## Ищем машину-цель не чаще раза в SEEK_INTERVAL: машин бывает сотни.
+## Рой — работающий бур/сборщик, тень — работающий генератор или прожектор.
+func _seek_machine(dt: float, radius: float) -> void:
+	if target_machine != null and not is_instance_valid(target_machine):
+		target_machine = null
+	_seek_t -= dt
+	if _seek_t > 0.0:
+		return
+	_seek_t = SEEK_INTERVAL
+	var best: Node2D = null
+	var best_d: float = radius
+	for m in World.machines.values():
+		if not is_instance_valid(m) or not _is_prey(m):
+			continue
+		var d: float = global_position.distance_to(m.global_position)
+		if d < best_d:
+			best_d = d
+			best = m
+	target_machine = best
+
+
+## Подходит ли машина в цели этому типу. Рой — работающий бур/сборщик
+## (есть питание), тень — работающий генератор или прожектор.
+func _is_prey(m: Node) -> bool:
+	if not (m is MachineBase):
+		return false
+	var mb: MachineBase = m
+	if kind == "swarm":
+		return (mb.kind == "Drill" or mb.kind == "Assembler") and mb.powered
+	if kind == "shade":
+		if mb is Generator:
+			return mb.power_active
+		return mb.kind == "Floodlight"
+	return false
+
+
+## Рой у машины грызёт её; жужжание стаи — позиционным звуком.
+func _swarm_tick(dt: float) -> void:
+	_buzz_t -= dt
+	if _buzz_t <= 0.0 and state == St.CHASE:
+		_buzz_t = randf_range(BUZZ_MIN, BUZZ_MAX)
+		Sfx.play_at("swarm", global_position, -10.0, randf_range(0.92, 1.08))
+	_machine_attack(dt)
+
+
+## Тень: у ТЭЦ сжигает уголь (генератор она не ломает — она им питается),
+## касание гасит солнечную панель, прожектор бьёт.
+func _shade_tick(dt: float) -> void:
+	var m: Node2D = target_machine
+	if m == null or not is_instance_valid(m):
+		return
+	if global_position.distance_to(m.global_position) > MACHINE_REACH + 8.0:
+		_drain_t = Balance.SHADE_DRAIN_PERIOD
+		return
+	if m is CoalGen:
+		var gen: CoalGen = m
+		_drain_t -= dt
+		if _drain_t <= 0.0:
+			_drain_t = Balance.SHADE_DRAIN_PERIOD
+			if gen.fuel > 0.0:
+				gen.fuel = maxf(0.0, gen.fuel - Balance.COAL_BURN)
+				coal_drained += 1
+	elif m is Solar:
+		# Касание гасит панель рубильником (#25): игрок включит её обратно по E.
+		var sol: Solar = m
+		if sol.enabled:
+			sol.set_enabled(false)
+	else:
+		# Прожектор (#31) не выключить и не осушить — его тень бьёт.
+		_machine_attack(dt)
+
+
+## Удар по машине-цели раз в MACHINE_HIT_PERIOD: MachineBase.take_damage (#25),
+## при hp <= 0 машина разрушается сама.
+func _machine_attack(dt: float) -> void:
+	var m: Node2D = target_machine
+	if m == null or not is_instance_valid(m):
+		return
+	if global_position.distance_to(m.global_position) > MACHINE_REACH:
+		return
+	_hit_t -= dt
+	if _hit_t > 0.0:
+		return
+	_hit_t = Balance.MACHINE_HIT_PERIOD
+	machine_hits += 1
+	if m is MachineBase:
+		(m as MachineBase).take_damage(dmg)
+
+
+## Копатель: если путь упёрся в породу, роет клетку перед собой (или под/над
+## собой, если цель ниже/выше). Роет только природную породу: флаг "dig"
+## в DB.tile_defs и твёрдость не выше BURROWER_DIG_MAX_HARD (§ 4.4).
+func _burrow(dt: float) -> void:
+	_dig_t -= dt
+	if _dig_t > 0.0:
+		return
+	var to: Vector2 = target_pos - global_position
+	if to.length() < 18.0:
+		return
+	# Роем, только когда идти некуда: пути нет, застряли или упёрлись в стену.
+	if not (_path_failed or _blocked_x or _stuck_t > STUCK_TIME * 0.5 or path_i >= path.size()):
+		return
+	var c: Vector2i = World.world_to_cell(global_position)
+	var foot: Vector2i = World.world_to_cell(global_position + Vector2(0.0, body.y * 0.5 - 2.0))
+	var head: Vector2i = World.world_to_cell(global_position - Vector2(0.0, body.y * 0.5 - 2.0))
+	var cands: Array[Vector2i] = []
+	if absf(to.x) >= absf(to.y) * 0.7:
+		var sx: int = 1 if to.x > 0.0 else -1
+		cands.append(Vector2i(c.x + sx, foot.y))
+		cands.append(Vector2i(c.x + sx, head.y))
+	if to.y > 8.0:
+		cands.append(Vector2i(c.x, foot.y + 1))
+	elif to.y < -8.0:
+		cands.append(Vector2i(c.x, head.y - 1))
+	for cell in cands:
+		var t: int = World.get_tile_v(cell)
+		if not DB.tile_solid(t):
+			continue
+		if not can_dig(t):
+			continue
+		World.set_tile(cell.x, cell.y, IDs.T.AIR)
+		tiles_dug += 1
+		_dig_t = Balance.BURROWER_DIG_PERIOD
+		_path_failed = false
+		repath = 0.0
+		UI.spawn_chip(cell, DB.tile_color(t))
+		Sfx.play_at("mine", World.cell_to_world(cell), -12.0, 0.6)
+		return
+	# Рыть нечего (или порода не по зубам) — пробуем снова чуть позже.
+	_dig_t = Balance.BURROWER_DIG_PERIOD * 0.5
+
+
+## Роет ли копатель этот тайл.
+static func can_dig(t: int) -> bool:
+	return DB.tile_diggable(t) and DB.tile_hard(t) <= Balance.BURROWER_DIG_MAX_HARD
+
+
+# ------------------------------------------------------------------ СВЕТ, ОБЗОР
 
 func _despawn_limit() -> float:
 	## Днём фантомы уходят глубже, ночью запас больше — ночь должна пугать.
@@ -342,6 +668,8 @@ func _compute_los(from: Vector2i, to: Vector2i) -> bool:
 	return true
 
 
+# ------------------------------------------------------------------ ПУТЬ
+
 func _track_progress(dnode: float, dt: float) -> void:
 	## Следим, продвигается ли фантом по пути: если к очередному узлу
 	## подобраться не удаётся, фантом застрял — прежний путь больше не годится
@@ -427,6 +755,8 @@ func _rebuild_path() -> void:
 		_path_failed = true
 
 
+# ------------------------------------------------------------------ УРОН
+
 func apply_stun(t: float) -> void:
 	stun = maxf(stun, t)
 
@@ -435,6 +765,9 @@ func take_damage(amount: float, from: Vector2) -> void:
 	if not alive:
 		return
 	hp -= amount
+	# Рой рассыпается с одного удара — и от взмаха, и от импульса (§ 4.5).
+	if kind == "swarm":
+		hp = 0.0
 	alert = 4.0
 	state = St.CHASE
 	target_pos = from
@@ -444,10 +777,44 @@ func take_damage(amount: float, from: Vector2) -> void:
 		Game.stats_kills += 1
 		Game.notify("Фантом рассеян! Хорошая работа.", Color(0.5, 0.9, 1.0))
 		Sfx.play("craft", -6.0, 0.8)
+		_drop_black_box()
 		queue_free()
 
 
+## Чёрный ящик: шанс BLACK_BOX_CHANCE, у двойника — всегда. Стая роя делит
+## шанс на всех, иначе рой оказался бы самым щедрым на данные.
+func _drop_black_box() -> void:
+	var chance: float = Balance.BLACK_BOX_CHANCE
+	if kind == "doppel":
+		chance = 1.0
+	elif kind == "swarm":
+		chance /= float(maxi(1, int(Balance.PHANTOMS["swarm"].get("pack", 1))))
+	if randf() >= chance:
+		return
+	var e: ItemEntity = ItemEntity.new()
+	e.item_id = IDs.I.BLACK_BOX
+	e.count = 1
+	e.global_position = global_position
+	World.add_world_node(e)
+
+
+# ------------------------------------------------------------------ ОТРИСОВКА
+
 func _draw() -> void:
+	match kind:
+		"swarm":
+			_draw_swarm()
+		"shade":
+			_draw_shade()
+		"burrower":
+			_draw_burrower()
+		"doppel":
+			_draw_doppel()
+		_:
+			_draw_echo()
+
+
+func _draw_echo() -> void:
 	var t: float = jitter
 	var base: Color = Color(0.30, 0.16, 0.34)
 	if state == St.CHASE:
@@ -475,14 +842,109 @@ func _draw() -> void:
 	draw_rect(Rect2(visor_x, -9.0, 11.0, 7.0), vcol)
 	draw_rect(Rect2(visor_x + 1.0, -8.0, 3.0, 2.0), Color(1, 1, 1, 0.7))
 
-	# Индикатор состояния
+	_draw_status(t, -16.0)
+
+
+## Индикатор погони, полоса hp и звёздочки оглушения — общие для всех типов.
+func _draw_status(t: float, top: float) -> void:
 	if state == St.CHASE:
-		draw_circle(Vector2(0, -16.0), 2.2, Color(1.0, 0.25, 0.3, 0.6 + 0.4 * sin(t * 12.0)))
-	if hp < MAX_HP:
+		draw_circle(Vector2(0, top), 2.2, Color(1.0, 0.25, 0.3, 0.6 + 0.4 * sin(t * 12.0)))
+	if hp < max_hp:
 		var bw: float = 16.0
-		draw_rect(Rect2(-bw * 0.5, -21.0, bw, 2.5), Color(0, 0, 0, 0.6))
-		draw_rect(Rect2(-bw * 0.5, -21.0, bw * (hp / MAX_HP), 2.5), Color(0.85, 0.25, 0.35))
+		draw_rect(Rect2(-bw * 0.5, top - 5.0, bw, 2.5), Color(0, 0, 0, 0.6))
+		draw_rect(Rect2(-bw * 0.5, top - 5.0, bw * (hp / max_hp), 2.5), Color(0.85, 0.25, 0.35))
 	if stun > 0.0:
 		for i in 3:
 			var a: float = t * 6.0 + i * TAU / 3.0
-			draw_circle(Vector2(cos(a) * 11.0, -14.0 + sin(a) * 4.0), 1.6, Color(0.5, 0.9, 1.0, 0.8))
+			draw_circle(Vector2(cos(a) * 11.0, top + 2.0 + sin(a) * 4.0), 1.6, Color(0.5, 0.9, 1.0, 0.8))
+
+
+## Рой: мелкий мерцающий сгусток с крылышками.
+func _draw_swarm() -> void:
+	var t: float = jitter
+	var col: Color = Color(0.85, 0.30, 0.55) if state == St.CHASE else Color(0.55, 0.22, 0.48)
+	if stun > 0.0:
+		col = col.lerp(Color(0.6, 0.85, 1.0), 0.55)
+	var flap: float = absf(sin(t * 28.0)) * 3.0
+	draw_line(Vector2(-1.0, -1.0), Vector2(-5.0, -2.0 - flap), Color(0.9, 0.9, 1.0, 0.5), 1.0)
+	draw_line(Vector2(1.0, -1.0), Vector2(5.0, -2.0 - flap), Color(0.9, 0.9, 1.0, 0.5), 1.0)
+	var shift: float = sin(t * 13.0) * 1.0
+	draw_circle(Vector2(shift, 0.0), 3.6, Color(0.2, 0.9, 0.9, 0.30))
+	draw_circle(Vector2.ZERO, 3.0, col)
+	draw_circle(Vector2(float(facing) * 1.4, -0.6), 1.0, Color(1.0, 0.9, 0.5))
+
+
+## Тень: тёмный размытый силуэт без визора.
+func _draw_shade() -> void:
+	var t: float = jitter
+	var col: Color = Color(0.06, 0.05, 0.10, 0.92)
+	if stun > 0.0:
+		col = col.lerp(Color(0.6, 0.85, 1.0), 0.45)
+	var r: Rect2 = Rect2(-SIZE.x * 0.5, -SIZE.y * 0.5, SIZE.x, SIZE.y)
+	for i in 3:
+		var w: float = sin(t * 3.0 + i * 2.1) * 2.0
+		draw_rect(Rect2(r.position + Vector2(w - 1.5, -1.0), r.size + Vector2(3.0, 2.0)),
+				Color(0.15, 0.05, 0.25, 0.18))
+	draw_rect(r, col)
+	# Рваный подол
+	for i in 4:
+		var x: float = r.position.x + 1.5 + i * 3.0
+		var h: float = 3.0 + sin(t * 6.0 + i) * 1.5
+		draw_rect(Rect2(x, r.end.y, 2.0, h), Color(0.06, 0.05, 0.10, 0.7))
+	_draw_status(t, -16.0)
+
+
+## Копатель: приземистый, с вращающимся буром спереди.
+func _draw_burrower() -> void:
+	var t: float = jitter
+	var col: Color = Color(0.42, 0.26, 0.16)
+	if state == St.CHASE:
+		col = Color(0.60, 0.30, 0.14)
+	if stun > 0.0:
+		col = col.lerp(Color(0.6, 0.85, 1.0), 0.55)
+	var r: Rect2 = Rect2(-SIZE.x * 0.5, -SIZE.y * 0.5, SIZE.x, SIZE.y)
+	var shift: float = sin(t * 9.0) * 1.2
+	draw_rect(Rect2(r.position + Vector2(shift, 0), r.size), Color(0.9, 0.5, 0.2, 0.25))
+	draw_rect(r, col)
+	draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 3.0), col.lightened(0.2))
+	# Бур: треугольник с вращающимися гранями.
+	var fx: float = float(facing)
+	var tip: Vector2 = Vector2(fx * (SIZE.x * 0.5 + 9.0), 2.0)
+	var a: Vector2 = Vector2(fx * SIZE.x * 0.5, -4.0)
+	var b: Vector2 = Vector2(fx * SIZE.x * 0.5, 8.0)
+	draw_colored_polygon(PackedVector2Array([a, b, tip]), Color(0.70, 0.72, 0.78))
+	var s: float = fmod(t * 14.0, 1.0)
+	draw_line(a.lerp(tip, s), b.lerp(tip, s), Color(0.35, 0.36, 0.40), 1.0)
+	# Узкая щель визора
+	var visor_x: float = 0.0 if facing > 0 else -8.0
+	draw_rect(Rect2(visor_x, -8.0, 8.0, 3.0), Color(1.0, 0.65, 0.25))
+	_draw_status(t, -16.0)
+
+
+## Двойник: копия скафандра игрока, визор мерцает, над головой — имя.
+func _draw_doppel() -> void:
+	var t: float = jitter
+	var col: Color = Color(0.86, 0.22, 0.24)
+	if stun > 0.0:
+		col = col.lerp(Color(0.6, 0.85, 1.0), 0.55)
+	var r: Rect2 = Rect2(-SIZE.x * 0.5, -SIZE.y * 0.5, SIZE.x, SIZE.y)
+	draw_set_transform(Vector2(0, SIZE.y * 0.5), 0.0, Vector2(1.0, 0.35))
+	draw_circle(Vector2.ZERO, SIZE.x * 0.6, Color(0, 0, 0, 0.28))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	draw_rect(Rect2(-r.size.x * 0.5 - 5.0, -r.size.y * 0.5 + 3.0, 5.0, r.size.y - 7.0), col.darkened(0.25))
+	draw_rect(r, col)
+	draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 3.0), col.lightened(0.18))
+	draw_rect(Rect2(r.position.x, r.end.y - 3.0, r.size.x, 3.0), col.darkened(0.22))
+	# Визор мерцает: под взглядом — чаще, и выдаёт подделку.
+	var visor_x: float = -1.0 if facing > 0 else -11.0
+	var rate: float = 31.0 if frozen else 11.0
+	var flick: bool = sin(t * rate) > 0.1
+	var vcol: Color = Color(0.72, 0.86, 0.94) if flick else Color(0.95, 0.15, 0.25)
+	draw_rect(Rect2(visor_x, r.position.y + 2.0, 11.0, 7.0), vcol)
+	if display_name != "":
+		var font: Font = ThemeDB.fallback_font
+		var fs: int = 8
+		var w: float = font.get_string_size(display_name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		draw_string(font, Vector2(-w * 0.5, -SIZE.y * 0.5 - 6.0), display_name,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.85, 0.92, 1.0, 0.85))
+	_draw_status(t, -SIZE.y * 0.5 - 16.0)

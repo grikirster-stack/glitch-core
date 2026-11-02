@@ -5,6 +5,7 @@ extends SceneTree
 ##
 ## Запуск из корня проекта:
 ##   godot --headless --path . --script res://tools/phantom_probe.gd -- --seed=31337
+## Тип фантома (#27): --kind=echo|swarm|shade|burrower|doppel (по умолчанию эхо).
 ##
 ## Сценарий: в породе выкапывается горизонтальная трасса (две клетки высотой,
 ## третья — пол). Игрок бежит по ней, четверо фантомов стартуют позади и
@@ -75,10 +76,14 @@ var walk_y: float = 0.0				## Высота игрока (дно трассы).
 ## Автозагрузки: в режиме --script их нельзя звать по имени, берём из корня.
 var W = null
 var G = null
+var kind: String = "echo"			## Тип фантомов в замере (--kind=).
 
 
 func _initialize() -> void:
 	seed(SEED)
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--kind="):
+			kind = a.substr(7)
 	W = root.get_node_or_null("World")
 	G = root.get_node_or_null("Game")
 	scene = load("res://scenes/main.tscn").instantiate()
@@ -248,6 +253,7 @@ func _prepare() -> void:
 	for i in PHANTOMS:
 		var c: Vector2i = Vector2i(TUNNEL_X0 + 6 + i * 2, tunnel_row + 1)
 		var p: Node = load("res://scripts/entities/phantom.gd").new()
+		p.set("kind", kind)
 		p.player = player
 		scene.add_child(p)
 		p.global_position = Vector2(float(c.x * 16) + 8.0, floor_y)
@@ -326,7 +332,7 @@ func _report() -> void:
 	if dist_n > 0:
 		chase_pct = 100.0 * float(states.get(ST_CHASE, 0)) / float(dist_n)
 	print("=== ЗАМЕР: 1000 шагов _physics_process, фантомов в погоне ===")
-	print("фантомов=%d" % ph.size())
+	print("фантомов=%d тип=%s" % [ph.size(), kind])
 	print("всего=%.1f мс" % total_ms)
 	print("на_шаг=%.4f мс" % (total_ms / float(maxi(1, step_us.size()))))
 	print("медиана_шага=%.1f мкс" % _median(step_us))
