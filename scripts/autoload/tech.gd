@@ -145,3 +145,22 @@ func add_fragment(text: String) -> bool:
 	fragments.append(text)
 	fragment_found.emit(text)
 	return true
+
+
+# ------------------------------------------------------------------ СОХРАНЕНИЕ (#37)
+
+func save_state() -> Dictionary:
+	return {
+		"unlocked": unlocked.duplicate(),
+		"read_chapters": read_chapters.duplicate(),
+		"fragments": fragments.duplicate(),
+	}
+
+
+## Без сигналов: загрузка не пишет в HUD «Открыто…» и «Журнал: глава…».
+func load_state(d: Dictionary) -> void:
+	unlocked = Array(d.get("unlocked", ["T0"])).duplicate()
+	if not unlocked.has("T0"):
+		unlocked.push_front("T0")
+	read_chapters = Array(d.get("read_chapters", [])).duplicate()
+	fragments = Array(d.get("fragments", [])).duplicate()

@@ -591,3 +591,32 @@ func try_finish() -> bool:
 	Sfx.play("power", -2.0)
 	update_objective()          # этап 4 — сразу, а не через 0.25 с
 	return true
+
+
+# ------------------------------------------------- СОХРАНЕНИЕ (#37)
+## Поля забега, которые пишет Save (scripts/core/save.gd). Новое поле состояния
+## забега — допишите его имя сюда. Питание и браун-аут не пишутся: их пересчитывает
+## первая же раскладка после загрузки.
+const SAVE_FIELDS: Array[String] = [
+	"time_of_day", "day_number", "tasks_total", "tasks_done", "research", "wave",
+	"game_time", "relay_active", "relay_timer", "stats_mined", "stats_crafted",
+	"stats_kills", "stats_deaths", "objective_stage",
+	"relay_speed",                       # цель и релей (#32)
+]
+
+
+func save_state() -> Dictionary:
+	var d: Dictionary = {}
+	for f in SAVE_FIELDS:
+		d[f] = get(f)
+	return d
+
+
+## Неизвестные ключи игнорируются, отсутствующие — остаются как есть.
+func load_state(d: Dictionary) -> void:
+	for f in SAVE_FIELDS:
+		if d.has(f):
+			set(f, d[f])
+	set_state(State.PLAYING)
+	_power_index_size = -1          ## машины поставлены заново — индекс пересоберётся
+	_power_timer = 0.0

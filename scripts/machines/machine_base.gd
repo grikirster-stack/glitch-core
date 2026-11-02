@@ -289,3 +289,76 @@ func _draw_body(base: Color, accent: Color) -> void:
 	draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 2.0), base.lightened(0.2))
 	draw_rect(Rect2(r.position.x, r.end.y - 2.0, r.size.x, 2.0), base.darkened(0.25))
 	draw_rect(Rect2(r.position.x + 2.0, r.position.y + 2.0, 3.0, 3.0), accent)
+
+
+# ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
+## Общий механизм сериализации машин (Save, scripts/core/save.gd). Базовые поля
+## пишет MachineBase, наследник дописывает своё через super:
+##     func save_state() -> Dictionary:
+##         var d: Dictionary = super()
+##         d["fuel"] = fuel
+##         return d
+## В словаре только простые типы (числа, строки, векторы, массивы, словари):
+## файл кодируется var_to_bytes без объектов. Машина, которая своё ещё не
+## дописала (новый тип), сохраняется и загружается с базовыми полями.
+
+## Состояние машины для файла сохранения. kind и cell нужны Save, чтобы
+## поставить машину заново (place_machine), остальное — её внутреннее состояние.
+func save_state() -> Dictionary:
+	return {
+		"kind": kind,
+		"cell": cell,
+		"hp": hp,
+		"max_hp": max_hp,
+		"progress": progress,
+		"work_time": work_time,
+		"output": _output.duplicate(),
+	}
+
+
+## Восстановить состояние после place_machine. Неизвестные ключи игнорируются,
+## отсутствующие оставляют значение, как у только что построенной машины.
+func load_state(d: Dictionary) -> void:
+	hp = float(d.get("hp", hp))
+	max_hp = float(d.get("max_hp", max_hp))
+	progress = float(d.get("progress", progress))
+	work_time = float(d.get("work_time", work_time))
+	_output = load_counts(d.get("output", {}))
+	_output_count = 0
+	for id in _output.keys():
+		_output_count += int(_output[id])
+	_last_progress = -1.0
+	queue_redraw()
+
+
+## Словарь «id -> число» из файла: ключи и значения приводятся к int.
+static func load_counts(v) -> Dictionary:
+	var out: Dictionary = {}
+	if v is Dictionary:
+		for k in v.keys():
+			if int(v[k]) > 0:
+				out[int(k)] = int(v[k])
+	return out
+
+
+## Рецепт станка в файле: номер в DB.recipes_for(station) и id выхода ([-1, NONE] — нет).
+static func recipe_ref(station: String, r: Dictionary) -> Array:
+	if r.is_empty():
+		return [-1, IDs.I.NONE]
+	return [DB.recipes_for(station).find(r), int(r.get("out", IDs.I.NONE))]
+
+
+## Рецепт по ссылке из файла. Номер сверяется с id выхода: если список рецептов
+## сменился между версиями, ищем по выходу; не нашли — пустой рецепт.
+static func recipe_from(station: String, ref) -> Dictionary:
+	if not (ref is Array) or ref.size() < 2 or int(ref[0]) < 0:
+		return {}
+	var list: Array = DB.recipes_for(station)
+	var i: int = int(ref[0])
+	var out_id: int = int(ref[1])
+	if i < list.size() and int(list[i].get("out", IDs.I.NONE)) == out_id:
+		return list[i]
+	for r in list:
+		if int(r.get("out", IDs.I.NONE)) == out_id:
+			return r
+	return {}

@@ -88,3 +88,16 @@ func _draw_bit(col: Color, radius: float) -> void:
 ## Лампочка питания: зелёная — есть, красная — нет.
 func _draw_power_lamp(at: Vector2) -> void:
 	draw_circle(at, 1.8, Color(0.4, 1.0, 0.5) if powered else Color(0.9, 0.25, 0.2))
+
+
+# ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
+## Таймер такта (глубинный бур наследует как есть).
+func save_state() -> Dictionary:
+	var d: Dictionary = super()
+	d["timer"] = _timer
+	return d
+
+
+func load_state(d: Dictionary) -> void:
+	super(d)
+	_timer = float(d.get("timer", _timer))

@@ -124,3 +124,23 @@ func _draw() -> void:
 	if powered:
 		lamp = Color(0.4, 1.0, 0.5) if efficiency >= 0.999 else Color(1.0, 0.8, 0.2)
 	draw_circle(Vector2(6.0, 5.0), 1.5, lamp)
+
+
+# ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
+## Счётчик выстрелов, перезарядка и угол ствола. Цель (узел фантома) не пишется:
+## фантомы после загрузки выходят заново (Threat.save_state), турель найдёт новую.
+func save_state() -> Dictionary:
+	var d: Dictionary = super()
+	d["shots"] = shots
+	d["cooldown"] = _cooldown
+	d["aim"] = _aim
+	return d
+
+
+func load_state(d: Dictionary) -> void:
+	super(d)
+	shots = int(d.get("shots", shots))
+	_cooldown = float(d.get("cooldown", _cooldown))
+	_aim = float(d.get("aim", _aim))
+	target = null
+	_scan_t = 0.0

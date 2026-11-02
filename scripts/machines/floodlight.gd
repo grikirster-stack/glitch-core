@@ -67,3 +67,20 @@ func _draw() -> void:
 	if powered:
 		lamp = Color(0.4, 1.0, 0.5) if lit else Color(1.0, 0.8, 0.2)
 	draw_circle(Vector2(5.0, 6.5), 1.3, lamp)
+
+
+# ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
+## Своего состояния сверх базового (hp, наработка) у прожектора нет: lit выводится
+## из питания. Save сразу после постановки раскладывает питание и зовёт relight():
+## свет возвращается через World.add_light_source в том же кадре, что и загрузка.
+func load_state(d: Dictionary) -> void:
+	super(d)
+	if lit:
+		_set_lit(false)
+
+
+## Зажечь/погасить по текущему питанию (после загрузки — не ждать кадра).
+func relight() -> void:
+	var want: bool = powered and efficiency >= Balance.FLOODLIGHT_MIN_EFF and not _destroyed
+	if want != lit:
+		_set_lit(want)

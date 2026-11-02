@@ -131,3 +131,24 @@ func _draw() -> void:
 		if tex:
 			var pos: Vector2 = -d * 6.0 + d * float(it["pos"]) * 12.0
 			draw_texture_rect(tex, Rect2(pos - Vector2(6, 6), Vector2(12, 12)), false)
+
+
+# ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
+## Направление и предметы на ленте с их положением.
+func save_state() -> Dictionary:
+	var d: Dictionary = super()
+	d["dir"] = dir
+	d["items"] = items.duplicate(true)
+	return d
+
+
+func load_state(d: Dictionary) -> void:
+	super(d)
+	dir = int(d.get("dir", dir)) % 4
+	items = []
+	var src = d.get("items", [])
+	if src is Array:
+		for it in src:
+			if it is Dictionary:
+				items.append({"id": int(it.get("id", IDs.I.NONE)), "count": int(it.get("count", 1)),
+						"pos": float(it.get("pos", 0.0))})

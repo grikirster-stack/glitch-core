@@ -60,3 +60,28 @@ func _draw() -> void:
 	draw_rect(Rect2(-8.0, -8.0, 16.0, 3.0), Color(0.55, 0.38, 0.22))
 	draw_rect(Rect2(-8.0, -1.0, 16.0, 2.0), Color(0.28, 0.18, 0.10))
 	draw_rect(Rect2(-1.5, -1.0, 3.0, 3.0), Color(0.85, 0.72, 0.30))
+
+
+# ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
+## Слоты по порядку: [[id, число], ...] — и сундуки игрока, и тайники руин.
+func save_state() -> Dictionary:
+	var d: Dictionary = super()
+	var out: Array = []
+	for s in slots:
+		out.append([s.id, s.count])
+	d["slots"] = out
+	return d
+
+
+func load_state(d: Dictionary) -> void:
+	super(d)
+	var src = d.get("slots", [])
+	if not (src is Array):
+		return
+	for i in CAP:
+		var e = src[i] if i < src.size() else null
+		if e is Array and e.size() >= 2 and int(e[1]) > 0:
+			slots[i] = ItemStack.new(int(e[0]), int(e[1]))
+		else:
+			slots[i] = ItemStack.new()
+	queue_redraw()
