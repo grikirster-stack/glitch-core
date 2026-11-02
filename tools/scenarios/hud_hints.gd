@@ -1,6 +1,6 @@
 extends ScenarioBase
 ## Подсказки HUD (issue #7): HUD больше не перебирает все постройки мира, но
-## подсказка «загрузить уголь в ТЭЦ» / «открыть сундук» по-прежнему появляется
+## подсказка ТЭЦ (топка / рубильник, #34) / «открыть сундук» по-прежнему появляется
 ## сразу, как герой подошёл, и пропадает сразу, как отошёл.
 ##
 ## В коридоре базы ставим ТЭЦ и сундук, вокруг — ещё 200 построек вдали (как
@@ -9,8 +9,7 @@ extends ScenarioBase
 ## (HUD и сценарий обновляются в разном порядке внутри кадра).
 
 const DIST: float = 40.0
-const HINT_GEN: String = "[E] — загрузить уголь в ТЭЦ"
-const HINT_CHEST: String = "[E] — открыть сундук"
+const HINT_CHEST: String = HUD.HINT_CHEST
 const MAX_LAG_FRAMES: int = 2
 
 
@@ -39,7 +38,11 @@ func run() -> void:
 		return
 	var gen: Node2D = World.machines[gen_cell]
 	var chest: Node2D = World.machines[chest_cell]
+	# Первый кадр после 200 построек бывает длиннее 0.3 с — ждём и кадры HUD,
+	# а не только время, иначе проверка успевает раньше первого _process HUD.
+	var fr0: int = hud.stat_frames
 	await wait(0.3)
+	await wait_until(func() -> bool: return hud.stat_frames >= fr0 + 3, 3.0)
 	ok("вдали от построек подсказки ТЭЦ/сундука нет", hud.hint_text == _want(gen, chest),
 			"«%s»" % hud.hint_text)
 
@@ -57,12 +60,13 @@ func run() -> void:
 	await wait(0.1)
 
 	var seen: Dictionary = stats["seen"]
-	ok("подсказка ТЭЦ появлялась у ТЭЦ", seen.has(HINT_GEN))
+	var hint_gen: String = hud.generator_hint(gen)
+	ok("подсказка ТЭЦ появлялась у ТЭЦ", seen.has(hint_gen), "«%s»" % hint_gen)
 	ok("подсказка сундука появлялась у сундука", seen.has(HINT_CHEST))
 	ok("подсказка появляется и пропадает сразу", int(stats["max_lag"]) <= MAX_LAG_FRAMES,
 			"наибольшее отставание %d кадр(а)" % int(stats["max_lag"]))
 	ok("отошёл — подсказки ТЭЦ/сундука нет", hud.hint_text == _want(gen, chest)
-			and hud.hint_text != HINT_GEN and hud.hint_text != HINT_CHEST, "«%s»" % hud.hint_text)
+			and hud.hint_text != hint_gen and hud.hint_text != HINT_CHEST, "«%s»" % hud.hint_text)
 	finish()
 
 
@@ -84,16 +88,16 @@ func _walk(stats: Dictionary, gen: Node2D, chest: Node2D, done_cond: Callable, t
 
 ## Какая подсказка должна быть сейчас — по расстояниям, в том же порядке
 ## важности, что у HUD: терминал, релей, ТЭЦ, сундук. Коридор базы может
-## задевать терминал — тогда ждём подсказку терминала.
+## задевать терминал — тогда ждём подсказку терминала (с учётом питания, #34).
 func _want(gen: Node2D, chest: Node2D) -> String:
 	var p: Vector2 = player.global_position
 	for t in World.terminals:
 		if World.cell_to_world(t).distance_to(p) < 42.0:
-			return "[E] — выполнить задание (удерживать)"
+			return UI.hud.terminal_hint(t)
 	if World.cell_to_world(World.beacon_cell).distance_to(p) < 56.0:
-		return "[E] — активировать релей-ядро (удерживать)"
+		return HUD.HINT_BEACON
 	if gen.global_position.distance_to(p) < DIST:
-		return HINT_GEN
+		return UI.hud.generator_hint(gen)
 	if chest.global_position.distance_to(p) < DIST:
 		return HINT_CHEST
 	return ""
