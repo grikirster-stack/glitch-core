@@ -7,6 +7,16 @@ extends Node2D
 ##  * перерисовка ленивая: каждый кадр — только при живых эффектах или движении
 ##    камеры, в покое — не чаще REDRAW_HZ (пульс релея не «встаёт колом»);
 ##  * частицы/кольца/взмахи имеют жёсткие лимиты, самые старые вытесняются.
+##
+## Угроза и оборона (#34):
+##  * пар из вентиляции — по сигналу Threat.vent_warning(cell) (телеграф спавна,
+##    #27) вентиляция «выдыхает» VENT_TELEGRAPH секунд; в сумерках (§ 4.1)
+##    видимые незапечатанные вентиляции слегка курятся. Клубы — те же словари
+##    с жёстким лимитом MAX_STEAM, узлов не создаём;
+##  * дуга турели — spawn_arc(from, to): ломаная молния на ARC_LIFE секунд по
+##    глобальному сигналу World.turret_fired (#31). Турель шлёт ещё и свой
+##    Turret.fired с теми же точками — на него НЕ подписываемся (иначе дуга
+##    двойная, и пришлось бы цепляться к каждой турели).
 
 # ------------------------------------------------------------ ЛИМИТЫ
 ## Максимум источников света, нарисованных за один кадр. В мире их тысячи,
@@ -21,6 +31,23 @@ const MAX_RINGS: int = 48
 const MAX_SLASHES: int = 32
 ## Максимум кругов оверлея питания за кадр.
 const MAX_POWER_RINGS: int = 32
+## Максимум клубов пара и одновременно «дышащих» вентиляций.
+const MAX_STEAM: int = 120
+const MAX_STEAM_VENTS: int = 16
+## Максимум живых дуг турели.
+const MAX_ARCS: int = 24
+
+# ------------------------------------------------- ПАР И ДУГИ (#34)
+## Шаг выдоха вентиляции при телеграфе, с между клубами.
+const STEAM_STEP: float = 0.07
+## Шаг «курения» вентиляций в сумерках, с.
+const DUSK_STEAM_STEP: float = 0.45
+## Сколько живёт клуб пара, с.
+const STEAM_LIFE: float = 1.3
+## Сколько живёт дуга турели, с.
+const ARC_LIFE: float = 0.14
+## Изломов на дуге.
+const ARC_SEGMENTS: int = 7
 
 # ------------------------------------------------- ПАРАМЕТРЫ ОТСЕЧЕНИЯ
 ## Запас вокруг видимой области камеры в долях радиуса источника света.
@@ -41,6 +68,12 @@ const STATS_INTERVAL: float = 2.0
 var chips: Array = []
 var rings: Array = []
 var slashes: Array = []
+## Клубы пара: {pos, vel, life, max, size, a}.
+var steams: Array = []
+## Вентиляции, которые сейчас «выдыхают»: {pos, t, acc}.
+var steam_vents: Array = []
+## Дуги турели: {pts: PackedVector2Array, t, color}.
+var arcs: Array = []
 
 var show_power: bool = false:
 	set(value):
@@ -64,6 +97,11 @@ var peak_glows: int = 0
 var peak_chips: int = 0
 var peak_rings: int = 0
 var peak_slashes: int = 0
+var peak_steams: int = 0
+var peak_arcs: int = 0
+## Сколько раз пришёл vent_warning и сколько дуг выпущено — для сценариев.
+var stat_vent_warnings: int = 0
+var stat_arcs: int = 0
 
 # ------------------------------------------------------------ ВНУТРЕННЕЕ
 var _dirty: bool = true
@@ -75,18 +113,22 @@ var _last_light_count: int = -1
 var _stats_on: bool = false
 var _stats_t: float = 0.0
 var _redraws: int = 0
+var _dusk_acc: float = 0.0
 
 
 func _ready() -> void:
 	z_index = 20
 	queue_redraw()
 	_stats_on = OS.get_cmdline_user_args().has(STATS_FLAG)
+	Threat.vent_warning.connect(spawn_vent_steam)
+	World.turret_fired.connect(_on_turret_fired)
 
 
 func _process(delta: float) -> void:
 	# Живые эффекты требуют покадровой перерисовки — иначе движение дёргается.
-	var animating: bool = _advance_effects(delta)
 	var cam: Camera2D = get_viewport().get_camera_2d()
+	_dusk_steam(delta, cam)
+	var animating: bool = _advance_effects(delta)
 	if _camera_changed(cam):
 		_dirty = true
 	if World.lights.size() != _last_light_count:
@@ -143,7 +185,60 @@ func _advance_effects(delta: float) -> bool:
 		if float(s["t"]) > 0.22:
 			slashes.remove_at(i)
 		i -= 1
-	return not chips.is_empty() or not rings.is_empty() or not slashes.is_empty()
+	_advance_steam(delta)
+	i = arcs.size() - 1
+	while i >= 0:
+		var a: Dictionary = arcs[i]
+		a["t"] = float(a["t"]) + delta
+		if float(a["t"]) > ARC_LIFE:
+			arcs.remove_at(i)
+		i -= 1
+	return not chips.is_empty() or not rings.is_empty() or not slashes.is_empty() \
+			or not steams.is_empty() or not steam_vents.is_empty() or not arcs.is_empty()
+
+
+## Выдохи вентиляций и клубы пара.
+func _advance_steam(delta: float) -> void:
+	var i: int = steam_vents.size() - 1
+	while i >= 0:
+		var v: Dictionary = steam_vents[i]
+		v["t"] = float(v["t"]) - delta
+		v["acc"] = float(v["acc"]) + delta
+		while float(v["acc"]) >= STEAM_STEP:
+			v["acc"] = float(v["acc"]) - STEAM_STEP
+			_puff(Vector2(v["pos"]), 1.0)
+		if float(v["t"]) <= 0.0:
+			steam_vents.remove_at(i)
+		i -= 1
+	i = steams.size() - 1
+	while i >= 0:
+		var p: Dictionary = steams[i]
+		var vel: Vector2 = Vector2(p["vel"])
+		vel.y -= 18.0 * delta              # пар всплывает
+		vel.x *= 1.0 - minf(1.0, 1.6 * delta)
+		p["vel"] = vel
+		p["pos"] = Vector2(p["pos"]) + vel * delta
+		p["size"] = float(p["size"]) + 5.0 * delta
+		p["life"] = float(p["life"]) - delta
+		if float(p["life"]) <= 0.0:
+			steams.remove_at(i)
+		i -= 1
+
+
+## Сумерки (§ 4.1): видимые незапечатанные вентиляции слегка курятся.
+func _dusk_steam(delta: float, cam: Camera2D) -> void:
+	if not Game.is_dusk() or cam == null:
+		_dusk_acc = 0.0
+		return
+	_dusk_acc += delta
+	if _dusk_acc < DUSK_STEAM_STEP:
+		return
+	_dusk_acc = 0.0
+	var view: Rect2 = _view_rect(cam).grow(16.0)
+	for v in World.vents:
+		var p: Vector2 = World.cell_to_world(v)
+		if view.has_point(p) and not is_vent_sealed(v):
+			_puff(p, 0.45)
 
 
 ## Следит за камерой: сдвиг/зум/появление и исчезновение камеры — повод перерисовать.
@@ -222,6 +317,58 @@ func spawn_slash(pos: Vector2) -> void:
 	peak_slashes = maxi(peak_slashes, slashes.size())
 
 
+## Пар из вентиляции: телеграф спавна (Threat.vent_warning, #27).
+func spawn_vent_steam(cell: Vector2i) -> void:
+	stat_vent_warnings += 1
+	if steam_vents.size() >= MAX_STEAM_VENTS:
+		steam_vents.remove_at(0)
+	steam_vents.append({"pos": World.cell_to_world(cell), "t": Balance.VENT_TELEGRAPH, "acc": STEAM_STEP})
+
+
+## Один клуб пара; strength 1 — выдох телеграфа, меньше — сумеречная дымка.
+func _puff(pos: Vector2, strength: float) -> void:
+	if steams.size() >= MAX_STEAM:
+		steams.remove_at(0)
+	var life: float = STEAM_LIFE * (0.6 + 0.4 * strength)
+	steams.append({
+		"pos": pos + Vector2(randf_range(-4.0, 4.0), randf_range(-3.0, 1.0)),
+		"vel": Vector2(randf_range(-22.0, 22.0), randf_range(-46.0, -22.0) * strength),
+		"life": life,
+		"max": life,
+		"size": randf_range(2.5, 4.0) * (0.7 + 0.3 * strength),
+		"a": 0.42 * strength + 0.12,
+	})
+	peak_steams = maxi(peak_steams, steams.size())
+
+
+## Дуга турели (#31): ломаная молния от ствола к цели.
+func spawn_arc(from: Vector2, to: Vector2, color: Color = Color(0.55, 0.92, 1.0)) -> void:
+	stat_arcs += 1
+	if arcs.size() >= MAX_ARCS:
+		arcs.remove_at(0)
+	var pts: PackedVector2Array = PackedVector2Array()
+	pts.resize(ARC_SEGMENTS + 1)
+	var d: Vector2 = to - from
+	var nrm: Vector2 = Vector2(-d.y, d.x).normalized()
+	var amp: float = clampf(d.length() * 0.08, 2.0, 7.0)
+	for k in ARC_SEGMENTS + 1:
+		var f: float = float(k) / float(ARC_SEGMENTS)
+		var j: float = 0.0 if (k == 0 or k == ARC_SEGMENTS) else randf_range(-amp, amp)
+		pts[k] = from + d * f + nrm * j
+	arcs.append({"pts": pts, "t": 0.0, "color": color})
+	peak_arcs = maxi(peak_arcs, arcs.size())
+
+
+## Запечатана ли вентиляция решёткой (#31: World.vents_sealed, клетка → HP).
+static func is_vent_sealed(cell: Vector2i) -> bool:
+	return World.is_vent_sealed(cell)
+
+
+## Выстрел турели (World.turret_fired, #31): дуга от ствола к цели.
+func _on_turret_fired(from: Vector2, to: Vector2) -> void:
+	spawn_arc(from, to)
+
+
 # ------------------------------------------------------------ ОТРИСОВКА
 
 func _draw() -> void:
@@ -263,6 +410,19 @@ func _draw() -> void:
 		var t: float = float(r["t"]) / 0.7
 		draw_arc(Vector2(r["pos"]), 10.0 + t * 120.0, 0.0, TAU, 40,
 				Color(r["color"].r, r["color"].g, r["color"].b, (1.0 - t) * 0.8), 3.0)
+
+	# --- Пар из вентиляций ----------------------------------------------------
+	for p in steams:
+		var lf: float = clampf(float(p["life"]) / float(p["max"]), 0.0, 1.0)
+		draw_circle(Vector2(p["pos"]), float(p["size"]), Color(0.78, 0.82, 0.86, float(p["a"]) * lf))
+
+	# --- Дуги турели ----------------------------------------------------------
+	for a in arcs:
+		var ta: float = 1.0 - float(a["t"]) / ARC_LIFE
+		var ac: Color = a["color"]
+		var pts: PackedVector2Array = a["pts"]
+		draw_polyline(pts, Color(ac.r, ac.g, ac.b, 0.28 * ta), 4.0)
+		draw_polyline(pts, Color(1.0, 1.0, 1.0, 0.9 * ta), 1.5)
 
 	# --- Взмах ---------------------------------------------------------------
 	for s in slashes:
