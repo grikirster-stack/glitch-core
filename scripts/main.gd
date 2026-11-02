@@ -10,6 +10,8 @@ var wave: int = 0
 var seed_value: int = 0
 var _shot_taken: bool = false
 var _args: PackedStringArray = PackedStringArray()
+## Режим сценария: волны фантомов не идут, их создаёт сам сценарий.
+var scenario_mode: bool = false
 
 
 func _ready() -> void:
@@ -18,6 +20,13 @@ func _ready() -> void:
 	for a in _args:
 		if a.begins_with("--seed="):
 			seed_value = int(a.substr(7))
+
+	# Список сценариев печатаем до генерации мира — так быстрее.
+	var scenarios: Array = _scenario_args()
+	if scenarios.has("list"):
+		_print_scenarios()
+		get_tree().quit(0)
+		return
 
 	Game.reset_run()
 	World.generate(seed_value)
@@ -56,13 +65,42 @@ func _ready() -> void:
 	Game.notify("Задания у терминалов дают данные. Копать — ЛКМ, строить — ПКМ.", Color(0.85, 0.85, 0.7))
 
 	# Автотест логики: godot --path . -- --test
-	if _args.has("--test"):
+	if _args.has("--test") and scenarios.is_empty():
 		var runner: Node = load("res://tools/test_runner.gd").new()
 		add_child(runner)
 		runner.start(self)
 
+	# Игровые сценарии: godot --path . -- --scenario=walk,mining
+	if not scenarios.is_empty():
+		scenario_mode = true
+		var srunner: ScenarioRunner = ScenarioRunner.new()
+		add_child(srunner)
+		srunner.start(self, scenarios)
+
+
+## Имена сценариев из --scenario=walk,mining
+func _scenario_args() -> Array:
+	var out: Array = []
+	for a in _args:
+		if not a.begins_with("--scenario="):
+			continue
+		for part in String(a.substr(11)).split(",", false):
+			var name: String = String(part).strip_edges()
+			if name != "":
+				out.append(name)
+	return out
+
+
+## Печать списка сценариев (удобно для CI и для человека).
+func _print_scenarios() -> void:
+	print("Доступные сценарии:")
+	for name in ScenarioRunner.scenario_names():
+		print("  %-16s %s" % [name, ScenarioRunner.scenario_desc(name)])
+
 
 func _process(delta: float) -> void:
+	if tint == null:
+		return
 	# Световой цикл
 	var dl: float = Game.daylight()
 	tint.color = Color(0.26, 0.30, 0.50).lerp(Color(1.0, 1.0, 1.0), dl)
@@ -76,6 +114,9 @@ func _process(delta: float) -> void:
 
 
 func _update_waves(delta: float) -> void:
+	# В сценариях фантомов создаёт сам сценарий: иначе проверки недетерминированы.
+	if scenario_mode:
+		return
 	var alive: int = get_tree().get_nodes_in_group("phantom").size()
 	Game.phantoms_alive = alive
 	var cap: int = 0
