@@ -33,6 +33,8 @@ var world_seed: int = 0
 var tiles: PackedByteArray = PackedByteArray()
 var surface: PackedInt32Array = PackedInt32Array()
 var tilemap: TileMapLayer = null
+## Декор-слой флоры (ADR-003 V2): только картинка, из сида и тайлов (scripts/world/decor.gd).
+var decor: TileMapLayer = null
 
 var terminals: Array[Vector2i] = []
 ## Какую главу журнала выдаёт терминал: клетка -> номер главы (0..8). Терминалы
@@ -122,6 +124,8 @@ func _build_tileset() -> void:
 	tilemap.name = "Tiles"
 	tilemap.tile_set = ts
 	add_child(tilemap)
+	decor = preload("res://scripts/world/decor.gd").new()   # ADR-003 V2: декор-слой флоры
+	add_child(decor)
 
 
 # ------------------------------------------------------------ ГЕНЕРАЦИЯ
@@ -1911,6 +1915,8 @@ func _set_cell_visual(x: int, y: int, id: int, old: int = -1) -> void:
 	_refresh_cell(x + 1, y, old, id)
 	_refresh_cell(x, y + 1, old, id)
 	_refresh_cell(x - 1, y, old, id)
+	if decor:
+		decor.on_cell(x, y)   # ADR-003 V2: декор столбца зависит от этой клетки
 
 
 func _sync_all() -> void:
@@ -1956,6 +1962,8 @@ func _sync_all() -> void:
 			var bio: int = 2 if y >= deep[x] else (1 if y >= mid[x] else 0)
 			var alt: int = ((x * 374761393 + y * 668265263) >> 15) & am
 			tilemap.set_cell(Vector2i(x, y), 0, av[id * nv + (((bio * ta + alt) << 4) | m)])
+	if decor:
+		decor.reset()   # ADR-003 V2: декор флоры соберётся по тем же тайлам
 
 
 # --- ADR-003 V1 (#103): вариант тайла в атласе -------------------------------
