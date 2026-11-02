@@ -37,6 +37,24 @@ func take_at(index: int, amount: int) -> int:
 	return slots[index].take(amount)
 
 
+## Выдать один предмет манипулятору (#30). filter — только этот id (NONE — любой);
+## accepts — дополнительная проверка «возьмёт ли приёмник» (пустой Callable — да).
+## Возвращает id выданного предмета или IDs.I.NONE.
+func take_any(filter: int = IDs.I.NONE, accepts: Callable = Callable()) -> int:
+	for s in slots:
+		if s.is_empty():
+			continue
+		if filter != IDs.I.NONE and s.id != filter:
+			continue
+		if accepts.is_valid() and not bool(accepts.call(s.id)):
+			continue
+		var id: int = s.id
+		s.take(1)
+		queue_redraw()
+		return id
+	return IDs.I.NONE
+
+
 func _draw() -> void:
 	draw_rect(Rect2(-8.0, -8.0, 16.0, 16.0), Color(0.45, 0.30, 0.17))
 	draw_rect(Rect2(-8.0, -8.0, 16.0, 3.0), Color(0.55, 0.38, 0.22))

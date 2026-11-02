@@ -140,6 +140,23 @@ const REGISTRY: Dictionary = {
 		"title": "тайники руин",
 		"desc": "в каждой руине сундук по роли хозяина и табличка; один сид — один тайник",
 	},
+	# --- Автоматизация (#30, ADR-001 § 4.2) ---
+	"inserter_chain": {
+		"file": "inserter_chain.gd",
+		"title": "манипулятор",
+		"desc": "сундук → манипулятор → лента → плавильня → лента → сундук: 10 слитков за ≤ 40 с",
+		"timeout_ms": 90000,
+	},
+	"analyzer_data": {
+		"file": "analyzer_data.gd",
+		"title": "анализатор",
+		"desc": "1 кристалл → +1 данные за 20 ± 1 с",
+	},
+	"deep_drill_reach": {
+		"file": "deep_drill_reach.gd",
+		"title": "глубинный бур",
+		"desc": "руда с глубины 40 клеток; обычная буровая туда не достаёт",
+	},
 }
 
 var scene: Node = null

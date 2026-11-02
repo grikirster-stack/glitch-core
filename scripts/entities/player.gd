@@ -363,10 +363,10 @@ func _break_tile(cell: Vector2i) -> void:
 
 
 func _do_place(cell: Vector2i) -> void:
-	# ПКМ по конвейеру — повернуть его.
-	if World.belts.has(cell):
-		var b: Belt = World.belts[cell]
-		b.turn()
+	# ПКМ по конвейеру или манипулятору (#30) — повернуть.
+	var turnable = World.machines.get(cell)
+	if turnable is Belt or turnable is Inserter:
+		turnable.turn()
 		Sfx.play("place", -14.0, 1.3)
 		return
 	var stack: ItemStack = inv.selected_stack()
@@ -435,6 +435,11 @@ func _do_interact(dt: float) -> void:
 		if task_progress >= 1.0:
 			task_progress = 0.0
 			Game.try_finish()
+		return
+	# Манипулятор под курсором (#30): E с предметом — фильтр, пустой рукой — сброс.
+	var ins = World.machines.get(building_cell)
+	if ins is Inserter and ins.global_position.distance_to(global_position) <= REACH:
+		ins.interact(self)
 		return
 	# Сундуки
 	for m in World.machines.values():
