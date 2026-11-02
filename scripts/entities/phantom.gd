@@ -990,8 +990,6 @@ const SHADE_CYAN: Color = Color(0.2, 0.95, 1.0, 0.18)
 const SHADE_FACE: Color = Color(0.05, 0.03, 0.07)	## Провал лица под капюшоном.
 const GLINT: Color = Color(1.0, 0.85, 0.9, 0.75)		## Блик на визоре.
 const GROUND_SHADOW: Color = Color(0, 0, 0, 0.3)
-const VISOR_RIM: Color = Color(0.16, 0.08, 0.12)		## Рамка визора двойника.
-const HERO_SUIT: Color = Color(0.86, 0.22, 0.24)	## Цвет скафандра героя (Player._draw); с V4 — из Avatar.
 const DRILL: Color = Color(0.72, 0.75, 0.80)		## Сталь бура копателя и её грани.
 const DRILL_DARK: Color = Color(0.50, 0.53, 0.56)
 const DRILL_HI: Color = Color(0.78, 0.80, 0.84)
@@ -1185,40 +1183,22 @@ func _draw_burrower() -> void:
 	_draw_status(t, floor_y - 14.0)
 
 
-## Двойник: облик героя (Player.body_layout, шов #58), но визор цвета опасности
-## и фонарь не горит. Раскладку берём у самого героя: сменится скафандр — двойник
-## сменит его вместе с ним. Под взглядом визор мерцает чаще и проступает расслоение.
+## Двойник: облик героя — тем же Avatar, с видом (look) и раскладкой самого героя
+## (Player.body_layout, шов #58): сменит герой скафандр — двойник сменит его вместе
+## с ним. Выдаёт подделку визор цвета опасности и погашенный фонарь
+## (state.impostor). Под взглядом визор мерцает чаще и проступает расслоение.
 func _draw_doppel() -> void:
 	var t: float = jitter
-	var col: Color = HERO_SUIT
-	if stun > 0.0:
-		col = col.lerp(STUN_TINT, 0.55)
 	var lay: Dictionary = _hero_layout()
 	var r: Rect2 = lay["body"]
-	draw_rect(Rect2(-SIZE.x * 0.5 - 1.0, SIZE.y * 0.5, SIZE.x + 2.0, 1.0), Color(0, 0, 0, 0.28))
 	# Раскладка уже повёрнута по facing героя; смотрит двойник в другую сторону — отражаем.
 	_face((int(lay["facing"]) < 0) != (facing < 0))
 	var rate: float = 31.0 if frozen else 11.0
 	if frozen and sin(t * 7.0) > 0.3:
 		draw_rect(Rect2(r.position - Vector2(1.0, 0.0), r.size), SPLIT_RED)
 		draw_rect(Rect2(r.position + Vector2(1.0, 0.0), r.size), SPLIT_CYAN)
-	draw_rect(lay["backpack"], col.darkened(0.25))
-	draw_rect(r, col)
-	draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 3.0), col.lightened(0.18))
-	draw_rect(Rect2(r.position.x, r.end.y - 3.0, r.size.x, 3.0), col.darkened(0.22))
-	draw_rect(lay["leg_back"], col.darkened(0.35))
-	draw_rect(lay["leg_front"], col.darkened(0.35))
-	# Визор цвета опасности — единственное, что выдаёт подделку. Тёмная рамка
-	# отделяет его от скафандра: на красном корпусе иначе визор теряется.
-	var lit: bool = sin(t * rate) > 0.1
-	var vis: Rect2 = lay["visor"]
-	draw_rect(vis.grow(1.0), VISOR_RIM)
-	draw_rect(vis, DANGER.lightened(0.15) if lit else DANGER.darkened(0.45))
-	draw_rect(lay["visor_top"], DANGER.lightened(0.45) if lit else DANGER.darkened(0.3))
-	draw_rect(lay["visor_glint"], GLINT)
-	# Фонарь на шлеме не горит: тёмный квадрат на месте огонька.
-	var lp: Vector2 = lay["light"]
-	draw_rect(Rect2(lp.x - 1.0, lp.y - 1.0, 2.0, 2.0), Color(0.22, 0.18, 0.20))
+	Avatar.draw(self, lay, int(lay["look"]), {"breath": t, "impostor": true,
+			"lit": sin(t * rate) > 0.1, "tint": STUN_TINT, "tint_k": 0.55 if stun > 0.0 else 0.0})
 	_face(false)
 	if display_name != "":
 		var font: Font = ThemeDB.fallback_font
@@ -1232,25 +1212,22 @@ func _draw_doppel() -> void:
 	_draw_status(t, -SIZE.y * 0.5 - 16.0)
 
 
-## Раскладка фигуры героя для двойника (Player.body_layout) и ключ "facing" —
-## куда смотрит герой, под которого она повёрнута. Героя нет (пустая сцена) —
-## простая фигура того же габарита «лицом вправо».
+## Раскладка фигуры героя для двойника (Player.body_layout), ключ "facing" —
+## куда смотрит герой, под которого она повёрнута, и "look" — вид героя. Героя нет
+## (пустая сцена) — скафандр по умолчанию в покое «лицом вправо».
 func _hero_layout() -> Dictionary:
 	var hero: Node = player
 	if (hero == null or not is_instance_valid(hero)) and is_inside_tree():
 		hero = get_tree().get_first_node_in_group("player")
 	var lay: Dictionary = {}
+	var look: int = 0
 	if hero != null and is_instance_valid(hero) and hero.has_method("body_layout"):
-		lay = hero.body_layout()
+		lay = hero.body_layout().duplicate()
 		var hf = hero.get("facing")
 		lay["facing"] = -1 if hf is int and int(hf) < 0 else 1
-	if not (lay.has("body") and lay.has("visor_glint") and lay.has("light")):
-		var b: Rect2 = Rect2(-SIZE * 0.5, SIZE)
-		lay = {
-			"body": b, "backpack": Rect2(b.position.x - 5.0, b.position.y + 3.0, 5.0, b.size.y - 7.0),
-			"leg_back": Rect2(-4.0, b.end.y - 3.0, 3.0, 3.0), "leg_front": Rect2(1.0, b.end.y - 3.0, 3.0, 3.0),
-			"visor": Rect2(-1.0, b.position.y + 2.0, 11.0, 7.0), "visor_top": Rect2(-1.0, b.position.y + 2.0, 11.0, 2.0),
-			"visor_glint": Rect2(0.0, b.position.y + 3.0, 3.0, 2.0), "light": Vector2(7.0, b.position.y + 2.0),
-			"facing": 1,
-		}
+		var hl = hero.get("look")
+		look = int(hl) if hl is int else 0
+	if not (lay.has("helmet") and lay.has("arm") and lay.has("tank")):
+		lay = Avatar.layout(look, 1, 0.0, jitter, 0.0, false, false).duplicate()
+	lay["look"] = look
 	return lay

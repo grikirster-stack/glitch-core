@@ -231,10 +231,6 @@ func _build() -> void:
 	left.add_child(head)
 	for i in Profile.Look.PARTS:
 		left.add_child(_look_row(i))
-	var note: Label = _label("Шлем, аксессуар и рюкзак — с новым скафандром", 14,
-			Color(0.6, 0.66, 0.76))
-	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	left.add_child(note)
 
 	# --- Правая колонка: ник, одиночная игра, сеть.
 	var right: VBoxContainer = VBoxContainer.new()
@@ -415,7 +411,7 @@ func _draw() -> void:
 
 ## Живое превью: тот же Avatar.draw, что у героя в игре. Позу (дыхание, поворот)
 ## считает Player.body_layout() отдельного, не добавленного в дерево героя —
-## шов раскладки один (#58), его меняет только MP-L.
+## шов раскладки один (#58); от вида (look) зависит и раскладка (шлем, ранец).
 class AvatarPreview extends Node2D:
 	var look: int = 0
 	var t: float = 0.0
@@ -428,6 +424,7 @@ class AvatarPreview extends Node2D:
 		queue_redraw()
 
 	func _draw() -> void:
+		_pose.look = look
 		Avatar.draw(self, _pose.body_layout(), look, {"breath": t})
 
 	func _notification(what: int) -> void:
