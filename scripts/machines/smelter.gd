@@ -2,6 +2,12 @@ class_name Smelter
 extends MachineBase
 ## Плавильня: переплавляет руду в слитки и сталь.
 
+## Горнило без питания — ровный тёмный цвет, без мерцания (#57).
+const FURNACE_COLD: Color = Color(0.30, 0.20, 0.16)
+## Горнило под питанием и цвет, к которому оно пульсирует.
+const FURNACE_HOT: Color = Color(0.95, 0.45, 0.12)
+const FURNACE_GLOW: Color = Color(1.0, 0.85, 0.4)
+
 var stock: Dictionary = {}    ## id -> count
 var recipe: Dictionary = {}
 var _timer: float = 0.0
@@ -12,11 +18,18 @@ func _init() -> void:
 	z_index = 3
 
 
+## Нужен ли предмет хоть одному ОТКРЫТОМУ рецепту (#57): вход запертого
+## рецепта станок не берёт — иначе он застревает внутри до открытия узла.
 func input_accepts(item_id: int) -> bool:
 	for r in DB.recipes_for("smelter"):
-		if r["in"].has(item_id):
+		if r["in"].has(item_id) and DB.recipe_unlocked(r):
 			return true
 	return false
+
+
+## Без питания горнило не мерцает — перерисовка каждый кадр не нужна.
+func has_time_animation() -> bool:
+	return powered
 
 
 func receive_item(item_id: int, count: int) -> int:
@@ -67,10 +80,16 @@ func _draw() -> void:
 	draw_rect(Rect2(-8.0, -8.0, 16.0, 16.0), base)
 	draw_rect(Rect2(-8.0, -8.0, 16.0, 2.0), base.lightened(0.2))
 	# Горнило
-	var glow: float = 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.006)
-	var hot: Color = Color(0.95, 0.45, 0.12) if powered else Color(0.30, 0.20, 0.16)
-	hot = hot.lerp(Color(1.0, 0.85, 0.4), glow * 0.4)
-	draw_rect(Rect2(-5.0, -2.0, 10.0, 7.0), hot)
+	draw_rect(Rect2(-5.0, -2.0, 10.0, 7.0), furnace_color(Time.get_ticks_msec()))
 	if progress > 0.0:
 		draw_rect(Rect2(-6.0, -12.0, 12.0, 2.0), Color(0, 0, 0, 0.6))
 		draw_rect(Rect2(-6.0, -12.0, 12.0 * progress, 2.0), Color(0.4, 0.9, 1.0))
+
+
+## Цвет горнила в момент t_ms: под питанием пульсирует к жёлтому,
+## без питания — ровный FURNACE_COLD (#57).
+func furnace_color(t_ms: int) -> Color:
+	if not powered:
+		return FURNACE_COLD
+	var glow: float = 0.5 + 0.5 * sin(t_ms * 0.006)
+	return FURNACE_HOT.lerp(FURNACE_GLOW, glow * 0.4)
