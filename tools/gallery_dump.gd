@@ -411,6 +411,14 @@ func _dump_world_views() -> void:
 	it.set("item_id", IDs.I.IRON_ORE)
 	it.set("count", 5)
 	await _shoot_node(it, "world/item_drop.png", Vector2i(96, 96), Vector2(0, -1))
+	# Мешок с хотбаром погибшего (#29) — если предмет на земле уже умеет быть мешком.
+	var bag: Node2D = item_scr.new()
+	if "bag" in bag:
+		bag.set("item_id", IDs.I.IRON_ORE)
+		bag.set("bag", [[IDs.I.IRON_ORE, 5], [IDs.I.COAL, 3]])
+		await _shoot_node(bag, "world/loot_bag.png", Vector2i(96, 96), Vector2(0, -1))
+	else:
+		bag.free()
 
 
 # ------------------------------------------------------------------ СКРИНШОТЫ
@@ -481,6 +489,20 @@ func _dump_shots() -> void:
 	p.set("mining_progress", 0.0)
 	p.queue_redraw()
 	drop.queue_free()
+
+	# 2а. Питание терминала: ТЭЦ у релея, круги питания (P), игрок у терминала.
+	var bx0: int = int(world.beacon_cell.x)
+	var by0: int = int(world.beacon_cell.y)
+	var mb0: GDScript = load("res://scripts/machines/machine_base.gd")
+	if mb0.place_machine("CoalGen", Vector2i(bx0 + 1, by0)):
+		world.machines[Vector2i(bx0 + 1, by0)].add_fuel(6)
+	ui.get("world_fx").set("show_power", true)
+	var term: Vector2i = _base_terminal()
+	await _look_at(world.cell_to_world(term + Vector2i(1, 0)) + Vector2(0, -3), true)
+	p.set("facing", -1)
+	await _frames(20)
+	await _grab("shots/terminal_power.png", false)
+	ui.get("world_fx").set("show_power", false)
 
 	# 3. Маленькая фабрика справа от базы: ТЭЦ + бур + конвейер + плавильня + сундук.
 	var bx: int = world.beacon_cell.x
@@ -568,7 +590,7 @@ func _dump_shots() -> void:
 		await _grab("shots/place_ruin.png", true)
 		break
 	# Терминал и релей-ядро на базе.
-	await _look_at(world.cell_to_world(world.terminals[0]) + Vector2(0, -tile), false, 3.5)
+	await _look_at(world.cell_to_world(_base_terminal()) + Vector2(0, -tile), false, 3.5)
 	await _grab("shots/place_terminal.png", true)
 	await _look_at(world.cell_to_world(world.beacon_cell) + Vector2(0, -tile), false, 3.5)
 	await _grab("shots/place_relay.png", true)
@@ -600,6 +622,16 @@ func _dump_shots() -> void:
 	if crys.x >= 0:
 		await _look_at(world.cell_to_world(crys), false)
 		await _grab("shots/place_deep_ore.png", true)
+
+
+## Левый терминал базы (терминалы руин идут в списке раньше базовых).
+func _base_terminal() -> Vector2i:
+	var bx: int = int(world.beacon_cell.x)
+	var best: Vector2i = world.terminals[0]
+	for t in world.terminals:
+		if absi(t.x - bx) <= 12 and (absi(best.x - bx) > 12 or t.x < best.x):
+			best = t
+	return best
 
 
 ## Первая клетка с тайлом id не выше строки min_y, подальше от краёв мира.
