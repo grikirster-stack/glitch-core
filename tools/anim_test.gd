@@ -902,12 +902,14 @@ class Runner extends Node:
 		return false
 
 
-	## Терминал задания — чтобы проверить рост task_progress.
+	## Терминал задания — чтобы проверить рост task_progress. Терминал работает
+	## только под питанием (#29); если запитанного нет — релей-ядро (его отсчёт
+	## по E растёт всегда).
 	func _find_terminal_cell() -> void:
-		var terms: Array = world.terminals
-		if terms.size() > 0:
-			_terminal_cell = terms[0]
-			return
+		for t in world.terminals:
+			if game.is_powered(world.cell_to_world(t)):
+				_terminal_cell = t
+				return
 		_terminal_cell = world.beacon_cell
 
 
