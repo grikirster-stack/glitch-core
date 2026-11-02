@@ -215,6 +215,32 @@ const REGISTRY: Dictionary = {
 		"title": "спавн из вентиляций",
 		"desc": "три ближайшие незапечатанные вентиляции, телеграф 2 с",
 	},
+	# --- Оборона (#31, ADR-001 § 4.4) ---
+	"turret_kills_echo": {
+		"file": "turret_kills_echo.gd",
+		"title": "турель убивает эхо",
+		"desc": "efficiency 1: эхо убито за ≤ 6 с (5 разрядов), тень — приоритетная цель",
+	},
+	"turret_brownout": {
+		"file": "turret_brownout.gd",
+		"title": "турель при браун-ауте",
+		"desc": "efficiency 0.5 — эхо умирает ≈ вдвое дольше; без питания турель молчит",
+	},
+	"airlock_player_passes_phantom_blocked": {
+		"file": "airlock_player_passes_phantom_blocked.gd",
+		"title": "шлюз",
+		"desc": "герой проходит; фантом в 3 клетках держит шлюз закрытым; открытый шлюз фантом не проходит",
+	},
+	"vent_grate_blocks_spawn": {
+		"file": "vent_grate_blocks_spawn.gd",
+		"title": "решётка вентиляции",
+		"desc": "решётка закрывает спавн из вентиляции; копатель ломает её за ≈ 8 с",
+	},
+	"steel_wall_vs_burrower": {
+		"file": "steel_wall_vs_burrower.gd",
+		"title": "стальная стена и копатель",
+		"desc": "землю копатель роет, стальную стену — нет; игрок ломает её за ≈ 4 с",
+	},
 }
 
 var scene: Node = null
