@@ -20,11 +20,17 @@ func run() -> void:
 	var sand: int = IDs.I.SAND
 	var inv0: int = player.inv.count_of(stone)
 
-	# 12 камней в трёх соседних клетках — как добыча под ногами.
+	# 12 камней — как добыча под ногами. Роняем в одну клетку со сдвигом ±4 px:
+	# предмет при падении случайно уходит вбок до ~13 px, поэтому ложатся они
+	# в 2–3 соседние клетки, но всегда в радиусе слияния (MERGE_CELLS = 2).
+	# Раньше роняли в три клетки подряд: разлёт доходил до 5 клеток, крайние
+	# кучки оказывались в 4 клетках друг от друга и по правилу не сливались —
+	# сценарий зависел от состояния ГСЧ, то есть от сценариев перед ним.
 	var nodes0: int = get_tree().get_node_count()
+	var cx: int = bx + 12
 	for i in DROPS:
-		var cx: int = bx + 11 + i % 3
-		player.spawn_item(stone, 1, Vector2(float(cx * World.TILE) + 8.0, floor_y))
+		var dx: float = float(i % 3 - 1) * 4.0
+		player.spawn_item(stone, 1, Vector2(float(cx * World.TILE) + 8.0 + dx, floor_y))
 	# Песок в той же клетке — другой предмет, с камнями не сливается.
 	player.spawn_item(sand, 1, Vector2(float((bx + 12) * World.TILE) + 8.0, floor_y))
 	await wait(1.5)
@@ -32,7 +38,7 @@ func run() -> void:
 	var stones: Array = _items(stone)
 	var sands: Array = _items(sand)
 	ok("одинаковые предметы рядом слились в одну кучку", stones.size() == 1,
-			"узлов камня: %d из %d выпавших" % [stones.size(), DROPS])
+			"узлов камня: %d из %d выпавших %s" % [stones.size(), DROPS, _describe(stones)])
 	var total: int = 0
 	for e in stones:
 		total += int(e.count)
@@ -71,6 +77,15 @@ func run() -> void:
 	await wait(0.2)
 	ok("кучка исчезла с земли", _items(stone).is_empty())
 	finish()
+
+
+## Клетки и счётчики кучек — для разбора провала.
+func _describe(list: Array) -> String:
+	var parts: PackedStringArray = PackedStringArray()
+	for e in list:
+		parts.append("%s×%d%s" % [str(World.world_to_cell(e.global_position)), int(e.count),
+				"" if e.grounded else " (летит)" if not e.magnet else " (магнит)"])
+	return "[" + ", ".join(parts) + "]"
 
 
 func _items(id: int) -> Array:
