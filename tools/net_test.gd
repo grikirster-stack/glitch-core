@@ -18,8 +18,8 @@ extends SceneTree
 
 ## Схема протокола PROTO = SCHEMA_PROTO. Поменяли кодек, порядок IDs или таблицы DB —
 ## поднимите Net.PROTO и впишите сюда новый PROTO и хэш, который напечатает тест.
-const SCHEMA_PROTO: int = 1
-const SCHEMA_HASH: String = "80ef119edc49510dd5d8f1fe1ad977fb"
+const SCHEMA_PROTO: int = 3
+const SCHEMA_HASH: String = "df92304962d81bc2e65ae6700f0423bc"
 
 const PORT_BASE: int = 24900
 const LOOP: String = "127.0.0.1"
@@ -227,6 +227,16 @@ func _codec() -> void:
 	ok("EVENT уведомление (UTF-8, цвет)", en.get("text") == "Рядом нет вентиляции" and en.get("color") == col)
 	ok("EVENT FX", NetCodec.decode_event(NetCodec.encode_fx(Vector2.ZERO, 3, 200)).get("arg") == 200)
 	ok("EVENT битый → {}", NetCodec.decode_event(NetCodec.encode_notify(Vector2.ZERO, "abc", col).slice(0, 9)).is_empty())
+	# MP-D (#89): удар по своему герою, таблица звуков.
+	var eh: Dictionary = NetCodec.decode_event(NetCodec.encode_hit(Vector2(40, 50), Vector2(-120, 300), 0.12))
+	ok("EVENT удар: отбрасывание и оглушение", eh.get("type") == NetCodec.Ev.HIT
+			and eh.get("knock") == Vector2(-120, 300) and absf(float(eh.get("stun", 0)) - 0.12) < 0.001, str(eh))
+	ok("EVENT удар битый → {}", NetCodec.decode_event(NetCodec.encode_hit(Vector2.ZERO, Vector2.ONE, 0.1).slice(0, 8)).is_empty())
+	var snd_ok: bool = NetCodec.SOUNDS.size() <= 256
+	for i in NetCodec.SOUNDS.size():
+		snd_ok = snd_ok and NetCodec.sound_id(NetCodec.sound_name(i)) == i
+	ok("звуки: имя ↔ id u8, неизвестный — −1 / \"\"", snd_ok and NetCodec.sound_id("нет") == -1
+			and NetCodec.sound_name(255) == "")
 
 	# Инвентарь
 	var slots: Array = []

@@ -1,26 +1,26 @@
-extends MpScenarioBase
+extends "res://tools/mp/scenarios/mp_players_base.gd"
 ## mp_factory (ADR-002, § 4.2.1, § 4.2.4, § 4.3, § 4.10; MP-E, #90): машины и предметы
 ## по сети. Хост и два клиента.
 ##
-## 1. Завод: бур над столбом из ORE_N клеток железной руды (под ним — бедрок), ТЭЦ с
-##    углём, две ленты вправо, сундук. Постройки появляются у обоих клиентов
-##    (MACHINE_ADD), у клиента бур под питанием, прогресс такта растёт между пакетами,
-##    предметы едут по лентам и между пакетами (экстраполяция). Своя логика машин у
-##    клиента не идёт: сундук клиента не наполняется, бур клиента не копает (тайлы —
-##    только дельтами хоста, хэши равны). Сумма у хоста: в сундуке ровно ORE_N руды,
-##    на лентах, в буре и на земле её нет — без дублей и потерь.
-## 2. Снос и постройка: лента разрушена (destroy) — пропала у всех, на её месте новая —
-##    появилась у всех, направление то же.
+## 1. Завод строит клиент 0 своим героем (шов ввода → пакет ввода → прокси на хосте,
+##    D3): сундук, две ленты, бур над столбом из ORE_N клеток железной руды (под ним —
+##    бедрок); ТЭЦ с углём хост ставит заранее. Постройки — из инвентаря прокси,
+##    появляются у обоих клиентов (MACHINE_ADD). У клиентов бур под питанием, прогресс
+##    такта растёт, предметы едут по лентам и между пакетами (экстраполяция). Своя логика
+##    машин у клиента не идёт: сундук клиента не наполняется, бур не копает (тайлы —
+##    дельтами хоста, хэши равны). Сумма у хоста: в сундуке ровно ORE_N руды, на лентах,
+##    в буре и на земле её нет — без дублей и потерь.
+## 2. Снос и постройка: лента разрушена (destroy: разбирать постройки руками в игре
+##    нельзя — сносят фантомы) — пропала у всех; клиент 0 ставит на её место новую и
+##    поворачивает ПКМ — у всех новая лента с тем же направлением.
 ## 3. Турель стреляет по фантому — у клиентов дуга (World.turret_fired) в ближайший такт.
 ## 4. Предметы на земле: три камня падают рядом и сливаются у хоста в один (3 шт.) —
 ##    у клиента одна марионетка на 3 шт. там же; убран у хоста — пропал у клиента.
 ## 5. Замер: база из 130 машин § 9.1 (60 лент с предметами, 20 манипуляторов, 10 буров,
 ##    18 сундуков, 6 ТЭЦ, 4 плавильни, 4 сборщика, 4 турели, 4 прожектора) в зоне
-##    интереса: Б/с машин хост → клиент, сбор net_state на хосте, мкс/такт.
-##
-## Пока сеть игроков (MP-D, #89) не в main, постройку за клиента делает хост тем же
-## MachineBase.place_machine, каким её сделает прокси-герой клиента (D3: действия —
-## на хосте обычным кодом Player). Данные клиент сообщает хосту именем барьера.
+##    интереса: Б/с машин хост → клиент, сбор net_state на хосте, мкс/такт; машина вне
+##    зоны интереса клиентам не шлётся; сверх мягкого предела — 1 Гц.
+## Данные клиент сообщает хосту именем барьера.
 
 const JS = preload("res://tools/mp/scenarios/mp_join_snapshot.gd")
 const ORE_N: int = 5
@@ -30,6 +30,13 @@ const ADR_MACHINES_BPS: int = 4080
 ## Предел сбора net_state на хосте, мкс за машинный такт (4 Гц): 5 мс — 2 % секунды
 ## кадров хоста даже на загруженной машине CI (замер на Windows — ≈ 1 мс на 145 машин).
 const GATHER_LIMIT_US: int = 5000
+## Что строит клиент 0, по порядку: [предмет, вид, смещение клетки]. Сундук и правая
+## лента — первыми: лента сама встаёт к соседу справа (Player._auto_orient).
+const BUILD: Array = [[IDs.I.CHEST, "Chest", 3], [IDs.I.BELT, "Belt", 2], [IDs.I.BELT, "Belt", 1],
+		[IDs.I.DRILL, "Drill", 0]]
+## Барьеры после «built» — по порядку (клиент, у которого не вышло, проходит их молча).
+const TAIL: Array = ["flowed", "destroyed", "gone", "rebuilt", "turret_ready", "shot", "@ip",
+		"items_gone", "measured"]
 
 var _sx: int = 0            ## клетка бура
 var _g: int = 0             ## ряд пола (бур стоит в ряду _g − 1)
@@ -46,33 +53,67 @@ func _cell(dx: int) -> Vector2i:
 	return Vector2i(_sx + dx, _g - 1)
 
 
+## Где стоит герой: на стальном уступе в ряду _g − 3 над клеткой _sx + dx.
+func _ledge(dx: int) -> Vector2:
+	return Vector2(float((_sx + dx) * World.TILE) + 8.0, float((_g - 3) * World.TILE) - 11.0)
+
+
 # ------------------------------------------------------------------ ХОСТ
 
 func run_host() -> void:
 	_layout()
-	var in_game: bool = await wait_players(1 + clients, 30.0)
+	var in_game: bool = await wait_players(1 + clients, 45.0)
 	ok("клиенты подключились", in_game, "игроков %d" % Net.peers.size())
+	ok("прокси клиентов с вводом", await wait_proxies(clients, 10.0))
 	await barrier("joined", -1, 30.0)
 	var nm: NetMachines = Game.net_machines
+	var p0: Player = hero_of(0)
+	var p1: Player = hero_of(1)
 
-	# --- 1. Завод: бур → лента → лента → сундук, ТЭЦ слева.
+	# --- 1. Площадка: расчистка, стальной пол и уступы, столб руды, ТЭЦ.
 	_clear(_sx - 2, _sx + 27, _g - 11, _g - 1)
 	for x in range(_sx - 2, _sx + 28):
 		if World.get_tile(x, _g) == IDs.T.AIR or DB.is_liquid(World.get_tile(x, _g)):
 			World.set_tile(x, _g, IDs.T.STEEL)
+	for dx in [0, 1, 2, 21, 22, 23]:
+		World.set_tile(_sx + dx, _g - 3, IDs.T.STEEL)
 	for k in ORE_N:
 		World.set_tile(_sx, _g + k, IDs.T.IRON_ORE)
 	World.set_tile(_sx, _g + ORE_N, IDs.T.BEDROCK)
-	var placed: int = 0
-	for kv in [["CoalGen", -1], ["Belt", 1], ["Belt", 2], ["Chest", 3], ["Drill", 0]]:
-		if MachineBase.place_machine(String(kv[0]), _cell(int(kv[1]))):
-			placed += 1
-	ok("хост: завод поставлен (ТЭЦ, бур, 2 ленты, сундук)", placed == 5, "%d из 5" % placed)
+	ok("хост: ТЭЦ поставлена", MachineBase.place_machine("CoalGen", _cell(-1)))
 	var gen: CoalGen = World.machines.get(_cell(-1))
-	var drill: Drill = World.machines.get(_cell(0))
-	var chest: Chest = World.machines.get(_cell(3))
-	gen.add_fuel(CoalGen.FUEL_MAX_UNITS)
-	await barrier("built", -1, 30.0)
+	if gen != null:
+		gen.add_fuel(CoalGen.FUEL_MAX_UNITS)
+	# Свой герой хоста — подальше (дроп подбирает ближайший), клиенты — на уступы.
+	player.global_position = surface_stand(World.world_to_cell(World.spawn_point).x - 40)
+	player.vel = Vector2.ZERO
+	var placed_ok: bool = p0 != null and p1 != null
+	if placed_ok:
+		ok("клиент 0 переставлен на уступ над заводом", await teleport_proxy(p0, _ledge(1)))
+		ok("клиент 1 переставлен на дальний уступ", await teleport_proxy(p1, _ledge(22)))
+		# Набор — в слоты 7–9 хотбара (стартовые вещи прокси там не мешают выбору).
+		p0.inv.slots[7] = ItemStack.new(IDs.I.CHEST, 1)
+		p0.inv.slots[8] = ItemStack.new(IDs.I.BELT, 3)
+		p0.inv.slots[9] = ItemStack.new(IDs.I.DRILL, 1)
+		p0.inv.changed.emit()
+	var hands0: int = _ore_in_hands()
+	await barrier("kit", -1, 30.0)
+
+	# Клиент 0 строит своим героем; хост — только смотрит, что сделал прокси.
+	await barrier("built", -1, 60.0)
+	var drill: Drill = World.machines.get(_cell(0)) as Drill
+	var chest: Chest = World.machines.get(_cell(3)) as Chest
+	var b1: Belt = World.belts.get(_cell(1))
+	var b2: Belt = World.belts.get(_cell(2))
+	ok("хост: клиент 0 поставил сундук, две ленты и бур",
+			drill != null and chest != null and b1 != null and b2 != null)
+	ok("хост: ленты встали вправо, к сундуку", b1 != null and b2 != null and b1.dir == 0 and b2.dir == 0)
+	if p0 != null:
+		var s7: ItemStack = p0.inv.get_slot(7)
+		var s8: ItemStack = p0.inv.get_slot(8)
+		var s9: ItemStack = p0.inv.get_slot(9)
+		ok("хост: постройки списаны из слотов прокси (сундук %d, ленты %d, бур %d)" % [s7.count, s8.count, s9.count],
+				s7.is_empty() and s8.id == IDs.I.BELT and s8.count == 1 and s9.is_empty())
 
 	# Руда идёт: бур выкапывает столб, всё уезжает в сундук.
 	var flowed: bool = await wait_until(func() -> bool:
@@ -82,10 +123,11 @@ func run_host() -> void:
 	await wait(1.0)                         # лишнего бур не выдал
 	var in_chest: int = _chest_count(chest, IDs.I.IRON_ORE)
 	var on_ground: int = _ground_count(IDs.I.IRON_ORE)
-	var in_drill: int = int(drill._output.get(IDs.I.IRON_ORE, 0))
-	ok("хост: сумма руды без дублей и потерь (сундук %d, ленты %d, бур %d, земля %d = %d)" % [
-			in_chest, _belt_items(), in_drill, on_ground, ORE_N],
-			in_chest + _belt_items() + in_drill + on_ground == ORE_N and in_chest == ORE_N)
+	var in_drill: int = int(drill._output.get(IDs.I.IRON_ORE, 0)) if drill != null else 0
+	var in_hands: int = _ore_in_hands() - hands0
+	ok("хост: сумма руды без дублей и потерь (сундук %d, ленты %d, бур %d, земля %d, у героев %d = %d)" % [
+			in_chest, _belt_items(), in_drill, on_ground, in_hands, ORE_N],
+			in_chest + _belt_items() + in_drill + on_ground + in_hands == ORE_N and in_chest == ORE_N)
 	var mined: int = 0
 	for k in ORE_N:
 		if World.get_tile(_sx, _g + k) == IDs.T.AIR:
@@ -94,16 +136,15 @@ func run_host() -> void:
 	await barrier("flowed", -1, 60.0)
 
 	# --- 2. Снос и постройка заново: видны всем.
-	var b2 = World.machines.get(_cell(2))
-	if b2 != null:
-		b2.destroy()
+	var old_b2 = World.machines.get(_cell(2))
+	if old_b2 != null:
+		old_b2.destroy()
 	await barrier("destroyed", -1, 20.0)
 	await barrier("gone", -1, 20.0)
-	var rebuilt: bool = MachineBase.place_machine("Belt", _cell(2))
-	if rebuilt:
-		World.machines[_cell(2)].dir = 3
-	ok("хост: на месте ленты новая (вверх)", rebuilt)
-	await barrier("rebuilt", -1, 20.0)
+	await barrier("rebuilt", -1, 30.0)
+	var nb2: Belt = World.belts.get(_cell(2))
+	ok("хост: клиент 0 поставил новую ленту и повернул её вниз", nb2 != null and nb2.dir == 1,
+			"dir %d" % (nb2.dir if nb2 != null else -1))
 
 	# --- 3. Турель стреляет — у клиентов дуга в ближайший такт.
 	var tg_ok: bool = MachineBase.place_machine("CoalGen", _cell(6)) and MachineBase.place_machine("Turret", _cell(7))
@@ -127,31 +168,35 @@ func run_host() -> void:
 	var merged: bool = await wait_until(func() -> bool:
 			var l: Array = _stones_near()
 			return l.size() == 1 and l[0].count == 3 and l[0].grounded, 10.0)
-	ok("хост: три камня упали и слились в один (3 шт.)", merged,
-			"куч %d" % _stones_near().size())
+	ok("хост: три камня упали и слились в один (3 шт.)", merged, "куч %d" % _stones_near().size())
 	var stone = _stones_near()[0] if merged else null
-	# Клиенты присылают «ip:<x>:<y>:<шт>» своей марионетки — сверяем с хостом.
+	# Клиенты присылают «ip<i>:<x>:<y>:<шт>» своей марионетки — сверяем с хостом.
 	for i in clients:
 		var rep: String = await _wait_report("ip%d:" % i, 15.0)
-		var p: PackedStringArray = rep.split(":")
-		if stone != null and p.size() >= 4:
-			var cp: Vector2 = Vector2(float(p[1]), float(p[2]))
+		var parts: PackedStringArray = rep.split(":")
+		if stone != null and parts.size() >= 4:
+			var cp: Vector2 = Vector2(float(parts[1]), float(parts[2]))
 			ok("c%d: марионетка камня там же, где у хоста (%.1f px), %s шт." % [i,
-					cp.distance_to(stone.global_position), p[3]],
-					cp.distance_to(stone.global_position) <= float(World.TILE) and int(p[3]) == 3)
+					cp.distance_to(stone.global_position), parts[3]],
+					cp.distance_to(stone.global_position) <= float(World.TILE) and int(parts[3]) == 3)
 		else:
 			ok("c%d: прислал марионетку камня" % i, false, rep)
-		await mp().barrier(rep, 1, 5.0)
+		if rep != "":
+			await mp().barrier(rep, 1, 5.0)
 	if stone != null:
-		print("  хост: камень #%d убран; все камни хоста %s" % [stone.net_id, str(_stones_near().map(func(e): return [e.net_id, e.count, e.global_position, e.age]))])
 		stone.queue_free()
 	await barrier("items_gone", -1, 20.0)
 
-	# --- 5. Замер: база из 130 машин в зоне интереса.
+	# --- 5. Замер: база из 130 машин в зоне интереса и ТЭЦ вне зоны.
 	var base: Array = _build_base()
 	ok("хост: база из 130 машин построена", base.size() == 130, "%d" % base.size())
+	var far: Vector2i = Vector2i(_sx + 90, World.surface[_sx + 90] - 1)
+	World.set_tile(far.x, far.y, IDs.T.AIR)
+	var far_ok: bool = MachineBase.place_machine("CoalGen", far)
+	if far_ok:
+		(World.machines[far] as CoalGen).add_fuel(4)    # топливо убывает — net_state меняется
 	await wait(1.0)                         # события постройки и первый полный обход прошли
-	var pid: int = _peer_of(0)
+	var pid: int = peer_of_uid(client_uid(0))
 	nm.reset_traffic()
 	var b0: int = int(nm.peer_bytes.get(pid, 0))
 	var t0: float = now()
@@ -174,6 +219,11 @@ func run_host() -> void:
 	ok("хост: машины идут 4 Гц (тактов сбора %d за %.1f с)" % [nm.gather_n, dt],
 			absi(nm.gather_n - roundi(dt * Net.MACHINE_HZ)) <= 1)
 	ok("хост: сбор net_state ≤ %d мкс/такт (%.0f)" % [GATHER_LIMIT_US, avg_us], avg_us <= float(GATHER_LIMIT_US))
+	var far_idx: int = far.y * World.W + far.x
+	var far_sent: bool = false
+	for id in nm._peers:
+		far_sent = far_sent or (nm._peers[id]["ms"] as Dictionary).has(far_idx)
+	ok("хост: ТЭЦ вне зоны интереса клиентам не шлётся (постройка — шлётся)", far_ok and not far_sent)
 	# Мягкий предел (§ 4.3): сверх него машины идут раз в секунду.
 	nm.soft_budget = 256
 	var slowed: bool = await wait_until(func() -> bool: return nm.slow, 3.0)
@@ -215,6 +265,15 @@ func _compare_all() -> void:
 			total_ok == clients, "хост %s, клиенты %s" % [mine, str(names.keys())])
 	for n in names:
 		await mp().barrier(String(n), int(names[n]), 5.0)
+
+
+## Руда в инвентарях всех героев (свой хоста и прокси).
+func _ore_in_hands() -> int:
+	var n: int = 0
+	for p in Game.players:
+		if is_instance_valid(p):
+			n += p.inv.count_of(IDs.I.IRON_ORE)
+	return n
 
 
 func _clear(x0: int, x1: int, y0: int, y1: int) -> void:
@@ -273,14 +332,6 @@ func _ground_count(id: int) -> int:
 	for e in _ground_items(id):
 		n += e.count
 	return n
-
-
-## Хост: id пира клиента i (по uid харнесса).
-func _peer_of(i: int) -> int:
-	for id in Net.peers:
-		if int(Net.peers[id]["uid"]) == client_uid(i):
-			return int(id)
-	return 0
 
 
 ## Хост: дождаться барьера клиента с этим префиксом (данные — в имени).
@@ -356,8 +407,11 @@ func run_client(i: int) -> void:
 	var got: bool = await wait_until(func() -> bool: return nw.is_joined, 20.0)
 	ok("c%d: снимок получен" % i, got)
 	await barrier("joined")
+	await barrier("kit")
+	if i == 0:
+		await _build_factory()
 	await barrier("built")
-	# Постройки хоста пришли событиями.
+	# Постройки клиента 0 (через прокси на хосте) пришли событиями.
 	var kinds: Array = [["CoalGen", -1], ["Drill", 0], ["Belt", 1], ["Belt", 2], ["Chest", 3]]
 	var arrived: bool = await wait_until(func() -> bool:
 			for kv in kinds:
@@ -365,20 +419,13 @@ func run_client(i: int) -> void:
 				if m == null or String(m.kind) != String(kv[0]):
 					return false
 			return true, 5.0)
-	ok("c%d: завод хоста появился (MACHINE_ADD %d)" % [i, nm.adds_rx], arrived)
+	ok("c%d: завод появился (MACHINE_ADD %d)" % [i, nm.adds_rx], arrived)
 	var drill = World.machines.get(_cell(0))
 	var b1 = World.belts.get(_cell(1))
 	var chest = World.machines.get(_cell(3))
 	if not arrived or drill == null or b1 == null:
-		await barrier("flowed")
-		await barrier("destroyed")
-		await barrier("gone")
-		await barrier("rebuilt")
-		await barrier("turret_ready")
-		await barrier("shot")
-		await barrier("ip%d:0:0:0" % i)
-		await barrier("items_gone")
-		await barrier("measured")
+		for b in TAIL:
+			await barrier("ip%d:0:0:0" % i if b == "@ip" else String(b))
 		await JS.client_report(self, i)
 		await barrier("done")
 		finish()
@@ -421,11 +468,18 @@ func run_client(i: int) -> void:
 	var gone: bool = await wait_until(func() -> bool: return World.machines.get(_cell(2)) == null, 3.0)
 	ok("c%d: снесённая лента пропала (MACHINE_DEL %d)" % [i, nm.dels_rx], gone)
 	await barrier("gone")
+	if i == 0:
+		var put: bool = await _place(IDs.I.BELT, "Belt", 2)
+		ok("c0: новая лента поставлена своим героем", put)
+		var turned: bool = put and await _click(_cell(2), func() -> bool:
+				var b = World.belts.get(_cell(2))
+				return b != null and b.dir == 1)
+		ok("c0: лента повёрнута ПКМ (вниз)", turned)
 	await barrier("rebuilt")
 	var back: bool = await wait_until(func() -> bool:
 			var b = World.belts.get(_cell(2))
-			return b != null and b.dir == 3, 3.0)
-	ok("c%d: новая лента появилась, направление как у хоста" % i, back)
+			return b != null and b.dir == 1, 3.0)
+	ok("c%d: новая лента у клиента, направление как у хоста" % i, back)
 
 	var arcs: Array = [0]
 	World.turret_fired.connect(func(_a: Vector2, _b: Vector2) -> void: arcs[0] += 1)
@@ -445,16 +499,15 @@ func run_client(i: int) -> void:
 	var st: Array = box[0]
 	ok("c%d: марионетка камня одна, 3 шт., на земле (появлений %d)" % [i, nm.spawns_rx], landed,
 			"куч %d" % st.size())
+	var sid: int = st[0].net_id if landed else -1
 	var rep: String = "ip%d:0:0:0" % i
 	if landed:
 		rep = "ip%d:%.1f:%.1f:%d" % [i, st[0].global_position.x, st[0].global_position.y, st[0].count]
 	await barrier(rep)
 	await barrier("items_gone")
-	var sid: int = st[0].net_id if landed else -1
 	var vanished: bool = await wait_until(func() -> bool:
 			return _stones_near().all(func(e): return e.net_id != sid), 3.0)
-	ok("c%d: убранный у хоста камень пропал (исчезновений %d)" % [i, nm.despawns_rx], vanished,
-			str(_stones_near().map(func(e): return [e.net_id, e.count, e.global_position])))
+	ok("c%d: убранный у хоста камень пропал (исчезновений %d)" % [i, nm.despawns_rx], vanished)
 
 	await barrier("measured")
 	print("  ЗАМЕР c%d: построек %d, событий постройки %d, сноса %d, записей net_state %d, предметов: появлений %d, исчезновений %d, убрано из снимка %d" % [
@@ -464,3 +517,45 @@ func run_client(i: int) -> void:
 	await barrier("done")
 	finish()
 
+
+## c0: построить завод своим героем — постройки по BUILD.
+func _build_factory() -> void:
+	var kit: bool = await wait_until(func() -> bool:
+			return (player.inv.get_slot(9).id == IDs.I.DRILL and player.inv.get_slot(8).count >= 3
+					and player.inv.get_slot(7).id == IDs.I.CHEST), 5.0)
+	ok("c0: набор построек пришёл в свой инвентарь (INV)", kit)
+	var n: int = 0
+	for b in BUILD:
+		if await _place(int(b[0]), String(b[1]), int(b[2])):
+			n += 1
+	ok("c0: построил своим героем сундук, две ленты и бур (%d из %d)" % [n, BUILD.size()], n == BUILD.size())
+
+
+## c0: выбрать в хотбаре предмет и щёлкнуть ПКМ по клетке; true — у себя появилась
+## постройка этого вида (MACHINE_ADD от хоста).
+func _place(item: int, kind: String, dx: int) -> bool:
+	var slot: int = -1
+	for k in range(player.inv.hotbar_size - 1, -1, -1):     # набор — в слотах 7–9
+		if player.inv.get_slot(k).id == item:
+			slot = k
+			break
+	if slot < 0:
+		return false
+	player.inv.selected = slot
+	var c: Vector2i = _cell(dx)
+	return await _click(c, func() -> bool:
+			var m = World.machines.get(c)
+			return m != null and String(m.kind) == kind)
+
+
+## c0: короткий щелчок ПКМ (0.1 с — меньше паузы постройки 0.16 с: одно действие)
+## и ожидание итога; не вышло (пауза постройки не истекла) — ещё раз.
+func _click(c: Vector2i, done_fn: Callable) -> bool:
+	for attempt in 4:
+		aim(World.cell_to_world(c))
+		press_mouse(MOUSE_BUTTON_RIGHT)
+		await wait(0.1)
+		release_mouse(MOUSE_BUTTON_RIGHT)
+		if await wait_until(done_fn, 2.0):
+			return true
+	return false

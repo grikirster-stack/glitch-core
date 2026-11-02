@@ -60,8 +60,11 @@ func _exit_tree() -> void:
 
 
 ## Игрок — один на сцену; ищем его по группе, только если ссылки ещё нет
-## или узел уже удалён (перезапуск сцены).
+## или узел уже удалён (перезапуск сцены). В сети (ADR-002, MP-D #89) героев
+## несколько — подбирает ближайший живой герой, которого считает этот процесс.
 func _get_player() -> Node2D:
+	if Game.players.size() > 1:
+		return _nearest_hero()
 	if not is_instance_valid(_player) or not _player.is_inside_tree():
 		_player = get_tree().get_first_node_in_group("player") as Node2D
 	return _player
@@ -340,5 +343,26 @@ func _net_nearest_hero() -> Node2D:
 		var dd: float = global_position.distance_squared_to(h.global_position)
 		if dd < best_d:
 			best_d = dd
+			best = h
+	return best
+
+
+# ------------------------------------------------- СЕТЬ (ADR-002, MP-D #89)
+## Ближайший живой герой на связи из Game.players, чьи действия считает этот процесс
+## (свой герой хоста, прокси). У клиента таких нет: предметы подбирает хост.
+func _nearest_hero() -> Node2D:
+	var best: Node2D = null
+	var best_d: float = INF
+	for h in Game.players:
+		if not is_instance_valid(h) or not h.is_inside_tree() or bool(h.get("dead")):
+			continue
+		var role: int = int(h.get("net_role"))
+		if role != Player.NetRole.LOCAL and role != Player.NetRole.PROXY:
+			continue
+		if not bool(h.get("net_linked")):
+			continue
+		var d: float = global_position.distance_squared_to(h.global_position)
+		if d < best_d:
+			best_d = d
 			best = h
 	return best
