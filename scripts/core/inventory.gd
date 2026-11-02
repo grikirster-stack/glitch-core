@@ -36,27 +36,38 @@ func can_add(id: int, amount: int = 1) -> bool:
 func add(id: int, amount: int = 1) -> int:
 	if id == IDs.I.NONE or amount <= 0:
 		return amount
+	var left: int = stack_into(slots, id, amount)
+	if left != amount:
+		changed.emit()
+	return left
+
+
+## Разложить amount предметов id по массиву стопок: сначала докладываем
+## в неполные стопки, потом — в пустые слоты; только слоты [from, to)
+## (to < 0 — до конца). Годится и для инвентаря, и для сундука (Chest.slots):
+## так панель перекладывает Shift+кликом и «Забрать всё» (#69).
+## Возвращает количество, которое НЕ поместилось.
+static func stack_into(arr: Array[ItemStack], id: int, amount: int, from: int = 0, to: int = -1) -> int:
+	if id == IDs.I.NONE or amount <= 0:
+		return amount
+	var end: int = arr.size() if to < 0 else mini(to, arr.size())
+	var maxst: int = DB.item_max_stack(id)
 	var left: int = amount
-	var maxst: int = slot_max(id)
-	# Сначала докладываем в неполные стопки.
-	for s in slots:
+	for i in range(from, end):
 		if left <= 0:
 			break
+		var s: ItemStack = arr[i]
 		if s.id == id and s.count < maxst:
 			var take: int = mini(maxst - s.count, left)
 			s.count += take
 			left -= take
-	# Потом в пустые слоты.
-	for i in size:
+	for i in range(from, end):
 		if left <= 0:
 			break
-		var s2: ItemStack = slots[i]
-		if s2.is_empty():
+		if arr[i].is_empty():
 			var take2: int = mini(maxst, left)
-			slots[i] = ItemStack.new(id, take2)
+			arr[i] = ItemStack.new(id, take2)
 			left -= take2
-	if left != amount:
-		changed.emit()
 	return left
 
 func count_of(id: int) -> int:
