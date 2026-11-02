@@ -625,6 +625,13 @@ func _dump_shots() -> void:
 	await _grab("shots/night_phantom.png", false)
 	ph.queue_free()
 
+	# 6а. Сумерки на базе (ADR-003 V3): сливовое небо, кромка гиганта, амбиент сумерек.
+	game.set("time_of_day", 0.63)
+	ui.get("hud").set("notes", [])
+	await _look_at(spawn + Vector2(0, -3), true)
+	await _frames(20)
+	await _grab("shots/base_dusk.png", false)
+
 	# Места мира — центральные кадры 480×270.
 	game.set("time_of_day", 0.40)
 	# Руина с тайником и табличкой: первая не под водой.
