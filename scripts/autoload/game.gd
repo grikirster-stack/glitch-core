@@ -61,6 +61,43 @@ var _power_verify_tick: int = 0         ## счётчик вызовов до с
 
 const POWER_VERIFY_EVERY: int = 32      ## как часто сверять индекс с миром
 
+# ------------------------------------------------- БЮДЖЕТ МОЩНОСТИ (ADR-001 § 4.3, #25)
+## Раз в Balance.POWER_CHECK_INTERVAL update_power_budget() раскладывает
+## потребителей (машины с power_draw) по ближайшему активному генератору в
+## радиусе, суммирует нагрузку генератора (power_load) и выдаёт потребителям
+## efficiency = clamp(output / load, 0, 1). Потребители лежат в том же индексе,
+## что и источники: перебор — O(потребители × генераторы), генераторов 2–6.
+##
+## Браун-аут — хотя бы один работающий генератор перегружен. Сигнал и флаг —
+## для звука (#36) и HUD (#34).
+signal brownout_changed(active: bool)
+## Раскладка пересчитана (раз в 0.25 с).
+signal power_updated
+
+var brownout: bool = false              ## есть перегруженный генератор
+var power_output_total: float = 0.0     ## суммарная мощность работающих генераторов
+var power_load_total: float = 0.0       ## суммарная нагрузка запитанных потребителей
+var power_unpowered: int = 0            ## потребителей вне зоны питания
+## Потребители — параллельные массивы: машины не двигаются, поэтому позиция и
+## потребление кэшируются при сборке индекса, а горячий цикл раскладки идёт по
+## упакованным массивам без обращений к узлам.
+var _power_consumers: Array = []                            ## потребители питания
+var _power_consumer_cells: Array = []                       ## их клетки в World.machines
+var _power_consumer_pos: PackedVector2Array = PackedVector2Array()
+var _power_consumer_draw: PackedFloat32Array = PackedFloat32Array()
+## Последний выданный потребителю итог: efficiency (0..1), POWER_STATE_OFF —
+## без питания, POWER_STATE_UNKNOWN — ещё не выдавался. Машине звоним только
+## при смене итога.
+var _power_consumer_state: PackedFloat32Array = PackedFloat32Array()
+var _power_timer: float = 0.0
+var _power_validate_tick: int = 0
+
+const POWER_STATE_OFF: float = -0.5
+const POWER_STATE_UNKNOWN: float = -1.0
+## Раз в сколько раскладок сверять потребителей с миром поимённо (ловит
+## «сняли бур и в тот же кадр поставили другую машину»). 4 × 0.25 с = 1 с.
+const POWER_VALIDATE_EVERY: int = 4
+
 
 func _ready() -> void:
 	relay_req = DB.relay_req.duplicate()
@@ -86,9 +123,19 @@ func reset_run() -> void:
 	_power_index_size = -1          ## мир мог смениться — индекс пересоберётся
 	# --- Исследования (#28): дерево и журнал живут один забег.
 	Tech.reset()
+	_power_timer = 0.0
+	power_output_total = 0.0
+	power_load_total = 0.0
+	power_unpowered = 0
+	_set_brownout(false)
 
 
 func _process(delta: float) -> void:
+	# Питание раскладывается и после смерти/победы: машины мира живут дальше.
+	_power_timer += delta
+	if _power_timer >= Balance.POWER_CHECK_INTERVAL:
+		_power_timer = 0.0
+		update_power_budget()
 	if state != State.PLAYING:
 		return
 	game_time += delta
@@ -191,18 +238,21 @@ func is_powered(p: Vector2) -> bool:
 
 
 ## Сообщить о новой машине. Вызывается из MachineBase.place_machine().
-## В индекс попадают только источники питания (генераторы).
+## В индекс попадают источники питания (генераторы) и потребители.
 func register_power_source(m, cell: Vector2i) -> void:
-	if not _is_power_source(m):
+	var source: bool = _is_power_source(m)
+	var consumer: bool = _is_power_consumer(m)
+	if not source and not consumer:
 		return
 	# Индекс мог устареть (например, мир пересоздали) — тогда проще пересобрать.
 	if _power_index_size != World.machines.size() or _has_dead_sources():
 		_rebuild_power_index()
 		return
-	if _power_sources.has(m):
-		return
-	_power_sources.append(m)
-	_power_source_cells.append(cell)
+	if source and not _power_sources.has(m):
+		_power_sources.append(m)
+		_power_source_cells.append(cell)
+	if consumer and not _power_consumers.has(m):
+		_add_power_consumer(m, cell)
 	_power_index_size = World.machines.size()
 
 
@@ -210,13 +260,31 @@ func register_power_source(m, cell: Vector2i) -> void:
 func _rebuild_power_index() -> void:
 	_power_sources.clear()
 	_power_source_cells.clear()
+	_power_consumers.clear()
+	_power_consumer_cells.clear()
+	_power_consumer_pos.clear()
+	_power_consumer_draw.clear()
+	_power_consumer_state.clear()
 	for cell in World.machines.keys():
 		var m = World.machines[cell]
 		if _is_power_source(m):
 			_power_sources.append(m)
 			_power_source_cells.append(cell)
+		elif _is_power_consumer(m):
+			_add_power_consumer(m, cell)
 	_power_index_size = World.machines.size()
 	_power_verify_tick = 0
+
+
+## Добавить потребителя в индекс (с кэшем позиции и потребления).
+func _add_power_consumer(m, cell: Vector2i) -> void:
+	_power_consumers.append(m)
+	_power_consumer_cells.append(cell)
+	# До add_world_node машина ещё не в дереве — тогда её позиция и есть мировая.
+	_power_consumer_pos.append(m.global_position if m.is_inside_tree() else m.position)
+	var draw = m.get("power_draw")
+	_power_consumer_draw.append(float(draw) if (draw is float or draw is int) else 0.0)
+	_power_consumer_state.append(POWER_STATE_UNKNOWN)
 
 
 ## Остались ли в индексе освобождённые машины.
@@ -258,6 +326,140 @@ static func _is_power_source(m) -> bool:
 	if not (radius is float or radius is int) or not (active is bool):
 		return false
 	return float(radius) > 0.0
+
+
+## Потребитель питания — машина, которой нужен статус питания (consumes_power).
+static func _is_power_consumer(m) -> bool:
+	if m == null or not is_instance_valid(m):
+		return false
+	return m.has_method("consumes_power") and m.consumes_power()
+
+
+## Раскладка бюджета мощности (§ 4.3). Вызывается из _process раз в
+## Balance.POWER_CHECK_INTERVAL; публичная — для тестов и замеров.
+##
+## Каждый потребитель питается от БЛИЖАЙШЕГО активного генератора, в радиус
+## которого попадает. Нагрузка генератора — сумма power_draw его потребителей,
+## efficiency = clamp(output / load, 0, 1) (при нулевой нагрузке — 1).
+func update_power_budget() -> void:
+	_sync_power_index()
+	# Поимённая сверка потребителей с миром — раз в POWER_VALIDATE_EVERY тиков.
+	# Добавление/снятие машин ловит проверка размера в _sync_power_index().
+	_power_validate_tick += 1
+	if _power_validate_tick >= POWER_VALIDATE_EVERY:
+		_power_validate_tick = 0
+		if not _power_consumers_valid():
+			_rebuild_power_index()
+	var tile: float = float(World.TILE)
+	# Работающие генераторы — в плоские массивы.
+	var gens: Array = []
+	var gpos: PackedVector2Array = PackedVector2Array()
+	var grad2: PackedFloat32Array = PackedFloat32Array()
+	var gout: PackedFloat32Array = PackedFloat32Array()
+	var out_total: float = 0.0
+	var stale: bool = false
+	for i in _power_sources.size():
+		var s = _power_sources[i]
+		if not is_instance_valid(s) or World.machines.get(_power_source_cells[i]) != s:
+			stale = true
+			continue
+		if not s.power_active:
+			_set_source_budget(s, 0.0, 0.0)
+			continue
+		gens.append(s)
+		gpos.append(s.global_position)
+		var r: float = float(s.power_radius) * tile
+		grad2.append(r * r)
+		var o: float = _source_output(s)
+		gout.append(o)
+		out_total += o
+	var ng: int = gens.size()
+	var gload: PackedFloat32Array = PackedFloat32Array()
+	gload.resize(ng)
+	gload.fill(0.0)
+	# Потребители → ближайший генератор в радиусе. Только упакованные массивы.
+	var nc: int = _power_consumers.size()
+	var assign: PackedInt32Array = PackedInt32Array()
+	assign.resize(nc)
+	var unpowered: int = 0
+	for ci in nc:
+		var p: Vector2 = _power_consumer_pos[ci]
+		var best: int = -1
+		var best_d2: float = INF
+		for gi in ng:
+			var d2: float = p.distance_squared_to(gpos[gi])
+			if d2 <= grad2[gi] and d2 < best_d2:
+				best_d2 = d2
+				best = gi
+		assign[ci] = best
+		if best >= 0:
+			gload[best] += _power_consumer_draw[ci]
+		else:
+			unpowered += 1
+	# Отношение мощности к нагрузке на каждом генераторе.
+	var geff: PackedFloat32Array = PackedFloat32Array()
+	geff.resize(ng)
+	var load_total: float = 0.0
+	var over: bool = false
+	for gi in ng:
+		var l: float = gload[gi]
+		var e: float = 1.0 if l <= 0.0 else clampf(gout[gi] / l, 0.0, 1.0)
+		geff[gi] = e
+		load_total += l
+		if l > gout[gi]:
+			over = true
+		_set_source_budget(gens[gi], l, e)
+	# Итог — потребителям, и только тем, у кого он сменился.
+	for ci in nc:
+		var a: int = assign[ci]
+		var st: float = geff[a] if a >= 0 else POWER_STATE_OFF
+		if st == _power_consumer_state[ci]:
+			continue
+		var c = _power_consumers[ci]
+		if not is_instance_valid(c):
+			stale = true
+			continue
+		_power_consumer_state[ci] = st
+		c.apply_power(a >= 0, st if a >= 0 else 0.0)
+	power_output_total = out_total
+	power_load_total = load_total
+	power_unpowered = unpowered
+	_set_brownout(over)
+	# Машину сняли/заменили — к следующему тику индекс будет свежим.
+	if stale:
+		_rebuild_power_index()
+	power_updated.emit()
+
+
+## Все ли потребители индекса на месте в мире.
+func _power_consumers_valid() -> bool:
+	for ci in _power_consumers.size():
+		var c = _power_consumers[ci]
+		if not is_instance_valid(c) or World.machines.get(_power_consumer_cells[ci]) != c:
+			return false
+	return true
+
+
+## Мощность источника сейчас (утиная типизация: см. _is_power_source).
+static func _source_output(s) -> float:
+	if s.has_method("current_output"):
+		return float(s.current_output())
+	return 0.0
+
+
+## Записать генератору его нагрузку и отношение мощности к нагрузке.
+static func _set_source_budget(s, p_load: float, p_eff: float) -> void:
+	if "power_load" in s:
+		s.power_load = p_load
+	if "efficiency" in s:
+		s.efficiency = p_eff
+
+
+func _set_brownout(on: bool) -> void:
+	if on == brownout:
+		return
+	brownout = on
+	brownout_changed.emit(on)
 
 
 ## Попытка запустить релей-ядро. Возвращает true, если запуск прошёл.
