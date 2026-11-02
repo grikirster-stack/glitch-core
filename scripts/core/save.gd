@@ -335,3 +335,24 @@ static func remove(s: String) -> void:
 	var dir: DirAccess = DirAccess.open("user://")
 	if dir != null and dir.file_exists(path_for(s).get_file()):
 		dir.remove(path_for(s).get_file())
+
+
+# ------------------------------------------------------------------ СЕТЬ (ADR-002, MP-C #88)
+## Вход в сетевую игру (§ 4.2.2, D4): хост шлёт снимок Save.encode(gather_join())
+## по каналу 0, клиент кладёт его в мир своего сида через apply_join(). Тот же
+## словарь, что у F5, без раздела player — герой клиента свой (MP-D ставит героев).
+
+## Хост: снимок мира для входа — всё, кроме героя.
+static func gather_join() -> Dictionary:
+	var d: Dictionary = gather()
+	d.erase("player")
+	return d
+
+
+## Клиент: снимок хоста поверх своего мира того же сида — apply() без героя и без
+## пересчёта питания (у клиента update_power_budget молчит: машины — марионетки).
+## false — снимок не подходит (last_error — почему).
+static func apply_join(d: Dictionary) -> bool:
+	var j: Dictionary = d.duplicate()
+	j.erase("player")
+	return apply(j)

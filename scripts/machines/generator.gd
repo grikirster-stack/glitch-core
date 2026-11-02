@@ -70,14 +70,17 @@ func _draw_power_ring(color: Color) -> void:
 	draw_arc(Vector2.ZERO, r, 0.0, TAU, 48, Color(color.r, color.g, color.b, 0.12), 2.0)
 
 
-## Лампа состояния: зелёная — норма, жёлтая — перегруз, красная — выключен.
+## Лампа состояния: бирюзовая — норма, жёлтая — перегруз, красная — выключен,
+## тёмная — включён, но не работает (нет угля / ночь).
 func _draw_status_lamp(pos: Vector2) -> void:
 	if not enabled:
-		draw_circle(pos, 1.8, Color(0.9, 0.25, 0.2))
+		_draw_lamp(pos, C_LAMP_OFF)
 	elif overloaded():
-		draw_circle(pos, 1.8, Color(1.0, 0.8, 0.2))
+		_draw_lamp(pos, C_HAZARD)
 	elif power_active:
-		draw_circle(pos, 1.8, Color(0.4, 1.0, 0.5))
+		_draw_lamp(pos, C_SCREEN_HI)
+	else:
+		_draw_lamp(pos, C_SCREEN)
 
 
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)

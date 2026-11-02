@@ -19,18 +19,19 @@ func reach() -> int:
 
 
 func _draw() -> void:
-	var base: Color = Color(0.30, 0.33, 0.42) if powered else Color(0.21, 0.23, 0.28)
-	draw_rect(Rect2(-8.0, -8.0, 16.0, 16.0), base)
-	draw_rect(Rect2(-8.0, -8.0, 16.0, 3.0), base.lightened(0.22))
-	# Усиленная рама: стальные косынки по углам.
-	var brace: Color = base.lightened(0.35)
-	draw_line(Vector2(-8.0, -5.0), Vector2(-5.0, -8.0), brace, 1.0)
-	draw_line(Vector2(8.0, -5.0), Vector2(5.0, -8.0), brace, 1.0)
-	draw_rect(Rect2(-8.0, 6.0, 16.0, 2.0), base.darkened(0.3))
-	# Сверло крупнее и светлее обычного.
-	_draw_bit(Color(0.70, 0.86, 0.98), 6.0)
-	# Двойной стержень: шахта идёт глубже.
-	var rod: Color = Color(0.58, 0.62, 0.70)
-	draw_line(Vector2(-2.0, 6.0), Vector2(-2.0, 15.0), rod, 2.0)
-	draw_line(Vector2(2.0, 6.0), Vector2(2.0, 15.0), rod, 2.0)
-	_draw_power_lamp(Vector2(5.0, -5.0))
+	_draw_body(BODY, powered, false)
+	# Усиленная рама: стальные косынки-квадраты по углам и жёлтая полоса
+	# во всю ширину внизу — «тяжёлая» машина.
+	draw_rect(Rect2(-8.0, -8.0, 3.0, 3.0), C_FRAME)
+	draw_rect(Rect2(5.0, -8.0, 3.0, 3.0), C_FRAME)
+	draw_rect(Rect2(-7.0, 5.0, 14.0, 2.0), C_HAZARD)
+	for k in 4:
+		draw_rect(Rect2(-6.0 + k * 4.0, 5.0, 2.0, 2.0), C_FRAME)
+	# Окно шире, шнек толще.
+	draw_rect(Rect2(-5.0, -4.0, 10.0, 9.0), C_FRAME)
+	draw_rect(Rect2(-4.0, -3.0, 8.0, 7.0), C_SCREEN)
+	_draw_auger(Rect2(-3.0, -3.0, 6.0, 7.0), C_BIO.lerp(C_METAL_HI, 0.5))
+	# Двойная штанга: шахта идёт глубже.
+	_draw_auger(Rect2(-3.0, 8.0, 2.0, 7.0), C_METAL_D)
+	_draw_auger(Rect2(1.0, 8.0, 2.0, 7.0), C_METAL_D)
+	_draw_power_lamp(Vector2(6.0, -6.0))

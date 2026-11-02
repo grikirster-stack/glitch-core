@@ -155,33 +155,37 @@ func _dir_cell() -> Vector2i:
 func _draw() -> void:
 	var d: Vector2 = Vector2(_dir_cell())
 	var side: Vector2 = Vector2(-d.y, d.x)
-	var base: Color = Color(0.40, 0.34, 0.24) if powered else Color(0.27, 0.24, 0.19)
-	# Основание: плита с полосой «откуда» (тёмная) и «куда» (светлая).
-	draw_rect(Rect2(-6.0, -6.0, 12.0, 12.0), base)
-	draw_line(-d * 6.0 - side * 5.0, -d * 6.0 + side * 5.0, base.darkened(0.35), 2.0)
-	draw_line(d * 6.0 - side * 5.0, d * 6.0 + side * 5.0, Color(0.85, 0.72, 0.3), 2.0)
+	# Основание: кремовая плита с полосой «откуда» (рама) и «куда» (жёлтая).
+	_draw_body(Rect2(-6.0, -6.0, 12.0, 12.0), powered, false)
+	var p0: Vector2 = -d * 4.0 - side * 5.0
+	var p1: Vector2 = -d * 6.0 + side * 5.0
+	draw_rect(Rect2(p0.min(p1), (p1 - p0).abs()), C_FRAME)
+	p0 = d * 4.0 - side * 5.0
+	p1 = d * 6.0 + side * 5.0
+	draw_rect(Rect2(p0.min(p1), (p1 - p0).abs()), C_HAZARD)
 	# Рука: поворачивается от источника (сзади) через верх к приёмнику (спереди).
 	var a0: float = (-d).angle()
 	var swing: float = progress if held != IDs.I.NONE else 0.0
 	var turn_sign: float = 1.0 if side.y > 0.0 else -1.0   ## переносим «над» основанием
 	var ang: float = a0 + turn_sign * PI * swing
 	var hand: Vector2 = Vector2(cos(ang), sin(ang)) * 7.0
-	var arm: Color = Color(0.80, 0.62, 0.30)
+	# Рука — механизм, она поворачивается; шарнир и захват — квадраты по сетке.
+	var arm: Color = C_FRAME if powered else C_FRAME.darkened(0.2)
 	draw_line(Vector2.ZERO, hand, arm, 2.0)
-	draw_circle(Vector2.ZERO, 2.2, arm.darkened(0.3))
-	# Захват: две губки поперёк руки.
-	var hd: Vector2 = hand.normalized()
-	var hs: Vector2 = Vector2(-hd.y, hd.x)
-	draw_line(hand - hs * 2.0, hand + hs * 2.0 + hd, arm.lightened(0.2), 1.5)
+	draw_rect(Rect2(-2.0, -2.0, 4.0, 4.0), C_METAL_D)
+	draw_rect(Rect2(-1.0, -1.0, 2.0, 2.0), C_FRAME)
+	# Захват: квадрат 3×3 на конце руки (жёлтый — видно, где он).
+	var hp: Vector2 = hand.round()
+	draw_rect(Rect2(hp - Vector2(1.0, 1.0), Vector2(3.0, 3.0)), C_HAZARD)
 	if held != IDs.I.NONE:
 		var tex: ImageTexture = DB.item_texture(held)
 		if tex:
-			draw_texture_rect(tex, Rect2(hand - Vector2(4, 4), Vector2(8, 8)), false)
+			draw_texture_rect(tex, Rect2(hp - Vector2(4, 4), Vector2(8, 8)), false)
 	# Фильтр — квадратик цвета предмета в углу.
 	if filter != IDs.I.NONE:
 		draw_rect(Rect2(-8.0, -8.0, 4.0, 4.0), DB.item_color(filter))
-		draw_rect(Rect2(-8.0, -8.0, 4.0, 4.0), Color(0, 0, 0, 0.6), false, 1.0)
-	draw_circle(Vector2(5.5, -5.5), 1.4, Color(0.4, 1.0, 0.5) if powered else Color(0.9, 0.25, 0.2))
+		draw_rect(Rect2(-8.0, -8.0, 4.0, 4.0), C_FRAME, false, 1.0)
+	_draw_lamp(Vector2(6.0, -6.0), C_SCREEN_HI if powered else C_LAMP_OFF)
 
 
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)

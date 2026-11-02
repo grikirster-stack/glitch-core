@@ -7,6 +7,9 @@ extends MachineBase
 ## клеток) через публичный World.add_light_source. При просадке сети или без
 ## питания гаснет. Эхо и копатель от такого света убегают; тень идёт его бить.
 
+## Линза, когда светит, — тёплый свет фонаря (`lamp` концепта ADR-003, в DB.PAL его нет).
+const LENS_LIT: Color = Color("#FFE7A0")
+
 var lit: bool = false
 var _light: Dictionary = {}
 
@@ -49,24 +52,24 @@ func _exit_tree() -> void:
 
 
 func _draw() -> void:
-	var base: Color = Color(0.36, 0.38, 0.42) if powered else Color(0.25, 0.26, 0.29)
-	# Стойка и основание
-	draw_rect(Rect2(-6.0, 5.0, 12.0, 3.0), base.darkened(0.2))
-	draw_rect(Rect2(-1.5, -1.0, 3.0, 6.0), base)
-	# Корпус фары
-	draw_rect(Rect2(-7.0, -8.0, 14.0, 8.0), base)
-	draw_rect(Rect2(-7.0, -8.0, 14.0, 1.5), base.lightened(0.22))
-	# Линза: тёплая, когда светит
-	var lens: Color = Color(1.0, 0.94, 0.62) if lit else Color(0.30, 0.31, 0.30)
-	draw_rect(Rect2(-5.5, -6.5, 11.0, 5.0), lens)
+	# Основание с разметкой и стойка
+	_draw_body(Rect2(-6.0, 5.0, 12.0, 3.0), powered, false)
+	draw_rect(Rect2(-5.0, 6.0, 2.0, 1.0), C_HAZARD)
+	draw_rect(Rect2(-1.0, -1.0, 2.0, 6.0), C_METAL_D)
+	# Корпус фары — кремовый короб в раме
+	_draw_body(Rect2(-7.0, -8.0, 14.0, 8.0), powered, false)
+	# Линза: тёплый свет фонаря, когда светит; без света — тёмное стекло
+	draw_rect(Rect2(-6.0, -6.0, 12.0, 5.0), C_FRAME)
+	draw_rect(Rect2(-5.0, -5.0, 10.0, 3.0), LENS_LIT if lit else C_SCREEN)
 	if lit:
-		draw_rect(Rect2(-4.5, -5.5, 3.0, 2.0), Color(1.0, 1.0, 0.9))
-		draw_circle(Vector2(0.0, -4.0), 9.0, Color(1.0, 0.9, 0.55, 0.12))
-	# Лампочка питания
-	var lamp: Color = Color(0.9, 0.25, 0.2)
+		draw_rect(Rect2(-4.0, -5.0, 3.0, 1.0), C_METAL_HI)
+		# Ореол — квадратный, полупрозрачный
+		draw_rect(Rect2(-9.0, -12.0, 18.0, 16.0), Color(LENS_LIT, 0.12))
+	# Лампочка питания: бирюзовая — светит, жёлтая — питания мало, красная — нет
+	var lamp: Color = C_LAMP_OFF
 	if powered:
-		lamp = Color(0.4, 1.0, 0.5) if lit else Color(1.0, 0.8, 0.2)
-	draw_circle(Vector2(5.0, 6.5), 1.3, lamp)
+		lamp = C_SCREEN_HI if lit else C_HAZARD
+	_draw_lamp(Vector2(4.0, 6.0), lamp)
 
 
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)

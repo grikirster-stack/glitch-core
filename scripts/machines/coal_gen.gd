@@ -8,6 +8,8 @@ extends Generator
 const BURN: float = Balance.COAL_BURN   ## секунд горения одной единицы угля
 const FUEL_VALUE: int = 1
 const FUEL_MAX_UNITS: int = 12          ## сколько угля помещается в топку
+## Дым ТЭЦ — сиреневые споры (ADR-003 § 4.1; `fl2` концепта, в DB.PAL его нет).
+const SPORE_SMOKE: Color = Color("#DCCDEA")
 
 var fuel: float = 0.0
 
@@ -72,22 +74,41 @@ func _on_interact(p) -> void:
 
 func _draw() -> void:
 	var hot: bool = power_active
-	var base: Color = Color(0.30, 0.30, 0.34)
-	draw_rect(Rect2(-8.0, -8.0, 16.0, 16.0), base)
-	draw_rect(Rect2(-8.0, -8.0, 16.0, 2.0), base.lightened(0.2))
-	# Топка
-	var glow: float = 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.01)
-	var c: Color = Color(0.95, 0.45, 0.12) if hot else Color(0.22, 0.20, 0.20)
+	var t: float = Time.get_ticks_msec() * 0.001
+	_draw_body(BODY, true)
+	# Мох: ТЭЦ стоит давно — лишайник затянул левый верхний угол и бок.
+	draw_rect(Rect2(-8.0, -9.0, 6.0, 2.0), C_LICHEN)
+	draw_rect(Rect2(-8.0, -7.0, 2.0, 5.0), C_LICHEN)
+	draw_rect(Rect2(-7.0, -10.0, 1.0, 1.0), C_LICHEN_HI)
+	draw_rect(Rect2(-4.0, -10.0, 1.0, 1.0), C_LICHEN_HI)
+	draw_rect(Rect2(-8.0, -3.0, 1.0, 2.0), C_LICHEN_HI)
+	# Труба над корпусом: рама-бандаж и блик.
+	draw_rect(Rect2(2.0, -12.0, 4.0, 8.0), C_METAL_D)
+	draw_rect(Rect2(2.0, -12.0, 4.0, 1.0), C_METAL_HI)
+	draw_rect(Rect2(2.0, -9.0, 4.0, 1.0), C_FRAME)
+	# Топка в раме: в работе светится лавовым и мерцает, колосники поверх.
+	draw_rect(Rect2(-5.0, -2.0, 10.0, 7.0), C_FRAME)
+	var c: Color = C_SOOT
 	if hot:
-		c = c.lerp(Color(1.0, 0.85, 0.4), glow * 0.5)
-	draw_rect(Rect2(-5.0, 0.0, 10.0, 6.0), c)
-	# Труба
-	draw_rect(Rect2(4.0, -8.0, 3.0, 9.0), Color(0.38, 0.40, 0.44))
-	_draw_status_lamp(Vector2(-5.0, -5.0))
+		c = C_LAVA.lerp(C_LAVA_HI, (0.5 + 0.5 * sin(t * 10.0)) * 0.5)
+	draw_rect(Rect2(-4.0, -1.0, 8.0, 5.0), c)
+	if hot:
+		draw_rect(Rect2(-3.0, 1.0, 6.0, 2.0), C_LAVA_HI)
+	draw_rect(Rect2(-2.0, -1.0, 1.0, 5.0), C_FRAME)
+	draw_rect(Rect2(1.0, -1.0, 1.0, 5.0), C_FRAME)
+	# Шкала топлива справа от топки: доля текущей единицы угля, снизу вверх.
 	if fuel > 0.0:
-		# Индикатор топлива
-		draw_rect(Rect2(-8.0, -13.0, 16.0, 2.0), Color(0, 0, 0, 0.6))
-		draw_rect(Rect2(-8.0, -13.0, 16.0 * clampf(fuel / BURN, 0.0, 1.0), 2.0), Color(1.0, 0.7, 0.2))
+		var f: float = roundf(5.0 * clampf(fuel / BURN, 0.0, 1.0))
+		draw_rect(Rect2(5.0, -1.0, 2.0, 5.0), C_SOOT)
+		draw_rect(Rect2(5.0, 4.0 - f, 2.0, f), C_LAVA_HI)
+	_draw_status_lamp(Vector2(-4.0, -5.0))
+	# Дым — сиреневые споры квадратами, поднимаются и тают.
+	if hot:
+		for k in 3:
+			var p: float = fmod(t * 0.7 + float(k) / 3.0, 1.0)
+			var sz: float = 2.0 + float(k)
+			draw_rect(Rect2(roundf(3.0 + p * 4.0 - sz * 0.5 + 1.0), roundf(-14.0 - p * 12.0), sz, sz),
+					Color(SPORE_SMOKE, 0.6 * (1.0 - p)))
 
 
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)

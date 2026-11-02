@@ -1117,6 +1117,8 @@ func _process(delta: float) -> void:
 ## которыми что-то изменилось. Очередь обычно пуста — вода стоит смирно,
 ## пока игрок не выкопает яму.
 func _fluid_tick() -> void:
+	if not Net.is_authority():   # СЕТЬ (ADR-002, D5): вода считается только на хосте
+		return
 	if _fluid_queue.is_empty():
 		return
 	var t0: int = Time.get_ticks_usec()
@@ -1276,6 +1278,8 @@ func fluid_pending() -> int:
 ## Обновляет тайл и картинку клетки по текущему уровню воды.
 func _set_fluid_cell(x: int, y: int) -> void:
 	var idx: int = y * W + x
+	if _net_track:   # СЕТЬ (ADR-002): уровень клетки — в батч хоста
+		_net_mark_fluid(idx)
 	# Одна порция — плёнка в полклетки: её не видно, клетка остаётся воздухом.
 	var id: int = IDs.T.WATER if fluid[idx] >= FLUID_VISIBLE else IDs.T.AIR
 	var old: int = tiles[idx]
@@ -1336,6 +1340,8 @@ func set_tile(x: int, y: int, id: int) -> void:
 	_update_astar(x, y)
 	_update_lights_around(x, y)
 	_defense_on_set_tile(Vector2i(x, y), id)
+	if _net_track:   # СЕТЬ (ADR-002): клетка — в батч хоста
+		_net_mark_tile(idx)
 
 
 func is_solid_cell(c: Vector2i) -> bool:
@@ -1538,6 +1544,8 @@ func _defense_on_set_tile(c: Vector2i, id: int) -> void:
 
 
 func _defense_tick(delta: float) -> void:
+	if not Net.is_authority():   # СЕТЬ (ADR-002): шлюзы и решётки — на хосте, тайлы приходят батчем
+		return
 	if airlocks.is_empty() and vents_sealed.is_empty():
 		_defense_t = 0.0
 		return
@@ -1607,6 +1615,8 @@ func _set_airlock(c: Vector2i, open: bool) -> void:
 	if tiles[idx] == id:
 		return
 	tiles[idx] = id
+	if _net_track:   # СЕТЬ (ADR-002): клетка — в батч хоста
+		_net_mark_tile(idx)
 	if tilemap:
 		_set_cell_visual(c.x, c.y, id)
 	Sfx.play_at("place", cell_to_world(c), -18.0, 0.7 if open else 0.55)
@@ -2284,3 +2294,91 @@ func load_state(d: Dictionary) -> bool:
 	_explore_cell = Vector2i(-9999, -9999)
 	explored_reset.emit()
 	return true
+
+
+# ------------------------------------------------------------ СЕТЬ (ADR-002, MP-C #88)
+## Мир по сети (scripts/net/net_world.gd, § 4.2.1, D5). На хосте крюки set_tile,
+## _set_airlock и _set_fluid_cell отмечают клетку «грязной» (флаг + список, без
+## повторов); NetWorld раз в сетевой такт забирает списки и шлёт текущие значения
+## батчем. Уровень воды отмечается и правкой тайла: set_tile сам меняет fluid.
+## У клиента клетки ставятся net_apply_* — вода и оборона у него не считаются
+## (Net.is_authority() в _fluid_tick и _defense_tick). В одиночной игре и у клиента
+## _net_track = false: крюк — одно сравнение, поведение прежнее.
+
+var _net_track: bool = false
+var _net_tile_flag: PackedByteArray = PackedByteArray()
+var _net_fluid_flag: PackedByteArray = PackedByteArray()
+var _net_tiles: PackedInt32Array = PackedInt32Array()
+var _net_fluid: PackedInt32Array = PackedInt32Array()
+
+
+## Хост: включить/выключить учёт изменённых клеток (списки очищаются).
+func net_track(on: bool) -> void:
+	_net_track = on
+	_net_tile_flag.resize(W * H)
+	_net_tile_flag.fill(0)
+	_net_fluid_flag.resize(W * H)
+	_net_fluid_flag.fill(0)
+	_net_tiles = PackedInt32Array()
+	_net_fluid = PackedInt32Array()
+
+
+func _net_mark_tile(idx: int) -> void:
+	if _net_tile_flag[idx] == 0:
+		_net_tile_flag[idx] = 1
+		_net_tiles.append(idx)
+	_net_mark_fluid(idx)
+
+
+func _net_mark_fluid(idx: int) -> void:
+	if _net_fluid_flag[idx] == 0:
+		_net_fluid_flag[idx] = 1
+		_net_fluid.append(idx)
+
+
+## Хост: забрать изменённые с прошлого раза клетки {tiles, fluid} (индексы y·W + x).
+func net_take_dirty() -> Dictionary:
+	var t: PackedInt32Array = _net_tiles
+	var f: PackedInt32Array = _net_fluid
+	_net_tiles = PackedInt32Array()
+	_net_fluid = PackedInt32Array()
+	for i in t:
+		_net_tile_flag[i] = 0
+	for i in f:
+		_net_fluid_flag[i] = 0
+	return {"tiles": t, "fluid": f}
+
+
+## Клиент: тайлы из батча хоста. Шлюз открывается/закрывается своим путём (картинка
+## и звук, без пересчёта пути и света) — как у хоста.
+func net_apply_tiles(idx: PackedInt32Array, val: PackedByteArray) -> void:
+	var n: int = W * H
+	for k in idx.size():
+		var i: int = idx[k]
+		if i < 0 or i >= n:
+			continue
+		var id: int = val[k]
+		var old: int = tiles[i]
+		if old == id or id >= IDs.TILE_COUNT:
+			continue
+		var x: int = i % W
+		var y: int = int(i / W)
+		var lock_old: bool = old == IDs.T.AIRLOCK or old == IDs.T.AIRLOCK_OPEN
+		var lock_new: bool = id == IDs.T.AIRLOCK or id == IDs.T.AIRLOCK_OPEN
+		if lock_old and lock_new:
+			_set_airlock(Vector2i(x, y), id == IDs.T.AIRLOCK_OPEN)
+		else:
+			set_tile(x, y, id)
+
+
+## Клиент: уровни воды из батча хоста. Тайл воды/воздуха выводится из уровня тем же
+## правилом, что у хоста (_set_fluid_cell), и только в клетке, куда вода течёт.
+func net_apply_fluid(idx: PackedInt32Array, val: PackedByteArray) -> void:
+	var n: int = W * H
+	for k in idx.size():
+		var i: int = idx[k]
+		if i < 0 or i >= n:
+			continue
+		fluid[i] = mini(int(val[k]), FLUID_MAX)
+		if _fluid_open(tiles[i]):
+			_set_fluid_cell(i % W, int(i / W))
