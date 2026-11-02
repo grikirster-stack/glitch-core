@@ -59,6 +59,7 @@ func _start() -> void:
 
 	player = Player.new()
 	player.look = int(Net.local_profile.get("look", 0)) & 0xFFFF   # вид из профиля (MP-B, #87)
+	_net_hero(player)   # СЕТЬ (ADR-002): роль своего героя — до _ready (камера только у своего)
 	player.add_to_group("player")
 	add_child(player)
 	player.global_position = World.spawn_point
@@ -77,11 +78,7 @@ func _start() -> void:
 	_setup_respawn()
 	add_child(TouchControls.new())   # сенсорное управление (#81): сенсорный экран или --touch
 
-	# Стартовый набор
-	player.inv.add(IDs.I.LAMP, 3)
-	player.inv.add(IDs.I.COAL, 6)
-	player.inv.add(IDs.I.IRON_PLATE, 2)
-	player.inv.add(IDs.I.COPPER_ORE, 4)
+	give_starter_kit(player)
 
 	Game.notify("Экспедиция «Кербер-9». Связь с орбитой потеряна.", Color(0.8, 0.9, 1.0))
 	Game.notify("Цель: собрать релей-ядро и улететь. Начните с добычи руды.", Color(0.5, 0.95, 0.8))
@@ -102,6 +99,14 @@ func _start() -> void:
 		srunner.start(self, scenarios)
 
 	_net_start()   # СЕТЬ (ADR-002): --mp-host, сетевые сценарии --mp-scenario
+
+
+## Стартовый набор героя (свой и, в сети, каждого товарища — MP-D, #89).
+func give_starter_kit(p: Player) -> void:
+	p.inv.add(IDs.I.LAMP, 3)
+	p.inv.add(IDs.I.COAL, 6)
+	p.inv.add(IDs.I.IRON_PLATE, 2)
+	p.inv.add(IDs.I.COPPER_ORE, 4)
 
 
 ## Имена сценариев из --scenario=walk,mining
@@ -184,6 +189,9 @@ func _setup_respawn() -> void:
 func _on_player_died() -> void:
 	if hardcore:
 		Game.set_state(Game.State.DEAD)
+		return
+	if not Net.is_authority():   # СЕТЬ (ADR-002): героя клиента возрождает хост (net_respawned)
+		end_screen.show_death(Lore.epitaph(), Balance.MP_RESPAWN_DELAY)
 		return
 	end_screen.show_death(Lore.epitaph(), Balance.RESPAWN_DELAY)
 	get_tree().create_timer(Balance.RESPAWN_DELAY).timeout.connect(_respawn)
@@ -279,6 +287,7 @@ func _on_net_ended(reason: String) -> void:
 
 ## Мир готов: --mp-host поднимает сервер, --mp-scenario запускает харнесс.
 func _net_start() -> void:
+	_net_players_start()
 	if _net.has("scenario"):
 		scenario_mode = true
 		Game.scenario_mode = true   # фантомов, как и в --scenario, создаёт сам сценарий
@@ -298,3 +307,36 @@ func _net_runner() -> void:
 	var r: MpRunner = MpRunner.new()
 	add_child(r)
 	r.start_mp(self, _net)
+
+
+# ------------------------------------------------- СЕТЬ: ИГРОКИ (ADR-002 § 4.2.3, MP-D #89)
+## Герои по пирам ведёт NetPlayers (scripts/net/net_players.gd): прокси у хоста,
+## марионетки у клиента. Без сети узла нет, свой герой — LOCAL, всё как раньше.
+var net_players: NetPlayers = null
+
+
+## Свой герой: LOCAL (одиночная, хост) или OWNER (клиент); Game.players — все герои.
+func _net_hero(p: Player) -> void:
+	p.net_role = Player.NetRole.OWNER if Net.is_client() else Player.NetRole.LOCAL
+	p.peer_id = Net.my_id()
+	p.nick = String(Net.session.get("nick", Net.local_profile.get("nick", "")))
+	p.net_respawned.connect(_on_net_respawned)
+	Game.local_player = p
+	Game.players = [p]
+
+
+## Сеть есть или будет (--mp-host, --mp-scenario): NetPlayers следит за сессией сам.
+func _net_players_start() -> void:
+	if net_players != null:
+		return
+	if not (Net.is_online() or _net.has("scenario") or _net.has("host_port")):
+		return
+	net_players = NetPlayers.new()
+	add_child(net_players)
+	net_players.start(self)
+
+
+## Хост возродил своего героя клиента (OWN): экран смерти прочь.
+func _on_net_respawned() -> void:
+	if end_screen != null:
+		end_screen.hide_end()

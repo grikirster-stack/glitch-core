@@ -50,10 +50,7 @@ const MAP_CHECK_SEC: float = 1.0
 ## Подсказку пересчитываем и без движения игрока — постройку могли поставить
 ## или снять прямо под ним.
 const HINT_RECHECK_SEC: float = 0.25
-## Радиусы подсказок, px (как раньше).
-const HINT_TERMINAL_DIST: float = 42.0
-const HINT_BEACON_DIST: float = 56.0
-const HINT_MACHINE_DIST: float = 40.0
+## Радиусы подсказок — радиусы E у героя (Player.E_*): цель выбирает Player.interact_target.
 ## Трекер цели, обучение и выбор генератора пересчитываются так часто, с.
 const STATE_RECHECK_SEC: float = 0.25
 ## Окно поиска «ближайшего» генератора вокруг игрока, клеток: по горизонтали —
@@ -112,6 +109,8 @@ const HINT_GEN_SWITCH: String = "[E] — рубильник ТЭЦ (вкл/вы�
 const HINT_SOLAR_SWITCH: String = "[E] — рубильник генератора (вкл/выкл)"
 const HINT_INSERTER: String = "ПКМ — повернуть манипулятор · [E] с предметом — фильтр"
 const HINT_HIDING: String = "Вы в вентиляции. [V] — вылезть"
+const HINT_REPAIR: String = "[E] — починить хламом (удерживать)"
+const HINT_LOAD: String = "[E] — загрузить в постройку"
 
 ## Цепочка обучения: шаги по порядку, TUT_DONE — пройдена (строка скрыта).
 enum Tut { DIG, CRAFT, PLACE, POWER, TERMINAL, DONE }
@@ -370,65 +369,37 @@ func _set_hint(h: String) -> void:
 	_hint_hash = h.hash()
 
 
-func _compute_hint(pos: Vector2) -> String:
+func _compute_hint(_pos: Vector2) -> String:
 	_hint_target = Rect2()
 	if player.hiding:
 		return HINT_HIDING
-	# Генератор под курсором — раньше терминала: E уходит туда, куда наведён
-	# курсор (см. player._do_interact). Иначе подсказка терминала «нет
-	# питания» перехватывала подсказку ТЭЦ, поставленного вплотную к нему.
-	var aimed = World.machines.get(player.building_cell)
-	if aimed is Generator and aimed.global_position.distance_to(pos) < 40.0:
-		return generator_hint(aimed)
-	# Только клетки в радиусе подсказки, а не все постройки мира.
-	var r: int = int(ceil(HINT_MACHINE_DIST / float(World.TILE))) + 1
-	var pc: Vector2i = World.world_to_cell(pos)
-	# Ближайший сундук и ближайший терминал: E достаётся тому, что ближе
-	# (см. player._do_interact). Терминал руины стоит в 36 px от её тайника —
-	# раньше подсказка терминала перехватывала подсказку тайника.
-	var chest_cell: Vector2i = Vector2i(-1, -1)
-	var chest_d: float = HINT_MACHINE_DIST
-	for dy in range(-r, r + 1):
-		for dx in range(-r, r + 1):
-			var m = World.machines.get(pc + Vector2i(dx, dy))
-			if m == null or not is_instance_valid(m) or not (m is Chest):
-				continue
-			var cd: float = m.global_position.distance_to(pos)
-			if cd >= HINT_MACHINE_DIST or cd >= chest_d:
-				continue
-			chest_d = cd
-			chest_cell = m.cell
-	var term_cell: Vector2i = Vector2i(-1, -1)
-	var term_d: float = HINT_TERMINAL_DIST
-	for t in World.terminals:
-		var td: float = World.cell_to_world(t).distance_to(pos)
-		if td < term_d:
-			term_d = td
-			term_cell = t
-	if chest_cell.x >= 0 and (term_cell.x < 0 or chest_d < term_d):
-		_hint_target = _cell_rect(chest_cell)
-		return HINT_CHEST
-	if term_cell.x >= 0:
-		var th: String = terminal_hint(term_cell)
-		if th == HINT_TERMINAL:     # без питания E не работает — и рамки нет
-			_hint_target = _cell_rect(term_cell)
-		return th
-	if World.cell_to_world(World.beacon_cell).distance_to(pos) < HINT_BEACON_DIST:
-		_hint_target = _cell_rect(World.beacon_cell)
+	# Цель E выбирает сам герой (Player.interact_target, #116): подсказка и рамка
+	# — у того объекта, который сработает по E (под курсором, иначе ближайший).
+	# Питание терминалов — через кэш HUD (_terminal_powered).
+	var tg: Dictionary = player.interact_target(_terminal_powered)
+	if tg.is_empty():
+		return ""
+	# Виды цели — константы Player.ET_*, через экземпляр (класс Player здесь не
+	# называем — цикл зависимостей).
+	var kind: String = String(tg["kind"])
+	if kind == player.ET_TERMINAL_OFF:
+		return HINT_TERMINAL_NO_POWER   # без питания E не работает — и рамки нет
+	_hint_target = _cell_rect(tg["cell"])
+	if kind == player.ET_GENERATOR:
+		return generator_hint(tg["node"])
+	if kind == player.ET_TERMINAL:
+		return HINT_TERMINAL
+	if kind == player.ET_BEACON:
 		return HINT_BEACON
-	for dy2 in range(-r, r + 1):
-		for dx2 in range(-r, r + 1):
-			var m2 = World.machines.get(pc + Vector2i(dx2, dy2))
-			if m2 == null or not is_instance_valid(m2):
-				continue
-			if m2.global_position.distance_to(pos) >= HINT_MACHINE_DIST:
-				continue
-			if m2 is Generator:
-				_hint_target = _cell_rect(m2.cell)
-				return generator_hint(m2)
-			if m2 is Inserter:
-				_hint_target = _cell_rect(m2.cell)
-				return HINT_INSERTER
+	if kind == player.ET_INSERTER:
+		return HINT_INSERTER
+	if kind == player.ET_CHEST:
+		return HINT_CHEST
+	if kind == player.ET_REPAIR:
+		return HINT_REPAIR
+	if kind == player.ET_LOAD:
+		return HINT_LOAD
+	_hint_target = Rect2()
 	return ""
 
 
