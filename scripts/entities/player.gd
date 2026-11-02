@@ -399,6 +399,9 @@ func _do_place(cell: Vector2i) -> void:
 		return
 	if place.begins_with("tile:"):
 		var tid: int = int(place.substr(5))
+		if not World.tile_place_ok(cell, tid):   # решётка — только на вентиляцию (#31)
+			Game.notify("Решётку ставят на вентиляцию.", Color(1.0, 0.6, 0.5))
+			return
 		World.set_tile(cell.x, cell.y, tid)
 		inv.remove_at(inv.selected, 1)
 		Sfx.play("place", -10.0)
