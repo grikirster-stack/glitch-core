@@ -1,6 +1,7 @@
 extends Node
 ## Автотест игровой логики: копание, подбор, крафт, конвейер, питание, фантомы, релей.
-## Плюс секция «== Анимации ==» — общий код из tools/anim_test.gd (issue #6).
+## Плюс секция «== Анимации ==» — общий код из tools/anim_test.gd (issue #6)
+## и секция «== Индекс питания ==» — общий код из tools/power_test.gd (issue #11).
 ## Запускается из main.gd флагом `--test`.
 ##
 ## Все паузы отсчитываются по реальному времени, а не по кадрам: в headless-режиме
@@ -9,6 +10,8 @@ extends Node
 ## Общий код проверок анимаций: тот же самый, что и в отдельном
 ## tools/anim_test.gd (issue #6). Дублирования нет — файл подключается один раз.
 const AnimTestScript = preload("res://tools/anim_test.gd")
+## Общий код регрессий индекса питания: tools/power_test.gd (issue #11).
+const PowerTestScript = preload("res://tools/power_test.gd")
 
 var scene: Node = null
 var step: int = 0
@@ -16,6 +19,7 @@ var player: Node = null
 var fails: int = 0
 var checks: int = 0
 var anim: Node = null
+var power: Node = null
 
 var _wait_until_ms: int = 0
 
@@ -73,7 +77,9 @@ func _process(_delta: float) -> void:
 		11: _t_relay()
 		12: _t_anim_start()
 		13: _t_anim_wait()
-		14: _t_finish()
+		14: _t_power_start()
+		15: _t_power_wait()
+		16: _t_finish()
 
 
 func _ok(label: String, cond: bool, extra: String = "") -> void:
@@ -380,6 +386,27 @@ func _t_anim_wait() -> void:
 		anim.queue_free()
 		anim = null
 		_next(14, 0.2)
+
+
+func _t_power_start() -> void:
+	# Секция «== Индекс питания ==»: те же проверки, что и в tools/power_test.gd.
+	# Общий код — дублирования нет.
+	power = PowerTestScript.Runner.new(self)
+	add_child(power)
+	power.start(scene)
+	_next(15, 0.2)
+
+
+func _t_power_wait() -> void:
+	if power == null:
+		_next(16)
+		return
+	if power.done:
+		checks += power.checks
+		fails += power.fails
+		power.queue_free()
+		power = null
+		_next(16, 0.2)
 
 
 func _t_finish() -> void:
