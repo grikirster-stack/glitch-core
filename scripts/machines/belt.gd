@@ -43,6 +43,32 @@ func add_item(item_id: int, count: int) -> bool:
 	return false
 
 
+## Приём «как у станка» (для манипулятора, #30): 0 — принято всё.
+func receive_item(item_id: int, count: int) -> int:
+	return 0 if add_item(item_id, count) else count
+
+
+## Снять с ленты один предмет для манипулятора (#30): ближайший к концу ленты,
+## подходящий под filter (NONE — любой) и accepts (пустой Callable — любой).
+## Возвращает id снятого предмета или IDs.I.NONE.
+func take_front(filter: int = IDs.I.NONE, accepts: Callable = Callable()) -> int:
+	for i in items.size():
+		var it: Dictionary = items[i]
+		var id: int = int(it["id"])
+		if filter != IDs.I.NONE and id != filter:
+			continue
+		if accepts.is_valid() and not bool(accepts.call(id)):
+			continue
+		var left: int = int(it["count"]) - 1
+		if left <= 0:
+			items.remove_at(i)
+		else:
+			it["count"] = left
+		queue_redraw()
+		return id
+	return IDs.I.NONE
+
+
 func _process(delta: float) -> void:
 	super(delta)
 	if items.is_empty():
