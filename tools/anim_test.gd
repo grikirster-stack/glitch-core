@@ -30,8 +30,8 @@ const RING_TTL: float = 0.7
 const SLASH_TTL: float = 0.22
 ## Частиц на один вызов spawn_chip.
 const CHIP_COUNT: int = 4
-## Предел числа живых копий фантома (issue #15).
-const PHANTOM_LIMIT: int = 12
+## Предел числа живых копий фантома (issue #15) — Balance.MAX_PHANTOMS (16 с #27).
+const PHANTOM_LIMIT: int = 16
 ## Порог шума, выше которого фантом начинает слышать игрока (phantom.gd).
 const PHANTOM_NOISE: float = 28.0
 ## Ниже этого порога тайл считается «мягким»: его реально выкопать за пару секунд.

@@ -1,16 +1,15 @@
 extends Node2D
-## Точка входа: генерация мира, игрок, волны фантомов, световой цикл.
+## Точка входа: генерация мира, игрок, световой цикл. Волны фантомов ведёт Threat (#27).
 
 var player: Player
 var world_fx: WorldFX
 var tint: CanvasModulate
 var end_screen: EndScreen
-var spawn_timer: float = 4.0
 var wave: int = 0
 var seed_value: int = 0
 var _shot_taken: bool = false
 var _args: PackedStringArray = PackedStringArray()
-## Режим сценария: волны фантомов не идут, их создаёт сам сценарий.
+## Режим сценария: директор угрозы молчит, фантомов создаёт сам сценарий.
 var scenario_mode: bool = false
 
 
@@ -36,6 +35,7 @@ func _ready() -> void:
 		return
 
 	Game.reset_run()
+	Threat.reset()
 	World.generate(seed_value)
 	Game.tasks_total = World.terminals.size()
 
@@ -81,7 +81,7 @@ func _ready() -> void:
 	# Игровые сценарии: godot --path . -- --scenario=walk,mining
 	if not scenarios.is_empty():
 		scenario_mode = true
-		Game.scenario_mode = true   # директор угрозы (#27) читает флаг отсюда
+		Game.scenario_mode = true   # директор угрозы (Threat) читает флаг отсюда
 		var srunner: ScenarioRunner = ScenarioRunner.new()
 		add_child(srunner)
 		srunner.start(self, scenarios)
@@ -107,68 +107,16 @@ func _print_scenarios() -> void:
 		print("  %-16s %s" % [name, ScenarioRunner.scenario_desc(name)])
 
 
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
 	if tint == null:
 		return
 	# Световой цикл
 	var dl: float = Game.daylight()
 	tint.color = Color(0.26, 0.30, 0.50).lerp(Color(1.0, 1.0, 1.0), dl)
 
-	if Game.state == Game.State.PLAYING:
-		_update_waves(delta)
-
 	if _args.has("--shot") and not _shot_taken and Game.game_time > 2.0:
 		_shot_taken = true
 		_take_screenshot()
-
-
-func _update_waves(delta: float) -> void:
-	# В сценариях фантомов создаёт сам сценарий: иначе проверки недетерминированы.
-	if scenario_mode:
-		return
-	var alive: int = get_tree().get_nodes_in_group("phantom").size()
-	Game.phantoms_alive = alive
-	var cap: int = 0
-	if Game.is_night():
-		cap = 1 + Game.day_number
-	if Game.relay_active:
-		cap = maxi(cap, 5)
-	if cap == 0:
-		return
-	spawn_timer -= delta
-	if spawn_timer <= 0.0 and alive < cap:
-		spawn_timer = 3.5 if Game.relay_active else 6.0
-		_spawn_phantom()
-
-
-func _spawn_phantom() -> void:
-	var cell: Vector2i = _find_spawn_cell()
-	if cell.x < 0:
-		return
-	var p: Phantom = Phantom.new()
-	p.player = player
-	add_child(p)
-	p.global_position = World.cell_to_world(cell)
-	p.spawn_point = p.global_position
-	if Game.is_night():
-		Sfx.play("alarm", -20.0, 1.6)
-
-
-func _find_spawn_cell() -> Vector2i:
-	var best: Vector2i = Vector2i(-1, -1)
-	for attempt in 400:
-		var x: int = randi_range(8, World.W - 8)
-		var top: int = World.surface[x]
-		var y: int = randi_range(top + 6, World.H - 12)
-		if World.get_tile(x, y) != IDs.T.AIR:
-			continue
-		if World.get_tile(x, y + 1) == IDs.T.AIR:
-			continue
-		var w: Vector2 = World.cell_to_world(Vector2i(x, y))
-		if w.distance_to(player.global_position) < 340.0:
-			continue
-		return Vector2i(x, y)
-	return best
 
 
 func _restart() -> void:

@@ -196,22 +196,16 @@ func find_mineable() -> Vector2i:
 	return best
 
 
-## Создать фантома (штатным спавном) и поставить его в нужную точку.
-func spawn_phantom_at(pos: Vector2) -> Node:
-	var before: Array = get_tree().get_nodes_in_group("phantom")
-	scene.call("_spawn_phantom")
-	var after: Array = get_tree().get_nodes_in_group("phantom")
-	var ph: Node = null
-	for n in after:
-		if not before.has(n):
-			ph = n
-			break
-	if ph == null and after.size() > 0:
-		ph = after[after.size() - 1]
-	if ph != null:
-		ph.global_position = pos
-		ph.spawn_point = pos
-	return ph
+## Создать фантома (штатным спавном директора угрозы) в нужной точке.
+## Для роя создаётся вся стая, возвращается первый из неё.
+func spawn_phantom_at(pos: Vector2, kind: String = "echo") -> Node:
+	var made: Array = Threat.spawn_phantom(kind, pos)
+	return made[0] if not made.is_empty() else null
+
+
+## То же, но вся стая (рой) целиком.
+func spawn_pack_at(pos: Vector2, kind: String = "swarm") -> Array:
+	return Threat.spawn_phantom(kind, pos)
 
 
 ## Дождаться одного кадра.

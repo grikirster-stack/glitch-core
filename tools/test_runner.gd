@@ -402,7 +402,7 @@ func _t_production_result() -> void:
 func _t_phantom() -> void:
 	print("== Фантомы ==")
 	var before: int = get_tree().get_nodes_in_group("phantom").size()
-	scene._spawn_phantom()
+	Threat.spawn_in_cave("echo")   # спавн ведёт директор угрозы (#27)
 	var after: int = get_tree().get_nodes_in_group("phantom").size()
 	_ok("фантом заспавнен", after > before, "%d -> %d" % [before, after])
 	var phs: Array = get_tree().get_nodes_in_group("phantom")
