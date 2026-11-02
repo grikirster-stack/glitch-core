@@ -9,6 +9,8 @@ extends SceneTree
 ##      прогон с окном ЗА ПРЕДЕЛАМИ ЭКРАНА и без звука; скрипт сам выходит:
 ##      godot --path . --audio-driver Dummy --windowed --position -10000,-10000 \
 ##            --resolution 960x540 --script res://tools/gallery_dump.gd -- --seed=31337
+##      (флаги после «--»: --no-world — только скриншоты, без вида машин и фантомов;
+##       --shots-after=<имя> — досъёмка скриншотов, следующих за shots/<имя>.png)
 ##
 ## Всё перебирается по данным, поэтому инструмент можно перезапускать, когда
 ## появятся новые объекты:
@@ -103,7 +105,12 @@ func _run() -> void:
 	_dump_tiles()
 	_print_md()
 	if windowed:
-		await _dump_world_views()
+		# --no-world: только скриншоты (вид машин/фантомов не менялся) — прогон короче.
+		if not OS.get_cmdline_user_args().has("--no-world"):
+			await _dump_world_views()
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with("--shots-after="):
+				_shots_after = a.substr(14)
 		await _dump_shots()
 	else:
 		print("headless: вид в мире и скриншоты пропущены (нужен прогон с окном за экраном)")
@@ -452,12 +459,24 @@ func _dump_world_views() -> void:
 
 # ------------------------------------------------------------------ СКРИНШОТЫ
 
+## --shots-after=<имя>: досъёмка — кадры до этого скриншота (включительно) не снимаются
+## и не ждут кадров (состояние игры всё равно готовится); нужно, когда окно за экраном
+## рисует медленно и прогон не укладывается в лимит.
+var _shots_after: String = ""
+
+
 func _frames(n: int) -> void:
+	if _shots_after != "":
+		return
 	for i in n:
 		await process_frame
 
 
 func _grab(rel: String, crop: bool) -> void:
+	if _shots_after != "":
+		if rel.get_file().get_basename() == _shots_after:
+			_shots_after = ""
+		return
 	await RenderingServer.frame_post_draw
 	var img: Image = root.get_texture().get_image()
 	if crop:
