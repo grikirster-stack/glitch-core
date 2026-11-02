@@ -508,9 +508,10 @@ func _draw_goal() -> void:
 	for id in req.keys():
 		if _have(id) >= int(req[id]):
 			done += 1
-	var right: String = "готово %d из %d" % [done, req.size()]
+	var right: String = "детали %d/%d" % [done, req.size()]
 	var rw: float = _w(right, 12)
-	_text(goal.position + Vector2(8, 16), "ЦЕЛЬ: РЕЛЕЙ-ЯДРО", goal.size.x - rw - 24, 13, Color(0.4, 0.9, 1.0),
+	# Заголовок — этап цели (#32): «ЦЕЛЬ 3/4: СОБРАТЬ РЕЛЕЙ»; ниже — детали релея.
+	_text(goal.position + Vector2(8, 16), Game.objective_text(), goal.size.x - rw - 24, 13, Color(0.4, 0.9, 1.0),
 			HORIZONTAL_ALIGNMENT_LEFT, goal)
 	_text(goal.position + Vector2(goal.size.x - rw - 8, 16), right, rw, 12,
 			C_OK if done == req.size() else C_DIM, HORIZONTAL_ALIGNMENT_LEFT, goal)
@@ -841,7 +842,8 @@ func _tooltip_for(t: Dictionary) -> Array:
 			out.append(_line("есть %d / нужно %d" % [have, need], C_OK if have >= need else C_BAD))
 			out.append(_line("Где взять: " + _source_of(id), C_DIM))
 		"goal_box":
-			out.append(_line("Собери всё это в инвентаре, подойди к релей-ядру в центре базы и удерживай E 3 с.", C_TEXT))
+			out.append(_line(Game.objective_text(), Color(0.4, 0.9, 1.0)))
+			out.append(_line("Ниже — детали релея: собери их в инвентаре, подойди к релей-ядру в центре базы и удерживай E 3 с.", C_TEXT))
 	return out
 
 
