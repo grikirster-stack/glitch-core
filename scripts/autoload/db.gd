@@ -390,10 +390,12 @@ const PAL: Dictionary = {
 	"bio": Color("#7FE6D2"), "bio_core": Color("#E8FFF8"),
 	# флора: шляпки свечника, стебель
 	"fl1": Color("#F2B8A0"), "fl1_d": Color("#C47E78"), "fl3": Color("#F4EBCF"),
+	# флора V2: сиреневые пузыри пузырника и трутовиков
+	"fl2": Color("#DCCDEA"), "fl2_d": Color("#A68FBC"),
 	"interact": Color("#FFF1A8"), "danger": Color("#F0306A"),
 }
 
-enum VK { ONE, TOP, NAT }
+enum VK { ONE, TOP, NAT, FLORA }
 const BIOMES: int = 3       ## 0 поверхность, 1 средние пещеры, 2 глубина у лавы
 const TEX_ALTS: int = 4     ## фактур на биом: World выбирает по хэшу клетки — меньше повторов
 const MASKS: int = 16
@@ -421,6 +423,8 @@ func _tile_vkind(id: int) -> int:
 			return VK.NAT
 		IDs.T.STEEL, IDs.T.PANEL, IDs.T.STEEL_WALL, IDs.T.WATER, IDs.T.LAVA:
 			return VK.TOP
+		IDs.T.TREE, IDs.T.LEAVES:
+			return VK.FLORA
 	return VK.ONE
 
 
@@ -436,7 +440,7 @@ func _home_bio(id: int) -> int:
 
 
 func _build_atlas() -> void:
-	var counts: Dictionary = {VK.NAT: VARIANTS, VK.TOP: 2, VK.ONE: 1}
+	var counts: Dictionary = {VK.NAT: VARIANTS, VK.TOP: 2, VK.ONE: 1, VK.FLORA: TEX_ALTS * MASKS}
 	var total: int = 0
 	for id in range(1, IDs.TILE_COUNT):
 		total += int(counts[_tile_vkind(id)])
@@ -483,6 +487,18 @@ func _build_atlas() -> void:
 				atlas_cells.append(c0)
 				atlas_cells.append(c1)
 				atlas_of_tile[id] = c1
+			VK.FLORA:
+				# ADR-003 V2: свечник растёт только на поверхности — биом картинку
+				# не меняет, все три биома смотрят в одни и те же клетки.
+				for alt in TEX_ALTS:
+					for m in MASKS:
+						var cf: Vector2i = Vector2i(slot % ATLAS_COLS, slot / ATLAS_COLS)
+						slot += 1
+						img.blit_rect(_flora_tile(id, alt, m), full, cf * TILE_SIZE)
+						for bio in BIOMES:
+							atlas_var[row0 + variant_index(bio, alt, m)] = cf
+						atlas_cells.append(cf)
+				atlas_of_tile[id] = atlas_var[row0 + variant_index(0, 0, _flora_face(id))]
 			_:
 				var c: Vector2i = Vector2i(slot % ATLAS_COLS, slot / ATLAS_COLS)
 				slot += 1
@@ -510,6 +526,8 @@ func _blend_edges(img: Image, edges: Array, m: int, pos: Vector2i) -> void:
 
 ## Один вариант тайла отдельной картинкой 16×16 (галерея, листы до/после).
 func variant_image(id: int, bio: int, alt: int, mask: int) -> Image:
+	if _tile_vkind(id) == VK.FLORA:
+		return _flora_tile(id, alt, mask)
 	var t: Image = _tile_base(id, bio if _tile_vkind(id) == VK.NAT else 0, alt if _tile_vkind(id) == VK.NAT else 0)
 	match _tile_vkind(id):
 		VK.NAT:
@@ -524,7 +542,10 @@ func variant_image(id: int, bio: int, alt: int, mask: int) -> Image:
 func _paint_tile(img: Image, id: int, ox: int, oy: int) -> void:
 	if id == IDs.T.AIR:
 		return
-	var face: Image = variant_image(id, _home_bio(id), 0, 1 if id == IDs.T.GRASS or _tile_vkind(id) == VK.TOP else 0)
+	var face_mask: int = 1 if id == IDs.T.GRASS or _tile_vkind(id) == VK.TOP else 0
+	if _tile_vkind(id) == VK.FLORA:
+		face_mask = _flora_face(id)
+	var face: Image = variant_image(id, _home_bio(id), 0, face_mask)
 	img.blend_rect(face, Rect2i(0, 0, TILE_SIZE, TILE_SIZE), Vector2i(ox, oy))
 
 
@@ -613,11 +634,7 @@ func _tile_base(id: int, bio: int, alt: int) -> Image:
 		IDs.T.BEDROCK:
 			_paint_bedrock(t, rng)
 		IDs.T.LOG:
-			_paint_fiber(t, rng, true)
-		IDs.T.TREE:
-			_paint_fiber(t, rng, false)
-		IDs.T.LEAVES:
-			_paint_cap(t, rng)
+			_paint_fiber(t, rng)
 		IDs.T.WATER:
 			_paint_water(t)
 		IDs.T.LAVA:
@@ -1016,47 +1033,107 @@ func _paint_lava(t: Image, rng: RandomNumberGenerator) -> void:
 			t.set_pixel(x, y, col)
 
 
-## Волокно стебля свечника: вертикальные кремовые волокна. block — сложенный блок
-## (обвязка и фаска), иначе живой стебель (тёмные края).
-func _paint_fiber(t: Image, rng: RandomNumberGenerator, block: bool) -> void:
+## Волокно стебля свечника, сложенное блоком (тайл LOG): кремовые волокна,
+## обвязка и фаска.
+func _paint_fiber(t: Image, rng: RandomNumberGenerator) -> void:
 	var f: Color = pal("fl3")
 	var fd: Color = pal("fl3").darkened(0.16)
 	for x in TILE_SIZE:
 		var col: Color = f if x % 3 != 0 else fd
 		col = col.lightened(rng.randf_range(-0.03, 0.03))
-		if not block and (x < 2 or x > 13):
-			col = f.darkened(0.3)
 		for y in TILE_SIZE:
 			t.set_pixel(x, y, col)
-	if block:
-		for x in TILE_SIZE:
-			for y in [4, 11]:
-				t.set_pixel(x, y, pal("fl1_d"))
-			t.set_pixel(x, 0, f.lightened(0.15))
-			t.set_pixel(x, TILE_SIZE - 1, fd.darkened(0.2))
+	for x in TILE_SIZE:
+		for y in [4, 11]:
+			t.set_pixel(x, y, pal("fl1_d"))
+		t.set_pixel(x, 0, f.lightened(0.15))
+		t.set_pixel(x, TILE_SIZE - 1, fd.darkened(0.2))
+
+
+# --------------------------------------------------- флора (ADR-003 V2, #104)
+# «Свечник» — тот же TREE (стебель) и LEAVES (шляпки): оба не твёрдые, проходимость
+# и форма дерева в мире прежние (World._place_tree). Меняется только рисунок:
+#  * стебель — узкий столб STEM_W px посреди клетки, вокруг пусто;
+#  * шляпка — плита CAP_H px в верхней части клетки, ниже просвет. Ряды кроны
+#    читаются стопкой квадратных шляпок-дождевиков (ADR-003 § 4.1), а в просвете
+#    шляпок над стволом стебель дорисовывает декор-слой (scripts/world/decor.gd);
+#  * верх ствола (над ним шляпка) несёт нижнюю шляпку кроны поперёк стебля.
+# Варианты — по маске открытых сторон (как у породы V1) и 4 фактуры. Край тайла прямой.
+
+const CAP_H: int = 9          ## высота шляпки в клетке, px
+const STEM_X: int = 6         ## левый край стебля в клетке, px (декор рисует так же)
+const STEM_W: int = 4         ## ширина стебля, px
+
+
+## Маска «лица» флоры для галереи: шляпка — одиночная (открыты верх и бока), стебель — середина.
+func _flora_face(id: int) -> int:
+	return 1 | 2 | 8 if id == IDs.T.LEAVES else 0
+
+
+## Клетка флоры: id — TREE или LEAVES, alt — фактура, m — маска открытых сторон.
+func _flora_tile(id: int, alt: int, m: int) -> Image:
+	var t: Image = _new_tile()
+	var rng: RandomNumberGenerator = _rng_for(id, 0, alt, 40 + m)
+	if id == IDs.T.TREE:
+		paint_flora_stem(t, 0, TILE_SIZE, alt)
+		if m & 1:
+			# Над стеблем шляпка или пусто — это верх ствола: нижняя шляпка кроны.
+			# Бока не скругляем: у широкой кроны слева и справа та же шляпка.
+			_paint_cap_slab(t, false, rng)
 	else:
-		# розовые кольца роста
-		var ry: int = rng.randi_range(3, 12)
-		for x in range(2, 14):
-			t.set_pixel(x, ry, pal("fl1"))
+		_paint_cap_slab(t, (m & 1) != 0, rng)
+		if m & 4:
+			# Нижняя шляпка столбца: пластинки длиннее.
+			for x in range(1, TILE_SIZE, 4):
+				t.set_pixel(x, CAP_H + 1, pal("fl1_d").darkened(0.15))
+	return t
 
 
-## Шляпка свечника: розовая, снизу пластинки темнее, сверху споровые пятна.
-func _paint_cap(t: Image, rng: RandomNumberGenerator) -> void:
+## Стебель свечника в строках y0..y1-1: светлый левый край, тень справа, кольца роста.
+func paint_flora_stem(t: Image, y0: int, y1: int, alt: int) -> void:
+	var f: Color = pal("fl3")
+	var cols: Array = [f.lightened(0.12), f, f.darkened(0.05), f.darkened(0.22)]
+	for y in range(y0, y1):
+		for k in STEM_W:
+			t.set_pixel(STEM_X + k, y, cols[k])
+	# Розовое кольцо роста — у половины фактур, на своей высоте.
+	if alt % 2 == 1:
+		var ry: int = 3 + alt * 3
+		if ry >= y0 and ry < y1:
+			for k in STEM_W:
+				t.set_pixel(STEM_X + k, ry, pal("fl1"))
+	# Волокно: тёмная черточка посреди стебля.
+	var wy: int = (5 + alt * 5) % TILE_SIZE
+	if wy >= y0 and wy + 2 < y1:
+		t.set_pixel(STEM_X + 1, wy, f.darkened(0.14))
+		t.set_pixel(STEM_X + 1, wy + 1, f.darkened(0.14))
+
+
+## Шляпка-плита CAP_H px сверху клетки: блик сверху, тёмная кромка снизу, под ней —
+## пластинки через пиксель; кремовые споровые пятна (на верхней шляпке больше).
+## Бока не выделяем: сосед-стебель для маски тоже «открыт», а шляпка через него
+## должна идти без шва. Все края — прямые.
+func _paint_cap_slab(t: Image, top: bool, rng: RandomNumberGenerator) -> void:
 	var c: Color = pal("fl1")
-	for y in TILE_SIZE:
+	var d: Color = pal("fl1_d")
+	for y in CAP_H:
 		for x in TILE_SIZE:
 			var col: Color = c
-			if y >= 12:
-				col = pal("fl1_d") if x % 2 == 0 else pal("fl1_d").lightened(0.1)
-			elif y == 0:
-				col = c.lightened(0.12)
+			if y == 0:
+				col = c.lightened(0.2)
+			elif y == CAP_H - 1:
+				col = d
+			elif y == CAP_H - 2 and x % 2 == 0:
+				col = c.lerp(d, 0.45)
 			t.set_pixel(x, y, col)
-	for i in 6:
-		var sx: int = rng.randi_range(1, 13)
-		var sy: int = rng.randi_range(2, 9)
-		t.set_pixel(sx, sy, pal("fl3"))
-		t.set_pixel(sx + 1, sy, pal("fl3"))
+	for x in range(0, TILE_SIZE, 2):
+		t.set_pixel(x, CAP_H, d.darkened(0.15))
+	var spots: int = 3 if top else 1
+	for i in spots:
+		var sx: int = rng.randi_range(1, TILE_SIZE - 3)
+		var sy: int = rng.randi_range(2, CAP_H - 4)
+		_rect(t, sx, sy, 2, 2, pal("fl3"))
+		t.set_pixel(sx + 1, sy + 1, pal("fl3").darkened(0.12))
 
 
 # --------------------------------------------------- постройки
