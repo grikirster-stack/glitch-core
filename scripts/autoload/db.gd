@@ -286,8 +286,7 @@ func item_color(id: int) -> Color:
 
 ## tech — узел дерева технологий (ключ Balance.TECH_COST), с которого рецепт
 ## открыт; "T0" — доступен с самого начала (ADR-001 § 4.6). Дерево и трату
-## данных ведёт #28; пока Tech.is_unlocked() отвечает «да» на всё, и крафт
-## ведёт себя как раньше.
+## данных ведёт Tech (#28): запертый рецепт виден в крафте серым, станции его не берут.
 func _recipe(out: int, amount: int, inputs: Dictionary, station: String, time: float, name: String,
 		tech: String = "T0") -> void:
 	recipes.append({

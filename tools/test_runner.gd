@@ -358,6 +358,10 @@ func _t_production() -> void:
 	_ok("сундук цеха поставлен", MachineBase.place_machine("Chest", prod_chest_cell))
 	_ok("сборщик поставлен", MachineBase.place_machine("Assembler", assembler_cell))
 	_ok("сундук сборщика поставлен", MachineBase.place_machine("Chest", prod_chest2_cell))
+	# --- Исследования (#28): микросхема — рецепт T1, станции запертые рецепты
+	# не берут. Открываем T1 честно — за данные, как игрок.
+	Game.research += Tech.cost("T1")
+	_ok("T1 открыт для цеха", Tech.unlock("T1") and Tech.is_unlocked("T1"))
 	var sm: Smelter = World.machines.get(smelter_cell)
 	var asm: Assembler = World.machines.get(assembler_cell)
 	if sm:

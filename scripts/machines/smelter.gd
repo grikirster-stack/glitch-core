@@ -50,6 +50,8 @@ func _process(delta: float) -> void:
 
 func _find_recipe() -> Dictionary:
 	for r in DB.recipes_for("smelter"):
+		if not DB.recipe_unlocked(r):    ## запертый деревом технологий (#28)
+			continue
 		var ok: bool = true
 		for k in r["in"].keys():
 			if int(stock.get(k, 0)) < int(r["in"][k]):
