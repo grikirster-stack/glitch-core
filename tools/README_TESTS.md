@@ -377,6 +377,24 @@ godot --headless --path . --script res://tools/save_test.gd
 прогон с окном за экраном (headless не рендерит), оба размера окна за один запуск:
 `godot --path . --audio-driver Dummy --windowed --position -10000,-10000 --resolution 1280x720 --script res://tools/inventory_shots.gd -- --prefix=after`.
 
+### Сенсорное управление (#81)
+
+Сценарий (`-- --scenario=touch_controls`):
+
+* `touch_controls` — касания `InputEventScreenTouch` / `InputEventScreenDrag` через
+  `Input.parse_input_event` (как на телефоне, с эмуляцией мыши из касаний) доходят до
+  `TouchControls._input`, оттуда — в шов `Player.touch_input`. Без сенсорного экрана и
+  `--touch` управление выключено и шов пуст; эмулированный «клик» под джойстиком не копает;
+  второй палец копает тайл, пока первый держит джойстик, и после разрушения ничего не
+  ставит на его место; джойстик вправо ведёт героя, вверх — прыжок; тап по кнопке прыжка
+  (нажатие и отпускание в одном кадре) прыгает; тап по хотбару выбирает слот; короткий
+  тап по пустой клетке ничего не ставит, долгий (≥ 0,4 с) — ставит камень; режим «строить» —
+  короткий тап ставит; I/J открывают и закрывают окна, тап по миру при открытом окне не
+  копает, тап по ячейке инвентаря (ЛКМ с `device` эмуляции) берёт стопку в руку и кладёт
+  обратно, палец листает рецепты. В конце мышь отпущена, шов пуст.
+
+Скриншот раскладки (`docs/img/touch_controls.png`) — `tools/touch_shot.gd`, окно за экраном:
+`godot --path . --audio-driver Dummy --windowed --position -10000,-10000 --resolution 1280x720 --script res://tools/touch_shot.gd -- --touch --seed=31337`.
 ### HUD и обучение (#34, ADR-001 § 4.1, 4.3, 4.7)
 
 Сценарии (`-- --scenario=hud_tracker,hud_tutorial,hud_hints,hud_no_alloc`), всё — по

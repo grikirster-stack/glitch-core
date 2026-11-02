@@ -73,6 +73,12 @@ var test_input: Dictionary = {}
 #   "mouse"         -> Vector2                    мировая позиция "курсора"
 #   "mouse_buttons" -> Dictionary[int -> bool]   состояние кнопок мыши
 
+# Сенсорный ввод (#81): TouchControls пишет сюда в том же формате, что test_input.
+# Клавиши складываются с клавиатурой (ИЛИ). "mouse_buttons" и "mouse" есть, только
+# пока палец на экране, и тогда заменяют мышь целиком: эмулированный из касания
+# «клик» под джойстиком не должен копать мир. test_input сценария главнее.
+var touch_input: Dictionary = {}
+
 var _coyote: float = 0.0
 var _jump_buffer: float = 0.0
 var _jump_prev: bool = false
@@ -304,6 +310,8 @@ func _key(code: int) -> bool:
 		var k: Dictionary = test_input["keys"]
 		if k.has(code):
 			return bool(k[code])
+	if touch_input.has("keys") and bool(touch_input["keys"].get(code, false)):
+		return true
 	return Input.is_key_pressed(code)
 
 
@@ -313,6 +321,8 @@ func _mouse_down(btn: int) -> bool:
 		var m: Dictionary = test_input["mouse_buttons"]
 		if m.has(btn):
 			return bool(m[btn])
+	if touch_input.has("mouse_buttons"):
+		return bool(touch_input["mouse_buttons"].get(btn, false))
 	return Input.is_mouse_button_pressed(btn)
 
 
@@ -321,6 +331,9 @@ func _mouse_pos() -> Vector2:
 	if test_input.has("mouse"):
 		var m: Vector2 = test_input["mouse"]
 		return m
+	if touch_input.has("mouse"):
+		var t: Vector2 = touch_input["mouse"]
+		return t
 	return get_global_mouse_position()
 
 
