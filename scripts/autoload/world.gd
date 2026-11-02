@@ -9,6 +9,9 @@ const TILE: int = 16
 const TREE_CHANCE: float = 0.10      # шанс дерева на колонку (до учёта зазора)
 const TREE_MIN_GAP: int = 6          # минимум колонок между соседними стволами
 
+const FLUID_MAX: int = 8             # сколько порций воды помещается в клетке
+const FLUID_STEP: float = 0.05       # период шага симуляции воды, сек
+
 const LIGHT_CHUNK: int = 8            # размер чанка пространственного хэша света (клетки)
 const LIGHT_MIN: float = 0.05         # минимальный свет тайла, дающий источник
 const LIGHT_BASE_RADIUS: float = 46.0 # базовый радиус свечения тайла
@@ -48,12 +51,23 @@ var _tile_light_pow: PackedFloat32Array = PackedFloat32Array()  # свет та�
 var _atlas_cache: Array = []          # id тайла -> координаты в атласе
 var _trees: int = 0
 
+# --- Вода ---------------------------------------------------------------------
+# fluid: уровень воды в клетке, 0..FLUID_MAX. Ноль — клетка сухая.
+# Уровень нужен, чтобы отличать «в клетке стоит вода» от «в клетке её полно»:
+# без уровней вода не умеет растекаться ровным слоем и не может заполнить
+# яму снизу вверх.
+var fluid: PackedByteArray = PackedByteArray()
+var _fluid_queue: PackedInt32Array = PackedInt32Array()  # клетки на пересчёт
+var _fluid_queued: PackedByteArray = PackedByteArray()   # флаг «уже в очереди»
+var _fluid_timer: float = 0.0
+
 
 func _ready() -> void:
 	_build_tileset()
 	_build_tile_light_table()
 	_build_atlas_cache()
 	_reset_light_chunks()
+	_reset_fluid()
 
 
 ## Кэш света тайлов по id — чтобы не лезть в словарь DB в горячих циклах.
@@ -279,6 +293,9 @@ func generate(p_seed: int) -> void:
 
 	# --- 11. Страховка: ничего не должно висеть в воздухе --------------------
 	_fix_floating_trees()
+
+	# --- 11a. Вода: уровни по готовому миру ----------------------------------
+	_init_fluid_from_tiles()
 
 	# --- 12. Визуализация, свет, поиск пути ----------------------------------
 	var t_sync: int = Time.get_ticks_usec()
@@ -597,6 +614,161 @@ func _place_base(cx: int) -> void:
 	vents.append(Vector2i(cx - 13, base - 1))
 
 
+# ------------------------------------------------------------ ВОДА
+
+## Обнуляет состояние воды: мир сухой, очередь пересчёта пуста.
+func _reset_fluid() -> void:
+	fluid = PackedByteArray()
+	fluid.resize(W * H)
+	fluid.fill(0)
+	_fluid_queued = PackedByteArray()
+	_fluid_queued.resize(W * H)
+	_fluid_queued.fill(0)
+	_fluid_queue = PackedInt32Array()
+	_fluid_timer = 0.0
+
+
+## Заливает уровни воды по готовому миру: каждая клетка с водой полная.
+## Клетки, под которыми пустота (вода висит в воздухе), помечаем на пересчёт —
+## они должны стечь вниз.
+func _init_fluid_from_tiles() -> void:
+	_reset_fluid()
+	for y in range(H):
+		var row: int = y * W
+		for x in range(W):
+			if tiles[row + x] != IDs.T.WATER:
+				continue
+			fluid[row + x] = FLUID_MAX
+			var below: int = get_tile(x, y + 1)
+			if below != IDs.T.WATER and not DB.tile_solid(below):
+				_fluid_mark(row + x)
+
+
+## Уровень воды в клетке (0 — сухо).
+func fluid_level(c: Vector2i) -> int:
+	if c.x < 0 or c.x >= W or c.y < 0 or c.y >= H:
+		return 0
+	return int(fluid[c.y * W + c.x])
+
+
+## Ставит клетку в очередь на пересчёт воды.
+func _fluid_mark(idx: int) -> void:
+	if idx < 0 or idx >= fluid.size():
+		return
+	if _fluid_queued[idx] != 0:
+		return
+	_fluid_queued[idx] = 1
+	_fluid_queue.append(idx)
+
+
+## Ставит клетку в очередь на пересчёт воды (по координатам).
+func _fluid_mark_cell(x: int, y: int) -> void:
+	if x < 0 or x >= W or y < 0 or y >= H:
+		return
+	_fluid_mark(y * W + x)
+
+
+func _process(delta: float) -> void:
+	_fluid_timer += delta
+	if _fluid_timer < FLUID_STEP:
+		return
+	_fluid_timer = 0.0
+	_fluid_tick()
+
+
+## Шаг симуляции воды: пересчитывает клетки, которые изменились или рядом с
+## которыми что-то изменилось. Очередь обычно пуста — вода стоит смирно,
+## пока игрок не выкопает яму.
+func _fluid_tick() -> void:
+	if _fluid_queue.is_empty():
+		return
+	var batch: PackedInt32Array = _fluid_queue
+	_fluid_queue = PackedInt32Array()
+	var moved: PackedInt32Array = PackedInt32Array()
+	for i in batch.size():
+		var idx: int = batch[i]
+		_fluid_queued[idx] = 0
+		if _fluid_step_cell(idx):
+			moved.append(idx)
+	# Изменилась клетка — пересчитать и её, и соседей: вода могла прийти
+	# или уйти, и их уровни теперь другие.
+	for i in moved.size():
+		var idx: int = moved[i]
+		_fluid_mark(idx)
+		var x: int = idx % W
+		var y: int = int(idx / W)
+		_fluid_mark_cell(x - 1, y)
+		_fluid_mark_cell(x + 1, y)
+		_fluid_mark_cell(x, y - 1)
+		_fluid_mark_cell(x, y + 1)
+
+
+## Один шаг воды в клетке: сначала вниз, потом в стороны.
+## Возвращает true, если уровень в клетке изменился.
+##
+## Вниз вода падает целиком, если под ней место. В стороны она отдаёт
+## понемногу и только тем соседям, которые заметно ниже: без этого порога
+## вода бесконечно перетекает туда-обратно между двумя клетками.
+func _fluid_step_cell(idx: int) -> bool:
+	var lvl: int = fluid[idx]
+	if lvl <= 0:
+		return false
+	var x: int = idx % W
+	var y: int = int(idx / W)
+	# --- вниз ---
+	if y + 1 < H:
+		var below: int = idx + W
+		var bt: int = tiles[below]
+		if bt == IDs.T.AIR or bt == IDs.T.WATER:
+			var space: int = FLUID_MAX - fluid[below]
+			if space > 0:
+				var give: int = mini(lvl, space)
+				fluid[idx] = lvl - give
+				fluid[below] = fluid[below] + give
+				_set_fluid_cell(x, y)
+				_set_fluid_cell(x, y + 1)
+				return true
+	# --- вбок ---
+	# Растекается только вода, стоящая на твёрдом: та, что лежит на воде,
+	# утекает вниз (см. выше), а не в стороны.
+	if y + 1 >= H or not DB.tile_solid(tiles[idx + W]):
+		return false
+	for d in [-1, 1]:
+		var nx: int = x + d
+		if nx < 0 or nx >= W:
+			continue
+		var n: int = idx + d
+		var nt: int = tiles[n]
+		if nt != IDs.T.AIR and nt != IDs.T.WATER:
+			continue
+		# Вода перетекает вбок только туда, где есть куда стечь: под
+		# соседом пусто (яма) или там обрыв. Иначе озеро растечётся
+		# тонкой плёнкой по всей ровной земле вокруг себя.
+		if n + W >= fluid.size():
+			continue
+		var n_below: int = tiles[n + W]
+		if DB.tile_solid(n_below) or n_below != IDs.T.AIR:
+			continue
+		if lvl >= fluid[n] + 2:
+			fluid[idx] = lvl - 1
+			fluid[n] = fluid[n] + 1
+			_set_fluid_cell(x, y)
+			_set_fluid_cell(nx, y)
+			return true
+	return false
+
+
+## Обновляет тайл и картинку клетки по текущему уровню воды.
+func _set_fluid_cell(x: int, y: int) -> void:
+	var idx: int = y * W + x
+	var id: int = IDs.T.WATER if fluid[idx] > 0 else IDs.T.AIR
+	if tiles[idx] == id:
+		return
+	tiles[idx] = id
+	if tilemap:
+		_set_cell_visual(x, y, id)
+
+
 # ------------------------------------------------------------ ДОСТУП К ТАЙЛАМ
 
 func in_bounds(x: int, y: int) -> bool:
@@ -627,7 +799,20 @@ func set_tile_raw(x: int, y: int, id: int) -> void:
 func set_tile(x: int, y: int, id: int) -> void:
 	if x < 0 or x >= W or y < 0 or y >= H:
 		return
-	tiles[y * W + x] = id
+	var idx: int = y * W + x
+	tiles[idx] = id
+	if fluid.size() == W * H:
+		if id == IDs.T.WATER:
+			if fluid[idx] == 0:
+				fluid[idx] = FLUID_MAX
+		else:
+			fluid[idx] = 0
+	# Вода рядом с изменившейся клеткой могла потечь или притечь.
+	_fluid_mark_cell(x, y)
+	_fluid_mark_cell(x - 1, y)
+	_fluid_mark_cell(x + 1, y)
+	_fluid_mark_cell(x, y - 1)
+	_fluid_mark_cell(x, y + 1)
 	if tilemap:
 		_set_cell_visual(x, y, id)
 	_update_astar(x, y)

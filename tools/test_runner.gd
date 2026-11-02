@@ -38,6 +38,8 @@ var smelter_cell: Vector2i = Vector2i.ZERO
 var prod_chest_cell: Vector2i = Vector2i.ZERO
 var assembler_cell: Vector2i = Vector2i.ZERO
 var prod_chest2_cell: Vector2i = Vector2i.ZERO
+var water_hole: Vector2i = Vector2i(-1, -1)
+var water_src: Vector2i = Vector2i(-1, -1)
 
 
 func start(main_scene: Node) -> void:
@@ -75,11 +77,13 @@ func _process(_delta: float) -> void:
 		9: _t_production_result()
 		10: _t_phantom()
 		11: _t_relay()
-		12: _t_anim_start()
-		13: _t_anim_wait()
-		14: _t_power_start()
-		15: _t_power_wait()
-		16: _t_finish()
+		12: _t_water_dig()
+		13: _t_water_check()
+		14: _t_anim_start()
+		15: _t_anim_wait()
+		16: _t_power_start()
+		17: _t_power_wait()
+		18: _t_finish()
 
 
 func _ok(label: String, cond: bool, extra: String = "") -> void:
@@ -395,25 +399,74 @@ func _t_relay() -> void:
 	_next(12, 0.5)
 
 
+## Вода должна течь. Ставим воду на ровную землю, рядом копаем настоящую яму
+## и смотрим, стекла ли вода вниз.
+func _t_water_dig() -> void:
+	print("== Вода ==")
+	var bx: int = World.beacon_cell.x
+	# Ищем две соседние колонки с одинаковой высотой земли: на ровном месте
+	# вода не растекается по сторонам, а копится в яме.
+	var found: bool = false
+	for x in range(bx + 8, min(bx + 60, World.W - 2)):
+		var g: int = World.surface[x]
+		if g != World.surface[x + 1]:
+			continue
+		if World.get_tile(x, g - 1) != IDs.T.AIR:
+			continue
+		if World.get_tile(x + 1, g - 1) != IDs.T.AIR:
+			continue
+		if World.get_tile(x + 1, g) == IDs.T.AIR:
+			continue
+		water_src = Vector2i(x, g - 1)
+		water_hole = Vector2i(x + 1, g)
+		found = true
+		break
+	_ok("нашлась ровная площадка под воду", found,
+			"источник %s, яма %s" % [str(water_src), str(water_hole)])
+	if not found:
+		_next(13, 1.0)
+		return
+	World.set_tile(water_src.x, water_src.y, IDs.T.WATER)
+	# Яма: копаем клетку земли у соседней колонки.
+	World.set_tile(water_hole.x, water_hole.y, IDs.T.AIR)
+	_ok("вода поставлена", World.get_tile_v(water_src) == IDs.T.WATER)
+	_ok("яма выкопана", World.get_tile_v(water_hole) == IDs.T.AIR)
+	_next(13, 1.0)
+
+
+func _t_water_check() -> void:
+	var lvl: int = World.fluid_level(water_hole)
+	_ok("вода стекла в выкопанную яму", lvl > 0, "уровень %d" % lvl)
+	_ok("в яме появилась вода", World.get_tile_v(water_hole) == IDs.T.WATER,
+			"тайл %d" % World.get_tile_v(water_hole))
+	# По ровной земле вода расползаться не должна: иначе озеро растеклось бы
+	# плёнкой по всей площадке.
+	var flat: Vector2i = Vector2i(water_src.x - 2, water_src.y)
+	_ok("вода не растеклась по ровной земле",
+			World.get_tile_v(flat) != IDs.T.WATER and World.fluid_level(flat) == 0,
+			"клетка %s тайл %d" % [str(flat), World.get_tile_v(flat)])
+	_next(14)
+
+
 func _t_anim_start() -> void:
 	# Секция «== Анимации ==»: те же самые проверки, что и в tools/anim_test.gd.
 	# Общий код — дублирования нет.
 	anim = AnimTestScript.Runner.new(self)
 	add_child(anim)
 	anim.start(scene)
-	_next(13, 0.2)
+	_next(15, 0.2)
 
 
 func _t_anim_wait() -> void:
 	if anim == null:
-		_next(14)
+		_next(16)
 		return
 	if anim.done:
 		checks += anim.checks
 		fails += anim.fails
 		anim.queue_free()
 		anim = null
-		_next(14, 0.2)
+		_next(16, 0.2)
 
 
 func _t_power_start() -> void:
@@ -422,19 +475,19 @@ func _t_power_start() -> void:
 	power = PowerTestScript.Runner.new(self)
 	add_child(power)
 	power.start(scene)
-	_next(15, 0.2)
+	_next(17, 0.2)
 
 
 func _t_power_wait() -> void:
 	if power == null:
-		_next(16)
+		_next(18)
 		return
 	if power.done:
 		checks += power.checks
 		fails += power.fails
 		power.queue_free()
 		power = null
-		_next(16, 0.2)
+		_next(18, 0.2)
 
 
 func _t_finish() -> void:
