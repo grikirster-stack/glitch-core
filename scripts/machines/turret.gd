@@ -106,24 +106,25 @@ func _fire(t: Node2D) -> void:
 
 
 func _draw() -> void:
-	var base: Color = Color(0.36, 0.40, 0.48) if powered else Color(0.25, 0.27, 0.31)
-	# Станина
-	draw_rect(Rect2(-8.0, 2.0, 16.0, 6.0), base.darkened(0.15))
-	draw_rect(Rect2(-8.0, 2.0, 16.0, 1.5), base.lightened(0.2))
-	draw_rect(Rect2(-5.0, -1.0, 10.0, 4.0), base)
-	# Ствол-разрядник
+	# Станина — кремовый короб с жёлтой разметкой, на нём поворотная башня.
+	_draw_body(Rect2(-8.0, 1.0, 16.0, 7.0), powered)
+	draw_rect(Rect2(-5.0, -1.0, 10.0, 2.0), C_FRAME)
+	# Ствол-разрядник (поворачивается к цели), срез — бирюзовый разрядник.
 	var pivot: Vector2 = Vector2(0.0, -3.0)
 	var tip: Vector2 = pivot + Vector2.from_angle(_aim) * MUZZLE
-	draw_line(pivot, tip, Color(0.70, 0.74, 0.80), 3.0)
-	draw_circle(tip, 1.6, Color(0.55, 0.9, 1.0) if powered else Color(0.35, 0.4, 0.45))
-	# Купол
-	draw_circle(pivot, 4.5, base.lightened(0.1))
-	draw_circle(pivot + Vector2(-1.2, -1.2), 1.4, base.lightened(0.35))
-	# Лампочка питания: зелёная — норма, жёлтая — браун-аут, красная — нет питания
-	var lamp: Color = Color(0.9, 0.25, 0.2)
+	draw_line(pivot, tip, C_FRAME, 3.0)
+	var tp: Vector2 = tip.round()
+	draw_rect(Rect2(tp - Vector2(1.0, 1.0), Vector2(3.0, 3.0)), C_BIO if powered else C_METAL_D)
+	# Башня — квадратный купол в раме, блик в углу.
+	draw_rect(Rect2(-4.0, -7.0, 8.0, 7.0), C_METAL_D)
+	draw_rect(Rect2(-3.0, -6.0, 6.0, 5.0), C_METAL if powered else C_METAL_OFF)
+	draw_rect(Rect2(-3.0, -6.0, 2.0, 1.0), C_METAL_HI)
+	draw_rect(Rect2(-1.0, -4.0, 2.0, 2.0), C_FRAME)
+	# Лампочка питания: бирюзовая — норма, жёлтая — браун-аут, красная — нет питания
+	var lamp: Color = C_LAMP_OFF
 	if powered:
-		lamp = Color(0.4, 1.0, 0.5) if efficiency >= 0.999 else Color(1.0, 0.8, 0.2)
-	draw_circle(Vector2(6.0, 5.0), 1.5, lamp)
+		lamp = C_SCREEN_HI if efficiency >= 0.999 else C_HAZARD
+	_draw_lamp(Vector2(5.0, 4.0), lamp)
 
 
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)

@@ -69,6 +69,32 @@ const MAP_OFFSET: Vector2 = Vector2(200, 60)
 ## Длина ключа состояния (см. _fill_key).
 const KEY_LEN: int = 48
 
+# ------------------------------------------------- ЦВЕТА (ADR-003 V6, «Споровый луг»)
+## Палитра мира — DB.PAL (V1); здесь только её роли в HUD и цвета плашек концепта
+## (ui_* — в DB.PAL их нет, это цвета интерфейса, а не мира).
+const _PAL: Dictionary = preload("res://scripts/autoload/db.gd").PAL
+const C_PLATE: Color = Color("#221A20D1")      ## тёмно-сливовая плашка (ui_bg, 82 %)
+const C_PLATE_HI: Color = Color("#3A2E34")     ## ячейка хотбара, полоса суток (ui_panel)
+const C_LINE: Color = Color("#EFE8D8")         ## текст и тонкие рамки (ui_line)
+const C_HP: Color = Color("#E8743B")           ## здоровье — цвет скафандра по умолчанию
+const C_BIO: Color = _PAL["bio"]               ## импульс, трекер цели, релей
+const C_INTERACT: Color = _PAL["interact"]     ## «можно взаимодействовать» (§ 3.2)
+const C_DANGER: Color = _PAL["danger"]         ## угроза: ночь, мало здоровья, вентиляции
+const C_HAZARD: Color = _PAL["hazard"]         ## жёлтая разметка: мощность, обучение, солнце
+const C_WARN: Color = _PAL["copper"]           ## перегруз/выключено (не угроза — не danger)
+const C_FRAME: Color = _PAL["frame"]
+## Миникарта: верх рельефа — лишайник, песок, порода средних пещер.
+const C_MAP_TOP: Color = _PAL["s_top"]
+const C_MAP_SAND: Color = _PAL["sand"]
+const C_MAP_STONE: Color = _PAL["m_base"]
+## Уголки-скобки опасности ночью: длина плеча и толщина, px; отступ от края.
+const BRACKET_LEN: float = 22.0
+const BRACKET_W: float = 3.0
+const BRACKET_PAD: float = 4.0
+## Рамка интерактива вокруг объекта: на сколько px шире клетки и толщина линии.
+const MARK_GROW: float = 2.0
+const MARK_W: float = 2.0
+
 var player = null   ## Ссылка на игрока без статического типа (иначе цикл зависимостей).
 var notes: Array = []          ## [{text, color, ttl}]
 var damage_flash: float = 0.0
@@ -132,10 +158,17 @@ var stat_map_vents: int = 0
 var stat_map_grates: int = 0
 ## Сколько раз сканировались клетки вокруг игрока в поисках генератора.
 var stat_power_scans: int = 0
+## Сколько раз перерисован слой рамки интерактива (ADR-003 § 3.2).
+var stat_mark_redraws: int = 0
+## Рамка интерактива на экране (пустая — объекта рядом нет). Читают сценарии.
+var mark_rect: Rect2i = Rect2i()
 
 # ------------------------------------------------------------ ВНУТРЕННЕЕ
 var _cross: Control = null
 var _map: Control = null
+var _mark: Control = null
+## Объект, с которым можно взаимодействовать (мировые px; пустой — нет).
+var _hint_target: Rect2 = Rect2()
 var _map_img: Image = null
 var _map_tex: ImageTexture = null
 var _map_sig: PackedInt32Array = PackedInt32Array()
@@ -172,6 +205,7 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_key.resize(KEY_LEN)
 	_map = _make_layer(_draw_map_layer)
+	_mark = _make_layer(_draw_mark_layer)
 	_cross = _make_layer(_draw_cross_layer)
 	_map_img = Image.create(MAP_SIZE.x, MAP_SIZE.y, false, Image.FORMAT_RGBA8)
 	_map_tex = ImageTexture.create_from_image(_map_img)
@@ -226,6 +260,7 @@ func _process(delta: float) -> void:
 	var th: int = Time.get_ticks_usec()
 	_update_hint(delta)
 	_update_state(delta)
+	_update_mark()
 	stat_hint_us += Time.get_ticks_usec() - th
 
 	# Основной слой: каждый кадр — пока идёт анимация (и ещё один кадр после неё),
@@ -290,6 +325,7 @@ func _fill_key() -> void:
 	_key[42] = power_load_x10
 	_key[43] = power_out_x10
 	_key[44] = power_flags
+	_key[45] = 1 if Game.is_night() else 0    # скобки опасности и метка суток (V6)
 	if player == null:
 		_key[12] = 0
 		return
@@ -311,6 +347,7 @@ func _update_hint(delta: float) -> void:
 	_hint_t -= delta
 	if player == null:
 		_set_hint("")
+		_hint_target = Rect2()
 		return
 	var pos: Vector2 = player.global_position
 	if _hint_t > 0.0 and pos.distance_squared_to(_hint_pos) < 0.25 \
@@ -331,12 +368,17 @@ func _set_hint(h: String) -> void:
 
 
 func _compute_hint(pos: Vector2) -> String:
+	_hint_target = Rect2()
 	if player.hiding:
 		return HINT_HIDING
 	for t in World.terminals:
 		if World.cell_to_world(t).distance_to(pos) < HINT_TERMINAL_DIST:
-			return terminal_hint(t)
+			var th: String = terminal_hint(t)
+			if th == HINT_TERMINAL:     # без питания E не работает — и рамки нет
+				_hint_target = _cell_rect(t)
+			return th
 	if World.cell_to_world(World.beacon_cell).distance_to(pos) < HINT_BEACON_DIST:
+		_hint_target = _cell_rect(World.beacon_cell)
 		return HINT_BEACON
 	# Только клетки в радиусе подсказки, а не все постройки мира.
 	var r: int = int(ceil(HINT_MACHINE_DIST / float(World.TILE))) + 1
@@ -350,14 +392,22 @@ func _compute_hint(pos: Vector2) -> String:
 			if m.global_position.distance_to(pos) >= HINT_MACHINE_DIST:
 				continue
 			if m is Generator:
+				_hint_target = _cell_rect(m.cell)
 				return generator_hint(m)
 			if m is Inserter:
+				_hint_target = _cell_rect(m.cell)
 				return HINT_INSERTER
-			if m is Chest:
+			if m is Chest and not chest:
 				chest = true
+				_hint_target = _cell_rect(m.cell)
 	if chest:
 		return HINT_CHEST
 	return ""
+
+
+## Клетка мира как прямоугольник в мировых px (для рамки интерактива).
+static func _cell_rect(c: Vector2i) -> Rect2:
+	return Rect2(Vector2(c * World.TILE), Vector2(World.TILE, World.TILE))
 
 
 ## Подсказка у терминала: без питания E не работает (#29) — так и пишем.
@@ -633,12 +683,12 @@ func _bake_map_if_changed() -> bool:
 	_map_img.fill(Color(0, 0, 0, 0))
 	var sy: float = float(MAP_SIZE.y) / float(World.H)
 	for px in MAP_SIZE.x:
-		var c: Color = Color(0.20, 0.45, 0.20)
+		var c: Color = C_MAP_TOP
 		var tid: int = sig[px * 2 + 1]
 		if tid == IDs.T.SAND:
-			c = Color(0.70, 0.62, 0.35)
+			c = C_MAP_SAND
 		elif tid == IDs.T.STONE:
-			c = Color(0.35, 0.35, 0.40)
+			c = C_MAP_STONE
 		var y0: int = clampi(int(float(sig[px * 2]) * sy), 0, MAP_SIZE.y - 1)
 		_map_img.fill_rect(Rect2i(px, y0, 1, MAP_SIZE.y - y0), c)
 	_map_tex.update(_map_img)
@@ -652,10 +702,10 @@ func _draw_map_layer() -> void:
 		return
 	var r: Rect2 = _map_rect
 	var c: Control = _map
-	c.draw_rect(r, Color(0.05, 0.06, 0.09, 0.72))
+	c.draw_rect(r, C_PLATE)
 	c.draw_texture(_map_tex, r.position)
 	c.draw_texture(_fog_tex, r.position)
-	c.draw_rect(r, Color(1, 1, 1, 0.25), false, 1.0)
+	c.draw_rect(r, Color(C_LINE, 0.25), false, 1.0)
 	var sx: float = r.size.x / float(World.W)
 	var sy: float = r.size.y / float(World.H)
 	# Вентиляции и решётки (#31) — только под открытым туманом.
@@ -667,21 +717,24 @@ func _draw_map_layer() -> void:
 		var vp: Vector2 = (r.position + Vector2((float(v.x) + 0.5) * sx, (float(v.y) + 0.5) * sy)).floor()
 		if WorldFX.is_vent_sealed(v):
 			ng += 1
-			c.draw_rect(Rect2(vp - Vector2(2, 2), Vector2(5, 5)), Color(0.62, 0.68, 0.74))
-			c.draw_line(vp - Vector2(2, 0), vp + Vector2(3, 0), Color(0.15, 0.17, 0.2), 1.0)
+			c.draw_rect(Rect2(vp - Vector2(2, 2), Vector2(5, 5)), C_FRAME)
+			c.draw_rect(Rect2(vp - Vector2(2, 0), Vector2(5, 1)), C_PLATE_HI)
 		else:
+			# Открытая вентиляция — отсюда лезут фантомы: цвет угрозы.
 			nv += 1
-			c.draw_rect(Rect2(vp - Vector2(2, 2), Vector2(5, 5)), Color(0.85, 0.45, 1.0))
+			c.draw_rect(Rect2(vp - Vector2(2, 2), Vector2(5, 5)), C_DANGER)
 	stat_map_vents = nv
 	stat_map_grates = ng
 	# Релей
 	var bp: Vector2 = r.position + Vector2(World.beacon_cell.x * sx, World.beacon_cell.y * sy)
-	c.draw_rect(Rect2(bp - Vector2(3, 3), Vector2(6, 6)), Color(0.3, 0.95, 1.0))
-	# Игрок
+	c.draw_rect(Rect2(bp - Vector2(3, 3), Vector2(6, 6)), C_BIO)
+	# Игрок — квадрат цвета скафандра в светлой рамке
 	if player:
-		c.draw_circle(r.position + Vector2(_map_dot), 3.0, Color(0.95, 0.25, 0.28))
+		var pp: Vector2 = r.position + Vector2(_map_dot)
+		c.draw_rect(Rect2(pp - Vector2(3, 3), Vector2(6, 6)), C_LINE)
+		c.draw_rect(Rect2(pp - Vector2(2, 2), Vector2(4, 4)), C_HP)
 	c.draw_string(ThemeDB.fallback_font, r.position + Vector2(4, 12), "КАРТА",
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.6))
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(C_LINE, 0.6))
 	var dt: int = Time.get_ticks_usec() - t0
 	stat_us += dt
 	stat_map_us += dt
@@ -707,7 +760,7 @@ func _map_cell(px: int, py: int) -> Vector2i:
 ## Карта исследования заменена: всё чёрное, потом открываем по ней (после
 ## загрузки #37 — полный проход по пикселям, при новом мире карта ещё пуста).
 func _on_explored_reset() -> void:
-	_fog_img.fill(Color(0, 0, 0, 1))
+	_fog_img.fill(Color(C_PLATE, 1.0))   # туман — та же сливовая плашка, непрозрачная
 	_fog_open.fill(0)
 	_fog_dirty = true
 	if World.explore_cells == 0:
@@ -752,12 +805,50 @@ func map_explored_at(c: Vector2i) -> bool:
 	return _fog_open[py * MAP_SIZE.x + px] != 0
 
 
+# ------------------------------------------------------------ РАМКА ИНТЕРАКТИВА
+## ADR-003 § 3.2: рамка цвета `interact` вокруг объекта, с которым сработает E,
+## и клавиша «E» над ним. Отдельный слой: перерисовывается, только когда рамка
+## сдвинулась на экране (камера/объект) или появилась/пропала, — основной слой
+## и его ключ не трогает.
+
+func _update_mark() -> void:
+	var r: Rect2i = Rect2i()
+	if _hint_target.size != Vector2.ZERO:
+		var sr: Rect2 = get_viewport().get_canvas_transform() * _hint_target
+		r = Rect2i(sr.position.round(), sr.size.round())
+	if r != mark_rect:
+		mark_rect = r
+		_mark.queue_redraw()
+
+
+func _draw_mark_layer() -> void:
+	var t0: int = Time.get_ticks_usec()
+	stat_mark_redraws += 1
+	if mark_rect.size == Vector2i.ZERO:
+		stat_us += Time.get_ticks_usec() - t0
+		return
+	var r: Rect2 = Rect2(mark_rect).grow(MARK_GROW)
+	var w: float = MARK_W
+	# Рамка — четыре полосы (не draw_rect с обводкой: углы остаются квадратными).
+	_mark.draw_rect(Rect2(r.position, Vector2(r.size.x, w)), C_INTERACT)
+	_mark.draw_rect(Rect2(r.position.x, r.end.y - w, r.size.x, w), C_INTERACT)
+	_mark.draw_rect(Rect2(r.position, Vector2(w, r.size.y)), C_INTERACT)
+	_mark.draw_rect(Rect2(r.end.x - w, r.position.y, w, r.size.y), C_INTERACT)
+	# Клавиша «E»: сливовая плашка с жёлтой кромкой над объектом.
+	var k: Rect2 = Rect2(roundf(r.get_center().x - 9.0), r.position.y - 24.0, 18.0, 18.0)
+	_mark.draw_rect(k, C_PLATE)
+	_mark.draw_rect(Rect2(k.position, Vector2(k.size.x, 2.0)), C_INTERACT)
+	_mark.draw_string(ThemeDB.fallback_font, k.position + Vector2(0, 14), "E",
+			HORIZONTAL_ALIGNMENT_CENTER, k.size.x, 13, C_INTERACT)
+	stat_us += Time.get_ticks_usec() - t0
+
+
 # ------------------------------------------------------------ ПРИЦЕЛ
 
 func _draw_cross_layer() -> void:
 	stat_cross_redraws += 1
 	var mp: Vector2 = _mouse
-	var cross: Color = Color(1, 1, 1, 0.75)
+	var cross: Color = Color(C_LINE, 0.75)
 	_cross.draw_line(mp - Vector2(7, 0), mp - Vector2(3, 0), cross, 1.5)
 	_cross.draw_line(mp + Vector2(3, 0), mp + Vector2(7, 0), cross, 1.5)
 	_cross.draw_line(mp - Vector2(0, 7), mp - Vector2(0, 3), cross, 1.5)
@@ -774,55 +865,62 @@ func _draw() -> void:
 	var font: Font = ThemeDB.fallback_font
 
 	if damage_flash > 0.0:
-		draw_rect(Rect2(0, 0, w, h), Color(0.8, 0.1, 0.1, damage_flash * 0.25))
+		draw_rect(Rect2(0, 0, w, h), Color(C_DANGER, damage_flash * 0.25))
 
 	# ---- Здоровье ------------------------------------------------------------
 	if player:
 		var hp_rect: Rect2 = Rect2(14, 12, 210, 20)
-		draw_rect(hp_rect, Color(0, 0, 0, 0.55))
+		draw_rect(hp_rect, C_PLATE)
 		var frac: float = clampf(player.hp / 100.0, 0.0, 1.0)
-		var hp_col: Color = Color(0.85, 0.22, 0.28) if frac > 0.35 else Color(0.95, 0.45, 0.15)
-		draw_rect(Rect2(hp_rect.position + Vector2(2, 2), Vector2((hp_rect.size.x - 4) * frac, hp_rect.size.y - 4)), hp_col)
-		draw_rect(hp_rect, Color(1, 1, 1, 0.35), false, 1.0)
+		# Здоровье — цвет скафандра; мало здоровья — цвет угрозы.
+		var hp_col: Color = C_HP if frac > 0.35 else C_DANGER
+		var hp_fill: Rect2 = Rect2(hp_rect.position + Vector2(2, 2), Vector2((hp_rect.size.x - 4) * frac, hp_rect.size.y - 4))
+		draw_rect(hp_fill, hp_col)
+		draw_rect(Rect2(hp_fill.position, Vector2(hp_fill.size.x, 2)), hp_col.lightened(0.3))
+		draw_rect(hp_rect, Color(C_LINE, 0.35), false, 1.0)
 		draw_string(font, hp_rect.position + Vector2(8, 15), "%d" % int(player.hp),
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.9))
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(C_LINE, 0.95))
 
 		# Индикатор заряда импульса
 		var emp_rect: Rect2 = Rect2(14, 38, 150, 8)
-		draw_rect(emp_rect, Color(0, 0, 0, 0.5))
+		draw_rect(emp_rect, C_PLATE)
 		var ef: float = 1.0 - player.emp_cd / player.emp_max
 		draw_rect(Rect2(emp_rect.position + Vector2(1, 1), Vector2((emp_rect.size.x - 2) * ef, emp_rect.size.y - 2)),
-				Color(0.35, 0.8, 1.0))
+				C_BIO)
 		draw_string(font, emp_rect.position + Vector2(156, 8), "ИМПУЛЬС [Q]",
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.6, 0.85, 1.0, 0.85))
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(C_BIO, 0.85))
 
 		# Трекер цели, мощность, обучение (#34)
 		_draw_status_block(font)
 
 	# ---- Время суток ---------------------------------------------------------
-	# Солнце ставим по квантованному времени — ровно тому, что в ключе перерисовки.
-	var clock_pos: Vector2 = Vector2(w - 120, 46)
-	draw_arc(clock_pos, 22.0, PI, TAU, 32, Color(0, 0, 0, 0.45), 3.0)
+	# Полоса суток с квадратной меткой (ADR-003): днём метка жёлтая, ночью —
+	# цвет угрозы. Метку ставим по квантованному времени — ровно тому, что в
+	# ключе перерисовки.
+	var strip: Rect2 = Rect2(w - 176, 36, 112, 4)
+	draw_rect(strip.grow(1.0), C_PLATE)
+	draw_rect(strip, C_PLATE_HI)
 	var tq: float = float(int(Game.time_of_day * float(CLOCK_STEPS))) / float(CLOCK_STEPS)
-	var ang: float = PI + tq * PI
-	var sun: Vector2 = clock_pos + Vector2(cos(ang), sin(ang)) * 22.0
+	var mx: float = roundf(strip.position.x + tq * strip.size.x)
+	var night: bool = Game.is_night()
 	var dl: float = Game.daylight()
-	var sky: Color = Color(0.25, 0.30, 0.45).lerp(Color(1.0, 0.85, 0.35), dl)
-	draw_circle(sun, 6.0, sky)
+	var sun: Color = C_DANGER if night else C_PLATE_HI.lerp(C_HAZARD, 0.35 + 0.65 * dl)
+	draw_rect(Rect2(mx - 4, 32, 8, 12), C_PLATE)
+	draw_rect(Rect2(mx - 3, 33, 6, 10), sun)
 	draw_string(font, Vector2(w - 176, 26), "Смена %d — %s" % [Game.day_number, Game.phase_name()],
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.9, 0.92, 1.0))
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, C_DANGER.lerp(C_LINE, 0.35) if night else C_LINE)
 
 	# ---- Отсчёт до ночи (сумерки, § 4.1) -----------------------------------
 	if night_countdown >= 0:
 		var cd: String = "НОЧЬ ЧЕРЕЗ %d с" % night_countdown
 		var cw: float = 240.0
 		var cr: Rect2 = Rect2(w * 0.5 - cw * 0.5, 12, cw, 28)
-		draw_rect(cr, Color(0.10, 0.03, 0.05, 0.62))
-		draw_rect(cr, Color(1.0, 0.45, 0.3, 0.7), false, 1.0)
+		draw_rect(cr, C_PLATE)
+		draw_rect(cr, Color(C_DANGER, 0.7), false, 1.0)
 		# Последние 5 с — ярче, мигает раз в секунду (ключ — целые секунды).
 		var hot: bool = night_countdown <= 5 and night_countdown % 2 == 1
 		draw_string(font, cr.position + Vector2(0, 20), cd, HORIZONTAL_ALIGNMENT_CENTER, cw, 16,
-				Color(1.0, 0.85, 0.6) if hot else Color(1.0, 0.55, 0.38))
+				C_DANGER.lerp(C_LINE, 0.6) if hot else C_DANGER.lerp(C_LINE, 0.25))
 
 	# ---- Уведомления --------------------------------------------------------
 	var y: float = h - 150
@@ -844,7 +942,7 @@ func _draw() -> void:
 	# ---- Подсказки -----------------------------------------------------------
 	if hint_text != "":
 		draw_string(font, Vector2(size.x * 0.5 - 300, size.y - 116), hint_text,
-				HORIZONTAL_ALIGNMENT_CENTER, 600, 15, Color(1.0, 0.95, 0.75, 0.95))
+				HORIZONTAL_ALIGNMENT_CENTER, 600, 15, Color(C_INTERACT, 0.95))
 
 	# ---- Подсказка управления (затухает) ------------------------------------
 	if Game.game_time < 22.0:
@@ -856,7 +954,12 @@ func _draw() -> void:
 		]
 		for i in lines.size():
 			draw_string(font, Vector2(size.x * 0.5 - 260, size.y * 0.30 + i * 20), String(lines[i]),
-					HORIZONTAL_ALIGNMENT_CENTER, 520, 14, Color(0.85, 0.92, 1.0, ta))
+					HORIZONTAL_ALIGNMENT_CENTER, 520, 14, Color(C_LINE, ta))
+
+	# ---- Ночь: уголки-скобки опасности по краям (ADR-003 § 3.2) ------------
+	# Опасность кодируется не только цветом: скобки видны и при дальтонизме.
+	if night:
+		_draw_brackets(w, h)
 	stat_us += Time.get_ticks_usec() - t0
 
 
@@ -866,11 +969,11 @@ func _draw_status_block(font: Font) -> void:
 	var x: float = 14.0
 	var y: float = 54.0
 	# Трекер цели
-	draw_rect(Rect2(x, y, 4, 34), Color(0.3, 0.9, 1.0, 0.85))
+	draw_rect(Rect2(x, y, 4, 34), C_BIO)
 	draw_string(font, Vector2(x + 10, y + 13), tracker_title,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.45, 0.92, 1.0))
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, C_BIO.lerp(C_LINE, 0.3))
 	draw_string(font, Vector2(x + 10, y + 30), tracker_detail,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.82, 0.9, 1.0, 0.9))
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(C_LINE, 0.9))
 	y += 44.0
 	# Мощность: выбранный/ближайший генератор (§ 4.3)
 	var g = power_gen
@@ -878,13 +981,13 @@ func _draw_status_block(font: Font) -> void:
 		var out: float = g.current_output()
 		var ld: float = float(g.power_load)
 		var bar: Rect2 = Rect2(x, y + 8, 120, 7)
-		draw_rect(bar, Color(0, 0, 0, 0.55))
+		draw_rect(bar, C_PLATE)
 		var cap: float = maxf(out, 0.001)
 		var frac: float = clampf(ld / cap, 0.0, 1.0) if out > 0.0 else (1.0 if ld > 0.0 else 0.0)
 		var over: bool = g.overloaded()
-		var col: Color = Color(1.0, 0.35, 0.25) if over else Color(1.0, 0.85, 0.3)
+		var col: Color = C_WARN if over else C_HAZARD
 		draw_rect(Rect2(bar.position + Vector2(1, 1), Vector2((bar.size.x - 2) * frac, bar.size.y - 2)), col)
-		draw_rect(bar, Color(1, 1, 1, 0.3), false, 1.0)
+		draw_rect(bar, Color(C_LINE, 0.3), false, 1.0)
 		var state: String = ""
 		if not g.enabled:
 			state = " · ВЫКЛ"
@@ -894,16 +997,16 @@ func _draw_status_block(font: Font) -> void:
 			state = " · ПЕРЕГРУЗ"
 		draw_string(font, Vector2(x + 128, y + 15), "%s: нагрузка %.1f / выход %.1f%s" % [power_text, ld, out, state],
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
-				Color(1.0, 0.55, 0.45) if (over or not g.enabled) else Color(1.0, 0.92, 0.7, 0.92))
+				C_WARN.lerp(C_LINE, 0.25) if (over or not g.enabled) else Color(C_HAZARD.lerp(C_LINE, 0.55), 0.92))
 		y += 22.0
 	elif Game.brownout:
 		draw_string(font, Vector2(x, y + 15), "ПЕРЕГРУЗ СЕТИ — станки замедлены",
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1.0, 0.55, 0.45))
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, C_WARN.lerp(C_LINE, 0.25))
 		y += 22.0
 	# Обучение: копай → крафт → ТЭЦ → питание → терминал
 	if tutorial_text != "":
 		draw_string(font, Vector2(x, y + 14), "ОБУЧЕНИЕ " + tutorial_text,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1.0, 0.88, 0.45, 0.95))
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(C_HAZARD.lerp(C_LINE, 0.3), 0.95))
 
 
 
@@ -919,8 +1022,13 @@ func _draw_hotbar(font: Font) -> void:
 	for i in count:
 		var r: Rect2 = hotbar_slot_rect(i)
 		var sel: bool = (player.inv.selected == i)
-		draw_rect(r, Color(0.08, 0.09, 0.12, 0.82))
-		draw_rect(r, Color(1, 1, 1, 0.85) if sel else Color(1, 1, 1, 0.22), false, 2.0 if sel else 1.0)
+		draw_rect(r, C_PLATE)
+		draw_rect(r.grow(-2.0), Color(C_PLATE_HI, 0.6))
+		# Выбранный слот — та же рамка `interact`, что вокруг объектов (§ 3.2).
+		if sel:
+			draw_rect(r, C_INTERACT, false, 2.0)
+		else:
+			draw_rect(r, Color(C_LINE, 0.22), false, 1.0)
 		var st: ItemStack = player.inv.get_slot(i)
 		if not st.is_empty():
 			var tex: ImageTexture = DB.item_texture(st.id)
@@ -928,6 +1036,21 @@ func _draw_hotbar(font: Font) -> void:
 				draw_texture_rect(tex, Rect2(r.position + Vector2(7, 7), Vector2(28, 28)), false)
 			if st.count > 1:
 				draw_string(font, r.position + Vector2(2, r.size.y - 4), str(st.count),
-						HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 6, 12, Color(1, 1, 1, 0.95))
+						HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 6, 12, Color(C_LINE, 0.95))
 		draw_string(font, r.position + Vector2(3, 12), str((i + 1) % 10),
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.45))
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(C_INTERACT, 0.8) if sel else Color(C_LINE, 0.45))
+
+
+## Уголки-скобки опасности в четырёх углах экрана (ночь). Квадратные L-плечи.
+func _draw_brackets(w: float, h: float) -> void:
+	var l: float = BRACKET_LEN
+	var t: float = BRACKET_W
+	var p: float = BRACKET_PAD
+	for cx in 2:
+		for cy in 2:
+			var x: float = p if cx == 0 else w - p - l
+			var y: float = p if cy == 0 else h - p - l
+			var vx: float = p if cx == 0 else w - p - t
+			var hy: float = p if cy == 0 else h - p - t
+			draw_rect(Rect2(x, hy, l, t), C_DANGER)
+			draw_rect(Rect2(vx, y, t, l), C_DANGER)
