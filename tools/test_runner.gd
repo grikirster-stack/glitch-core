@@ -484,6 +484,47 @@ func _check_data() -> void:
 		_collect_nonpositive(consts[k], String(k), nonpos)
 	_ok("константы Balance положительные", consts.size() >= 30 and nonpos.is_empty(),
 			"констант %d, плохих %s" % [consts.size(), str(nonpos)])
+	_check_style_v1(atlas)
+
+
+# --- ADR-003 V1 (#103): палитра, варианты атласа, биомы по глубине -----------
+func _check_style_v1(atlas: Image) -> void:
+	# Каждый вариант атласа нарисован и твёрдые тайлы непрозрачны целиком («всё квадратное»).
+	var holes: Array = []
+	for id in range(1, IDs.TILE_COUNT):
+		for v in DB.VARIANTS:
+			var c: Vector2i = DB.atlas_var[id * DB.VARIANTS + v]
+			var n: int = _opaque_pixels(atlas, c * DB.TILE_SIZE) if c.x >= 0 else 0
+			var need: int = DB.TILE_SIZE * DB.TILE_SIZE if DB.tile_solid(id) and id != IDs.T.GLASS else 1
+			if n < need:
+				holes.append("%s/%d" % [DB.tile_name(id), v])
+				break
+	_ok("V1: все варианты атласа нарисованы, твёрдые — сплошной квадрат", holes.is_empty(), str(holes))
+	# Руды различимы при дейтеранопии (ADR-003 § 5): ΔE (CIE76) между любыми двумя ≥ 20.
+	var ores: Array = DB.ORE_PAL.keys()
+	var worst: float = 999.0
+	var pair: String = ""
+	for i in ores.size():
+		for j in range(i + 1, ores.size()):
+			var a: Color = DB.deutan(DB.PAL[DB.ORE_PAL[ores[i]]])
+			var b: Color = DB.deutan(DB.PAL[DB.ORE_PAL[ores[j]]])
+			var de: float = DB.delta_e(a, b)
+			if de < worst:
+				worst = de
+				pair = "%s/%s" % [DB.ORE_PAL[ores[i]], DB.ORE_PAL[ores[j]]]
+	_ok("V1: руды различимы при дейтеранопии (мин. ΔE ≥ 20)", worst >= 20.0, "мин. ΔE %.1f (%s)" % [worst, pair])
+	# Биомы по глубине: у поверхности — поверхность, у дна — глубина; камень в разных
+	# биомах — разные клетки атласа, а тайл (id) тот же.
+	var bx: int = World.beacon_cell.x
+	var top: int = int(World.surface[bx])
+	_ok("V1: биомы по глубине (поверхность → пещеры → глубина)",
+			World.biome_at(bx, top + 2) == 0 and World.biome_at(bx, top + int((World.H - top) * 0.4)) == 1
+			and World.biome_at(bx, World.H - 5) == 2,
+			"%d/%d/%d" % [World.biome_at(bx, top + 2), World.biome_at(bx, top + int((World.H - top) * 0.4)),
+			World.biome_at(bx, World.H - 5)])
+	var s0: Vector2i = DB.atlas_var[IDs.T.STONE * DB.VARIANTS + DB.variant_index(0, 0, 0)]
+	var s2: Vector2i = DB.atlas_var[IDs.T.STONE * DB.VARIANTS + DB.variant_index(2, 0, 0)]
+	_ok("V1: камень на поверхности и в глубине — разные клетки атласа", s0 != s2, "%s / %s" % [s0, s2])
 
 
 ## Число непрозрачных пикселей в квадрате TILE_SIZE от origin.

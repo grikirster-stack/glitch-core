@@ -98,10 +98,15 @@ func _build_tile_light_table() -> void:
 
 
 ## Кэш координат атласа по id тайла: поиск в словаре на каждой клетке дорогой.
+## _atlas_cache — «лицо» тайла, _atlas_var — все варианты (ADR-003 V1).
 func _build_atlas_cache() -> void:
 	_atlas_cache.clear()
 	for id in range(IDs.TILE_COUNT):
 		_atlas_cache.append(DB.atlas_of_tile.get(id, Vector2i(-1, -1)))
+	_atlas_var = DB.atlas_var
+	_open_tbl.resize(IDs.TILE_COUNT)
+	for id in range(IDs.TILE_COUNT):
+		_open_tbl[id] = 0 if DB.tile_solid(id) else 1
 
 
 func _build_tileset() -> void:
@@ -110,8 +115,7 @@ func _build_tileset() -> void:
 	var src: TileSetAtlasSource = TileSetAtlasSource.new()
 	src.texture = DB.atlas_texture
 	src.texture_region_size = Vector2i(TILE, TILE)
-	for id in range(IDs.TILE_COUNT):
-		var ac: Vector2i = DB.atlas_of_tile[id]
+	for ac in DB.atlas_cells:
 		src.create_tile(ac)
 	ts.add_source(src, 0)
 	tilemap = TileMapLayer.new()
@@ -323,6 +327,7 @@ func generate(p_seed: int) -> void:
 
 	# --- 12. Визуализация, свет, поиск пути ----------------------------------
 	var t_sync: int = Time.get_ticks_usec()
+	_build_biome_rows()
 	_sync_all()
 	var t_lights: int = Time.get_ticks_usec()
 	_rebuild_lights()
@@ -1265,11 +1270,12 @@ func _set_fluid_cell(x: int, y: int) -> void:
 	var idx: int = y * W + x
 	# Одна порция — плёнка в полклетки: её не видно, клетка остаётся воздухом.
 	var id: int = IDs.T.WATER if fluid[idx] >= FLUID_VISIBLE else IDs.T.AIR
-	if tiles[idx] == id:
+	var old: int = tiles[idx]
+	if old == id:
 		return
 	tiles[idx] = id
 	if tilemap:
-		_set_cell_visual(x, y, id)
+		_set_cell_visual(x, y, id, old)
 
 
 # ------------------------------------------------------------ ДОСТУП К ТАЙЛАМ
@@ -1303,6 +1309,7 @@ func set_tile(x: int, y: int, id: int) -> void:
 	if x < 0 or x >= W or y < 0 or y >= H:
 		return
 	var idx: int = y * W + x
+	var old: int = tiles[idx]
 	tiles[idx] = id
 	if fluid.size() == W * H:
 		if id == IDs.T.WATER:
@@ -1317,7 +1324,7 @@ func set_tile(x: int, y: int, id: int) -> void:
 	_fluid_mark_cell(x, y - 1)
 	_fluid_mark_cell(x, y + 1)
 	if tilemap:
-		_set_cell_visual(x, y, id)
+		_set_cell_visual(x, y, id, old)
 	_update_astar(x, y)
 	_update_lights_around(x, y)
 	_defense_on_set_tile(Vector2i(x, y), id)
@@ -1891,26 +1898,142 @@ func get_lights_near(rect: Rect2) -> Array:
 
 # ------------------------------------------------------------ СИНХРОНИЗАЦИЯ
 
-func _set_cell_visual(x: int, y: int, id: int) -> void:
+## old — что стояло в клетке до правки (-1 — неизвестно): соседей, чья маска
+## от правки не меняется (вода сменила воздух у стены), не перерисовываем.
+func _set_cell_visual(x: int, y: int, id: int, old: int = -1) -> void:
 	## Воздух не рисуем вовсе — пустая клетка дешевле прозрачного тайла.
 	if id == IDs.T.AIR:
 		tilemap.set_cell(Vector2i(x, y), 0, Vector2i(-1, -1))
 	else:
-		tilemap.set_cell(Vector2i(x, y), 0, _atlas_cache[id])
+		tilemap.set_cell(Vector2i(x, y), 0, _atlas_var[id * DB.VARIANTS + _cell_variant(x, y, id)])
+	# ADR-003 V1: у четырёх соседей могла смениться маска открытых сторон.
+	_refresh_cell(x, y - 1, old, id)
+	_refresh_cell(x + 1, y, old, id)
+	_refresh_cell(x, y + 1, old, id)
+	_refresh_cell(x - 1, y, old, id)
 
 
 func _sync_all() -> void:
 	if not tilemap:
 		return
+	if _bio_mid.size() != W:
+		_build_biome_rows()
 	# Пустые клетки пропускаем: тайлмап после очистки и так пуст.
-	# Координаты атласа берём из кэша — поиск в словаре на каждой клетке дорогой.
+	# Вариант клетки (ADR-003 V1) считается здесь же, без вызовов на клетку:
+	# маска открытых сторон, биом по глубине колонки, фактура по хэшу.
+	var nv: int = DB.VARIANTS
+	var av: Array = _atlas_var
+	var op: PackedByteArray = _open_tbl
+	var ta: int = DB.TEX_ALTS
+	var am: int = DB.TEX_ALTS - 1      # фактур — степень двойки
+	var mid: PackedInt32Array = _bio_mid
+	var deep: PackedInt32Array = _bio_deep
 	for y in range(H):
 		var row: int = y * W
+		# Края мира — общим путём (соседи за краем), середина — без проверок границ.
+		var inner: bool = y > 0 and y < H - 1
 		for x in range(W):
-			var id: int = tiles[row + x]
+			var i: int = row + x
+			var id: int = tiles[i]
 			if id == IDs.T.AIR:
 				continue
-			tilemap.set_cell(Vector2i(x, y), 0, _atlas_cache[id])
+			if not inner or x == 0 or x == W - 1:
+				tilemap.set_cell(Vector2i(x, y), 0, av[id * nv + _cell_variant(x, y, id)])
+				continue
+			var m: int = 0
+			var n: int = tiles[i - W]
+			if n != id and op[n] != 0:
+				m = 1
+			n = tiles[i + 1]
+			if n != id and op[n] != 0:
+				m |= 2
+			n = tiles[i + W]
+			if n != id and op[n] != 0:
+				m |= 4
+			n = tiles[i - 1]
+			if n != id and op[n] != 0:
+				m |= 8
+			var bio: int = 2 if y >= deep[x] else (1 if y >= mid[x] else 0)
+			var alt: int = ((x * 374761393 + y * 668265263) >> 15) & am
+			tilemap.set_cell(Vector2i(x, y), 0, av[id * nv + (((bio * ta + alt) << 4) | m)])
+
+
+# --- ADR-003 V1 (#103): вариант тайла в атласе -------------------------------
+# Клетка атласа = тайл × биом по глубине × фактура (одна из DB.TEX_ALTS, по хэшу клетки) ×
+# маска открытых сторон (1 верх, 2 право, 4 низ, 8 лево; сторона открыта, если
+# сосед не твёрдый и не тот же тайл). Всё считается локально из тайлов и рельефа:
+# в сохранение и в сеть по-прежнему идёт только id тайла (ADR-003 § 8).
+# Глубины смены биомов — ADR-003 § 10 п. 3: средние пещеры с 25 % глубины
+# колонки (как железо), глубина у лавы — с 55 % (кристаллы, лава).
+
+const BIO_MID_DEPTH: float = 0.25
+const BIO_DEEP_DEPTH: float = 0.55
+
+var _atlas_var: Array = []                              # id * DB.VARIANTS + вариант -> клетка атласа
+var _open_tbl: PackedByteArray = PackedByteArray()      # 1 — тайл не твёрдый: сторона к нему открыта
+var _bio_mid: PackedInt32Array = PackedInt32Array()     # с какой строки колонки начинаются средние пещеры
+var _bio_deep: PackedInt32Array = PackedInt32Array()    # с какой строки — глубина у лавы
+
+
+## Границы биомов по колонкам: от рельефа, с неровной «ступенькой» ±1–2 клетки
+## (пары колонок), чтобы граница не была линейкой. Зовётся после генерации и загрузки.
+func _build_biome_rows() -> void:
+	_bio_mid.resize(W)
+	_bio_deep.resize(W)
+	for x in W:
+		var top: int = surface[x] if surface.size() == W else SEA_LEVEL
+		var span: float = float(H - top)
+		var h: int = ((x >> 1) * 2654435761) >> 13
+		_bio_mid[x] = top + int(span * BIO_MID_DEPTH) + (h & 3) - 1
+		_bio_deep[x] = top + int(span * BIO_DEEP_DEPTH) + ((h >> 3) & 3) - 1
+
+
+## Биом клетки: 0 поверхность, 1 средние пещеры, 2 глубина у лавы.
+func biome_at(x: int, y: int) -> int:
+	if _bio_mid.size() != W or x < 0 or x >= W:
+		return 0
+	return 2 if y >= _bio_deep[x] else (1 if y >= _bio_mid[x] else 0)
+
+
+func _cell_variant(x: int, y: int, id: int) -> int:
+	var m: int = 0
+	var n: int = get_tile(x, y - 1)
+	if n != id and _open_tbl[n] != 0:
+		m = 1
+	n = get_tile(x + 1, y)
+	if n != id and _open_tbl[n] != 0:
+		m |= 2
+	n = get_tile(x, y + 1)
+	if n != id and _open_tbl[n] != 0:
+		m |= 4
+	n = get_tile(x - 1, y)
+	if n != id and _open_tbl[n] != 0:
+		m |= 8
+	var alt: int = ((x * 374761393 + y * 668265263) >> 15) & (DB.TEX_ALTS - 1)
+	return DB.variant_index(biome_at(x, y), alt, m)
+
+
+## Клетка атласа, которая должна стоять в (x, y) при текущих тайлах (тесты сверяют тайлмап).
+func cell_atlas(x: int, y: int) -> Vector2i:
+	var id: int = get_tile(x, y)
+	if id == IDs.T.AIR or not in_bounds(x, y):
+		return Vector2i(-1, -1)
+	return _atlas_var[id * DB.VARIANTS + _cell_variant(x, y, id)]
+
+
+## Пересчёт варианта соседней клетки после правки рядом (воздух не трогаем — он пуст).
+## was/now — тайл правленой клетки до и после: если сторона к ней у соседа как была
+## открыта (или закрыта), так и осталась, перерисовывать нечего.
+func _refresh_cell(x: int, y: int, was: int = -1, now: int = -1) -> void:
+	if not in_bounds(x, y):
+		return
+	var id: int = tiles[y * W + x]
+	if id == IDs.T.AIR:
+		return
+	if was >= 0 and now >= 0 \
+			and (was != id and _open_tbl[was] != 0) == (now != id and _open_tbl[now] != 0):
+		return
+	tilemap.set_cell(Vector2i(x, y), 0, _atlas_var[id * DB.VARIANTS + _cell_variant(x, y, id)])
 
 
 func sync_all() -> void:
@@ -2105,8 +2228,12 @@ func load_state(d: Dictionary) -> bool:
 	fluid = f.duplicate()
 	explored = e.duplicate()
 	var s: PackedInt32Array = d.get("surface", PackedInt32Array())
-	if s.size() == W:
+	if s.size() == W and s != surface:
 		surface = s.duplicate()
+		# ADR-003 V1: границы биомов идут от рельефа — пересчитать и перерисовать.
+		_build_biome_rows()
+		if tilemap:
+			_sync_all()
 	# Очередь воды — как была: вода продолжит течь с того же шага.
 	_fluid_queued.resize(n)
 	_fluid_queued.fill(0)

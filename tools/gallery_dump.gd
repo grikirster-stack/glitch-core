@@ -176,6 +176,35 @@ func _dump_tiles() -> void:
 			continue
 		_save(_upscale(_tile_image(int(id)), PIXEL_SCALE), "tiles/%s.png" % _tile_slug(int(id)))
 	print("тайлов: %d" % (ids.size() - 1))
+	_dump_tile_variants(ids)
+
+
+## ADR-003 V1: лист вариантов атласа — строки тайлов, столбцы: 3 биома по глубине ×
+## маски открытых сторон (закрыт, верх, низ-потолок, все стороны). Без окна.
+func _dump_tile_variants(ids: Array) -> void:
+	if not db.has_method("variant_image"):
+		return
+	var masks: Array = [0, 1, 4, 15]
+	var ts: int = db.TILE_SIZE
+	var gap: int = 2
+	var cols: int = 3 * masks.size()
+	var rows: Array = []
+	for id in ids:
+		if int(id) != IDs.T.AIR:
+			rows.append(int(id))
+	var img: Image = Image.create_empty(cols * (ts + gap) + gap * 3, rows.size() * (ts + gap) + gap, false,
+			Image.FORMAT_RGBA8)
+	img.fill(Color("#1a1420"))
+	for r in rows.size():
+		var id: int = rows[r]
+		for bio in 3:
+			for k in masks.size():
+				var x: int = gap + (bio * masks.size() + k) * (ts + gap) + bio * gap
+				var y: int = gap + r * (ts + gap)
+				var t: Image = db.variant_image(id, bio, 0, int(masks[k]))
+				img.blend_rect(t, Rect2i(0, 0, ts, ts), Vector2i(x, y))
+	_save(_upscale(img, 4), "tiles_variants.png")
+	print("лист вариантов тайлов: %d строк × %d столбцов" % [rows.size(), cols])
 
 
 func _item_slug(id: int) -> String:
