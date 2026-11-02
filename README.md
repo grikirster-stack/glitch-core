@@ -49,8 +49,8 @@
 
 ### Как выходят релизы
 
-Workflow [`Релиз`](.github/workflows/release.yml) запускается **на каждый мерж в main**:
-автотесты на сидах 31337, 4242, 12345 → экспорт Android/Windows/Linux → проверка APK
+Релиз выпускается **только вручную, по кнопке** — workflow [`Релиз`](.github/workflows/release.yml)
+(Actions → «Релиз» → Run workflow, ветка main). Он делает: автотесты на сидах 31337, 4242, 12345 → экспорт Android/Windows/Linux → проверка APK
 (`apksigner verify`, `aapt dump badging`: пакет, версия, три ABI, разрешения) → тег `vX.Y.Z`
 и GitHub Release с файлами и заметками на русском. Тесты упали — релиза нет.
 
@@ -61,14 +61,16 @@ Workflow [`Релиз`](.github/workflows/release.yml) запускается **
   её не коммитят.
 - **Заметки** — список смерженных PR с прошлого тега по группам (геймплей / исправления /
   прочее) и ссылка на полный diff. Посмотреть заранее: `python tools/release/plan.py --notes notes.md`.
-- **Вручную**: Actions → «Релиз» → Run workflow (выбрать `bump`: auto/patch/minor/major) или
-  `gh workflow run release.yml -f bump=minor`. Настоящий релиз — только с main.
+- **Запуск**: Actions → «Релиз» → Run workflow (выбрать `bump`: auto/patch/minor/major) или
+  `gh workflow run release.yml -f bump=auto`. Настоящий релиз — только с main и только если
+  с прошлого тега есть новые коммиты.
 - **Пробная сборка без тега и релиза**: `gh workflow run release.yml --ref <ветка> -f bump=patch -f dry_run=true`,
   файлы — в артефакте запуска (`gh run download <id>`). PR, которые трогают `export_presets.cfg`,
   `project.godot`, `release.yml` или `tools/release/`, проходят ту же сборку автоматически.
-- **Подпись APK** — release-ключом из секретов репозитория `ANDROID_KEYSTORE_BASE64`,
-  `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`; без них — debug-ключом, сгенерированным
-  в CI (с пометкой в заметках). Создать ключ один раз и сохранить вне репозитория:
+- **Подпись APK** — release-ключом (сертификат `CN=Glitch Core`) из секретов репозитория
+  `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`; они уже заданы.
+  Без секретов (например, в форке) — запасной путь: debug-ключ, сгенерированный в CI, с пометкой
+  в заметках. Как ключ создавался (повторять не нужно; хранится вне репозитория):
 
   ```bash
   keytool -genkeypair -v -keystore glitch-core-release.keystore -storetype PKCS12 \
