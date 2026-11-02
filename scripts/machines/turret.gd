@@ -9,15 +9,13 @@ extends MachineBase
 ## Цель — по приоритету Balance.TURRET_PRIORITY (тень > копатель > двойник >
 ## эхо > рой), при равном — ближайшая.
 ##
-## Дуга выстрела здесь простая (ломаная на 0.12 с). Полировка FX — #34 через
-## сигнал fired / World.turret_fired.
+## Дугу выстрела рисует только WorldFX (#34) по World.turret_fired — сама
+## турель её не рисует (иначе дуга двойная). Точка from — срез ствола.
 
 ## Выстрел: из точки from в точку to (мировые координаты).
 signal fired(from: Vector2, to: Vector2)
 
 const RANGE_PX: float = Balance.TURRET_RANGE_TILES * 16.0
-const ARC_TIME: float = 0.12        ## сколько видна дуга, с
-const ARC_SEGMENTS: int = 5
 const MUZZLE: float = 7.0           ## длина ствола от центра купола, px
 
 var shots: int = 0                  ## выстрелов за жизнь — для сценариев
@@ -25,8 +23,6 @@ var target: Node2D = null           ## последняя цель
 var _cooldown: float = 0.0          ## секунды полезной работы до выстрела
 var _scan_t: float = 0.0
 var _aim: float = -PI * 0.5         ## угол ствола
-var _arc_t: float = 0.0
-var _arc_pts: PackedVector2Array = PackedVector2Array()
 
 
 func _init() -> void:
@@ -38,9 +34,6 @@ func _init() -> void:
 
 func _process(delta: float) -> void:
 	super(delta)
-	if _arc_t > 0.0:
-		_arc_t = maxf(0.0, _arc_t - delta)
-		queue_redraw()
 	if not powered:
 		return
 	if _cooldown > 0.0:
@@ -102,25 +95,14 @@ func _fire(t: Node2D) -> void:
 	_cooldown = Balance.TURRET_PERIOD
 	shots += 1
 	var to: Vector2 = t.global_position
-	var from: Vector2 = global_position + Vector2(0.0, -3.0)
-	_aim = (to - from).angle()
-	_build_arc(to - global_position)
+	var pivot: Vector2 = global_position + Vector2(0.0, -3.0)
+	_aim = (to - pivot).angle()
+	var from: Vector2 = pivot + Vector2.from_angle(_aim) * MUZZLE
+	queue_redraw()                  # ствол повернулся
 	t.take_damage(Balance.TURRET_DAMAGE, global_position)
 	Sfx.play_at("turret_zap", global_position, -8.0, randf_range(0.92, 1.08))
 	fired.emit(from, to)
 	World.turret_fired.emit(from, to)
-
-
-## Ломаная дуга от ствола до цели (в локальных координатах).
-func _build_arc(local_to: Vector2) -> void:
-	var start: Vector2 = Vector2(0.0, -3.0) + Vector2.from_angle(_aim) * MUZZLE
-	var n: Vector2 = (local_to - start).orthogonal().normalized()
-	_arc_pts = PackedVector2Array()
-	for i in ARC_SEGMENTS + 1:
-		var k: float = float(i) / float(ARC_SEGMENTS)
-		var off: float = 0.0 if i == 0 or i == ARC_SEGMENTS else randf_range(-4.0, 4.0)
-		_arc_pts.append(start.lerp(local_to, k) + n * off)
-	_arc_t = ARC_TIME
 
 
 func _draw() -> void:
@@ -142,8 +124,3 @@ func _draw() -> void:
 	if powered:
 		lamp = Color(0.4, 1.0, 0.5) if efficiency >= 0.999 else Color(1.0, 0.8, 0.2)
 	draw_circle(Vector2(6.0, 5.0), 1.5, lamp)
-	# Дуга выстрела
-	if _arc_t > 0.0 and _arc_pts.size() >= 2:
-		var a: float = _arc_t / ARC_TIME
-		draw_polyline(_arc_pts, Color(0.55, 0.9, 1.0, a), 2.0)
-		draw_polyline(_arc_pts, Color(1.0, 1.0, 1.0, a), 1.0)

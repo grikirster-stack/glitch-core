@@ -86,6 +86,13 @@ func _countdown(hud: HUD) -> void:
 	ok("в сумерках — секунды до ночи", hud.night_countdown > 0 and absi(hud.night_countdown - want) <= 1,
 			"HUD %d, ожидали %d" % [hud.night_countdown, want])
 	# Отсчёт идёт и HUD перерисовывается по секундам, а не каждый кадр.
+	# Покадровые анимации HUD убираем из окна замера: затухание подсказки
+	# управления (game_time 16–22 с), уведомлений (Game шлёт «Цель 1/4» после
+	# сброса этапа) и вспышки урона.
+	Game.game_time = maxf(Game.game_time, 30.0)
+	hud.notes.clear()
+	hud.damage_flash = 0.0
+	await _frames(hud, 3)
 	var c0: int = hud.night_countdown
 	var r0: int = hud.stat_redraws
 	var f0: int = hud.stat_frames
