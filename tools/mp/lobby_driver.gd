@@ -266,6 +266,8 @@ func _shots() -> void:
 	await frames(2)
 	menu.host_seed_edit.text = "Кербер"
 	tap(menu.slot_buttons[1])
+	# Свои адреса машины в снимок для репозитория не кладём — пример домашней сети.
+	menu.host_ips_label.text = "Ваши адреса в локальной сети: 192.168.1.20"
 	await _shot("lobby_create.png")
 	# «Подключиться по IP» с недавними адресами
 	menu.show_screen("main")
