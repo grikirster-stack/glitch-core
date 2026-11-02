@@ -5,7 +5,8 @@ extends Node
 ## секции «== Данные ==» и «== Сутки ==» — согласованность IDs/DB/Balance и цикл смены (#24),
 ## секция «== Лор ==» — общий код из tools/lore_test.gd (issue #26),
 ## секция «== Звук ==» — общий код из tools/sfx_test.gd (issue #36),
-## секция «== Тайники руин ==» — сундуки и таблички руин (issue #35).
+## секция «== Тайники руин ==» — сундуки и таблички руин (issue #35),
+## секция «== Небесный тайник ==» — обломок «Кербер-9» в небе (issue #60).
 ## Запускается из main.gd флагом `--test`.
 ##
 ## Все паузы отсчитываются по реальному времени, а не по кадрам: в headless-режиме
@@ -136,6 +137,7 @@ func _t_world() -> void:
 	print("   инвентарь: ", _inv_dump())
 	_check_data()
 	_check_ruin_caches()
+	_check_sky_cache()
 	_next(2)
 
 
@@ -814,3 +816,61 @@ func _check_ruin_terminals() -> void:
 	chapters.sort()
 	_ok("у каждого терминала своя глава журнала", chapters == range(Lore.chapter_count()),
 			"терминалов %d, главы %s" % [World.terminals.size(), str(chapters)])
+
+
+# ------------------------------------------------------- небесный тайник (#60)
+
+## Обломок «Кербер-9» в небе: есть, каждая его клетка выше прыжка героя (с ростом)
+## над рельефом под ней, в пределах мира, миникарта (рельеф World.surface) его не
+## видит, в сундуке 3–6 предметов из Balance.SKY_LOOT, всё определено сидом.
+func _check_sky_cache() -> void:
+	print("== Небесный тайник ==")
+	var sc: Dictionary = World.sky_cache
+	var chest = sc.get("chest")
+	_ok("обломок с тайником есть", not sc.is_empty() and chest != null and is_instance_valid(chest)
+			and World.machines.get(sc.get("cell")) == chest,
+			"«%s», нос x=%d, пол y=%d, генерация %.2f мс"
+			% [String(sc.get("name", "")), int(sc.get("x0", -1)), int(sc.get("floor_y", -1)), World.sky_cache_ms])
+	if sc.is_empty():
+		return
+	# Прыжок с места: v²/2g; достать до клетки — подняться ногами на высоту роста выше неё.
+	var jump_px: float = Player.JUMP_VELOCITY * Player.JUMP_VELOCITY / (2.0 * Player.GRAVITY)
+	var reach_px: float = jump_px + Player.SIZE.y
+	var low: Array = []
+	var min_gap: int = 999
+	var out_of_world: Array = []
+	var on_map: Array = []
+	for c in World.sky_cells:
+		var gap: int = World.sky_ground(c.x, c.x) - c.y - 1
+		min_gap = mini(min_gap, gap)
+		if float(gap * World.TILE) <= reach_px:
+			low.append(c)
+		if c.y < Balance.SKY_TOP_MARGIN or c.x < 0 or c.x >= World.W:
+			out_of_world.append(c)
+		if World.surface[c.x] <= c.y:
+			on_map.append(c)
+	_ok("обломок выше прыжка над рельефом под ним", low.is_empty() and min_gap >= Balance.SKY_CLEARANCE_MIN,
+			"зазор от %d клеток (%d px) > прыжок %.0f px + рост %.0f px; низко: %s"
+			% [min_gap, min_gap * World.TILE, jump_px, Player.SIZE.y, str(low.slice(0, 4))])
+	_ok("обломок в пределах мира", out_of_world.is_empty(), str(out_of_world.slice(0, 4)))
+	_ok("миникарта (рельеф) обломок не видит", on_map.is_empty(), str(on_map.slice(0, 4)))
+	var items: Array = []
+	for s in chest.slots:
+		if not s.is_empty():
+			items.append([s.id, s.count])
+	var foreign: Array = []
+	for it in items:
+		if not Balance.SKY_LOOT.has(int(it[0])):
+			foreign.append(DB.item_name(int(it[0])))
+	_ok("в небесном тайнике 3–6 предметов", items.size() >= Balance.SKY_CACHE_MIN
+			and items.size() <= Balance.SKY_CACHE_MAX and foreign.is_empty(),
+			"%d: %s" % [items.size(), str(items)])
+	var plan: Dictionary = World.sky_plan()
+	var same: bool = not plan.is_empty()
+	for k in plan.keys():
+		if plan[k] != sc.get(k):
+			same = false
+	_ok("тайник определён сидом", same and items == World.sky_cache_loot()
+			and sc.get("fragment") == World.sky_fragment(), str(plan))
+	var frag: String = String(sc.get("fragment", ""))
+	_ok("в самописце обрывок журнала", frag != "" and not frag.contains("{"), "«%s»" % frag)
