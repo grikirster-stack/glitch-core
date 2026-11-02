@@ -35,6 +35,9 @@ var surface: PackedInt32Array = PackedInt32Array()
 var tilemap: TileMapLayer = null
 
 var terminals: Array[Vector2i] = []
+## Какую главу журнала выдаёт терминал: клетка -> номер главы (0..8). Терминалы
+## базы — главы 0–1, терминал i-й руины — глава Lore.BASE_TERMINALS + i (#29).
+var terminal_chapters: Dictionary = {}
 var vents: Array[Vector2i] = []
 var beacon_cell: Vector2i = Vector2i.ZERO
 var spawn_point: Vector2 = Vector2.ZERO
@@ -136,6 +139,7 @@ func generate(p_seed: int) -> void:
 	surface = PackedInt32Array()
 	surface.resize(W)
 	terminals.clear()
+	terminal_chapters.clear()
 	vents.clear()
 	machines.clear()
 	belts.clear()
@@ -579,24 +583,35 @@ func _place_ruin(cx: int, rng: RandomNumberGenerator) -> void:
 			continue
 		if base > 0 and base < H - 1:
 			set_tile_raw(x, base, IDs.T.STEEL)
-	# Стены
+	# Нижний ряд (base - 1): терминал у правого края, лампа в центре, окна.
+	# Их колонки стены обходят: раньше стены заполняли весь ряд, и окна, лампа
+	# и терминал руины не ставились ни на одном сиде (#29).
+	var tx: int = mini(cx + half - 1, W - 2)
+	var low: Dictionary = {tx: IDs.T.TERMINAL}
+	if not low.has(cx):
+		low[cx] = IDs.T.LIGHT_CRYSTAL
+	for i in 3:
+		var wx: int = cx - half + 1 + i * 2
+		if wx > cx - half and wx < cx + half and not low.has(wx):
+			low[wx] = IDs.T.GLASS
+	# Стены (ГСЧ зовётся на каждую колонку, как раньше: остальной мир не сдвигается)
 	for x in range(cx - half, cx + half + 1):
 		var hgt: int = rng.randi_range(1, 3)
+		if low.has(x):
+			continue
 		for i in hgt:
 			if get_tile(x, base - 1 - i) == IDs.T.AIR:
 				set_tile_raw(x, base - 1 - i, IDs.T.PANEL)
-	# Окна и лампы
-	for i in 3:
-		var wx: int = cx - half + 1 + i * 2
-		if wx > cx - half and wx < cx + half and get_tile(wx, base - 1) == IDs.T.AIR:
-			set_tile_raw(wx, base - 1, IDs.T.GLASS)
-	if get_tile(cx, base - 1) == IDs.T.AIR:
-		set_tile_raw(cx, base - 1, IDs.T.LIGHT_CRYSTAL)
-	# Терминал (задание)
-	var tx: int = cx + half - 1
-	if tx < W - 1 and get_tile(tx, base - 1) == IDs.T.AIR:
-		set_tile_raw(tx, base - 1, IDs.T.TERMINAL)
-		terminals.append(Vector2i(tx, base - 1))
+	for x in low.keys():
+		if int(low[x]) != IDs.T.TERMINAL and get_tile(int(x), base - 1) == IDs.T.AIR:
+			set_tile_raw(int(x), base - 1, int(low[x]))
+	# Терминал (задание, глава журнала руины) ставится всегда; над ним — проход.
+	set_tile_raw(tx, base - 1, IDs.T.TERMINAL)
+	for y in range(base - 3, base - 1):
+		if DB.tile_solid(get_tile(tx, y)):
+			set_tile_raw(tx, y, IDs.T.AIR)
+	terminals.append(Vector2i(tx, base - 1))
+	terminal_chapters[Vector2i(tx, base - 1)] = Lore.BASE_TERMINALS + ruin_caches.size()
 	# Хлам
 	for i in 4:
 		var sx: int = clampi(cx + rng.randi_range(-half, half), 1, W - 2)
@@ -761,6 +776,7 @@ func _place_base(cx: int) -> void:
 		var tx: int = cx - 6 + i * 12
 		set_tile_raw(tx, base - 1, IDs.T.TERMINAL)
 		terminals.append(Vector2i(tx, base - 1))
+		terminal_chapters[Vector2i(tx, base - 1)] = i
 	# Лампы по кругу
 	for lx in [cx - 11, cx - 3, cx + 3, cx + 11]:
 		set_tile_raw(int(lx), base - 1, IDs.T.LIGHT_CRYSTAL)

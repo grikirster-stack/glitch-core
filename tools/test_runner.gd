@@ -789,3 +789,28 @@ func _check_ruin_caches() -> void:
 	Lore.quiet = quiet0
 	_ok("имена мест детерминированы сидом", again == names, str(names))
 	_ok("другой сид — другие имена мест", other != names, str(other))
+	_check_ruin_terminals()
+
+
+## Терминалы и главы журнала (#29): в каждой руине — терминал с главой
+## BASE_TERMINALS + i, на базе — два терминала с главами 0–1. Раньше стены руины
+## занимали весь нижний ряд, и терминал руины не ставился ни на одном сиде.
+func _check_ruin_terminals() -> void:
+	var no_term: Array = []
+	for c in World.ruin_caches:
+		var i: int = int(c["index"])
+		var found: bool = false
+		for t in World.terminals:
+			if int(World.terminal_chapters.get(t, -1)) == Lore.BASE_TERMINALS + i \
+					and World.get_tile_v(t) == IDs.T.TERMINAL and absi(t.x - int(c["cell"].x)) <= 8:
+				found = true
+		if not found:
+			no_term.append(i)
+	_ok("в каждой руине есть терминал", not World.ruin_caches.is_empty() and no_term.is_empty(),
+			"без терминала: %s" % str(no_term))
+	var chapters: Array = []
+	for t in World.terminals:
+		chapters.append(int(World.terminal_chapters.get(t, -1)))
+	chapters.sort()
+	_ok("у каждого терминала своя глава журнала", chapters == range(Lore.chapter_count()),
+			"терминалов %d, главы %s" % [World.terminals.size(), str(chapters)])
