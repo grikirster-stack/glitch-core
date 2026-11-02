@@ -182,3 +182,26 @@ func _draw() -> void:
 		draw_rect(Rect2(-8.0, -8.0, 4.0, 4.0), DB.item_color(filter))
 		draw_rect(Rect2(-8.0, -8.0, 4.0, 4.0), Color(0, 0, 0, 0.6), false, 1.0)
 	draw_circle(Vector2(5.5, -5.5), 1.4, Color(0.4, 1.0, 0.5) if powered else Color(0.9, 0.25, 0.2))
+
+
+# ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
+## Направление, фильтр, предмет в захвате и ход переноса.
+func save_state() -> Dictionary:
+	var d: Dictionary = super()
+	d["dir"] = dir
+	d["filter"] = filter
+	d["held"] = held
+	d["moved"] = moved
+	d["swing"] = _swing
+	d["idle"] = _idle_t
+	return d
+
+
+func load_state(d: Dictionary) -> void:
+	super(d)
+	dir = int(d.get("dir", dir)) % 4
+	filter = int(d.get("filter", filter))
+	held = int(d.get("held", held))
+	moved = int(d.get("moved", moved))
+	_swing = float(d.get("swing", _swing))
+	_idle_t = float(d.get("idle", _idle_t))

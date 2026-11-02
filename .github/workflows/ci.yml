@@ -73,6 +73,12 @@ jobs:
         timeout-minutes: 5
         run: godot --headless --path . --script res://tools/sfx_test.gd
 
+      # Сохранение (issue #37) — отдельным запуском: «сохранил → загрузил → мир
+      # побайтно равен» на трёх сидах CI в одном процессе.
+      - name: Автотест сохранения (отдельный запуск)
+        timeout-minutes: 5
+        run: godot --headless --path . --script res://tools/save_test.gd
+
       # Текст лора для чтения глазами на ревью. Заодно проверяет, что флаг
       # --lore-dump печатает журнал и выходит с нулевым кодом.
       - name: Печать лора для ревью (сиды 31337, 4242, 12345)
