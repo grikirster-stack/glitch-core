@@ -50,7 +50,10 @@ var mining_cell: Vector2i = Vector2i(-1, -1)
 var building_cell: Vector2i = Vector2i(-1, -1)
 var task_progress: float = 0.0
 var hiding: bool = false
+## Сколько ещё можно сидеть в вентиляции, с (тикает от Balance.HIDE_MAX к нулю).
 var hide_timer: float = 0.0
+## Через сколько секунд можно снова залезть в вентиляцию (Balance.HIDE_COOLDOWN).
+var hide_cd: float = 0.0
 var noise: float = 0.0
 var invuln: float = 0.0
 var slash_cd: float = 0.0
@@ -79,6 +82,16 @@ var _shake: float = 0.0
 var _noise_level: float = 0.0
 var _step_gap: float = 0.0
 var _mine_fx_t: float = 0.0
+## Клавиши прошлого кадра: V и E срабатывают по фронту нажатия.
+var _v_prev: bool = false
+var _e_prev: bool = false
+## Пауза между единицами хлама при ремонте с зажатой E, с.
+var _repair_cd: float = 0.0
+## Ремонт: одна единица хлама раз в REPAIR_GAP, пока E зажата.
+const REPAIR_GAP: float = 0.3
+## Это нажатие E уже отработало (терминал, ремонт): до отпускания E оно не
+## открывает сундук рядом и не дёргает рубильник.
+var _e_used: bool = false
 
 
 func _ready() -> void:
@@ -108,6 +121,8 @@ func _physics_process(delta: float) -> void:
 	_hit_flash = maxf(0.0, _hit_flash - dt)
 	_step_gap = maxf(0.0, _step_gap - dt)
 	noise = maxf(0.0, noise - dt * 40.0)
+	_repair_cd = maxf(0.0, _repair_cd - dt)
+	_tick_hide(dt)
 	_regen += dt
 	if _regen > 6.0 and hp < MAX_HP:
 		_regen = 0.0
@@ -266,14 +281,19 @@ func _handle_input(dt: float) -> void:
 		_empulse()
 
 	# E — взаимодействие
-	if _key(KEY_E):
-		_do_interact(dt)
+	var e_down: bool = _key(KEY_E)
+	if e_down:
+		_do_interact(dt, not _e_prev)
 	else:
 		task_progress = 0.0
+		_e_used = false
+	_e_prev = e_down
 
-	# V — вентиляция
-	if _key(KEY_V):
+	# V — вентиляция (по фронту: зажатая V не дёргает укрытие каждый кадр)
+	var v_down: bool = _key(KEY_V)
+	if v_down and not _v_prev:
 		_toggle_hide()
+	_v_prev = v_down
 
 
 # ------------------------------------------------- ШОВ ТЕСТОВОГО ВВОДА
@@ -417,18 +437,27 @@ func _place_allowed(cell: Vector2i) -> bool:
 	return true
 
 
-func _do_interact(dt: float) -> void:
-	# Терминалы
+## E — взаимодействие. fresh — первый кадр нажатия (подсказки — один раз на нажатие).
+func _do_interact(dt: float, fresh: bool = true) -> void:
+	# Терминалы: работают только под питанием (ADR-001 § 4.6, #29)
 	for t in World.terminals:
-		if World.cell_to_world(t).distance_to(global_position) < 42.0:
+		var tw: Vector2 = World.cell_to_world(t)
+		if tw.distance_to(global_position) < 42.0:
+			if not Game.is_powered(tw):
+				task_progress = 0.0
+				if fresh:
+					Sfx.play("craft", -16.0, 0.6)
+					Game.notify("Терминал: нет питания. Поставьте рядом ТЭЦ или солнечную панель.",
+							Color(1.0, 0.7, 0.4))
+				return
 			task_progress += dt / 2.2
 			if task_progress >= 1.0:
 				task_progress = 0.0
-				World.terminals.erase(t)
-				World.set_tile(t.x, t.y, IDs.T.PANEL)
-				Game.complete_task()
-				Sfx.play("craft", -6.0)
+				_read_terminal(t)
 			return
+	# Ремонт: E с хламом в хотбаре по повреждённой машине (§ 4.4)
+	if _try_repair() or _e_used:
+		return
 	# Релей
 	if World.cell_to_world(World.beacon_cell).distance_to(global_position) < 56.0:
 		task_progress += dt / 3.0
@@ -463,18 +492,88 @@ func _do_interact(dt: float) -> void:
 					return
 
 
+## Терминал отработал: +данные (Game.complete_task), глава журнала этого места.
+func _read_terminal(t: Vector2i) -> void:
+	var chapter: int = int(World.terminal_chapters.get(t, -1))
+	World.terminals.erase(t)
+	World.set_tile(t.x, t.y, IDs.T.PANEL)
+	_e_used = true
+	Game.complete_task()
+	if chapter >= 0:
+		Tech.read_chapter(chapter)
+	Sfx.play("craft", -6.0)
+
+
+## Ремонт хламом: +Balance.REPAIR_PER_SCRAP HP ближайшей повреждённой машине за
+## единицу, пока E зажата — раз в REPAIR_GAP. true — рядом есть что чинить (E занята).
+func _try_repair() -> bool:
+	var sel: ItemStack = inv.selected_stack()
+	if sel.is_empty() or sel.id != IDs.I.SCRAP:
+		return false
+	var best: MachineBase = null
+	var best_d: float = 44.0
+	for m in World.machines.values():
+		if m.hp >= m.max_hp:
+			continue
+		var d: float = m.global_position.distance_to(global_position)
+		if d < best_d:
+			best_d = d
+			best = m
+	if best == null:
+		return false
+	if _repair_cd > 0.0:
+		return true
+	_repair_cd = REPAIR_GAP
+	_e_used = true
+	best.hp = minf(best.max_hp, best.hp + Balance.REPAIR_PER_SCRAP)
+	best.anim = 1.0
+	best.queue_redraw()
+	inv.remove_at(inv.selected, 1)
+	Sfx.play("place", -10.0, 1.2)
+	UI.spawn_chip(best.cell, Color(0.75, 0.7, 0.6))
+	Game.notify("Ремонт: %s %d/%d" % [DB.item_name(MachineBase.machine_item_id(best.kind)),
+			int(best.hp), int(best.max_hp)], Color(0.7, 0.95, 0.7))
+	return true
+
+
+# ------------------------------------------------- УКРЫТИЕ (ADR-001 § 4.8)
+## В вентиляции — не дольше Balance.HIDE_MAX: hide_timer тикает, потом выталкивает.
+## Повторно залезть можно через Balance.HIDE_COOLDOWN после выхода (любого).
+## Внутри герой неуязвим; после выхода — короткая передышка, не бессрочная.
+func _tick_hide(dt: float) -> void:
+	if not hiding:
+		hide_cd = maxf(0.0, hide_cd - dt)
+		return
+	hide_timer = maxf(0.0, hide_timer - dt)
+	if hide_timer <= 0.0:
+		_leave_vent()
+		Game.notify("Вентиляция вытолкнула вас наружу.", Color(1.0, 0.75, 0.5))
+
+
+func _leave_vent() -> void:
+	hiding = false
+	hide_timer = 0.0
+	hide_cd = Balance.HIDE_COOLDOWN
+	invuln = minf(invuln, 0.6)
+	Sfx.play("power", -16.0, 0.8)
+
+
 func _toggle_hide() -> void:
 	if hiding:
-		hiding = false
-		hide_timer = 0.0
+		_leave_vent()
 		return
 	for v in World.vents:
 		if World.cell_to_world(v).distance_to(global_position) < 40.0:
+			if hide_cd > 0.0:
+				Game.notify("Вентиляция ещё не остыла: %d с." % ceili(hide_cd), Color(0.8, 0.8, 0.8))
+				return
 			hiding = true
-			hide_timer = 6.0
-			invuln = 7.0
+			hide_timer = Balance.HIDE_MAX
+			invuln = Balance.HIDE_MAX + 0.6
+			vel = Vector2.ZERO
 			Sfx.play("power", -14.0)
-			Game.notify("Вы залезли в вентиляцию. Фантомы вас не видят.", Color(0.6, 0.9, 1.0))
+			Game.notify("Вы в вентиляции: %d с, фантомы вас не видят." % int(Balance.HIDE_MAX),
+					Color(0.6, 0.9, 1.0))
 			return
 	Game.notify("Рядом нет вентиляции.", Color(0.8, 0.8, 0.8))
 
@@ -510,10 +609,61 @@ func damage(amount: float, knock: Vector2) -> void:
 	_shake = HIT_SHAKE
 	UI.flash_damage()
 	if hp <= 0.0:
-		hp = 0.0
-		dead = true
-		died.emit()
-		Game.set_state(Game.State.DEAD)
+		_die()
+
+
+# ------------------------------------------------- СМЕРТЬ (ADR-001 § 4.8)
+## Смерть: хотбар падает мешком на месте смерти, основной инвентарь остаётся.
+## Что дальше — респаун или конец забега (--hardcore) — решает main.gd по died.
+func _die() -> void:
+	hp = 0.0
+	dead = true
+	hiding = false
+	hide_timer = 0.0
+	vel = Vector2.ZERO
+	task_progress = 0.0
+	mining_progress = 0.0
+	Game.stats_deaths += 1
+	drop_hotbar_bag()
+	died.emit()
+
+
+## Высыпать хотбар в мешок (ItemEntity с bag) на месте героя. null — хотбар пуст.
+func drop_hotbar_bag() -> ItemEntity:
+	var bag: Array = []
+	for i in inv.hotbar_size:
+		var s: ItemStack = inv.slots[i]
+		if s.is_empty():
+			continue
+		bag.append([s.id, s.count])
+		inv.slots[i] = ItemStack.new()
+	if bag.is_empty():
+		return null
+	inv.changed.emit()
+	stats_changed.emit()
+	var e: ItemEntity = ItemEntity.new()
+	e.bag = bag
+	e.item_id = int(bag[0][0])
+	e.despawn = false
+	e.pickup_delay = 1.0
+	e.global_position = global_position
+	World.add_world_node(e)
+	return e
+
+
+## Респаун в капсуле на базе: полное здоровье, короткая неуязвимость.
+func respawn_at(pos: Vector2) -> void:
+	global_position = pos
+	vel = Vector2.ZERO
+	hp = MAX_HP
+	dead = false
+	hiding = false
+	hide_timer = 0.0
+	hide_cd = 0.0
+	invuln = 2.0
+	_stun = 0.0
+	_regen = 0.0
+	stats_changed.emit()
 
 
 func _sfx(n: String, v: float = 0.0, p: float = 1.0) -> void:

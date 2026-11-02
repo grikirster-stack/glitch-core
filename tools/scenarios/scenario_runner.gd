@@ -52,7 +52,7 @@ const REGISTRY: Dictionary = {
 	"terminal": {
 		"file": "terminal.gd",
 		"title": "терминал",
-		"desc": "подойти к терминалу, удерживать E, задание засчитано",
+		"desc": "терминал без питания: E — подсказка «нет питания», задание не засчитано",
 	},
 	"relay": {
 		"file": "relay.gd",
@@ -139,6 +139,27 @@ const REGISTRY: Dictionary = {
 		"file": "ruin_cache.gd",
 		"title": "тайники руин",
 		"desc": "в каждой руине сундук по роли хозяина и табличка; один сид — один тайник",
+	},
+	# --- Игрок и терминалы (#29, ADR-001 § 4.6–4.8) ---
+	"terminal_powered": {
+		"file": "terminal_powered.gd",
+		"title": "терминал под питанием",
+		"desc": "ТЭЦ у терминала базы и руины: E — +5 данных и глава журнала",
+	},
+	"hide_limit": {
+		"file": "hide_limit.gd",
+		"title": "лимит укрытия",
+		"desc": "через 6 с вентиляция выталкивает, повторно — через 10 с",
+	},
+	"respawn": {
+		"file": "respawn.gd",
+		"title": "смерть и респаун",
+		"desc": "мешок с хотбаром на месте смерти, респаун на базе, время у рассвета; --hardcore",
+	},
+	"repair": {
+		"file": "repair.gd",
+		"title": "ремонт",
+		"desc": "E с хламом по повреждённой машине: +20 HP за единицу",
 	},
 }
 
@@ -270,6 +291,7 @@ func _reset_world() -> void:
 	p.on_ground = false
 	p.hiding = false
 	p.hide_timer = 0.0
+	p.hide_cd = 0.0
 	p.noise = 0.0
 	p.invuln = 0.0
 	p.mining_progress = 0.0
