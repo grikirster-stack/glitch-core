@@ -9,7 +9,9 @@ extends "res://tools/mp/scenarios/mp_threat_base.gd"
 ##    вид — Look Бориса;
 ##  * миникарта: маячок товарища — только ближе 20 клеток или в зоне питания (правило
 ##    § 4.7 у каждого клиента); двойника на ней нет;
-##  * перекличка: Борис жмёт G — у всех «Борис: перекличка!»; хост, Аня и Вера отвечают G —
+##  * перекличка: Борис тапает G на сенсорной раскладке (#135: касание → TouchControls →
+##    шов touch_input → счётчик нажатий пакета ввода; кнопки в сети не налезают на плашку
+##    команды и миникарту) — у всех «Борис: перекличка!»; хост, Аня и Вера отвечают G —
 ##    огоньки зелёные у всех героев, у двойника в маске Бориса — красный (он не отвечает);
 ##    повтор G после переклички — кулдаун 20 с;
 ##  * удар по своему: Борис бьёт хоста, хост бьёт Веру — урона нет, «клац» (у клиентов
@@ -262,7 +264,7 @@ func run_client(i: int) -> void:
 	# --- Перекличка.
 	await barrier("call")
 	if i == 1:
-		await _tap(KEY_G)
+		await _touch_g()
 	ok("%s: «Борис: перекличка!» на HUD" % me, await wait_until(func() -> bool:
 		return _has_note(String(NICKS[1]) + ": перекличка!"), WAIT))
 	if i != 1:
@@ -322,6 +324,42 @@ func run_client(i: int) -> void:
 	await barrier("done")
 	Game.notification.disconnect(_on_note)
 	finish()
+
+
+## Борис начинает перекличку тапом по кнопке G сенсорной раскладки (#135): касание идёт
+## настоящим путём (Input.parse_input_event, как в сценарии touch_controls), G доходит
+## до хоста только через шов героя и счётчик нажатий пакета ввода.
+func _touch_g() -> void:
+	var tc: TouchControls = get_tree().get_first_node_in_group("touch_controls")
+	if tc == null:
+		ok("c1: сенсорное управление на месте", false)
+		return
+	tc.set_enabled(true)
+	await wait(0.4)                 # HUD пересчитал товарищей, раскладка встала под плашку
+	ok("c1: в сети с товарищами есть кнопка G (перекличка)", tc.rollcall_shown()
+			and tc.control_at(tc.btn_center["g"]) == "g")
+	ok("c1: G в ряду Q и V, рядом с V", is_equal_approx(tc.btn_center["g"].y, tc.btn_center["q"].y)
+			and is_equal_approx(tc.btn_center["v"].y, tc.btn_center["q"].y)
+			and tc.btn_center["g"].distance_to(tc.btn_center["v"]) <= float(tc.btn_radius["v"]) * 2.0 + 20.0 * tc._k,
+			"G %s, V %s, Q %s" % [str(tc.btn_center["g"]), str(tc.btn_center["v"]), str(tc.btn_center["q"])])
+	var plate: Rect2 = HUD.team_plate_rect(UI.hud.size.x, UI.hud.team_mates.size())
+	var map: Rect2 = Rect2(Vector2(UI.hud.size.x - HUD.MAP_OFFSET.x, HUD.MAP_OFFSET.y), Vector2(HUD.MAP_SIZE))
+	var hit: Array = []
+	for id in tc.btn_center:
+		var r: float = float(tc.btn_radius[id])
+		var box: Rect2 = Rect2(Vector2(tc.btn_center[id]) - Vector2(r, r), Vector2(r, r) * 2.0)
+		if box.intersects(plate) or box.intersects(map):
+			hit.append(id)
+	ok("c1: кнопки не налезают на миникарту и плашку команды (%d товарища)" % UI.hud.team_mates.size(),
+			UI.hud.team_mates.size() == 3 and hit.is_empty(), "налезают: %s, плашка %s" % [str(hit), str(plate)])
+	var e: InputEventScreenTouch = InputEventScreenTouch.new()
+	e.index = 4
+	e.position = get_viewport().get_final_transform() * Vector2(tc.btn_center["g"])
+	for pressed in [true, false]:
+		e.pressed = pressed
+		Input.parse_input_event(e.duplicate())
+	await wait(0.3)                 # короткий тап держит G PULSE_FRAMES кадров — пакет ввода его видит
+	tc.set_enabled(false)
 
 
 func _puppet(id: int) -> Phantom:
