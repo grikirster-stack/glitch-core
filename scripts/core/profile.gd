@@ -2,7 +2,8 @@ class_name Profile
 extends RefCounted
 ## Профиль игрока (ADR-002 § 3 D8, § 4.6; MP-B, #87): ник, uid и параметры вида.
 ##
-## Файл user://profile.cfg (ConfigFile):
+## Файл user://profile.cfg (ConfigFile; в тестовом прогоне — свой файл процесса,
+## default_path(), #132):
 ##   [profile] uid  — случайные 64 бита, создаются один раз (по нему хост узнаёт
 ##                    вернувшегося игрока);
 ##             nick — ник (правила — nick_error());
@@ -93,9 +94,17 @@ func to_net() -> Dictionary:
 
 # ------------------------------------------------------------------ ФАЙЛ
 
+## Профиль по умолчанию: user://profile.cfg; в тестовом прогоне (TestEnv) — свой
+## файл процесса profile~t<pid>.cfg.
+static func default_path() -> String:
+	return TestEnv.file(PATH) if TestEnv.active() else PATH
+
+
 ## Профиль из файла; нет файла или нет uid — создаёт и сразу записывает
-## (uid появляется один раз). path — для тестов (временный путь).
-static func load_or_create(path: String = PATH) -> Profile:
+## (uid появляется один раз). path — для тестов (временный путь); пусто — default_path().
+static func load_or_create(path: String = "") -> Profile:
+	if path == "":
+		path = default_path()
 	var p: Profile = Profile.new()
 	var cfg: ConfigFile = ConfigFile.new()
 	var dirty: bool = cfg.load(path) != OK
@@ -126,7 +135,9 @@ static func load_or_create(path: String = PATH) -> Profile:
 	return p
 
 
-func save_to(path: String = PATH) -> Error:
+func save_to(path: String = "") -> Error:
+	if path == "":
+		path = default_path()
 	var cfg: ConfigFile = ConfigFile.new()
 	cfg.set_value("profile", "uid", uid)
 	cfg.set_value("profile", "nick", nick)
@@ -139,7 +150,11 @@ func save_to(path: String = PATH) -> Error:
 
 ## «Меньше глитча» из файла, не создавая профиль (игра запущена без меню: --test,
 ## --scenario, сеть). Нет файла или битое поле — false.
-static func read_less_glitch(path: String = PATH) -> bool:
+## В тестовом прогоне по умолчанию — файл теста (нет — false): итог не зависит от
+## настроек игрока.
+static func read_less_glitch(path: String = "") -> bool:
+	if path == "":
+		path = default_path()
 	var cfg: ConfigFile = ConfigFile.new()
 	if cfg.load(path) != OK:
 		return false
