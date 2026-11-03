@@ -86,6 +86,7 @@ static func put(kind: String, c: Vector2i, opts: Dictionary = {}) -> MachineBase
 	if not MachineBase.place_machine(kind, c):
 		return null
 	var m: MachineBase = World.machines[c]
+	m.permanent = true   # постройка базы: разобрать её нельзя
 	if opts.has("dir") and "dir" in m:
 		m.set("dir", int(opts["dir"]))
 	if opts.has("fuel") and m is CoalGen:

@@ -101,6 +101,13 @@ func furnace_color(t_ms: int) -> Color:
 	return FURNACE_HOT.lerp(FURNACE_GLOW, glow * 0.4)
 
 
+## Плавильню сняли или снесли — сырьё из неё на землю, ничего не пропадает.
+func _on_destroyed() -> void:
+	for id in stock.keys():
+		spawn_item(int(id), int(stock[id]), global_position + Vector2(0.0, -4.0))
+	stock.clear()
+
+
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
 ## Загрузка входа, рецепт в работе (ссылкой на DB) и таймер плавки.
 func save_state() -> Dictionary:

@@ -147,6 +147,13 @@ func _belt_rect(s0: float, s1: float, a0: float, a1: float, d: Vector2, side: Ve
 	draw_rect(Rect2(Vector2(minf(p0.x, p1.x), minf(p0.y, p1.y)), (p1 - p0).abs()), col)
 
 
+## Конвейер сняли или снесли — груз с него на землю, ничего не пропадает.
+func _on_destroyed() -> void:
+	for it in items:
+		spawn_item(int(it["id"]), int(it["count"]), global_position + Vector2(0.0, -4.0))
+	items.clear()
+
+
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
 ## Направление и предметы на ленте с их положением.
 func save_state() -> Dictionary:

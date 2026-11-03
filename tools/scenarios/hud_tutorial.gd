@@ -44,7 +44,8 @@ func run() -> void:
 		finish()
 		return
 	await wait(0.4)
-	ok("у ТЭЦ без угля в руке — подсказка «рубильник»", hud.hint_text == HUD.HINT_GEN_SWITCH,
+	ok("у ТЭЦ без угля в руке — подсказка «рубильник»",
+			hud.hint_text == HUD.HINT_GEN_SWITCH + HUD.HINT_DISMANTLE_TAIL,
 			"«%s»" % hud.hint_text)
 	hold(KEY_2)                               # слот 2 — уголь из стартового набора
 	await wait(0.4)
@@ -92,7 +93,8 @@ func run() -> void:
 	ok("манипулятор поставлен", MachineBase.place_machine("Inserter", ins_cell))
 	stand_in_corridor(11)                     # герой на bx+12: манипулятор в 16 px
 	await wait(0.4)
-	ok("у манипулятора — ПКМ поворот / E фильтр", hud.hint_text == HUD.HINT_INSERTER,
+	ok("у манипулятора — ПКМ поворот / E фильтр",
+			hud.hint_text == HUD.HINT_INSERTER + HUD.HINT_DISMANTLE_TAIL,
 			"«%s»" % hud.hint_text)
 	finish()
 

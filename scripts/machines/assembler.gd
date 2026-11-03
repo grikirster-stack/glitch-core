@@ -94,6 +94,13 @@ func _draw() -> void:
 		_draw_progress(-13.0)
 
 
+## Сборщик сняли или снесли — сырьё из него на землю, ничего не пропадает.
+func _on_destroyed() -> void:
+	for id in stock.keys():
+		spawn_item(int(id), int(stock[id]), global_position + Vector2(0.0, -4.0))
+	stock.clear()
+
+
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
 ## Как у плавильни: вход, рецепт в работе и таймер.
 func save_state() -> Dictionary:

@@ -122,6 +122,10 @@ const HINT_INSERTER: String = "ПКМ — повернуть манипулят�
 const HINT_HIDING: String = "Вы в вентиляции. [V] — вылезть"
 const HINT_REPAIR: String = "[E] — починить хламом (удерживать)"
 const HINT_LOAD: String = "[E] — загрузить в постройку"
+## Разбор постройки: E удерживать — снять машину и вернуть предмет в рюкзак.
+const HINT_DISMANTLE: String = "[E] (удерживать) — разобрать"
+## Хвост подсказки: к своему действию E машины добавляется разбор.
+const HINT_DISMANTLE_TAIL: String = " · удерживать [E] — разобрать"
 
 ## Цепочка обучения: шаги по порядку, TUT_DONE — пройдена (строка скрыта).
 enum Tut { DIG, CRAFT, PLACE, POWER, TERMINAL, DONE }
@@ -407,15 +411,26 @@ func _compute_hint(_pos: Vector2) -> String:
 	if kind == player.ET_BEACON:
 		return HINT_BEACON
 	if kind == player.ET_INSERTER:
-		return HINT_INSERTER
+		return HINT_INSERTER + _dismantle_tail(tg.get("node"))
 	if kind == player.ET_CHEST:
 		return HINT_CHEST
 	if kind == player.ET_REPAIR:
 		return HINT_REPAIR
 	if kind == player.ET_LOAD:
 		return HINT_LOAD
+	if kind == player.ET_DISMANTLE:
+		return "%s: %s" % [HINT_DISMANTLE, DB.item_name(int(tg.get("item", 0)))]
 	_hint_target = Rect2()
 	return ""
+
+
+## Хвост подсказки про разбор — только если постройку и правда можно снять.
+func _dismantle_tail(m) -> String:
+	if m == null or not is_instance_valid(m):
+		return ""
+	if bool(m.permanent):
+		return ""
+	return HINT_DISMANTLE_TAIL
 
 
 ## Клетка мира как прямоугольник в мировых px (для рамки интерактива).
@@ -443,12 +458,13 @@ func _terminal_powered(t: Vector2i) -> bool:
 
 
 ## Подсказка у генератора: ТЭЦ с углём в руке — топка, иначе — рубильник (#25).
+## Хвост про разбор — если генератор не кампанийный.
 func generator_hint(g) -> String:
 	if g is CoalGen:
 		if player != null and player.inv.selected_stack().id == IDs.I.COAL:
 			return HINT_GEN_COAL
-		return HINT_GEN_SWITCH
-	return HINT_SOLAR_SWITCH
+		return HINT_GEN_SWITCH + _dismantle_tail(g)
+	return HINT_SOLAR_SWITCH + _dismantle_tail(g)
 
 
 # ------------------------------------------------ ТРЕКЕР ЦЕЛИ, ОБУЧЕНИЕ, МОЩНОСТЬ
@@ -867,6 +883,15 @@ func _update_mark() -> void:
 	if r != mark_rect:
 		mark_rect = r
 		_mark.queue_redraw()
+	elif _interact_progress() > 0.0:
+		_mark.queue_redraw()   # плашка «E» наполняется (удержание: разбор)
+
+
+## Доля удержания E (0..1): разбор постройки или чтение терминала.
+func _interact_progress() -> float:
+	if player == null:
+		return 0.0
+	return clampf(float(player.task_progress), 0.0, 1.0)
 
 
 func _draw_mark_layer() -> void:
@@ -888,6 +913,11 @@ func _draw_mark_layer() -> void:
 	_mark.draw_rect(Rect2(k.position, Vector2(k.size.x, 2.0)), C_INTERACT)
 	_mark.draw_string(ThemeDB.fallback_font, k.position + Vector2(0, 14), "E",
 			HORIZONTAL_ALIGNMENT_CENTER, k.size.x, 13, C_INTERACT)
+	# Удержание E (разбор постройки): плашка наполняется бирюзовой полосой.
+	var pr: float = _interact_progress()
+	if pr > 0.0:
+		_mark.draw_rect(Rect2(k.position + Vector2(1.0, k.size.y - 4.0),
+				Vector2((k.size.x - 2.0) * pr, 3.0)), C_BIO)
 	stat_us += Time.get_ticks_usec() - t0
 
 
