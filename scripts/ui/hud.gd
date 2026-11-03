@@ -63,8 +63,8 @@ const CURSOR_GEN_REACH: float = 5.6 * 16.0
 ## Прямоугольник миникарты относительно правого верхнего угла.
 const MAP_SIZE: Vector2i = Vector2i(186, 52)
 const MAP_OFFSET: Vector2 = Vector2(200, 60)
-## Длина ключа состояния (см. _fill_key).
-const KEY_LEN: int = 48
+## Длина ключа состояния (см. _fill_key). [46..61] — команда в сети (MP-J).
+const KEY_LEN: int = 64
 
 # ------------------------------------------------- ЦВЕТА (ADR-003 V6, «Споровый луг»)
 ## Палитра мира — DB.PAL (V1); здесь только её роли в HUD и цвета плашек концепта
@@ -261,6 +261,7 @@ func _process(delta: float) -> void:
 	_update_hint(delta)
 	_update_state(delta)
 	_update_mark()
+	_update_team(delta)   # СЕТЬ (MP-J): товарищи и маячки
 	stat_hint_us += Time.get_ticks_usec() - th
 
 	# Основной слой: каждый кадр — пока идёт анимация (и ещё один кадр после неё),
@@ -326,6 +327,7 @@ func _fill_key() -> void:
 	_key[43] = power_out_x10
 	_key[44] = power_flags
 	_key[45] = 1 if Game.is_night() else 0    # скобки опасности и метка суток (V6)
+	_fill_team_key()   # СЕТЬ (MP-J): [46..61]
 	if player == null:
 		_key[12] = 0
 		return
@@ -727,6 +729,11 @@ func _draw_map_layer() -> void:
 	# Релей
 	var bp: Vector2 = r.position + Vector2(World.beacon_cell.x * sx, World.beacon_cell.y * sy)
 	c.draw_rect(Rect2(bp - Vector2(3, 3), Vector2(6, 6)), C_BIO)
+	# Маячки товарищей (MP-J, § 4.7): только по правилу — рядом или в зоне питания.
+	for i in range(0, _team_dots.size(), 3):
+		var tp: Vector2 = r.position + Vector2(_team_dots[i], _team_dots[i + 1])
+		c.draw_rect(Rect2(tp - Vector2(2, 2), Vector2(5, 5)), C_PLATE)
+		c.draw_rect(Rect2(tp - Vector2(1, 1), Vector2(3, 3)), Avatar.suit_color(_team_dots[i + 2]))
 	# Игрок — квадрат цвета скафандра в светлой рамке
 	if player:
 		var pp: Vector2 = r.position + Vector2(_map_dot)
@@ -921,6 +928,9 @@ func _draw() -> void:
 		draw_string(font, cr.position + Vector2(0, 20), cd, HORIZONTAL_ALIGNMENT_CENTER, cw, 16,
 				C_DANGER.lerp(C_LINE, 0.6) if hot else C_DANGER.lerp(C_LINE, 0.25))
 
+	# ---- Команда в сети: товарищи и перекличка (MP-J) ---------------------
+	_draw_team(font, w)
+
 	# ---- Уведомления --------------------------------------------------------
 	var y: float = h - 150
 	for i in range(notes.size() - 1, -1, -1):
@@ -1053,3 +1063,133 @@ func _draw_brackets(w: float, h: float) -> void:
 			var hy: float = p if cy == 0 else h - p - t
 			draw_rect(Rect2(x, hy, l, t), C_DANGER)
 			draw_rect(Rect2(vx, y, t, l), C_DANGER)
+
+
+# ------------------------------------------------------------ СЕТЬ: КОМАНДА (ADR-002 § 4.7–4.8, MP-J #95)
+## Список товарищей под миникартой (ник цветом скафандра, здоровье, огонёк
+## переклички, «погиб»), строка переклички и маячки товарищей на миникарте.
+## Маячок товарища — только если он ближе MP_TEAM_RADIO_TILES клеток к своему герою
+## или в радиусе питания работающего генератора («маячок скафандра питается от сети
+## базы»); двойника на карте нет никогда — он не герой. Состав и маячки — раз в
+## STATE_RECHECK_SEC; в ключ — число товарищей, счётчик событий NetTeam, секунды
+## переклички, подпись ников и по товарищу hp, флаги, вид. Без товарищей (одиночная
+## игра) раздел не работает, ключ [46..61] — нули.
+
+const TEAM_MAX: int = 3            ## товарищей на HUD (4 игрока — хост и 3 клиента)
+const TEAM_ROW_H: float = 16.0
+const TEAM_HEAD_H: float = 14.0
+
+## Товарищи на HUD и чьи маячки сейчас на миникарте (Player без типа). Читают сценарии.
+var team_mates: Array = []
+var team_beacons: Array = []
+## false — раздел выключен (замер «до» в mp_doppel).
+var team_on: bool = true
+var _team: Node = null              ## NetTeam (без типа — цикл зависимостей)
+var _team_t: float = 0.0
+var _team_nick_sig: int = 0
+var _team_dots: PackedInt32Array = PackedInt32Array()       ## x, y (px миникарты), look
+var _team_dots_new: PackedInt32Array = PackedInt32Array()
+
+
+## Маячок этого товарища на миникарте по правилу § 4.7 (для сценариев).
+func team_beacon_rule(h) -> bool:
+	if h == null or not is_instance_valid(h) or h.dead or player == null:
+		return false
+	var pos: Vector2 = h.global_position
+	return player.global_position.distance_to(pos) <= Balance.MP_TEAM_RADIO_TILES * World.TILE \
+			or Game.is_powered(pos)
+
+
+func _update_team(delta: float) -> void:
+	if Game.players.size() <= 1 or not team_on:
+		if not team_mates.is_empty() or not _team_dots.is_empty():
+			team_mates.clear()
+			team_beacons.clear()
+			_team_dots.resize(0)
+			_map.queue_redraw()
+		return
+	_team_t -= delta
+	if _team_t > 0.0:
+		return
+	_team_t = STATE_RECHECK_SEC
+	if _team == null or not is_instance_valid(_team):
+		_team = get_tree().get_first_node_in_group("net_team")
+	team_mates.clear()
+	team_beacons.clear()
+	_team_nick_sig = 0
+	_team_dots_new.resize(0)
+	for h in Game.players:
+		if h == player or not is_instance_valid(h):
+			continue
+		if team_mates.size() < TEAM_MAX:
+			team_mates.append(h)
+			_team_nick_sig = (_team_nick_sig * 31 + String(h.nick).hash()) & 0x7fffffff
+		if not team_beacon_rule(h):
+			continue
+		team_beacons.append(h)
+		var c: Vector2i = World.world_to_cell(h.global_position)
+		_team_dots_new.append(int(float(c.x * MAP_SIZE.x) / float(World.W)))
+		_team_dots_new.append(int(float(c.y * MAP_SIZE.y) / float(World.H)))
+		_team_dots_new.append(int(h.look))
+	if _team_dots_new != _team_dots:
+		_team_dots = _team_dots_new.duplicate()
+		_map.queue_redraw()
+
+
+func _fill_team_key() -> void:
+	var n: int = team_mates.size()
+	var tm: Node = _team if n > 0 and _team != null and is_instance_valid(_team) else null
+	_key[46] = n
+	_key[47] = int(tm.serial) if tm != null else 0
+	_key[48] = ceili(float(tm.window_left)) if tm != null else 0
+	_key[49] = _team_nick_sig if n > 0 else 0
+	for i in TEAM_MAX:
+		var b: int = 50 + i * 4
+		var m = team_mates[i] if i < n else null
+		if m == null or not is_instance_valid(m):
+			_key[b] = 0
+			_key[b + 1] = 0
+			_key[b + 2] = 0
+			_key[b + 3] = 0
+			continue
+		_key[b] = int(m.hp)
+		_key[b + 1] = (1 if m.dead else 0) | (2 if m.rollcall_t > 0.0 else 0) | (4 if m.hiding else 0)
+		_key[b + 2] = int(m.look)
+		_key[b + 3] = m.get_instance_id() & 0x7fffffff
+
+
+## Плашка команды под миникартой. Всё, что здесь рисуется, — в ключе [46..61].
+func _draw_team(font: Font, w: float) -> void:
+	var n: int = team_mates.size()
+	if n == 0:
+		return
+	var x: float = w - MAP_OFFSET.x
+	var y: float = MAP_OFFSET.y + MAP_SIZE.y + 6.0
+	var win: int = _key[48]
+	draw_rect(Rect2(x, y, MAP_SIZE.x, TEAM_HEAD_H + TEAM_ROW_H * n + 2.0), C_PLATE)
+	var head: String = "КОМАНДА" if win <= 0 else "ПЕРЕКЛИЧКА %d с · [G] — ответить" % win
+	draw_string(font, Vector2(x + 4, y + 11), head, HORIZONTAL_ALIGNMENT_LEFT, -1, 10,
+			C_BIO if win > 0 else Color(C_LINE, 0.6))
+	y += TEAM_HEAD_H
+	for i in n:
+		var m = team_mates[i]
+		if not is_instance_valid(m):
+			continue
+		var ry: float = y + float(i) * TEAM_ROW_H
+		var col: Color = Avatar.suit_color(int(m.look))
+		draw_rect(Rect2(x + 4, ry + 3, 8, 8), C_LINE)
+		draw_rect(Rect2(x + 5, ry + 4, 6, 6), col)
+		draw_string(font, Vector2(x + 16, ry + 11), String(m.nick), HORIZONTAL_ALIGNMENT_LEFT, 90, 11,
+				col.lightened(0.55))
+		if m.dead:
+			draw_string(font, Vector2(x + 110, ry + 11), "погиб", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, C_DANGER)
+		else:
+			var bar: Rect2 = Rect2(x + 110, ry + 5, 52, 4)
+			var f: float = clampf(float(m.hp) / 100.0, 0.0, 1.0)
+			draw_rect(bar, C_PLATE_HI)
+			draw_rect(Rect2(bar.position, Vector2(bar.size.x * f, bar.size.y)), C_HP if f > 0.35 else C_DANGER)
+		# Огонёк переклички: зелёный — ответил, красный — идёт перекличка без ответа.
+		if not m.dead and float(m.rollcall_t) > 0.0:
+			draw_rect(Rect2(x + 170, ry + 4, 6, 6), Avatar.ROLLCALL_GREEN)
+		elif not m.dead and win > 0:
+			draw_rect(Rect2(x + 170, ry + 4, 6, 6), Avatar.ROLLCALL_RED)
