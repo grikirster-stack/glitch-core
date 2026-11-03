@@ -573,7 +573,12 @@ class Runner extends Node:
 			leaked = leaked or String(s).contains(TestEnv.MARK) or SAVE_SLOTS.has(s)
 		_ok("слоты: тестовые видны только своему процессу, у игрока их нет", mine_ok and not leaked,
 				"свои %s, у игрока %d" % [str(mine), player_view.size()])
+		var t0: int = Time.get_ticks_usec()
 		menu._refresh_load_buttons()
+		var t1: int = Time.get_ticks_usec()
+		save_s.list_saves()
+		print("  ЗАМЕР: серая ли «Загрузить» (Save.slots, без чтения) — %.2f мс; список из %d файлов — %.2f мс"
+				% [float(t1 - t0) / 1000.0, mine.size(), float(Time.get_ticks_usec() - t1) / 1000.0])
 		_ok("есть сохранения — «Загрузить» активна", not menu.load_button.disabled)
 		menu.load_button.pressed.emit()
 		var rows: Array = []
@@ -1129,7 +1134,11 @@ func _open_menu() -> void:
 
 func _tap_load() -> void:
 	_ok("сохранение есть — «Загрузить» активна", not _menu.load_button.disabled)
+	var t0: int = Time.get_ticks_usec()
 	_tap(_menu.load_button)
+	print("  ЗАМЕР: тап «Загрузить» → список (настоящий файл %.1f КБ) — %.2f мс" % [
+			float(FileAccess.get_file_as_bytes(load("res://scripts/core/save.gd").path_for("1")).size()) / 1024.0,
+			float(Time.get_ticks_usec() - t0) / 1000.0])
 
 
 ## Экран «load» свёрстан: строка сохранения и тап по ней.
