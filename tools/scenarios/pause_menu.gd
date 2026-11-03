@@ -121,9 +121,10 @@ func run() -> void:
 	ok("фокус на «Продолжить»", focus == menu.continue_button)
 
 	# --- «Продолжить».
+	var menu_id: int = menu.get_instance_id()   # меню уйдёт — в лямбде не ссылка, а id
 	menu.continue_button.pressed.emit()
 	var sc2: Node = await _scene_of(func(sc: Node) -> bool:
-			return sc != null and sc != menu and sc.has_method("exit_to_menu") and sc.get("player") != null)
+			return sc.get_instance_id() != menu_id and sc.has_method("exit_to_menu") and sc.get("player") != null)
 	ok("«Продолжить» — снова забег, раннер принят новой сценой", sc2 != null and runner.scene == sc2
 			and not get_tree().paused and UI.visible)
 	if sc2 == null:

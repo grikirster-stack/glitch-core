@@ -9,7 +9,8 @@ extends ScenarioBase
 ## прыжка (нажатие и отпускание в одном кадре) прыгает; второй палец копает тайл,
 ## пока первый держит джойстик (мультитач); тап по хотбару выбирает слот; долгий тап
 ## по пустой клетке ставит блок, короткий — нет; режим «строить» ставит коротким
-## тапом; кнопки I и J открывают и закрывают окна, тап по миру при этом не копает.
+## тапом; кнопки I и J открывают и закрывают окна, тап по миру при этом не копает;
+## кнопка «II» открывает паузу (#119).
 ## В одиночной игре кнопки переклички G нет (#135; в сети её проверяет mp_doppel).
 
 var tc: TouchControls = null
@@ -207,6 +208,16 @@ func _windows_by_buttons() -> void:
 	_tap(2, tc.btn_center["journal"])
 	await wait(0.2)
 	ok("повторный тап по J закрывает журнал", not UI.journal.visible and not UI.blocking())
+	# Пауза (#119): ESC на телефоне нет — кнопка «II» рядом с J; в паузе кнопок нет.
+	_tap(2, tc.btn_center["pause"])
+	await get_tree().process_frame
+	await get_tree().process_frame
+	ok("кнопка «II» открывает паузу (дерево стоит), кнопок и джойстика нет", UI.pause.visible
+			and get_tree().paused and tc.control_at(tc.btn_center["inv"]) == ""
+			and tc.control_at(tc.btn_center["pause"]) == "" and tc.control_at(tc.stick_center) == "")
+	UI.pause.continue_button.pressed.emit()
+	ok("«Продолжить» — пауза закрыта, кнопка «II» снова жмётся", not UI.pause.visible
+			and not get_tree().paused and tc.control_at(tc.btn_center["pause"]) == "pause")
 
 
 # ------------------------------------------------------------------ КАСАНИЯ

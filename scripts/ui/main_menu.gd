@@ -238,7 +238,7 @@ func _build() -> void:
 	# --- Правая колонка: ник, одиночная игра, сеть.
 	var right: VBoxContainer = VBoxContainer.new()
 	right.custom_minimum_size = Vector2(COL_W, 0)
-	right.add_theme_constant_override("separation", 8)
+	right.add_theme_constant_override("separation", 6)   # #119: с «Продолжить» колонка влезает в 720
 	cols.add_child(right)
 	right.add_child(_label("Ник", 20, ACCENT))
 	nick_edit = LineEdit.new()
