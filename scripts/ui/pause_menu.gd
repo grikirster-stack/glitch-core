@@ -1,6 +1,7 @@
 class_name PauseMenu
 extends CanvasLayer
-## Пауза в забеге (#119): ESC (на телефоне — кнопка «II» TouchControls) открывает панель
+## Пауза в забеге (#119): ESC (на телефоне — кнопка «меню» TouchControls или «Назад»
+## Android, #149) открывает панель
 ## «Продолжить», «Сохранить», «Сохранить и выйти в меню», «Выход из игры». ESC сначала
 ## закрывает инвентарь или журнал (UI._input) и только потом открывает паузу; в паузе
 ## ESC — «Продолжить» (из предупреждения — назад к пунктам).
@@ -200,11 +201,16 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey and event.pressed and not event.echo \
 			and (event as InputEventKey).keycode == KEY_ESCAPE:
-		if confirm_box.visible:
-			_show_items()
-		else:
-			close()
+		back()
 		get_viewport().set_input_as_handled()
+
+
+## ESC и «Назад» Android (UI.go_back, #149): из предупреждения — к пунктам, иначе «Продолжить».
+func back() -> void:
+	if confirm_box.visible:
+		_show_items()
+	else:
+		close()
 
 
 func _process(_delta: float) -> void:

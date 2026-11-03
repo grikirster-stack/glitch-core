@@ -107,6 +107,17 @@ const HINT_CHEST: String = "[E] — открыть сундук"
 const HINT_GEN_COAL: String = "[E] — загрузить уголь в ТЭЦ"
 const HINT_GEN_SWITCH: String = "[E] — рубильник ТЭЦ (вкл/выкл) · уголь в руке + [E] — топка"
 const HINT_SOLAR_SWITCH: String = "[E] — рубильник генератора (вкл/выкл)"
+## Подсказка управления в начале забега: клавиатура и мышь / телефон (#149).
+const CONTROLS_KEYS: Array = [
+	"WASD — движение   SPACE — прыжок   SHIFT — бег",
+	"ЛКМ — копать / бить   ПКМ — строить   E — взаимодействовать",
+	"Q — импульс   V — вентиляция   I / TAB — инвентарь и крафт   1-0 — хотбар",
+]
+const CONTROLS_TOUCH: Array = [
+	"Джойстик — идти, вверх — прыжок   » — бег",
+	"Тап к стене — копать / бить   блок в хотбаре — строить",
+	"«меню» или «Назад» — пауза и сохранение   I — инвентарь",
+]
 const HINT_INSERTER: String = "ПКМ — повернуть манипулятор · [E] с предметом — фильтр"
 const HINT_HIDING: String = "Вы в вентиляции. [V] — вылезть"
 const HINT_REPAIR: String = "[E] — починить хламом (удерживать)"
@@ -602,11 +613,13 @@ func _compute_tutorial() -> void:
 	var n: int = tutorial_step + 1
 	match tutorial_step:
 		Tut.DIG:
-			tutorial_text = "%d/5 Копай: ЛКМ по земле — хлам %d/%d на ТЭЦ" % [n, mini(scrap, TUT_SCRAP), TUT_SCRAP]
+			tutorial_text = "%d/5 Копай: %s по земле — хлам %d/%d на ТЭЦ" % [n,
+					"тап" if UI.touch_on else "ЛКМ", mini(scrap, TUT_SCRAP), TUT_SCRAP]
 		Tut.CRAFT:
 			tutorial_text = "%d/5 Крафт: I — «Угольная ТЭЦ»" % n
 		Tut.PLACE:
-			tutorial_text = "%d/5 ТЭЦ: ПКМ — у терминала, [E] с углём — топка" % n
+			tutorial_text = ("%d/5 ТЭЦ: выбери в хотбаре, тап у терминала; [E] с углём — топка" if UI.touch_on
+					else "%d/5 ТЭЦ: ПКМ — у терминала, [E] с углём — топка") % n
 		Tut.POWER:
 			tutorial_text = "%d/5 Питание: терминал вне зоны (P — радиус)" % n
 		Tut.TERMINAL:
@@ -956,11 +969,7 @@ func _draw() -> void:
 	# ---- Подсказка управления (затухает) ------------------------------------
 	if Game.game_time < 22.0:
 		var ta: float = clampf((22.0 - Game.game_time) / 6.0, 0.0, 1.0)
-		var lines: Array = [
-			"WASD — движение   SPACE — прыжок   SHIFT — бег",
-			"ЛКМ — копать / бить   ПКМ — строить   E — взаимодействовать",
-			"Q — импульс   V — вентиляция   I / TAB — инвентарь и крафт   1-0 — хотбар",
-		]
+		var lines: Array = CONTROLS_TOUCH if UI.touch_on else CONTROLS_KEYS
 		for i in lines.size():
 			draw_string(font, Vector2(size.x * 0.5 - 260, size.y * 0.30 + i * 20), String(lines[i]),
 					HORIZONTAL_ALIGNMENT_CENTER, 520, 14, Color(C_LINE, ta))

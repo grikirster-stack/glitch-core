@@ -1,6 +1,8 @@
 extends CanvasLayer
 ## Автозагрузка интерфейса: HUD, окно инвентаря, журнал (J), пауза (ESC, #119),
-## проброс эффектов в мир.
+## проброс эффектов в мир. Телефон (#149): системная «Назад» Android — как ESC
+## (go_back; само приложение не закрывается: application/config/quit_on_go_back = false),
+## свернули приложение — пауза и автосохранение (app_paused).
 
 var hud: HUD
 var panel: InventoryPanel
@@ -8,6 +10,8 @@ var journal: JournalPanel
 var pause: PauseMenu
 var world_fx: WorldFX = null
 var player: Player = null
+## Включено сенсорное управление (TouchControls.set_enabled): подсказки — про тапы.
+var touch_on: bool = false
 
 
 func _ready() -> void:
@@ -21,6 +25,35 @@ func _ready() -> void:
 	pause = PauseMenu.new()   # #119: свой CanvasLayer, работает и при паузе дерева
 	add_child(pause)
 	Game.notification.connect(_on_notification)
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		go_back()
+	elif what == NOTIFICATION_APPLICATION_PAUSED:
+		app_paused()
+
+
+## «Назад» Android в забеге (#149) — как ESC: открытое окно закрыть, иначе пауза; в паузе —
+## назад из предупреждения или «Продолжить». В меню «Назад» ведёт MainMenu.go_back.
+func go_back() -> void:
+	if pause.visible:
+		pause.back()
+	elif panel.visible or journal.visible:
+		panel.close()
+		journal.close()
+	elif pause.can_pause():
+		pause.open()
+
+
+## Приложение свернули (#149): Android может выгрузить его из памяти, и забег пропал бы.
+## Пауза (одиночная игра — мир стоит) и сохранение в слот F5, если сейчас можно.
+func app_paused() -> void:
+	if not pause.can_pause():
+		return
+	pause.open()
+	if pause.save_blocked() == "":
+		pause.save_run()
 
 
 func bind(p: Player) -> void:
