@@ -192,3 +192,7 @@ const MP_ROLLCALL_COOLDOWN: float = 20.0     ## перекличка (G), с
 const MP_ROLLCALL_LIGHT: float = 6.0         ## зелёный огонёк ответившего, с
 const MP_DOPPEL_REVEAL: float = 1.5          ## двойник «глючит» после удара, с
 const MP_FRIENDLY_SLASH_CD: float = 1.0      ## кулдаун удара по своему, с
+## Требование релея от N (#139; ADR-002 § 8 вопрос 3): RELAY_REQ × (1 + k·(N−1)),
+## по детали — до целого. Зонд MP-K оценил первую победу вчетвером в 29.4 мин при цели
+## 30–45: вчетвером копают вчетверо быстрее, а сырья релея нужно столько же.
+const MP_RELAY_REQ_PER_PLAYER: float = 0.25
