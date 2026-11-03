@@ -15,12 +15,15 @@ extends SceneTree
 ##   godot --headless --path . --script res://tools/mp_balance_probe.gd
 ##   godot --headless --path . --script res://tools/mp_balance_probe.gd -- --runs=night1,siege3 --n=1,4 --seeds=31337
 ##   ... -- --runs=siege3 --out=a.json        затем  ... -- --runs= --load=a.json,b.json   (только таблица)
+## --logs=<папка> — вывод каждого запуска в файл <прогон>_n<N>_<сид>.txt.
 ## --hand-min=<мин> — минут чистой добычи релея руками одиночки (иначе — balance_hand на
 ## каждом сиде, ≈ 2.5 мин; нужен для оценки «релей командой»).
 ## Код возврата 1, если хоть одна измеренная метрика вне допуска.
 
 const DEFAULT_SEEDS: Array = [31337, 4242, 12345]
 const DEFAULT_N: Array = [1, 2, 3, 4]
+## Предел на один запуск (сценарий сам укладывается в timeout_ms реестра, ≤ 4 мин).
+const RUN_LIMIT_MS: int = 330000
 
 ## Прогоны: имя → сценарий и флаги хоста.
 const RUNS: Dictionary = {
@@ -31,8 +34,9 @@ const RUNS: Dictionary = {
 	"siege5": {"sc": "mp_balance_siege", "flags": ["--mpb-day=5"]},
 	"def5": {"sc": "mp_balance_siege", "flags": ["--mpb-day=5", "--mpb-def"]},
 	"mining": {"sc": "mp_balance_mining", "flags": []},
+	"doppel": {"sc": "mp_balance_doppel", "flags": []},
 }
-const DEFAULT_RUNS: Array = ["night1", "night1_dark", "siege3", "def3", "siege5", "def5", "mining"]
+const DEFAULT_RUNS: Array = ["night1", "night1_dark", "siege3", "def3", "siege5", "def5", "mining", "doppel"]
 
 ## Цели. key — «прогон.метрика»; ratio — факт при N делится на факт при N = 1 того же сида;
 ## ns — при каких N проверять. op: ">=", "<=", "==", "in" (lo..hi).
@@ -89,6 +93,7 @@ func _initialize() -> void:
 	var runs: Array = DEFAULT_RUNS.duplicate()
 	var hand_min: float = -1.0
 	var out_path: String = ""
+	var logs: String = ""
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--seeds="):
 			seeds = Array(a.substr(8).split(",", false)).map(func(s): return int(s))
@@ -100,6 +105,8 @@ func _initialize() -> void:
 			hand_min = float(a.substr(11))
 		elif a.begins_with("--out="):
 			out_path = a.substr(6)
+		elif a.begins_with("--logs="):
+			logs = a.substr(7)
 		elif a.begins_with("--load="):
 			for p in a.substr(7).split(",", false):
 				_load(String(p))
@@ -120,8 +127,13 @@ func _initialize() -> void:
 						"--mp-scenario=" + String(RUNS[run]["sc"]), "--mp-clients=%d" % (int(n) - 1),
 						"--seed=%d" % int(s), "--balance-out=" + mfile]
 				args.append_array(PackedStringArray(RUNS[run]["flags"]))
-				var out: Array = []
-				var code: int = OS.execute(exe, args, out, true)
+				var res: Dictionary = _run(exe, args, RUN_LIMIT_MS)
+				var code: int = int(res["code"])
+				if logs != "":
+					var lf: FileAccess = FileAccess.open(logs.path_join("%s_n%d_%d.txt" % [run, int(n), int(s)]), FileAccess.WRITE)
+					if lf != null:
+						lf.store_buffer(res["out"])
+						lf.close()
 				for line in FileAccess.get_file_as_string(mfile).split("\n", false):
 					var kv: PackedStringArray = line.strip_edges().split("=")
 					if kv.size() == 2:
@@ -141,6 +153,34 @@ func _initialize() -> void:
 	if not failed.is_empty():
 		print("сценарии с провалами проверок: %s" % ", ".join(failed))
 	quit(1 if bad > 0 else 0)
+
+
+## Запуск дочернего Godot с пределом времени: сценарий, который не загрузился (ошибка
+## разбора — игра пошла обычным забегом), не выходит сам — его убиваем, это провал.
+## Вывод читается всё время, иначе полный канал остановил бы процесс.
+func _run(exe: String, args: PackedStringArray, limit_ms: int) -> Dictionary:
+	var r: Dictionary = OS.execute_with_pipe(exe, args, false)
+	if r.is_empty():
+		return {"code": -1, "out": PackedByteArray()}
+	var pid: int = int(r["pid"])
+	var buf: PackedByteArray = PackedByteArray()
+	var t0: int = Time.get_ticks_msec()
+	var killed: bool = false
+	while true:
+		for f in [r["stdio"], r["stderr"]]:
+			for _k in 64:
+				var chunk: PackedByteArray = (f as FileAccess).get_buffer(4096)
+				if chunk.is_empty():
+					break
+				buf.append_array(chunk)
+		if not OS.is_process_running(pid):
+			break
+		if Time.get_ticks_msec() - t0 > limit_ms:
+			OS.kill(pid)
+			killed = true
+			break
+		OS.delay_msec(200)
+	return {"code": -2 if killed else OS.get_process_exit_code(pid), "out": buf}
 
 
 func _put(key: String, n: int, s: int, v) -> void:
@@ -178,9 +218,8 @@ func _estimate(seeds: Array, hand_min: float, exe: String, proj: String) -> void
 			var mfile: String = OS.get_user_data_dir().path_join("mp_balance_probe_hand_%d.txt" % OS.get_process_id())
 			if FileAccess.file_exists(mfile):
 				DirAccess.remove_absolute(mfile)
-			var out: Array = []
-			OS.execute(exe, PackedStringArray(["--headless", "--path", proj, "--", "--scenario=balance_hand",
-					"--seed=%d" % int(s), "--balance-out=" + mfile]), out, true)
+			_run(exe, PackedStringArray(["--headless", "--path", proj, "--", "--scenario=balance_hand",
+					"--seed=%d" % int(s), "--balance-out=" + mfile]), RUN_LIMIT_MS)
 			for line in FileAccess.get_file_as_string(mfile).split("\n", false):
 				var kv: PackedStringArray = line.strip_edges().split("=")
 				if kv.size() == 2 and kv[0] == "hand_relay_min" and kv[1] != "NA":
