@@ -290,6 +290,7 @@ func _on_net_ended(reason: String) -> void:
 func _net_start() -> void:
 	_net_players_start()
 	_net_inv_start()
+	_net_team_start()   # MP-J (#95): перекличка, двойник среди своих
 	if _net.has("scenario"):
 		scenario_mode = true
 		Game.scenario_mode = true   # фантомов, как и в --scenario, создаёт сам сценарий
@@ -356,3 +357,17 @@ func _net_inv_start() -> void:
 	net_inv = InvOps.new()
 	add_child(net_inv)
 	net_inv.start(self)
+
+
+# ------------------------------------------------- СЕТЬ: КОМАНДА (ADR-002 § 4.8, MP-J #95)
+## Перекличка (G), маска и «глюк» двойника, удар по своему — NetTeam
+## (scripts/net/net_team.gd). Без сети узла нет.
+var net_team: NetTeam = null
+
+
+func _net_team_start() -> void:
+	if net_team != null or net_players == null:
+		return
+	net_team = NetTeam.new()
+	add_child(net_team)
+	net_team.start(self)

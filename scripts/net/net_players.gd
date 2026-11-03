@@ -575,6 +575,8 @@ static func play_fx(kind: int, pos: Vector2, arg: int) -> void:
 
 ## Ник товарища над головой (§ 4.2.3): шрифт ThemeDB.fallback_font 8 px, светлый тон
 ## скафандра. Отдельный узел-ребёнок: рисунок героя (Avatar, MP-B/MP-L) не тронут.
+## Родитель — герой или двойник в маске товарища (MP-J, #95): узел читает его поля
+## nick и look (у Player и у Phantom они одни и те же), мёртвого не подписывает.
 class NickTag extends Node2D:
 	const FONT_SIZE: int = 8
 	const LIFT: float = 9.0
@@ -584,21 +586,29 @@ class NickTag extends Node2D:
 	func _ready() -> void:
 		z_index = 1
 
+	## Текст над головой: "" — не подписывать (нет ника, погиб, рассеян).
+	func text() -> String:
+		var p: Node = get_parent()
+		if p == null or p.get("dead") == true or p.get("alive") == false:
+			return ""
+		return String(p.get("nick"))
+
 	func _process(_delta: float) -> void:
-		var p: Player = get_parent() as Player
-		var key: String = "" if p == null or p.dead else p.nick + "|%d" % p.look
+		var p: Node = get_parent()
+		var n: String = text()
+		var key: String = "" if n == "" else n + "|%d" % int(p.get("look"))
 		if key != _shown:
 			_shown = key
 			queue_redraw()
 
 	func _draw() -> void:
-		var p: Player = get_parent() as Player
-		if p == null or p.nick == "" or p.dead:
+		var n: String = text()
+		if n == "":
 			return
 		var font: Font = ThemeDB.fallback_font
-		var w: float = font.get_string_size(p.nick, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x
+		var w: float = font.get_string_size(n, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x
 		var y: float = -Player.SIZE.y * 0.5 - LIFT
-		draw_string(font, Vector2(-w * 0.5 + 0.5, y + 0.5), p.nick, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		draw_string(font, Vector2(-w * 0.5 + 0.5, y + 0.5), n, HORIZONTAL_ALIGNMENT_LEFT, -1,
 				FONT_SIZE, Color(0, 0, 0, 0.6))
-		draw_string(font, Vector2(-w * 0.5, y), p.nick, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE,
-				Avatar.suit_color(p.look).lightened(0.55))
+		draw_string(font, Vector2(-w * 0.5, y), n, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE,
+				Avatar.suit_color(int(get_parent().get("look"))).lightened(0.55))
