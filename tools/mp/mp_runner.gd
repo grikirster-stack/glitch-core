@@ -76,6 +76,17 @@ const MP_REGISTRY: Dictionary = {
 		"desc": "F5 хоста — версия 2 с 4 игроками по uid (замер КБ и мс); у клиента F5/F9 молчат; все вышли, загрузка, вход того же uid — его вещи и место"},
 	"mp_disconnect": {"file": "mp_disconnect.gd", "title": "сеть: обрыв и парковка", "clients": 1,
 		"desc": "процесс клиента убит — по таймауту ENet герой в Net.parked (хотбар не упал, жив); тот же uid вернулся — позиция, HP, инвентарь"},
+	# --- Баланс кооператива (MP-K, #96): тяжёлые боты, не в «all» и не в CI ("manual");
+	# таблица по N и сидам — tools/mp_balance_probe.gd ---
+	"mp_balance_night": {"file": "mp_balance_night.gd", "title": "баланс сети: ночь по шахтам", "clients": 3,
+		"timeout_ms": 240000, "manual": true,
+		"desc": "N героев в своих тёмных точках с 3 лампами, бьют подошедших; ночь штатным директором с формулами N: смерти, встречи и урон на героя, трафик"},
+	"mp_balance_siege": {"file": "mp_balance_siege.gd", "title": "баланс сети: осада базы", "clients": 3,
+		"timeout_ms": 240000, "manual": true,
+		"desc": "обычная база у релея (--mpb-def — с 2 турелями и стеной), N героев у ядра не защищают; ночь --mpb-day штатным директором с формулами N: машин потеряно"},
+	"mp_balance_mining": {"file": "mp_balance_mining.gd", "title": "баланс сети: добыча командой", "clients": 3,
+		"timeout_ms": 180000, "manual": true,
+		"desc": "N героев одновременно копают свои жилы железной руды своим швом (клиент — через прокси): с/ед от ЛКМ до руды в своём инвентаре"},
 }
 
 ## −1 — хост-процесс; 0.. — номер клиента (--mp-role).
@@ -97,9 +108,9 @@ var _launch_ms: Dictionary = {}   ## хост: uid → мс запуска пр�
 var _total_re: RegEx = RegEx.create_from_string("^ИТОГ: проверок (\\d+), провалов (\\d+)")
 
 
-## Имена сетевых сценариев.
+## Имена сетевых сценариев для «all» (без "manual": боты баланса MP-K запускают по имени).
 static func mp_names() -> Array:
-	return MP_REGISTRY.keys()
+	return MP_REGISTRY.keys().filter(func(k) -> bool: return not bool(MP_REGISTRY[k].get("manual", false)))
 
 
 ## Точка входа из main.gd (_net_runner): opts — Net.parse_args().
