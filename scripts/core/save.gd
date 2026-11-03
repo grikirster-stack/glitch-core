@@ -1,7 +1,8 @@
 class_name Save
 extends RefCounted
 ## Сохранение и загрузка забега (ADR-001 § 5.3, PR-N, #37). F5 — сохранить,
-## F9 — загрузить (UI). Один слот по умолчанию: user://save_1.sav.
+## F9 — загрузить (UI). Один слот по умолчанию: user://save_1.sav. Из меню — «Загрузить»
+## (list_saves, #132).
 ##
 ## Что пишется — по одному словарю на систему, каждая сериализует себя сама:
 ##   world    — World.save_state(): тайлы, вода (уровни и очередь), туман войны,
@@ -43,8 +44,11 @@ static var last_raw_size: int = 0      ## байт до сжатия
 static var last_error: String = ""
 
 
+## Файл слота. В тестовом прогоне (TestEnv, #132) — с суффиксом процесса:
+## save_<слот>~t<pid>.sav — параллельные прогоны не делят файлы, сохранения игрока
+## тесты не трогают.
 static func path_for(s: String) -> String:
-	return "user://save_%s.sav" % s
+	return "user://save_%s%s.sav" % [s, TestEnv.suffix()]
 
 
 static func exists(s: String = slot) -> bool:
@@ -449,3 +453,79 @@ static func _net_apply(d: Dictionary) -> void:
 			NetCoop.restore_hero(on_line[int(uid)], e)
 		else:
 			Net.parked[int(uid)] = (e as Dictionary).duplicate(true)
+
+
+# ------------------------------------------------------------------ СПИСОК ДЛЯ МЕНЮ (#132)
+## «Загрузить» в меню (одиночная игра и «Создать игру»): какие слоты есть и что в них.
+## Слоты — по файлам user://save_*.sav; в тестовом прогоне видны только файлы этого
+## процесса (TestEnv), в игре тестовые файлы не видны.
+
+## Слоты на диске, без чтения файлов (меню решает, серая ли кнопка).
+static func slots() -> PackedStringArray:
+	var out: PackedStringArray = PackedStringArray()
+	var dir: DirAccess = DirAccess.open("user://")
+	if dir == null:
+		return out
+	var sfx: String = TestEnv.suffix()
+	for f in dir.get_files():
+		if not f.begins_with("save_") or not f.ends_with(".sav"):
+			continue
+		var s: String = f.substr(5, f.length() - 9)
+		if sfx != "":
+			if not s.ends_with(sfx):
+				continue
+			s = s.substr(0, s.length() - sfx.length())
+		elif s.contains(TestEnv.MARK):
+			continue
+		if s != "":
+			out.append(s)
+	return out
+
+
+## Что в слоте: {slot, time (unix, изменён), ok, error, seed, day, net, name, nicks,
+## players}. Файл читается целиком (распаковка); ok = false — не наш или битый.
+static func slot_info(s: String) -> Dictionary:
+	var path: String = path_for(s)
+	var info: Dictionary = {"slot": s, "time": FileAccess.get_modified_time(path), "ok": false,
+			"error": "", "seed": 0, "day": 1, "net": false, "name": "",
+			"nicks": PackedStringArray(), "players": 1}
+	var err0: String = last_error   # список не портит причину последней операции F5/F9
+	last_error = "сохранения нет"
+	var d: Dictionary = decode(FileAccess.get_file_as_bytes(path)) if FileAccess.file_exists(path) else {}
+	var why: String = last_error if d.is_empty() else ""
+	last_error = err0
+	if why == "" and int(d.get("version", 0)) <= 0:
+		why = "файл повреждён"
+	if why != "":
+		info["error"] = why
+		return info
+	info["ok"] = true
+	info["seed"] = int(d.get("seed", 0))
+	var g = d.get("game", {})
+	info["day"] = int(g.get("day_number", 1)) if g is Dictionary else 1
+	var pl = d.get("players")
+	if pl is Dictionary and not (pl as Dictionary).is_empty():
+		info["net"] = true
+		var nicks: PackedStringArray = PackedStringArray()
+		for uid in pl:
+			var e = pl[uid]
+			if e is Dictionary:
+				nicks.append(String(e.get("nick", "?")))
+		info["nicks"] = nicks
+		info["players"] = (pl as Dictionary).size()
+	var ses = d.get("session", {})
+	if ses is Dictionary:
+		info["name"] = String(ses.get("name", ""))
+	return info
+
+
+## Все сохранения для меню: новые сверху.
+static func list_saves() -> Array:
+	var out: Array = []
+	for s in slots():
+		out.append(slot_info(s))
+	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			if int(a["time"]) != int(b["time"]):
+				return int(a["time"]) > int(b["time"])
+			return String(a["slot"]) < String(b["slot"]))
+	return out
