@@ -858,7 +858,7 @@ func _face(flip: bool) -> void:
 
 ## Сдвиг расслоения: ±1 px, знак мигает с частотой rate.
 func _split_d(t: float, rate: float) -> float:
-	return 1.0 if sin(t * rate) > 0.0 else -1.0
+	return 1.0 if GlitchFx.calm or sin(t * rate) > 0.0 else -1.0   # «меньше мерцания» (V7): не мигает
 
 
 ## Эхо: тёмно-фиолетовая копия скафандра, верх распадается светящимися спорами,
