@@ -101,6 +101,9 @@ const POWER_VALIDATE_EVERY: int = 4
 
 func _ready() -> void:
 	relay_req = DB.relay_req.duplicate()
+	# СЕТЬ (#139): требование релея от числа героев — на входе и выходе героя.
+	player_joined.connect(_on_heroes_changed.unbind(1))
+	player_left.connect(_on_heroes_changed.unbind(1))
 
 
 ## Сброс забега (при перезапуске сцены).
@@ -126,6 +129,7 @@ func reset_run() -> void:
 	relay_speed = 1.0
 	_objective_t = 0.0
 	relay_have = {}                 # вклад деталей в ядро (MP-I, #94)
+	relay_req = DB.relay_req.duplicate()   # требование от N (#139) — с одиночного
 	relay_unattended = false
 	_power_index_size = -1          ## мир мог смениться — индекс пересоберётся
 	# --- Исследования (#28): дерево и журнал живут один забег.
@@ -682,6 +686,13 @@ func load_state(d: Dictionary) -> void:
 	if not d.has("relay_have"):     # файл до MP-I (#94): вклада ещё не было
 		relay_have = {}
 	relay_have = relay_have.duplicate()
+	# Требование от N (#139): клиент берёт хостово из снимка входа, хост и одиночная
+	# считают сами (не ниже загруженного вклада).
+	if Net.is_client():
+		if d.get("relay_req") is Dictionary:
+			relay_req = (d["relay_req"] as Dictionary).duplicate()
+	else:
+		relay_req_update()
 	set_state(State.PLAYING)
 	_power_index_size = -1          ## машины поставлены заново — индекс пересоберётся
 	_power_timer = 0.0
@@ -812,12 +823,63 @@ func relay_attended() -> bool:
 	return false
 
 
-## Хост: вклад в ядро изменился — всем (канал 0, после снимка — по порядку).
+## Хост: вклад в ядро или требование изменились — всем (канал 0, после снимка — по порядку).
 func _net_relay_changed() -> void:
 	if Net.is_host():
-		Net.send_on(0, NetCodec.Msg.COOP, NetCodec.encode_coop_relay(relay_have))
+		Net.send_on(0, NetCodec.Msg.COOP, NetCodec.encode_coop_relay(relay_have, relay_req))
 
 
-## Клиент: вклад в ядро с хоста.
-func net_apply_relay(have: Dictionary) -> void:
+## Клиент: вклад в ядро и требование с хоста (#139: требование от N считает хост).
+func net_apply_relay(have: Dictionary, req: Dictionary) -> void:
 	relay_have = have.duplicate()
+	if not req.is_empty() and req != relay_req:
+		relay_req = req.duplicate()
+
+
+# --- Требование релея от N (#139; ADR-002 § 4.7 «Релей вчетвером»).
+## Требование = DB.relay_req × (1 + Balance.MP_RELAY_REQ_PER_PLAYER·(N − 1)), по детали —
+## до ближайшего целого; N — героев в сессии (Game.players). Пересчитывает хост на входе и
+## выходе героя и при загрузке; клиент получает итог в COOP RELAY и в снимке входа. Уже
+## сданное в ядро не теряется: требование детали не ниже relay_count(id) — ушёл товарищ, и
+## сверх нового требования сданное просто засчитано. При N = 1 — ровно DB.relay_req.
+
+## Множитель требования релея при n героях.
+static func relay_req_scale(n: int) -> float:
+	return 1.0 + Balance.MP_RELAY_REQ_PER_PLAYER * float(maxi(n, 1) - 1)
+
+
+## Требование при n героях (с учётом уже сданного в ядро).
+func relay_req_for(n: int) -> Dictionary:
+	var k: float = relay_req_scale(n)
+	var out: Dictionary = {}
+	for id in DB.relay_req.keys():
+		var need: int = int(DB.relay_req[id])
+		if n > 1:
+			need = roundi(float(need) * k)
+		out[id] = maxi(need, relay_count(int(id)))
+	return out
+
+
+## Героев в сессии (в одиночной — 1).
+func hero_count() -> int:
+	return maxi(players.size(), 1)
+
+
+## Хост и одиночная: пересчитать требование по числу героев. Изменилось — клиентам
+## (COOP RELAY) и уведомление команде. true — требование изменилось.
+func relay_req_update() -> bool:
+	if Net.is_client():
+		return false
+	var req: Dictionary = relay_req_for(hero_count())
+	if req == relay_req:
+		return false
+	relay_req = req
+	_net_relay_changed()
+	if Net.is_online() and not relay_active and state == State.PLAYING:
+		NetCoop.team_notify("Героев на связи: %d — релею нужно деталей ×%.2f." % [hero_count(),
+				relay_req_scale(hero_count())], RELAY_COLOR)
+	return true
+
+
+func _on_heroes_changed() -> void:
+	relay_req_update()

@@ -231,7 +231,8 @@ func _load(path: String) -> void:
 ## одновременно со своей скоростью по сети (mp_balance_mining, с/ед при N против N = 1).
 ## Остальное (разведка, исследования — данные общие, терминал один на команду, — стройка,
 ## ночи, удержание сигнала 180 с) берём как у одиночки: R_N = R1 − M1 + M_N,
-## M_N = M1 · (с/ед при N ÷ с/ед при N = 1) ÷ N.
+## M_N = M1 · (с/ед при N ÷ с/ед при N = 1) · k_N ÷ N, где k_N = 1 + MP_RELAY_REQ_PER_PLAYER·(N − 1)
+## — во сколько раз больше деталей релея (#139; Game.relay_req_for).
 func _estimate(seeds: Array, hand_min: float, exe: String, proj: String) -> void:
 	for s in seeds:
 		var m1: float = hand_min
@@ -254,7 +255,8 @@ func _estimate(seeds: Array, hand_min: float, exe: String, proj: String) -> void
 			var v = spu[n].get(int(s), null)
 			if v == null or v is String or base == null or base is String or float(base) <= 0.0:
 				continue
-			var mn: float = m1 * (float(v) / float(base)) / float(n)
+			var k: float = 1.0 + Balance.MP_RELAY_REQ_PER_PLAYER * float(int(n) - 1)   # деталей релея больше (#139)
+			var mn: float = m1 * (float(v) / float(base)) * k / float(n)
 			_put("est.team_mine_min", int(n), int(s), mn)
 			_put("est.win_lo", int(n), int(s), SOLO_WIN_MIN[0] - m1 + mn)
 			_put("est.win_min", int(n), int(s), SOLO_WIN_MIN[1] - m1 + mn)

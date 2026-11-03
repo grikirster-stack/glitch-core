@@ -366,6 +366,9 @@ static func gather_join() -> Dictionary:
 	d.erase("player")
 	d.erase("players")   # MP-I (#94): чужие инвентари клиенту не нужны
 	d.erase("session")
+	# Требование релея от N (#139) — только во входе: файл сохранения его не пишет,
+	# хост пересчитывает по героям на связи.
+	(d["game"] as Dictionary)["relay_req"] = Game.relay_req.duplicate()
 	return d
 
 
