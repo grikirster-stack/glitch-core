@@ -18,8 +18,8 @@ extends SceneTree
 
 ## Схема протокола PROTO = SCHEMA_PROTO. Поменяли кодек, порядок IDs или таблицы DB —
 ## поднимите Net.PROTO и впишите сюда новый PROTO и хэш, который напечатает тест.
-const SCHEMA_PROTO: int = 7
-const SCHEMA_HASH: String = "dd9a82fd2ad27ddf19bdec29bbe5acb2"
+const SCHEMA_PROTO: int = 8
+const SCHEMA_HASH: String = "1d6ff93df2dcc21c2589e1e5a9584b94"
 
 const PORT_BASE: int = 24900
 const LOOP: String = "127.0.0.1"
@@ -76,6 +76,7 @@ func _run() -> void:
 	_codec()
 	_codec_inv()   # MP-G (#91): команды InvOps, CHEST, TECH
 	_codec_coop()  # MP-I (#94): смерть, вклад в релей, итоги
+	_codec_team()   # MP-J (#95): TEAM — перекличка, маска и «глюк» двойника
 	_sizes()
 	_handshake_table()
 	await _loop()
@@ -667,3 +668,23 @@ func _codec_coop() -> void:
 			and NetCodec.decode_coop(PackedByteArray([NetCodec.CoopEv.RELAY, 2, 9, 1])).is_empty() \
 			and NetCodec.decode_coop(PackedByteArray([99])).is_empty()
 	ok("COOP: битый кадр — пусто", bad)
+
+
+# ------------------------------------------------------------------ 6. КОМАНДА (MP-J, #95)
+
+func _codec_team() -> void:
+	print("== Кодек команды: TEAM ==")
+	var ev: Dictionary = NetCodec.TeamEv
+	ok("TEAM.CALL туда-обратно", NetCodec.decode_team(NetCodec.encode_team(ev.CALL, 3))
+			== {"kind": ev.CALL, "slot": 3, "id": 0})
+	ok("TEAM.ANSWER туда-обратно", NetCodec.decode_team(NetCodec.encode_team(ev.ANSWER, 0))
+			== {"kind": ev.ANSWER, "slot": 0, "id": 0})
+	ok("TEAM.MASK туда-обратно (номер u16, слот; без маски — TEAM_NO_SLOT)",
+			NetCodec.decode_team(NetCodec.encode_team(ev.MASK, 2, 65535)) == {"kind": ev.MASK, "slot": 2, "id": 65535}
+			and NetCodec.decode_team(NetCodec.encode_team(ev.MASK, NetCodec.TEAM_NO_SLOT, 1))["slot"]
+			== NetCodec.TEAM_NO_SLOT)
+	ok("TEAM.REVEAL туда-обратно", NetCodec.decode_team(NetCodec.encode_team(ev.REVEAL, 0, 4097))["id"] == 4097)
+	ok("TEAM битый / чужой вид → {}", NetCodec.decode_team(PackedByteArray([0])).is_empty()
+			and NetCodec.decode_team(PackedByteArray([ev.CALL, 1, 2])).is_empty()
+			and NetCodec.decode_team(PackedByteArray([ev.MASK, 1, 2])).is_empty()
+			and NetCodec.decode_team(PackedByteArray([9, 1])).is_empty())

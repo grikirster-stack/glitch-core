@@ -40,6 +40,7 @@ enum Msg {
 	CHEST,         ## 2: открытый сундук — тем, у кого он открыт (MP-G, #91)
 	TECH,          ## 0: исследования, главы, обрывки — всем (MP-G, #91)
 	COOP,          ## 0 / 2: кооператив — смерть, вклад в релей, итоги (MP-I, #94)
+	TEAM,          ## 2: команда — перекличка (G), маска и «глюк» двойника (MP-J, #95)
 }
 
 ## Типы событий EVENT. Только дописывать в конец.
@@ -926,6 +927,7 @@ static func schema_sample() -> PackedByteArray:
 	# MP-G (#91): команды InvOps, сундук, исследования.
 	out.append_array(inv_schema_sample())
 	out.append_array(coop_schema_sample())   # MP-I (#94)
+	out.append_array(team_schema_sample())   # MP-J (#95)
 	return out
 
 
@@ -1357,4 +1359,54 @@ static func coop_schema_sample() -> PackedByteArray:
 		out.append_array(encode_u32((p as PackedByteArray).size()))
 		out.append_array(p)
 	out.append_array(var_to_bytes([CoopEv.keys(), COOP_WIPE]))
+	return out
+
+
+# ------------------------------------------------------------------ КОМАНДА (MP-J, #95)
+## Кадр TEAM (канал 2, хост → все): u8 вид (TeamEv) · аргументы:
+##   CALL   — u8 слот: игрок начал перекличку (G); у всех на HUD «Аня: перекличка!»;
+##   ANSWER — u8 слот: игрок ответил (G) — огонёк на шлеме зелёный MP_ROLLCALL_LIGHT;
+##   MASK   — u16 номер фантома (NetPhantoms) · u8 слот товарища, чей ник и вид у двойника
+##            (TEAM_NO_SLOT — маски нет, как в одиночной);
+##   REVEAL — u16 номер фантома: двойника ударили — «глючит» MP_DOPPEL_REVEAL.
+## Только дописывать в конец (иначе — поднять Net.PROTO).
+enum TeamEv { CALL, ANSWER, MASK, REVEAL }
+const TEAM_NO_SLOT: int = 0xFF
+
+
+static func encode_team(kind: int, slot: int, id: int = 0) -> PackedByteArray:
+	match kind:
+		TeamEv.CALL, TeamEv.ANSWER:
+			return PackedByteArray([kind & 0xFF, slot & 0xFF])
+		TeamEv.MASK:
+			return PackedByteArray([kind & 0xFF, id & 0xFF, (id >> 8) & 0xFF, slot & 0xFF])
+	return PackedByteArray([kind & 0xFF, id & 0xFF, (id >> 8) & 0xFF])
+
+
+## {kind, slot, id} или {} у битого (неизвестный вид, не тот размер).
+static func decode_team(b: PackedByteArray) -> Dictionary:
+	if b.size() < 2:
+		return {}
+	var kind: int = b[0]
+	match kind:
+		TeamEv.CALL, TeamEv.ANSWER:
+			if b.size() == 2:
+				return {"kind": kind, "slot": int(b[1]), "id": 0}
+		TeamEv.MASK:
+			if b.size() == 4:
+				return {"kind": kind, "slot": int(b[3]), "id": b.decode_u16(1)}
+		TeamEv.REVEAL:
+			if b.size() == 3:
+				return {"kind": kind, "slot": TEAM_NO_SLOT, "id": b.decode_u16(1)}
+	return {}
+
+
+## Образцы сообщений MP-J для schema_sample().
+static func team_schema_sample() -> PackedByteArray:
+	var out: PackedByteArray = PackedByteArray()
+	for p in [encode_team(TeamEv.CALL, 2), encode_team(TeamEv.ANSWER, 3),
+			encode_team(TeamEv.MASK, 1, 4097), encode_team(TeamEv.REVEAL, 0, 65535)]:
+		out.append_array(encode_u32((p as PackedByteArray).size()))
+		out.append_array(p)
+	out.append_array(var_to_bytes([TeamEv.keys(), TEAM_NO_SLOT]))
 	return out
