@@ -153,8 +153,9 @@ func _victim() -> void:
 			"%s → %s" % [first.nick, nc.watching.nick if nc.watching != null else "—"])
 	await tap(KEY_A)
 	ok("c0: A — обратно", await wait_until(func() -> bool: return nc.watching == first, 2.0))
-	await barrier("respawned")
+	# До барьера: сразу после него хост ведёт Аню к мешку.
 	ok("c0: возродился — экран закрыт, герой на базе", await wait_until(func() -> bool:
-		return not player.dead and not es.visible and at_base(player), WAIT),
+		return not player.dead and not es.visible and at_base(player), Balance.MP_RESPAWN_DELAY + WAIT),
 			"%.0f px от капсулы" % player.global_position.distance_to(World.spawn_point))
 	ok("c0: камера снова своя", player.camera.position == Vector2.ZERO and nc.watching == null)
+	await barrier("respawned")
