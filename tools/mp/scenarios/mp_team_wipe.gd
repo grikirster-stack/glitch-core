@@ -34,7 +34,7 @@ func run_host() -> void:
 	kill(p0)
 	await barrier("c_dead")
 	ok("хост: Аня ждёт личного отсчёта, вайпа нет", nc.due.has(p0) and nc.wipe_left < 0.0)
-	var t0: float = now()
+	var t0: float = Game.game_time   # отсчёты NetCoop идут в _process — меряем теми же часами (часы забега)
 	kill(player)
 	ok("хост: погибли все — отсчёт вайпа RESPAWN_DELAY = %.0f с" % Balance.RESPAWN_DELAY,
 			absf(nc.wipe_left - Balance.RESPAWN_DELAY) < 0.2 and nc.due.is_empty(), "%.2f" % nc.wipe_left)
@@ -43,7 +43,7 @@ func run_host() -> void:
 	await barrier("wipe")
 	var back: bool = await wait_until(func() -> bool: return not player.dead and not p0.dead,
 			Balance.RESPAWN_DELAY + 4.0)
-	var dt: float = now() - t0
+	var dt: float = Game.game_time - t0
 	ok("вайп: оба на базе через %.0f с" % Balance.RESPAWN_DELAY, back and at_base(player) and at_base(p0)
 			and dt < Balance.RESPAWN_DELAY + 2.0, "%.1f с" % dt)
 	await wait(0.2)

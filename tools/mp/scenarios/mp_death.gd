@@ -44,7 +44,7 @@ func run_host() -> void:
 	var day0: int = Game.day_number
 	var tod0: float = Game.time_of_day
 	var gt0: float = Game.game_time
-	var t0: float = now()
+	var t0: float = Game.game_time   # отсчёты NetCoop идут в _process — меряем теми же часами (часы забега)
 	kill(p0)
 	ok("Аня погибла (прокси)", p0.dead and p0.hp <= 0.0)
 	var bag: ItemEntity = bag_of(client_uid(0))
@@ -69,7 +69,7 @@ func run_host() -> void:
 
 	# --- Респаун без сдвига часов.
 	var back: bool = await wait_until(func() -> bool: return not p0.dead, Balance.MP_RESPAWN_DELAY + 5.0)
-	var dt: float = now() - t0
+	var dt: float = Game.game_time - t0
 	ok("Аня возродилась через %d с" % int(Balance.MP_RESPAWN_DELAY), back
 			and dt > Balance.MP_RESPAWN_DELAY - 1.0 and dt < Balance.MP_RESPAWN_DELAY + 2.5, "%.1f с" % dt)
 	ok("Аня — в капсуле на базе, HP полное", at_base(p0) and p0.hp >= Player.MAX_HP,
@@ -157,5 +157,8 @@ func _victim() -> void:
 	ok("c0: возродился — экран закрыт, герой на базе", await wait_until(func() -> bool:
 		return not player.dead and not es.visible and at_base(player), Balance.MP_RESPAWN_DELAY + WAIT),
 			"%.0f px от капсулы" % player.global_position.distance_to(World.spawn_point))
-	ok("c0: камера снова своя", player.camera.position == Vector2.ZERO and nc.watching == null)
+	# Камеру возвращает NetCoop в своём кадре отрисовки — после флага «жив» из OWN, не в том же кадре.
+	ok("c0: камера снова своя", await wait_until(func() -> bool:
+		return player.camera.position == Vector2.ZERO and nc.watching == null, WAIT),
+			"%s, глазами %s" % [str(player.camera.position), nc.watching.nick if nc.watching != null else "—"])
 	await barrier("respawned")
