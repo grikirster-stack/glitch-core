@@ -22,9 +22,13 @@ const F: int = 14      # ряд пола стендов
 const TOP: int = 5     # верхний ряд расчистки
 const X0: int = 12     # левый край расчистки (база — в середине мира)
 ## Ширина широкой ямы C. Не зависит от FLUID_SCAN: так замер при разных
-## FLUID_SCAN идёт на одной и той же нагрузке, а слишком малый FLUID_SCAN
-## честно проваливает «широкая яма наполняется».
+## FLUID_SCAN идёт на одной и той же нагрузке. Ямы шире — в fluid_pools (#70).
 const WIDE: int = 16
+
+## Запас пустых клеток между стендами. Стенды отделены друг от друга
+## обрывом (пола между ними нет), так что после #70 «ямой» соседний стенд
+## не становится — запас остался от прежнего правила, раскладка та же.
+const SPACE: int = 16
 
 var scan: int = 16
 var _frame_us_max: int = 0
@@ -38,11 +42,10 @@ func run() -> void:
 	await wait(0.2)
 	var consts: Dictionary = World.get_script().get_script_constant_map()
 	scan = int(consts.get("FLUID_SCAN", 16))
-	# Между стендами — больше FLUID_SCAN пустых клеток там, где проверяем
-	# «ровную землю»: иначе соседний стенд станет стенкой ямы.
-	var d0: int = X0 + scan + 2
-	var a0: int = d0 + scan + 10
-	var a_len: int = 2 * scan + 9
+	# Между стендами — SPACE пустых клеток там, где проверяем «ровную землю».
+	var d0: int = X0 + SPACE + 2
+	var a0: int = d0 + SPACE + 10
+	var a_len: int = 2 * SPACE + 9
 	var b0: int = a0 + a_len + 4
 	var c0: int = b0 + 7 + 4
 	var e0: int = c0 + WIDE + 2 + 4
@@ -105,6 +108,55 @@ func _measure_terrain() -> void:
 				pits += 1
 		parts.append("%d → %.0f %%" % [int(k), 100.0 * float(pits) / float(maxi(cols, 1))])
 	print("  ЗАМЕР рельеф: доля колонок поверхности «в яме» при поиске стенки на N клеток: %s" % ", ".join(parts))
+	# #70: стенку ищем по площадке до первого разрыва в полу (шире G клеток
+	# без опоры), предел — 64 клетки. Последнее число — правило мира как есть.
+	var gparts: Array = []
+	for gap in [0, 1, 2, 3, 4]:
+		var cols: int = 0
+		var pits: int = 0
+		for x in range(World.W):
+			var r: int = World.surface[x] - 1
+			if World.get_tile(x, r) != IDs.T.AIR or not World.is_solid_cell(Vector2i(x, r + 1)):
+				continue
+			cols += 1
+			if _wall_on_floor(x, r, -1, int(gap)) and _wall_on_floor(x, r, 1, int(gap)):
+				pits += 1
+		gparts.append("%d → %.0f %%" % [int(gap), 100.0 * float(pits) / float(maxi(cols, 1))])
+	var wcols: int = 0
+	var wpits: int = 0
+	if World.has_method("_fluid_bounded"):
+		var cells0: int = World.fluid_scan_cells
+		for x in range(World.W):
+			var r: int = World.surface[x] - 1
+			if World.get_tile(x, r) != IDs.T.AIR or not World.is_solid_cell(Vector2i(x, r + 1)):
+				continue
+			wcols += 1
+			if bool(World.call("_fluid_bounded", x, r)):
+				wpits += 1
+		World.fluid_scan_cells = cells0
+	print("  ЗАМЕР рельеф (#70): доля колонок «в яме» по площадке до разрыва шире G клеток: %s; правило мира (FLUID_SCAN %d) → %.0f %%" % [
+		", ".join(gparts), scan, 100.0 * float(wpits) / float(maxi(wcols, 1))])
+
+
+## Стенка в ряду y в сторону d, пока пол под рядом не обрывается шире gap
+## клеток подряд (#70); предел — 64 клетки.
+func _wall_on_floor(x: int, y: int, d: int, gap: int) -> bool:
+	var run: int = 0
+	for i in range(1, 65):
+		var cx: int = x + d * i
+		if cx < 0 or cx >= World.W:
+			return true
+		var t: int = World.get_tile(cx, y)
+		if t != IDs.T.AIR and t != IDs.T.WATER:
+			return true
+		var b: int = World.get_tile(cx, y + 1)
+		if (b == IDs.T.AIR or b == IDs.T.WATER) and World.fluid_level(Vector2i(cx, y + 1)) < World.FLUID_MAX:
+			run += 1
+			if run > gap:
+				return false
+		else:
+			run = 0
+	return false
 
 
 func _wall_within(x: int, y: int, d: int, k: int) -> bool:
@@ -210,7 +262,7 @@ func _stand_wide(c0: int) -> void:
 			"порций %d" % _sum(c0 + 1, c0 + WIDE, F - 2, F - 1))
 
 
-## D: видимость. Отдельная ровная площадка: стенок ближе FLUID_SCAN нет.
+## D: видимость. Отдельная ровная площадка: стенок рядом нет, по краям обрыв.
 func _stand_visible(d0: int) -> void:
 	for x in range(d0 - 1, d0 + 10):
 		World.set_tile(x, F, IDs.T.STONE)
