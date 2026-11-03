@@ -50,6 +50,9 @@ var _destroyed: bool = false
 ## Готовое, ждущее манипулятора (#30): id -> count. См. deliver() и take_output().
 var _output: Dictionary = {}
 var _output_count: int = 0
+## Неразборная постройка: её нельзя снять и вернуть в инвентарь (постройки
+## кампании, тайники руин). Ставится кодом мира, не игроком.
+var permanent: bool = false
 
 
 static func place_machine(p_kind: String, c: Vector2i) -> bool:
@@ -264,6 +267,31 @@ func _on_destroyed() -> void:
 	pass
 
 
+## Разобрать постройку: снять с мира и вернуть предмет в инвентарь героя.
+## Неразборные постройки (permanent) и уже снятые — не трогаем: возвращают NONE.
+## Содержимое (готовое в буфере, кристаллы анализатора) высыпается на землю —
+## ничего не пропадает. Возвращает id предмета, который надо вернуть герою.
+func dismantle() -> int:
+	if permanent or _destroyed:
+		return IDs.I.NONE
+	if not Net.is_authority():   # СЕТЬ (ADR-002): снос — событие от хоста
+		return IDs.I.NONE
+	var item: int = machine_item_id(kind)
+	_on_destroyed()      # содержимое постройки — на землю
+	_drop_output()       # готовое, не забранное манипулятором, — на землю
+	if World.machines.get(cell) == self:
+		World.machines.erase(cell)
+	if World.belts.get(cell) == self:
+		World.belts.erase(cell)
+	_destroyed = true
+	# Осколки — как при сносе (звук и подсказку даёт герой, который разбирает).
+	var col: Color = DB.item_color(item) if item != IDs.I.NONE else Color(0.5, 0.5, 0.55)
+	for i in DESTROY_CHIPS:
+		UI.spawn_chip(cell, col)
+	queue_free()
+	return item
+
+
 ## Высыпать на землю готовое, не забранное манипулятором (#30).
 func _drop_output() -> void:
 	for id in _output.keys():
@@ -389,6 +417,7 @@ func save_state() -> Dictionary:
 		"progress": progress,
 		"work_time": work_time,
 		"output": _output.duplicate(),
+		"permanent": permanent,
 	}
 
 
@@ -399,6 +428,7 @@ func load_state(d: Dictionary) -> void:
 	max_hp = float(d.get("max_hp", max_hp))
 	progress = float(d.get("progress", progress))
 	work_time = float(d.get("work_time", work_time))
+	permanent = bool(d.get("permanent", permanent))
 	_output = load_counts(d.get("output", {}))
 	_output_count = 0
 	for id in _output.keys():

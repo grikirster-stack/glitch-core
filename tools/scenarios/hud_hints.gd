@@ -38,6 +38,8 @@ func run() -> void:
 		return
 	var gen: Node2D = World.machines[gen_cell]
 	var chest: Node2D = World.machines[chest_cell]
+	# В сундуке вещь: полный сундук открывается по E (пустой — цель разбора).
+	(chest as Chest).receive_item(IDs.I.STONE, 1)
 	# Первый кадр после 200 построек бывает длиннее 0.3 с — ждём и кадры HUD,
 	# а не только время, иначе проверка успевает раньше первого _process HUD.
 	var fr0: int = hud.stat_frames

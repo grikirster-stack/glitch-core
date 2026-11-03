@@ -100,6 +100,9 @@ const REPAIR_GAP: float = 0.3
 ## Это нажатие E уже отработало (терминал, ремонт): до отпускания E оно не
 ## открывает сундук рядом и не дёргает рубильник.
 var _e_used: bool = false
+## Разбор постройки: сколько E держат (с) и в какой клетке.
+var _dismantle_t: float = 0.0
+var _dismantle_cell: Vector2i = Vector2i(-1, -1)
 
 
 func _ready() -> void:
@@ -318,6 +321,7 @@ func _handle_input(dt: float) -> void:
 	else:
 		task_progress = 0.0
 		_e_used = false
+		_dismantle_t = 0.0
 	_e_prev = e_down
 
 	# V — вентиляция (по фронту: зажатая V не дёргает укрытие каждый кадр)
@@ -507,6 +511,10 @@ const ET_INSERTER: String = "inserter"          ## предмет в руке �
 const ET_CHEST: String = "chest"                ## сундук и тайники руин / небесный тайник
 const ET_REPAIR: String = "repair"              ## хлам в руке, машина повреждена
 const ET_LOAD: String = "load"                  ## предмет в руке подходит станку
+const ET_DISMANTLE: String = "dismantle"        ## разбор постройки (удержание E)
+
+## Сколько секунд держать E над постройкой, чтобы разобрать её (DISMANTLE).
+const DISMANTLE_HOLD: float = 0.9
 
 ## Клетка цели, по которой копится task_progress: сменилась цель — отсчёт заново.
 var _task_cell: Vector2i = Vector2i(-1, -1)
@@ -553,19 +561,76 @@ func interact_target(powered: Callable = Callable()) -> Dictionary:
 			var c: Vector2i = pc + Vector2i(dx, dy)
 			if not World.machines.has(c):
 				continue
-			var mt: Dictionary = _target_at(c, pos, false, powered)
+			var mt: Dictionary = _target_at(c, pos, false, powered, false)
 			if mt.is_empty():
 				continue
 			var md: float = Vector2(mt["pos"]).distance_to(pos)
 			if md < best_d:
 				best_d = md
 				best = mt
-	return off if off_d < best_d else best
+	var res: Dictionary = off if off_d < best_d else best
+	if not res.is_empty():
+		return res
+	# Рядом нет ничего с особым действием E — разбор: ближайшая машина.
+	return _dismantle_target(pos)
+
+
+## Цель разбора: ближайшая машина, которую можно снять (пустая рука, не
+## кампанийная, сундук — пустой). Это запасной путь: если рядом есть терминал,
+## сундук с вещами или станок — E делает обычное дело, разбор — только когда
+## игрок целится в машину (aimed) или рядом нет ничего другого.
+func _dismantle_target(pos: Vector2) -> Dictionary:
+	if not inv.selected_stack().is_empty():
+		return {}
+	var r: int = int(ceil(E_MACHINE / float(World.TILE))) + 1
+	var pc: Vector2i = World.world_to_cell(pos)
+	var best: Dictionary = {}
+	var best_d: float = INF
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			var c: Vector2i = pc + Vector2i(dx, dy)
+			var m = World.machines.get(c)
+			if m == null or not is_instance_valid(m) or m.is_queued_for_deletion():
+				continue
+			if not _can_dismantle(m):
+				continue
+			var mp: Vector2 = m.global_position
+			var d: float = mp.distance_to(pos)
+			if d > E_MACHINE or d >= best_d:
+				continue
+			best_d = d
+			best = {"kind": ET_DISMANTLE, "cell": c, "node": m, "pos": mp,
+					"item": MachineBase.machine_item_id(m.kind)}
+	return best
+
+
+## Можно ли снять постройку m и вернуть её в инвентарь: не кампанийная и не
+## тайник руин, сундук — пустой (полный сначала открывают).
+func _can_dismantle(m) -> bool:
+	if m == null or not is_instance_valid(m) or m.is_queued_for_deletion():
+		return false
+	if bool(m.permanent):
+		return false
+	if m is Chest and not _chest_empty(m):
+		return false
+	return true
+
+
+## Пуст ли сундук (ни одного предмета).
+func _chest_empty(m) -> bool:
+	var ch = m as Chest
+	for s in ch.slots:
+		if not s.is_empty():
+			return false
+	return true
 
 
 ## Что E сделает с объектом в клетке c (пусто — ничего или далеко).
 ## aimed — клетка под курсором: манипулятор тогда достаётся на всю досягаемость.
-func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable) -> Dictionary:
+## allow_dismantle — искать цель разбора (бур, конвейер…): в поиске «ближайшего»
+## разбор не участвует, чтобы не отбирать E у сундука и терминала.
+func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable,
+		allow_dismantle: bool = true) -> Dictionary:
 	if c.x < 0:
 		return {}
 	var m = World.machines.get(c)
@@ -580,11 +645,16 @@ func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable) -> Di
 			tg["kind"] = ET_GENERATOR
 		elif m is Inserter and (d < E_MACHINE or (aimed and d <= REACH)):
 			tg["kind"] = ET_INSERTER
-		elif m is Chest and d < E_MACHINE:
+		elif m is Chest and d < E_MACHINE and not _chest_empty(m):
 			tg["kind"] = ET_CHEST
 		elif not sel.is_empty() and d <= E_STATION and not (m is Belt or m is Chest or m is Generator) \
 				and m.input_accepts(sel.id):
 			tg["kind"] = ET_LOAD
+		elif allow_dismantle and d < E_MACHINE and sel.is_empty() and _can_dismantle(m):
+			# Разбор: своего действия E у машины нет (бур, плавильня, сборщик,
+			# конвейер) или сундук пуст.
+			tg["kind"] = ET_DISMANTLE
+			tg["item"] = MachineBase.machine_item_id(m.kind)
 		else:
 			return {}
 		return tg
@@ -649,6 +719,52 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 				inv.remove_at(inv.selected, sel.count - left)
 				_sfx_here("place", -12.0)
 				_notify("Загружено: %s" % DB.item_name(sel.id), Color(0.7, 0.9, 1.0))
+	# Разбор постройки (DISMANTLE): удержание E с пустой рукой снимает машину и
+	# возвращает её предмет в инвентарь. Отпустил раньше — ничего не разобрано.
+	var dm: MachineBase = _dismantle_node(tg, kind)
+	if dm != null:
+		if cell != _dismantle_cell:
+			_dismantle_cell = cell
+			_dismantle_t = 0.0
+		_dismantle_t += dt
+		task_progress = clampf(_dismantle_t / DISMANTLE_HOLD, 0.0, 1.0)
+		if _dismantle_t >= DISMANTLE_HOLD:
+			_dismantle_t = 0.0
+			task_progress = 0.0
+			_dismantle(dm)
+		return
+	_dismantle_t = 0.0
+	_dismantle_cell = Vector2i(-1, -1)
+
+
+## Машина под целью E, которую можно разобрать удержанием E. Полный сундук —
+## нет (его сначала открывают); кампанийные постройки — нет.
+func _dismantle_node(tg: Dictionary, kind: String) -> MachineBase:
+	if kind == ET_CHEST:
+		return null
+	var node = tg.get("node")
+	if not (node is MachineBase):
+		return null
+	var m: MachineBase = node
+	if not is_instance_valid(m) or m.is_queued_for_deletion():
+		return null
+	if not _can_dismantle(m):
+		return null
+	if not inv.selected_stack().is_empty():
+		return null
+	return m
+
+
+## Разобрать постройку: предмет вернётся в инвентарь (нет места — под ноги).
+func _dismantle(m: MachineBase) -> void:
+	var item: int = m.dismantle()
+	if item == IDs.I.NONE:
+		return
+	var left: int = inv.add(item, 1)
+	if left > 0:
+		spawn_item(item, left, global_position)
+	_sfx_here("pickup", -10.0, 1.1)
+	_notify("Разобрано: %s" % DB.item_name(item), Color(0.8, 0.9, 0.75))
 
 
 ## Терминал отработал: +данные (Game.complete_task), глава журнала этого места.

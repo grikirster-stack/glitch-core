@@ -773,6 +773,7 @@ func _place_ruin_cache(i: int, cx: int, base: int, half: int) -> void:
 	var chest: Chest = null
 	if MachineBase.place_machine("Chest", cell):
 		chest = machines[cell]
+		chest.permanent = true   # тайник руины: разобрать нельзя
 		for e in ruin_cache_loot(i, role):
 			chest.receive_item(int(e[0]), int(e[1]))
 	var sign_cell: Vector2i = _ruin_top_cell(cx - half, base)
@@ -985,6 +986,7 @@ func _place_sky_cache() -> void:
 	var chest: Chest = null
 	if MachineBase.place_machine("Chest", cell):
 		chest = machines[cell]
+		chest.permanent = true   # тайник обломков: разобрать нельзя
 		sky_cells.append(cell)
 		for e in sky_cache_loot():
 			chest.receive_item(int(e[0]), int(e[1]))

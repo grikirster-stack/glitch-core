@@ -184,6 +184,11 @@ const REGISTRY: Dictionary = {
 		"title": "ремонт",
 		"desc": "E с хламом по повреждённой машине: +20 HP за единицу",
 	},
+	"dismantle": {
+		"file": "dismantle.gd",
+		"title": "разбор постройки",
+		"desc": "удержание E снимает машину и возвращает её предмет в рюкзак; кампанийные — нет",
+	},
 	# --- Плавильня и замок технологий (#57) ---
 	"smelter_locked": {
 		"file": "smelter_locked.gd",
@@ -545,6 +550,8 @@ func _reset_world() -> void:
 	p._v_prev = false
 	p._repair_cd = 0.0
 	p._task_cell = Vector2i(-1, -1)
+	p._dismantle_t = 0.0
+	p._dismantle_cell = Vector2i(-1, -1)
 	# Игрок заново.
 	p.test_input = {}
 	p.hp = Player.MAX_HP
