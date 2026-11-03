@@ -95,9 +95,13 @@ func _start() -> void:
 	if not scenarios.is_empty():
 		scenario_mode = true
 		Game.scenario_mode = true   # директор угрозы (Threat) читает флаг отсюда
-		var srunner: ScenarioRunner = ScenarioRunner.new()
-		add_child(srunner)
-		srunner.start(self, scenarios)
+		var srunner: ScenarioRunner = ScenarioRunner.carried
+		if srunner != null and is_instance_valid(srunner):
+			srunner.adopt(self)   # ПАУЗА (#119): сценарий вернулся из меню — список не заново
+		else:
+			srunner = ScenarioRunner.new()
+			add_child(srunner)
+			srunner.start(self, scenarios)
 
 	_net_start()   # СЕТЬ (ADR-002): --mp-host, сетевые сценарии --mp-scenario
 	_menu_load()   # МЕНЮ «Загрузить» (#132): одиночная игра из сохранения
@@ -442,3 +446,24 @@ func _menu_load() -> void:
 	else:
 		print("МЕНЮ: сохранение «%s» не загружено: %s" % [slot, Save.last_error])
 		Game.notify("Загрузить нельзя: %s." % Save.last_error, Color(1.0, 0.6, 0.4))
+
+
+# ------------------------------------------------- ПАУЗА: ВЫХОД В МЕНЮ (#119)
+## «Сохранить и выйти в меню» / «Выйти в меню» паузы (PauseMenu): сохранение уже сделано
+## (или от него отказались). Сеть: клиент отключается, хост заканчивает сессию (Net.leave);
+## в меню уводят NetLobby и _on_net_ended, как при обрыве, — здесь только если никто не
+## увёл (одиночная, хост без лобби: --mp-host). Сценарий (--scenario=) переносит раннер
+## через меню сам: ScenarioRunner.carry_over.
+func exit_to_menu() -> void:
+	UI.pause.close(false)
+	if Net.is_online():
+		Net.leave()
+	else:
+		Net.session = {}   # выбор одиночной игры прочитан; меню начнёт с чистого
+	get_tree().paused = false
+	_exit_to_menu_now.call_deferred()
+
+
+func _exit_to_menu_now() -> void:
+	if is_inside_tree() and get_tree().current_scene == self and ResourceLoader.exists(MENU_SCENE):
+		get_tree().change_scene_to_file(MENU_SCENE)

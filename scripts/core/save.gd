@@ -2,7 +2,8 @@ class_name Save
 extends RefCounted
 ## Сохранение и загрузка забега (ADR-001 § 5.3, PR-N, #37). F5 — сохранить,
 ## F9 — загрузить (UI). Один слот по умолчанию: user://save_1.sav. Из меню — «Загрузить»
-## (list_saves, #132).
+## (list_saves, #132) и «Продолжить» (latest_single, #119). Пауза в забеге (PauseMenu,
+## #119): «Сохранить» и «Сохранить и выйти в меню» пишут в тот же слот, что F5.
 ##
 ## Что пишется — по одному словарю на систему, каждая сериализует себя сама:
 ##   world    — World.save_state(): тайлы, вода (уровни и очередь), туман войны,
@@ -529,3 +530,21 @@ static func list_saves() -> Array:
 				return int(a["time"]) > int(b["time"])
 			return String(a["slot"]) < String(b["slot"]))
 	return out
+
+
+## «Продолжить» в меню (#119): самое новое (по времени файла) читаемое одиночное
+## сохранение — {} если такого нет. Файлы читаются по одному от новых, пока не найдётся
+## подходящий (обычно — один: слот F5, куда пишет и «Сохранить и выйти в меню»).
+static func latest_single() -> Dictionary:
+	var order: Array = []
+	for s in slots():
+		order.append([FileAccess.get_modified_time(path_for(s)), s])
+	order.sort_custom(func(a: Array, b: Array) -> bool:
+			if int(a[0]) != int(b[0]):
+				return int(a[0]) > int(b[0])
+			return String(a[1]) < String(b[1]))
+	for e in order:
+		var info: Dictionary = slot_info(String(e[1]))
+		if bool(info["ok"]) and not bool(info["net"]):
+			return info
+	return {}
