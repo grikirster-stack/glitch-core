@@ -399,6 +399,22 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		_stars = PackedVector2Array()
 		queue_redraw()
+	elif what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		go_back()
+
+
+## «Назад» Android (#149; application/config/quit_on_go_back = false): с сетевых экранов —
+## как их кнопка «Назад» / «Отмена» / «Выйти», с главного — выход из игры.
+func go_back() -> void:
+	match current_screen:
+		"main":
+			get_tree().quit()
+		"connecting":
+			connect_back_button.pressed.emit()
+		"lobby":
+			lobby_leave_button.pressed.emit()
+		_:
+			show_screen("main")
 
 
 func _draw() -> void:

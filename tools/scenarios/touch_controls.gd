@@ -7,10 +7,13 @@ extends ScenarioBase
 ## Проверяем: без сенсорного экрана и --touch управление выключено; джойстик
 ## двигает героя, а эмулированный «клик» под джойстиком не копает; тап по кнопке
 ## прыжка (нажатие и отпускание в одном кадре) прыгает; второй палец копает тайл,
-## пока первый держит джойстик (мультитач); тап по хотбару выбирает слот; долгий тап
-## по пустой клетке ставит блок, короткий — нет; режим «строить» ставит коротким
-## тапом; кнопки I и J открывают и закрывают окна, тап по миру при этом не копает;
-## кнопка «II» открывает паузу (#119).
+## пока первый держит джойстик (мультитач); тап по хотбару выбирает слот и режим
+## (блок — «строить», пустая ячейка — «копать»); умный прицел (#149): тап по свободной
+## клетке ставит один блок, тап за препятствием — блок со своей стороны, тап за радиусом
+## копает ближнюю стену по лучу, тап на полклетки мимо камня копает камень; кнопки I и J
+## открывают и закрывают окна, тап по миру при этом не копает; кнопка «меню» открывает
+## паузу (#119); «Назад» Android закрывает окно, открывает и закрывает паузу, свернули
+## приложение — пауза и сохранение (#149).
 ## В одиночной игре кнопки переклички G нет (#135; в сети её проверяет mp_doppel).
 
 var tc: TouchControls = null
@@ -36,8 +39,9 @@ func run() -> void:
 
 	await _mining_with_stick_held()
 	await _walk_and_jump()
-	await _build_by_long_tap()
+	await _smart_aim()
 	await _windows_by_buttons()
+	await _back_and_app_pause()
 
 	_lift_all()
 	await wait(0.1)
@@ -78,6 +82,8 @@ func _mining_with_stick_held() -> void:
 	ok("докопал и держит палец — на месте тайла ничего не ставится",
 			World.get_tile_v(cell) == IDs.T.AIR, DB.tile_name(World.get_tile_v(cell)))
 	# Оба пальца сразу: джойстик вправо и палец на мире — шов видит и то и другое.
+	# Пустую клетку умный прицел (#149) не копает — возвращаем тайл под палец.
+	World.set_tile(cell.x, cell.y, before)
 	_drag(0, tc.stick_center + Vector2(tc.stick_radius * 0.9, 0.0))
 	await wait(0.1)
 	var keys: Dictionary = player.touch_input.get("keys", {})
@@ -122,49 +128,68 @@ func _walk_and_jump() -> void:
 	await wait_until(func() -> bool: return player.on_ground, 2.0)
 
 
-## Тап по хотбару выбирает слот; долгий тап ставит блок, короткий — нет;
-## режим «строить» ставит коротким тапом.
-func _build_by_long_tap() -> void:
+## Тап по хотбару выбирает слот и режим; умный прицел (#149) ставит и копает, даже
+## когда палец не попал в клетку.
+func _smart_aim() -> void:
 	var base: int = stand_in_corridor(3)
 	_settle_camera()
 	await wait(0.6)
 	player.inv.slots[5] = ItemStack.new(IDs.I.STONE, 10)
+	player.inv.slots[6] = ItemStack.new()
 	_tap(3, UI.hud.hotbar_slot_rect(5).get_center())
 	await wait(0.1)
-	ok("тап по хотбару выбирает слот", player.inv.selected == 5, str(player.inv.selected))
+	ok("тап по хотбару выбирает слот, блок в руке включает «строить»",
+			player.inv.selected == 5 and tc.build_mode, "слот %d, строить %s" % [player.inv.selected, tc.build_mode])
 
 	var pc: Vector2i = World.world_to_cell(player.global_position)
+	var near: Vector2i = Vector2i(pc.x + 1, base - 1)
 	var a: Vector2i = Vector2i(pc.x + 2, base - 1)
-	var b: Vector2i = Vector2i(pc.x + 3, base - 1)
-	ok("рядом пустые клетки под постройку", World.get_tile_v(a) == IDs.T.AIR
-			and World.get_tile_v(b) == IDs.T.AIR, "%s %s" % [str(a), str(b)])
+	var far: Vector2i = Vector2i(pc.x + 9, base - 1)
+	ok("рядом пустые клетки под постройку", World.get_tile_v(near) == IDs.T.AIR
+			and World.get_tile_v(a) == IDs.T.AIR, "%s %s" % [str(near), str(a)])
 
-	# Короткий тап по пустой клетке — не постройка.
-	_touch(1, _screen(World.cell_to_world(a)), true)
-	await wait(0.15)
-	_touch(1, _screen(World.cell_to_world(a)), false)
-	await wait(0.3)
-	ok("короткий тап по пустой клетке ничего не ставит", World.get_tile_v(a) == IDs.T.AIR)
-
-	# Долгий тап (≥ 0.4 с) — ставит блок из хотбара.
+	# Короткий тап по свободной клетке — блок; палец держится — второй не ставится.
 	var stones: int = player.inv.slots[5].count
 	_touch(1, _screen(World.cell_to_world(a)), true)
-	var placed: bool = await wait_until(func() -> bool: return World.get_tile_v(a) == IDs.T.STONE, 1.5)
+	var placed: bool = await wait_until(func() -> bool: return World.get_tile_v(a) == IDs.T.STONE, 0.6)
+	await wait(0.5)
 	_touch(1, _screen(World.cell_to_world(a)), false)
-	ok("долгий тап ставит блок из хотбара", placed and player.inv.slots[5].count == stones - 1,
+	ok("тап по свободной клетке ставит один блок (палец держится — второй не встаёт)",
+			placed and player.inv.slots[5].count == stones - 1 and World.get_tile_v(near) == IDs.T.AIR,
 			"камней %d → %d" % [stones, player.inv.slots[5].count])
 
-	# Режим «строить»: короткий тап — сразу постройка.
-	_tap(2, tc.btn_center["build"])
+	# Тап далеко за камнем (за радиусом): блок встаёт перед камнем, со своей стороны.
+	_touch(1, _screen(World.cell_to_world(far)), true)
+	placed = await wait_until(func() -> bool: return World.get_tile_v(near) == IDs.T.STONE, 0.6)
+	_touch(1, _screen(World.cell_to_world(far)), false)
+	ok("тап за препятствием и радиусом ставит блок со своей стороны", placed,
+			DB.tile_name(World.get_tile_v(near)))
+
+	# Пустая ячейка хотбара — «копать»; тап за радиусом копает ближнюю стену по лучу.
+	_tap(3, UI.hud.hotbar_slot_rect(6).get_center())
 	await wait(0.1)
-	ok("кнопка «строить» включает режим", tc.build_mode)
-	_touch(1, _screen(World.cell_to_world(b)), true)
-	placed = await wait_until(func() -> bool: return World.get_tile_v(b) == IDs.T.STONE, 0.4)
-	_touch(1, _screen(World.cell_to_world(b)), false)
-	ok("в режиме «строить» короткий тап ставит блок", placed)
-	_tap(2, tc.btn_center["build"])
+	ok("пустая ячейка хотбара включает «копать»", player.inv.selected == 6 and not tc.build_mode)
+	_touch(1, _screen(World.cell_to_world(far)), true)
 	await wait(0.1)
-	ok("повторный тап выключает режим", not tc.build_mode)
+	ok("тап за радиусом целит в ближнюю стену по лучу", tc.aim_cell == near, str(tc.aim_cell))
+	var dug: bool = await wait_until(func() -> bool: return World.get_tile_v(near) == IDs.T.AIR, 6.0)
+	_touch(1, _screen(World.cell_to_world(far)), false)
+	ok("удержание выкапывает её", dug, DB.tile_name(World.get_tile_v(near)))
+	await wait(0.1)
+	ok("палец снят — цели нет", tc.aim_cell == TouchControls.NO_CELL)
+
+	# Палец на полклетки мимо камня (над ним, в воздухе) — копаем камень.
+	World.set_tile(a.x, a.y, IDs.T.AIR)
+	var rock: Vector2i = Vector2i(pc.x + 3, base - 1)
+	World.set_tile(rock.x, rock.y, IDs.T.STONE)
+	var miss: Vector2 = World.cell_to_world(rock + Vector2i(0, -1)) + Vector2(0.0, 5.0)
+	_touch(1, _screen(miss), true)
+	await wait(0.15)
+	ok("тап на полклетки мимо камня целит в камень", tc.aim_cell == rock and player.mining_cell == rock,
+			"%s, копается %s" % [str(tc.aim_cell), str(player.mining_cell)])
+	_touch(1, _screen(miss), false)
+	await wait(0.1)
+	World.set_tile(rock.x, rock.y, IDs.T.AIR)
 
 
 ## I и J открывают и закрывают окна; при открытом окне тап по миру не копает.
@@ -208,16 +233,41 @@ func _windows_by_buttons() -> void:
 	_tap(2, tc.btn_center["journal"])
 	await wait(0.2)
 	ok("повторный тап по J закрывает журнал", not UI.journal.visible and not UI.blocking())
-	# Пауза (#119): ESC на телефоне нет — кнопка «II» рядом с J; в паузе кнопок нет.
+	# Пауза (#119): ESC на телефоне нет — кнопка «меню» рядом с J; в паузе кнопок нет.
 	_tap(2, tc.btn_center["pause"])
 	await get_tree().process_frame
 	await get_tree().process_frame
-	ok("кнопка «II» открывает паузу (дерево стоит), кнопок и джойстика нет", UI.pause.visible
+	ok("кнопка «меню» открывает паузу (дерево стоит), кнопок и джойстика нет", UI.pause.visible
 			and get_tree().paused and tc.control_at(tc.btn_center["inv"]) == ""
 			and tc.control_at(tc.btn_center["pause"]) == "" and tc.control_at(tc.stick_center) == "")
 	UI.pause.continue_button.pressed.emit()
-	ok("«Продолжить» — пауза закрыта, кнопка «II» снова жмётся", not UI.pause.visible
+	ok("«Продолжить» — пауза закрыта, кнопка «меню» снова жмётся", not UI.pause.visible
 			and not get_tree().paused and tc.control_at(tc.btn_center["pause"]) == "pause")
+
+
+## «Назад» Android (#149): окно — закрыть, иначе пауза; в паузе — продолжить. Свернули
+## приложение — пауза и сохранение в слот F5.
+func _back_and_app_pause() -> void:
+	ok("приложение не закрывается само по «Назад»",
+			not bool(ProjectSettings.get_setting("application/config/quit_on_go_back", true)))
+	_tap(2, tc.btn_center["inv"])
+	await wait(0.2)
+	get_tree().root.propagate_notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+	await get_tree().process_frame
+	ok("«Назад» закрывает инвентарь, паузы нет", not UI.panel.visible and not UI.pause.visible)
+	get_tree().root.propagate_notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+	await get_tree().process_frame
+	ok("«Назад» открывает паузу", UI.pause.visible and get_tree().paused)
+	get_tree().root.propagate_notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+	await get_tree().process_frame
+	ok("ещё раз «Назад» — пауза закрыта", not UI.pause.visible and not get_tree().paused)
+	Save.remove(Save.slot)
+	UI.app_paused()
+	ok("свернули приложение — пауза и сохранение в слот F5", UI.pause.visible and get_tree().paused
+			and Save.exists(Save.slot), Save.path_for(Save.slot))
+	UI.pause.close()
+	Save.remove(Save.slot)
+	await get_tree().process_frame
 
 
 # ------------------------------------------------------------------ КАСАНИЯ

@@ -461,6 +461,12 @@ func _auto_orient(cell: Vector2i, kind: String) -> void:
 	b.dir = 0
 
 
+## Сюда можно поставить блок или машину: клетка свободна (и машины в ней нет), герой
+## не мешает. Сенсорный прицел (TouchControls, #149) выбирает по ней клетку постройки.
+func can_place_at(cell: Vector2i) -> bool:
+	return not World.machines.has(cell) and _place_allowed(cell)
+
+
 func _place_allowed(cell: Vector2i) -> bool:
 	var tid: int = World.get_tile_v(cell)
 	if tid != IDs.T.AIR and not DB.is_liquid(tid):
