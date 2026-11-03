@@ -284,6 +284,7 @@ const ENC_PX: float = 48.0
 
 var _enc: Dictionary = {}       ## "фантом:герой" → true
 var _hunt: Dictionary = {}      ## "фантом:герой" → true (фантом выбрал героя целью)
+var _tgt: Dictionary = {}       ## фантом → {герой → кадров, когда он был целью}
 var _dmg: Dictionary = {}       ## индекс героя → урон
 var _deaths: Dictionary = {}    ## индекс героя → смертей
 var _hp_prev: Dictionary = {}
@@ -294,6 +295,7 @@ var _min_hp: Dictionary = {}
 func night_track_begin() -> void:
 	_enc.clear()
 	_hunt.clear()
+	_tgt.clear()
 	_dmg.clear()
 	_deaths.clear()
 	_hp_prev.clear()
@@ -331,11 +333,16 @@ func night_track_step() -> void:
 			var key: String = "%d:%d" % [(p as Node).get_instance_id(), k]
 			if (p as Phantom).player == h:
 				_hunt[key] = true
+				var pid: int = (p as Node).get_instance_id()
+				if not _tgt.has(pid):
+					_tgt[pid] = {}
+				_tgt[pid][k] = int(_tgt[pid].get(k, 0)) + 1
 			if (p as Node2D).global_position.distance_to(h.global_position) < ENC_PX:
 				_enc[key] = true
 
 
-## Итог ночи по героям: {enc, hunt, dmg, deaths, min_hp, hp_end} — массивы по героям.
+## Итог ночи по героям: {enc, hunt, own, dmg, deaths, min_hp, hp_end} — массивы по героям
+## (hunt — фантомов, хоть раз выбравших героя целью; own — за кем охотился дольше всех).
 func night_track_result() -> Dictionary:
 	var hs: Array = heroes()
 	var n: int = hs.size()
@@ -349,6 +356,19 @@ func night_track_result() -> Dictionary:
 		enc[int(String(key).get_slice(":", 1))] += 1
 	for key in _hunt:
 		hunt[int(String(key).get_slice(":", 1))] += 1
+	# «Фантомов на героя»: каждый фантом — одному герою, за которым охотился дольше всех.
+	var own: Array = []
+	own.resize(n)
+	own.fill(0)
+	for pid in _tgt:
+		var best_k: int = -1
+		var best_f: int = -1
+		for k in _tgt[pid]:
+			if int(_tgt[pid][k]) > best_f:
+				best_f = int(_tgt[pid][k])
+				best_k = int(k)
+		if best_k >= 0:
+			own[best_k] += 1
 	var dmg: Array = []
 	var deaths: Array = []
 	var min_hp: Array = []
@@ -359,7 +379,7 @@ func night_track_result() -> Dictionary:
 		deaths.append(int(_deaths[k]))
 		min_hp.append(float(_min_hp[k]))
 		hp_end.append(0.0 if h == null or h.dead or int(_deaths[k]) > 0 else h.hp)
-	return {"enc": enc, "hunt": hunt, "dmg": dmg, "deaths": deaths, "min_hp": min_hp, "hp_end": hp_end}
+	return {"enc": enc, "hunt": hunt, "own": own, "dmg": dmg, "deaths": deaths, "min_hp": min_hp, "hp_end": hp_end}
 
 
 static func mean(a: Array) -> float:

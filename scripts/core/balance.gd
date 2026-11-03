@@ -186,6 +186,9 @@ const MP_BAG_OWNER_LOCK: float = 120.0       ## мешок поднимает т
 const MP_RELAY_HOLD_RADIUS_TILES: float = 12.0 ## отсчёт релея идёт, пока герой ближе
 const MP_TEAM_RADIO_TILES: float = 20.0      ## товарищ на миникарте без питания ближе этого
 const MP_ROLLCALL_COOLDOWN: float = 20.0     ## перекличка (G), с
-const MP_ROLLCALL_LIGHT: float = 4.0         ## зелёный огонёк ответившего, с
+## Было 4 (калибровка MP-K, #96): окно ответа NetTeam.ANSWER_WINDOW = 6 с, и у ответившего
+## в первые 2 с огонёк гас раньше конца переклички — 17–28 % окна настоящий товарищ горел
+## красным, как двойник (mp_balance_doppel). Огонёк не короче окна — ложного красного нет.
+const MP_ROLLCALL_LIGHT: float = 6.0         ## зелёный огонёк ответившего, с
 const MP_DOPPEL_REVEAL: float = 1.5          ## двойник «глючит» после удара, с
 const MP_FRIENDLY_SLASH_CD: float = 1.0      ## кулдаун удара по своему, с

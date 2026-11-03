@@ -25,24 +25,31 @@ const DEFAULT_N: Array = [1, 2, 3, 4]
 ## Предел на один запуск (сценарий сам укладывается в timeout_ms реестра, ≤ 4 мин).
 const RUN_LIMIT_MS: int = 330000
 
-## Прогоны: имя → сценарий и флаги хоста.
+## Прогоны: имя → сценарий, флаги хоста, при каких N (по умолчанию — все из --n).
 const RUNS: Dictionary = {
 	"night1": {"sc": "mp_balance_night", "flags": []},
-	"night1_dark": {"sc": "mp_balance_night", "flags": ["--mpb-nolamp"]},
+	"night1_dark": {"sc": "mp_balance_night", "flags": ["--mpb-nolamp"], "ns": [1, 4]},
+	"night3_dark": {"sc": "mp_balance_night", "flags": ["--mpb-day=3", "--mpb-nolamp", "--mpb-invuln"]},
+	"night3_solo1": {"sc": "mp_balance_night", "flags": ["--mpb-day=3", "--mpb-nolamp", "--mpb-invuln", "--mpb-spot=1"], "ns": [1]},
+	"night3_solo2": {"sc": "mp_balance_night", "flags": ["--mpb-day=3", "--mpb-nolamp", "--mpb-invuln", "--mpb-spot=2"], "ns": [1]},
+	"night3_solo3": {"sc": "mp_balance_night", "flags": ["--mpb-day=3", "--mpb-nolamp", "--mpb-invuln", "--mpb-spot=3"], "ns": [1]},
 	"siege3": {"sc": "mp_balance_siege", "flags": ["--mpb-day=3"]},
 	"def3": {"sc": "mp_balance_siege", "flags": ["--mpb-day=3", "--mpb-def"]},
-	"siege5": {"sc": "mp_balance_siege", "flags": ["--mpb-day=5"]},
-	"def5": {"sc": "mp_balance_siege", "flags": ["--mpb-day=5", "--mpb-def"]},
+	"siege5": {"sc": "mp_balance_siege", "flags": ["--mpb-day=5"], "ns": [1, 4]},
+	"def5": {"sc": "mp_balance_siege", "flags": ["--mpb-day=5", "--mpb-def"], "ns": [1, 4]},
 	"mining": {"sc": "mp_balance_mining", "flags": []},
-	"doppel": {"sc": "mp_balance_doppel", "flags": []},
+	"doppel": {"sc": "mp_balance_doppel", "flags": [], "ns": [2, 3, 4]},
 }
-const DEFAULT_RUNS: Array = ["night1", "night1_dark", "siege3", "def3", "siege5", "def5", "mining", "doppel"]
+const DEFAULT_RUNS: Array = ["night1", "night1_dark", "night3_dark", "night3_solo1", "night3_solo2",
+		"night3_solo3", "siege3", "def3", "siege5", "def5", "mining", "doppel"]
 
 ## Цели. key — «прогон.метрика»; ratio — факт при N делится на факт при N = 1 того же сида;
 ## ns — при каких N проверять. op: ">=", "<=", "==", "in" (lo..hi).
 const TARGETS: Array = [
-	{"key": "night1_dark.night_enc_pp", "ratio": true, "ns": [2, 3, 4], "op": "in", "lo": 0.6, "hi": 1.0,
-		"title": "давление на игрока: встреч с фантомами на героя, доля от N = 1 (ночь 1 без ламп, по шахтам)"},
+	{"key": "est.pressure_own", "ns": [2, 3, 4], "op": "in", "lo": 0.6, "hi": 1.0,
+		"title": "давление на игрока: фантомов на героя, доля от одиночки в той же точке (ночь 3 без ламп, по шахтам)"},
+	{"key": "est.pressure_enc", "ns": [2, 3, 4], "op": "in", "lo": 0.6, "hi": 1.0,
+		"title": "давление на игрока: встреч с фантомами (ближе 48 px) на героя, доля от одиночки в той же точке"},
 	{"key": "night1.night_deaths", "ns": [1, 2, 3, 4], "op": "==", "v": 0.0,
 		"title": "ночь 1, по 3 лампы, по шахтам: смертей (выжили все)"},
 	{"key": "siege3.siege_lost", "ns": [1, 2, 3, 4], "op": ">=", "v": 1.0,
@@ -60,25 +67,33 @@ const TARGETS: Array = [
 ]
 ## Справочные строки (без цели).
 const INFO: Array = [
-	{"key": "night1_dark.night_dmg_pp", "ratio": true, "title": "урон на героя, доля от N = 1 (ночь 1 без ламп)"},
-	{"key": "night1_dark.night_hunt_pp", "ratio": true, "title": "охотников на героя, доля от N = 1 (ночь 1 без ламп)"},
-	{"key": "night1_dark.night_enc_pp", "title": "встреч на героя (ночь 1 без ламп)"},
-	{"key": "night1_dark.night_deaths", "title": "смертей (ночь 1 без ламп)"},
-	{"key": "night1.night_enc_pp", "title": "встреч на героя (ночь 1 с лампами)"},
-	{"key": "night1.night_hp_min", "title": "мин. hp героя в конце ночи 1 с лампами"},
-	{"key": "night1.night_spawned", "title": "фантомов вышло (ночь 1)"},
-	{"key": "siege3.siege_spawned", "title": "фантомов вышло (ночь 3, осада)"},
-	{"key": "siege3.siege_hits", "title": "ударов по машинам (ночь 3 без обороны)"},
-	{"key": "def3.siege_hits", "title": "ударов по машинам (ночь 3 с обороной)"},
-	{"key": "def3.siege_min_hp", "title": "мин. hp уцелевших машин, % (ночь 3 с обороной)"},
+	{"key": "night3_dark.night_own_pp", "title": "ночь 3 без ламп: фантомов на героя"},
+	{"key": "night3_dark.night_enc_pp", "title": "ночь 3 без ламп: встреч на героя"},
+	{"key": "night3_dark.night_spawned", "title": "ночь 3 без ламп: фантомов вышло (рой — поштучно)"},
+	{"key": "night3_dark.night_budget", "title": "ночь 3 без ламп: бюджет ночи"},
+	{"key": "night1.night_hp_min", "title": "ночь 1 с лампами: мин. hp героя в конце"},
+	{"key": "night1.night_enc_pp", "title": "ночь 1 с лампами: встреч на героя"},
+	{"key": "night1.night_spawned", "title": "ночь 1 с лампами: фантомов вышло"},
+	{"key": "night1_dark.night_deaths", "title": "ночь 1 без ламп: смертей"},
+	{"key": "night1_dark.night_enc_pp", "title": "ночь 1 без ламп: встреч на героя"},
+	{"key": "siege3.siege_spawned", "title": "ночь 3, осада: фантомов вышло"},
+	{"key": "siege3.siege_hits", "title": "ночь 3 без обороны: ударов по машинам"},
+	{"key": "def3.siege_hits", "title": "ночь 3 с обороной: ударов по машинам"},
+	{"key": "def3.siege_min_hp", "title": "ночь 3 с обороной: мин. hp уцелевших машин, %"},
 	{"key": "siege5.siege_lost", "title": "ночь 5 без обороны: машин потеряно"},
 	{"key": "def5.siege_lost", "title": "ночь 5, 2 турели + стена: машин потеряно"},
-	{"key": "def5.siege_min_hp", "title": "мин. hp уцелевших машин, % (ночь 5 с обороной)"},
+	{"key": "def5.siege_min_hp", "title": "ночь 5 с обороной: мин. hp уцелевших машин, %"},
+	{"key": "night1.night_h2c_bps", "title": "трафик хост → клиент, ночь 1 по шахтам, Б/с"},
+	{"key": "night3_dark.night_h2c_bps", "title": "трафик хост → клиент, ночь 3 по шахтам, Б/с"},
 	{"key": "mining.mine_spu", "title": "добыча через сеть: с на единицу железной руды (среднее по героям)"},
 	{"key": "mining.mine_spu_max", "title": "добыча: с/ед у самого медленного героя"},
-	{"key": "est.team_mine_min", "title": "релей руками командой: минут чистой добычи (бюджет одиночки ÷ N, с/ед по сети)"},
-	{"key": "est.win_lo", "title": "оценка первой победы, мин: одиночка 40 мин"},
-	{"key": "est.win_hi", "title": "оценка первой победы, мин: одиночка 60 мин"},
+	{"key": "est.team_mine_min", "title": "релей руками командой: минут чистой добычи"},
+	{"key": "est.win_lo", "title": "оценка первой победы, мин, если одиночка — 40 мин"},
+	{"key": "est.win_hi", "title": "оценка первой победы, мин, если одиночка — 60 мин"},
+	{"key": "doppel.doppel_life", "title": "двойник: с от появления до раскрытия (первого удара)"},
+	{"key": "doppel.doppel_dmg", "title": "двойник: урон героям до раскрытия"},
+	{"key": "doppel.rollcall_net_lat", "title": "перекличка: задержка ответа по сети, с"},
+	{"key": "doppel.rollcall_false_red", "title": "перекличка: доля окна, когда ответивший снова красный"},
 ]
 
 ## Первая победа одиночки (ADR-001 § 2): 40–60 мин, середина — 50.
@@ -119,6 +134,8 @@ func _initialize() -> void:
 			continue
 		for s in seeds:
 			for n in ns:
+				if RUNS[run].has("ns") and not (RUNS[run]["ns"] as Array).has(int(n)):
+					continue
 				var t0: int = Time.get_ticks_msec()
 				var mfile: String = OS.get_user_data_dir().path_join("mp_balance_probe_%d.txt" % OS.get_process_id())
 				if FileAccess.file_exists(mfile):
@@ -144,6 +161,8 @@ func _initialize() -> void:
 						float(Time.get_ticks_msec() - t0) / 1000.0, code])
 	if runs.has("mining") or facts.has("mining.mine_spu"):
 		_estimate(seeds, hand_min, exe, proj)
+	for m in ["own", "enc"]:
+		_pressure(m)
 	if out_path != "":
 		var f: FileAccess = FileAccess.open(out_path, FileAccess.WRITE)
 		if f != null:
@@ -238,6 +257,31 @@ func _estimate(seeds: Array, hand_min: float, exe: String, proj: String) -> void
 			_put("est.win_lo", int(n), int(s), SOLO_WIN_MIN[0] - m1 + mn)
 			_put("est.win_min", int(n), int(s), SOLO_WIN_MIN[1] - m1 + mn)
 			_put("est.win_hi", int(n), int(s), SOLO_WIN_MIN[2] - m1 + mn)
+
+
+## Давление на игрока при N: Σ по героям k < N метрики героя в точке k при N, делённая на
+## Σ той же метрики одиночки в точке k (night3_dark при N = 1 — точка 0, night3_soloK — K).
+## Тот же герой, та же точка, та же ночь сида — разница только в товарищах и формулах N.
+func _pressure(m: String) -> void:
+	var seeds: Array = _seeds_seen()
+	for s in seeds:
+		var solo: Array = []
+		for k in 4:
+			var run: String = "night3_dark" if k == 0 else "night3_solo%d" % k
+			solo.append(facts.get("%s.night_%s_h%d" % [run, m, k], {}).get(1, {}).get(int(s), null))
+		for n in [2, 3, 4]:
+			var num: float = 0.0
+			var den: float = 0.0
+			var full: bool = true
+			for k in n:
+				var v = facts.get("night3_dark.night_%s_h%d" % [m, k], {}).get(n, {}).get(int(s), null)
+				if v == null or v is String or solo[k] == null or solo[k] is String:
+					full = false
+					break
+				num += float(v)
+				den += float(solo[k])
+			if full:
+				_put("est.pressure_" + m, n, int(s), num / den if den > 0.0 else "NA")
 
 
 # ------------------------------------------------------------------ ТАБЛИЦА

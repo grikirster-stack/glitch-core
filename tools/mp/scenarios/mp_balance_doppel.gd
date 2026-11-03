@@ -100,6 +100,7 @@ func run_host() -> void:
 	stop_fight()
 	var life: float = revealed if revealed >= 0.0 else LIMIT
 	var mask_nick: String = dop.nick if is_instance_valid(dop) else "?"
+	var victim_nick: String = String((dop.player as Player).nick) if is_instance_valid(dop) and dop.player is Player else victim.nick
 	await barrier("end", -1, 30.0)
 	# --- Фаза 2: только перекличка (двойника нет) — калибровка окна. Счёт «ложного
 	# красного» с нуля у всех: до этого окна обрывались раскрытием.
@@ -139,7 +140,7 @@ func run_host() -> void:
 			win_frames += int(v["win"])
 	var false_red: float = float(fr_frames) / float(maxi(1, win_frames))
 	print("  [двойник, N = %d] маска «%s», жертва «%s»; раскрыт %s; урон героям до раскрытия %.0f (жертве %.0f); переклички %d + %d без двойника, ответ по сети %s с; у ответившего товарища огонёк снова красный %.0f %% окна (окно %.1f с, огонёк %.1f с)" % [
-			heroes_n(), mask_nick, victim.nick,
+			heroes_n(), mask_nick, victim_nick,
 			("через %.1f с" % revealed) if revealed >= 0.0 else "НЕТ за %.0f с" % LIMIT,
 			dmg_before, float(r["dmg"][heroes_n() - 1]), calls, calls_b,
 			"%.2f" % mean(lat) if not lat.is_empty() else "—", false_red * 100.0,
