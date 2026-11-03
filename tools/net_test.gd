@@ -18,8 +18,8 @@ extends SceneTree
 
 ## Схема протокола PROTO = SCHEMA_PROTO. Поменяли кодек, порядок IDs или таблицы DB —
 ## поднимите Net.PROTO и впишите сюда новый PROTO и хэш, который напечатает тест.
-const SCHEMA_PROTO: int = 7
-const SCHEMA_HASH: String = "78063c600345edb5e47ff71e9730ac92"
+const SCHEMA_PROTO: int = 8
+const SCHEMA_HASH: String = "1d6ff93df2dcc21c2589e1e5a9584b94"
 
 const PORT_BASE: int = 24900
 const LOOP: String = "127.0.0.1"
@@ -75,6 +75,7 @@ func _run() -> void:
 	await process_frame          # автозагрузки (DB, World) готовы
 	_codec()
 	_codec_inv()   # MP-G (#91): команды InvOps, CHEST, TECH
+	_codec_coop()  # MP-I (#94): смерть, вклад в релей, итоги
 	_codec_team()   # MP-J (#95): TEAM — перекличка, маска и «глюк» двойника
 	_sizes()
 	_handshake_table()
@@ -639,6 +640,34 @@ func _codec_inv() -> void:
 	ok("TECH туда-обратно (узел, обрывок)", tu.get("kind") == NetCodec.TechEv.UNLOCK and tu.get("research") == 1234
 			and tu.get("arg") == 3 and tf.get("text") == "…сигнал…" and tf.get("research") == 7)
 	ok("TECH UNLOCK — 4 Б", NetCodec.encode_tech(NetCodec.TechEv.UNLOCK, 1, 1).size() == 4)
+
+
+
+# ------------------------------------------------------------------ MP-I (#94): КООПЕРАТИВ
+
+func _codec_coop() -> void:
+	print("== Кодек: кооператив (MP-I) ==")
+	var d: Dictionary = NetCodec.decode_coop(NetCodec.encode_coop_death(15.0, false))
+	var h: Dictionary = NetCodec.decode_coop(NetCodec.encode_coop_death(-1.0, true))
+	ok("COOP DEATH туда-обратно (отсчёт, зритель, вайп)", d.get("kind") == NetCodec.CoopEv.DEATH
+			and is_equal_approx(float(d.get("delay", 0.0)), 15.0) and d.get("wipe") == false
+			and float(h.get("delay", 0.0)) < 0.0 and h.get("wipe") == true)
+	ok("COOP DEATH — 6 Б", NetCodec.encode_coop_death(3.0, true).size() == 6)
+	var have: Dictionary = {9: 24, 3: 48, 255: 65535}
+	var r: Dictionary = NetCodec.decode_coop(NetCodec.encode_coop_relay(have))
+	ok("COOP RELAY туда-обратно, порядок ключей не важен", r.get("have") == have
+			and NetCodec.encode_coop_relay({3: 48, 9: 24}) == NetCodec.encode_coop_relay({9: 24, 3: 48}))
+	ok("COOP RELAY пустой — 2 Б", NetCodec.encode_coop_relay({}).size() == 2
+			and (NetCodec.decode_coop(NetCodec.encode_coop_relay({})).get("have", null) as Dictionary).is_empty())
+	var s: Dictionary = NetCodec.decode_coop(NetCodec.encode_coop_stats([120, 30, 7, 2],
+			[["Аня", 1], ["Борис", 65535]]))
+	ok("COOP STATS туда-обратно", s.get("team") == [120, 30, 7, 2]
+			and s.get("players") == [["Аня", 1], ["Борис", 65535]])
+	var bad: bool = NetCodec.decode_coop(PackedByteArray()).is_empty() \
+			and NetCodec.decode_coop(PackedByteArray([NetCodec.CoopEv.DEATH, 1, 2])).is_empty() \
+			and NetCodec.decode_coop(PackedByteArray([NetCodec.CoopEv.RELAY, 2, 9, 1])).is_empty() \
+			and NetCodec.decode_coop(PackedByteArray([99])).is_empty()
+	ok("COOP: битый кадр — пусто", bad)
 
 
 # ------------------------------------------------------------------ 6. КОМАНДА (MP-J, #95)

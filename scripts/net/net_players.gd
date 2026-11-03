@@ -185,12 +185,12 @@ func _remove(id: int) -> void:
 	p.queue_free()
 
 
-## Смерть прокси (хост): мешок уже выпал (Player._die); возрождение на базе через
-## MP_RESPAWN_DELAY без сдвига часов (D11). Команду и вайп доделывает MP-I (#94).
+## Смерть прокси (хост): мешок уже выпал (Player._die); респаун, вайп и зритель
+## --hardcore — NetCoop (scripts/net/net_coop.gd, MP-I #94).
 func _on_proxy_died(p: Player) -> void:
-	get_tree().create_timer(Balance.MP_RESPAWN_DELAY).timeout.connect(func() -> void:
-		if is_instance_valid(p) and p.dead and Game.state == Game.State.PLAYING:
-			p.respawn_at(World.spawn_point))
+	var coop: NetCoop = main.get("net_coop") as NetCoop if main != null else null
+	if coop != null:
+		coop.on_hero_died(p)
 
 
 # ------------------------------------------------------------------ КАДР

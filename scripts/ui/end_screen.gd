@@ -41,6 +41,8 @@ func show_end(p_title: String, p_subtitle: String, p_color: Color, p_stats: Arra
 	stats = p_stats
 	respawn_delay = -1.0
 	epilogue = ""
+	net_death = false
+	net_watch = ""
 	visible = true
 	t = 0.0
 	queue_redraw()
@@ -63,6 +65,8 @@ func hide_end() -> void:
 	visible = false
 	respawn_delay = -1.0
 	epilogue = ""
+	net_death = false
+	net_watch = ""
 
 
 func _process(delta: float) -> void:
@@ -72,7 +76,7 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if not visible or respawn_delay >= 0.0:
+	if not visible or respawn_delay >= 0.0 or net_death:   # смерть в сети: R не перезапускает
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k: InputEventKey = event
@@ -86,6 +90,9 @@ func _input(event: InputEvent) -> void:
 
 func _draw() -> void:
 	var a: float = clampf(t * 1.6, 0.0, 1.0)
+	if net_death:   # СЕТЬ (ADR-002 § 4.7): мир виден — глазами товарища
+		_draw_net_death(a)
+		return
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.02, 0.05, 0.86 * a))
 	var font: Font = ThemeDB.fallback_font
 	if epilogue != "":
@@ -143,3 +150,58 @@ func _draw_prompt(font: Font, a: float, y: float) -> void:
 	var blink: float = 0.55 + 0.45 * sin(t * 4.0)
 	draw_string(font, Vector2(0, y), "[R] — новая попытка",
 			HORIZONTAL_ALIGNMENT_CENTER, size.x, 22, Color(1.0, 0.95, 0.7, a * blink))
+
+
+# ------------------------------------------------- СЕТЬ (ADR-002 § 4.7, MP-I #94)
+## Смерть в сети: экран не закрывает мир — камера идёт за живым товарищем (NetCoop,
+## A/D — следующий), сверху «ТЕБЯ НАШЛИ», эпитафия и отсчёт до капсулы. Время забега не
+## двигается. delay < 0 — --hardcore: зритель до конца забега. Вайп (погибли все)
+## меняет отсчёт на одиночный (Balance.RESPAWN_DELAY) — тем же вызовом.
+
+## Экран смерти в сети (показан, пока герой мёртв).
+var net_death: bool = false
+## Ник товарища, за которым идёт камера ("" — живых нет).
+var net_watch: String = ""
+## Зритель до конца забега (--hardcore в сети).
+var net_spectator: bool = false
+## Погибла вся команда — отсчёт одиночный, часы уйдут к рассвету.
+var net_wipe: bool = false
+
+
+## Показать (или обновить отсчёт, если экран уже открыт) смерть в сети.
+func show_net_death(p_epitaph: String, delay: float, wipe: bool = false) -> void:
+	if not (visible and net_death):
+		show_end("ТЕБЯ НАШЛИ", p_epitaph, Color(0.92, 0.28, 0.34), [])
+		net_death = true
+	net_spectator = delay < 0.0
+	net_wipe = wipe
+	respawn_delay = -1.0 if net_spectator else t + delay
+	queue_redraw()
+
+
+## Секунд до капсулы (−1 — зритель или экран не про смерть в сети).
+func net_respawn_left() -> float:
+	if not net_death or net_spectator:
+		return -1.0
+	return maxf(0.0, respawn_delay - t)
+
+
+func _draw_net_death(a: float) -> void:
+	var font: Font = ThemeDB.fallback_font
+	var w: float = size.x
+	draw_rect(Rect2(0, 0, w, 120.0), Color(0.02, 0.02, 0.05, 0.62 * a))
+	draw_rect(Rect2(0, size.y - 64.0, w, 64.0), Color(0.02, 0.02, 0.05, 0.62 * a))
+	draw_string(font, Vector2(0, 52), title, HORIZONTAL_ALIGNMENT_CENTER, w, 40,
+			Color(color.r, color.g, color.b, a))
+	draw_string(font, Vector2(0, 84), subtitle, HORIZONTAL_ALIGNMENT_CENTER, w, 17, Color(0.85, 0.9, 1.0, a))
+	var eyes: String = "Глазами: %s · A/D — следующий" % net_watch if net_watch != "" else "Живых рядом нет"
+	draw_string(font, Vector2(0, 108), eyes, HORIZONTAL_ALIGNMENT_CENTER, w, 14, Color(0.7, 0.85, 1.0, a))
+	var line: String
+	if net_spectator:
+		line = "Хардкор: ты — зритель до конца забега."
+	elif net_wipe:
+		line = "Погибла вся команда. Капсулы на базе через %d с — к рассвету…" % ceili(net_respawn_left())
+	else:
+		line = "Капсула на базе через %d с…" % ceili(net_respawn_left())
+	draw_string(font, Vector2(0, size.y - 26.0), line, HORIZONTAL_ALIGNMENT_CENTER, w, 20,
+			Color(1.0, 0.95, 0.7, a))

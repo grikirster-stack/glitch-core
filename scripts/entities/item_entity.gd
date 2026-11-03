@@ -103,6 +103,7 @@ func _physics_process(delta: float) -> void:
 			modulate.a = 1.0
 	var player: Node2D = _get_player()
 	if player == null:
+		_net_bag_fall(delta)   # СЕТЬ (MP-I): мешок падает, пока его некому поднять
 		return
 	# Погибший герой ничего не подбирает: мешок ждёт его на месте смерти.
 	var alive: bool = not bool(player.get("dead"))
@@ -305,7 +306,9 @@ func _net_puppet(delta: float) -> void:
 		modulate.a = 1.0
 	var hero: Node2D = _net_nearest_hero()
 	var d: float = global_position.distance_to(hero.global_position) if hero != null else INF
-	if not magnet and d < MAGNET_DIST and pickup_delay <= 0.0:
+	# Мешок погибшего (MP-I, #94) поднимает только владелец, а владельца клиент не знает:
+	# мешок не притягиваем «на глаз», ждём ответа хоста (DESPAWN).
+	if not magnet and d < MAGNET_DIST and pickup_delay <= 0.0 and bag.is_empty():
 		magnet = true
 	if magnet:
 		if hero == null:
@@ -361,8 +364,39 @@ func _nearest_hero() -> Node2D:
 			continue
 		if not bool(h.get("net_linked")):
 			continue
+		if not net_may_take(h):   # MP-I (#94): мешок — сначала владельцу
+			continue
 		var d: float = global_position.distance_squared_to(h.global_position)
 		if d < best_d:
 			best_d = d
 			best = h
 	return best
+
+
+# ------------------------------------------------- СЕТЬ (ADR-002 § 4.7, MP-I #94)
+## Мешок погибшего: первые Balance.MP_BAG_OWNER_LOCK с (по возрасту мешка — он
+## пишется в сохранение и в запись предмета) поднимает только владелец, потом — любой
+## (отнести в сундук). Владелец — uid профиля (переживает обрыв и сохранение);
+## 0 — одиночная игра, ограничения нет.
+var bag_owner: int = 0
+
+
+## Может ли герой h подобрать этот предмет.
+func net_may_take(h: Node2D) -> bool:
+	if bag.is_empty() or bag_owner == 0 or age >= Balance.MP_BAG_OWNER_LOCK:
+		return true
+	return int(h.get("net_uid")) == bag_owner
+
+
+## Поднять мешок сейчас некому (владелец погиб, рядом чужие): он всё равно падает на пол.
+func _net_bag_fall(delta: float) -> void:
+	if bag.is_empty() or grounded or not Net.is_online():
+		return
+	vel.y += 900.0 * delta
+	var res: Dictionary = World.move_body(global_position, vel * delta, Vector2(10.0, 10.0))
+	global_position = res["position"]
+	if res["hit_y"]:
+		vel = Vector2.ZERO
+		grounded = true
+	if res["hit_x"]:
+		vel.x = 0.0

@@ -39,6 +39,7 @@ enum Msg {
 	LOBBY,         ## 2: лобби до старта: готовность и старт (MP-H, #93)
 	CHEST,         ## 2: открытый сундук — тем, у кого он открыт (MP-G, #91)
 	TECH,          ## 0: исследования, главы, обрывки — всем (MP-G, #91)
+	COOP,          ## 0 / 2: кооператив — смерть, вклад в релей, итоги (MP-I, #94)
 	TEAM,          ## 2: команда — перекличка (G), маска и «глюк» двойника (MP-J, #95)
 }
 
@@ -925,6 +926,7 @@ static func schema_sample() -> PackedByteArray:
 	out.append_array(lobby_schema_sample())   # MP-H (#93)
 	# MP-G (#91): команды InvOps, сундук, исследования.
 	out.append_array(inv_schema_sample())
+	out.append_array(coop_schema_sample())   # MP-I (#94)
 	out.append_array(team_schema_sample())   # MP-J (#95)
 	return out
 
@@ -1246,6 +1248,117 @@ static func inv_schema_sample() -> PackedByteArray:
 		out.append_array(p)
 	out.append_array(var_to_bytes([InvOp.keys(), Box.keys(), TechEv.keys(), SLOT_AUTO, CELL_NONE,
 			MOVE_SWAP, CHEST_OPEN, CHEST_CLOSED, INV_ARGS_SIZE.values()]))
+	return out
+
+
+# ------------------------------------------------------------------ КООПЕРАТИВ (MP-I, #94)
+## Кадр COOP (ADR-002 § 4.7, § 3 D11): u8 вид (CoopEv) + данные.
+##   DEATH (хост → владельцу, канал 2): f32 секунд до респауна (< 0 — зритель до конца
+##     забега, --hardcore) · u8 флаги (COOP_WIPE — погибла вся команда).
+##   RELAY (хост → всем, канал 0): вклад деталей в релей-ядро — u8 n · n × (u8 id, u16 count).
+##   STATS (хост → всем, канал 0, при конце забега): итоги команды 4 × u32 (добыто,
+##     изготовлено, фантомов, смертей) · u8 n · n × (str8 ник, u16 смертей).
+
+## События COOP. Только дописывать в конец.
+enum CoopEv { NONE, DEATH, RELAY, STATS }
+const COOP_WIPE: int = 1
+
+
+static func encode_coop_death(delay: float, wipe: bool) -> PackedByteArray:
+	var s: StreamPeerBuffer = StreamPeerBuffer.new()
+	s.put_u8(CoopEv.DEATH)
+	s.put_float(delay)
+	s.put_u8(COOP_WIPE if wipe else 0)
+	return s.data_array
+
+
+## have — {id: count} вклада в ядро (по возрастанию id: байты не зависят от порядка ключей).
+static func encode_coop_relay(have: Dictionary) -> PackedByteArray:
+	var s: StreamPeerBuffer = StreamPeerBuffer.new()
+	s.put_u8(CoopEv.RELAY)
+	var ids: Array = have.keys()
+	ids.sort()
+	var n: int = mini(ids.size(), 255)
+	s.put_u8(n)
+	for i in n:
+		s.put_u8(int(ids[i]) & 0xFF)
+		s.put_u16(clampi(int(have[ids[i]]), 0, 0xFFFF))
+	return s.data_array
+
+
+## team — [добыто, изготовлено, фантомов, смертей]; players — [[ник, смертей], …].
+static func encode_coop_stats(team: Array, players: Array) -> PackedByteArray:
+	var s: StreamPeerBuffer = StreamPeerBuffer.new()
+	s.put_u8(CoopEv.STATS)
+	for i in 4:
+		s.put_u32(clampi(int(team[i]) if i < team.size() else 0, 0, 0x7FFFFFFF))
+	var n: int = mini(players.size(), 255)
+	s.put_u8(n)
+	for i in n:
+		_put_str8(s, String(players[i][0]))
+		s.put_u16(clampi(int(players[i][1]), 0, 0xFFFF))
+	return s.data_array
+
+
+## {kind: DEATH, delay, wipe} · {kind: RELAY, have} · {kind: STATS, team, players} · {} у битого.
+static func decode_coop(b: PackedByteArray) -> Dictionary:
+	var s: StreamPeerBuffer = _reader(b)
+	if s.get_available_bytes() < 1:
+		return {}
+	var kind: int = s.get_u8()
+	var d: Dictionary = {"kind": kind}
+	match kind:
+		CoopEv.DEATH:
+			if s.get_available_bytes() != 5:
+				return {}
+			d["delay"] = s.get_float()
+			d["wipe"] = (s.get_u8() & COOP_WIPE) != 0
+		CoopEv.RELAY:
+			if s.get_available_bytes() < 1:
+				return {}
+			var n: int = s.get_u8()
+			if s.get_available_bytes() != 3 * n:
+				return {}
+			var have: Dictionary = {}
+			for i in n:
+				var id: int = s.get_u8()
+				have[id] = s.get_u16()
+			d["have"] = have
+		CoopEv.STATS:
+			if s.get_available_bytes() < 17:
+				return {}
+			var team: Array = []
+			for i in 4:
+				team.append(s.get_u32())
+			var n: int = s.get_u8()
+			var players: Array = []
+			for i in n:
+				var nick = _get_str8(s)
+				if nick == null or s.get_available_bytes() < 2:
+					return {}
+				players.append([nick, s.get_u16()])
+			if s.get_available_bytes() != 0:
+				return {}
+			d["team"] = team
+			d["players"] = players
+		_:
+			return {}
+	return d
+
+
+## Образцы сообщений MP-I для schema_sample().
+static func coop_schema_sample() -> PackedByteArray:
+	var out: PackedByteArray = PackedByteArray()
+	var parts: Array = [
+		encode_coop_death(15.0, false),
+		encode_coop_death(-1.0, true),
+		encode_coop_relay({9: 24, 3: 48}),
+		encode_coop_stats([120, 30, 7, 2], [["Аня", 1], ["Борис", 0]]),
+	]
+	for p in parts:
+		out.append_array(encode_u32((p as PackedByteArray).size()))
+		out.append_array(p)
+	out.append_array(var_to_bytes([CoopEv.keys(), COOP_WIPE]))
 	return out
 
 
