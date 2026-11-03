@@ -282,6 +282,9 @@ func _windows_by_buttons() -> void:
 	ok("тап по ячейке инвентаря: стопка в руку и обратно", took and panel.held.is_empty()
 			and player.inv.slots[0].id == id0, DB.item_name(id0))
 	if panel._max_scroll() >= 2:
+		# Прокрутка панели живёт между сценариями (предыдущий мог оставить её
+		# внизу) — проверка листания должна начинаться с нуля.
+		panel.scroll = 0
 		var s0: int = panel.scroll
 		_panel_drag(panel, -InventoryPanel.RECIPE_H * 2.2)
 		var s1: int = panel.scroll
