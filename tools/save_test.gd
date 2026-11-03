@@ -127,6 +127,8 @@ class Runner extends Node:
 		_snap = save_s.gather()
 		var saved: bool = save_s.save_game(SLOT)
 		_ok("файл записан", saved, "%s %s" % [save_s.path_for(SLOT), save_s.last_error])
+		_ok("файл — свой у процесса (#132: параллельные прогоны не делят слот)", TestEnv.suffix() != ""
+				and save_s.path_for(SLOT).ends_with("%s.sav" % TestEnv.suffix()))
 		if not saved:
 			_after_round()
 			return
