@@ -219,6 +219,7 @@ func _physics_process(delta: float) -> void:
 
 	# --- Двойник под взглядом -------------------------------------------------
 	if kind == "doppel":
+		net_reveal_t = maxf(0.0, net_reveal_t - dt)   # СЕТЬ (MP-J): «глюк» после удара гаснет
 		var was: bool = frozen
 		frozen = stun <= 0.0 and _gazed_at(dist)
 		if frozen and not was:
@@ -790,6 +791,8 @@ func take_damage(amount: float, from: Vector2) -> void:
 	if not alive or net_puppet:   # СЕТЬ: урон марионетке считает хост
 		return
 	hp -= amount
+	if kind == "doppel" and Game.players.size() > 1:   # СЕТЬ (MP-J): удар — «глюк», проступает облик
+		_net_reveal()
 	# Рой рассыпается с одного удара — и от взмаха, и от импульса (§ 4.5).
 	if kind == "swarm":
 		hp = 0.0
@@ -853,6 +856,8 @@ func _net_pick_target(dt: float) -> void:
 	if _net_seek_t > 0.0 and cur != null and cur.net_targetable():
 		return
 	_net_seek_t = SEEK_INTERVAL
+	if kind == "doppel" and _net_doppel_pick():   # MP-J: жертва — самый отбившийся
+		return
 	var best: Player = null
 	var best_d: float = INF
 	var alive_best: Player = null
@@ -945,6 +950,7 @@ func net_apply(pos: Vector2, v: Vector2, row: Dictionary) -> void:
 func _net_puppet_tick(dt: float) -> void:
 	jitter += dt
 	stun = maxf(0.0, stun - dt)
+	net_reveal_t = maxf(0.0, net_reveal_t - dt)
 	if not visible:
 		return
 	if kind == "swarm" and state == St.CHASE:
@@ -966,6 +972,121 @@ func _net_killed() -> void:
 	Net.send(NetCodec.Msg.EVENT, NetCodec.encode_notify(global_position, "Фантом рассеян! Хорошая работа.",
 			Color(0.5, 0.9, 1.0)))
 	NetPlayers.send_sound(global_position, "craft", -6.0, 0.8)
+
+
+# ------------------------------------------------------------------ СЕТЬ: ДВОЙНИК СРЕДИ СВОИХ (ADR-002 § 4.8, MP-J #95)
+# Хост: жертва — самый отбившийся доступный герой (максимум дистанции до ближайшего
+# живого товарища); маска — ник и Look живого товарища, который дальше всех от жертвы.
+# Живых меньше двух — маски нет: цель, имя (Lore.impostor) и облик как в одиночной.
+# Маску клиентам шлёт NetTeam (TEAM.MASK), удар — «глюк» на MP_DOPPEL_REVEAL (TEAM.REVEAL).
+# Ник маски над головой рисует тот же узел, что у товарищей (NetPlayers.NickTag) —
+# он читает поля nick и look, как у Player.
+
+## Новая жертва или маска — только если отбилась заметно дальше прежней, px
+## (иначе при равных дистанциях облик двойника дёргался бы каждые полсекунды).
+const MASK_SWITCH_PX: float = 32.0
+
+## Маска двойника: ник и вид товарища ("" — маски нет).
+var nick: String = ""
+var look: int = 0
+## Хост: пир товарища-маски (0 — маски нет); его читает NetTeam.
+var net_mask_peer: int = 0
+## «Глюк» после удара: сколько ещё проступает настоящий облик, с.
+var net_reveal_t: float = 0.0
+var _net_mask: Player = null
+
+
+## Хост: жертва и маска (раз в SEEK_INTERVAL из _net_pick_target). false — живых
+## меньше двух или доступной жертвы нет: цель выбирается как у всех фантомов.
+func _net_doppel_pick() -> bool:
+	var alive: Array[Player] = []
+	for h in Game.players:
+		var hero: Player = h as Player if is_instance_valid(h) else null
+		if hero != null and not hero.dead:
+			alive.append(hero)
+	if alive.size() < 2:
+		_net_set_mask(null)
+		return false
+	var cur: Player = player as Player if is_instance_valid(player) else null
+	var victim: Player = null
+	var best: float = -1.0
+	var cur_iso: float = -1.0
+	for h in alive:
+		if not h.net_targetable():
+			continue
+		var iso: float = INF
+		for o in alive:
+			if o != h:
+				iso = minf(iso, h.global_position.distance_to(o.global_position))
+		if h == cur:
+			cur_iso = iso
+		if iso > best:
+			best = iso
+			victim = h
+	if victim == null:
+		_net_set_mask(null)
+		return false
+	if cur != null and cur_iso >= 0.0 and victim != cur and best - cur_iso < MASK_SWITCH_PX:
+		victim = cur
+	var mask: Player = null
+	var far: float = -1.0
+	var old: Player = _net_mask if is_instance_valid(_net_mask) else null
+	var old_d: float = -1.0
+	for o in alive:
+		if o == victim:
+			continue
+		var d: float = o.global_position.distance_to(victim.global_position)
+		if o == old:
+			old_d = d
+		if d > far:
+			far = d
+			mask = o
+	if old != null and old_d >= 0.0 and mask != old and far - old_d < MASK_SWITCH_PX:
+		mask = old
+	if victim != cur:
+		player = victim
+		_los_ms = -1000000      # обзор — уже до новой жертвы
+		repath = 0.0
+	_net_set_mask(mask)
+	return true
+
+
+func _net_set_mask(m: Player) -> void:
+	_net_mask = m
+	if m == null:
+		nick = ""
+		look = 0
+		net_mask_peer = 0
+	else:
+		nick = m.nick
+		look = m.look
+		net_mask_peer = m.peer_id
+
+
+## Клиент: маска с хоста (NetTeam, TEAM.MASK): ник и вид товарища или "" — без маски.
+## До первой маски марионетка двойника не рисуется: иначе на миг мелькнуло бы имя
+## Lore.impostor и свой облик — подсказка, которой в сети нет.
+func net_apply_mask(p_nick: String, p_look: int) -> void:
+	nick = p_nick
+	look = p_look & 0xFFFF
+	_net_mask_known = true
+
+
+var _net_mask_known: bool = false
+
+
+## Хост: двойника ударили — «глюк» у всех (NetTeam шлёт TEAM.REVEAL и зовёт GlitchFx).
+func _net_reveal() -> void:
+	net_reveal_t = Balance.MP_DOPPEL_REVEAL
+	NetTeam.doppel_revealed(self)
+
+
+## Раскладка маски: вид товарища, поза — по движению двойника (лицом по facing).
+## Фаза шага — по координате, как Player.walk_anim (|vel.x|·dt·0.08 за кадр).
+func _mask_layout() -> Dictionary:
+	var air: bool = not on_ground and absf(vel.y) > 40.0
+	return Avatar.layout(look, facing, global_position.x * 0.08, jitter, absf(vel.x) / Player.SPEED,
+			air, false)
 
 
 # ------------------------------------------------------------------ ОТРИСОВКА
@@ -1189,7 +1310,16 @@ func _draw_burrower() -> void:
 ## (state.impostor). Под взглядом визор мерцает чаще и проступает расслоение.
 func _draw_doppel() -> void:
 	var t: float = jitter
-	var lay: Dictionary = _hero_layout()
+	if net_puppet and not _net_mask_known:   # СЕТЬ (MP-J): маска с хоста ещё не пришла
+		return
+	# СЕТЬ (MP-J): после удара «глючит» — сквозь маску проступает настоящий облик
+	# (эхо); при «меньше мерцания» (GlitchFx.calm) — ровно, без мелькания.
+	if net_reveal_t > 0.0 and (GlitchFx.calm or fmod(t, 0.14) < 0.09):
+		_draw_echo()
+		return
+	var masked: bool = nick != ""   # СЕТЬ (MP-J): облик товарища, ник — у NickTag
+	var lay: Dictionary = _mask_layout() if masked else _hero_layout()
+	var lk: int = look if masked else int(lay["look"])
 	var r: Rect2 = lay["body"]
 	# Раскладка уже повёрнута по facing героя; смотрит двойник в другую сторону — отражаем.
 	_face((int(lay["facing"]) < 0) != (facing < 0))
@@ -1197,10 +1327,12 @@ func _draw_doppel() -> void:
 	if frozen and sin(t * 7.0) > 0.3:
 		draw_rect(Rect2(r.position - Vector2(1.0, 0.0), r.size), SPLIT_RED)
 		draw_rect(Rect2(r.position + Vector2(1.0, 0.0), r.size), SPLIT_CYAN)
-	Avatar.draw(self, lay, int(lay["look"]), {"breath": t, "impostor": true,
+	Avatar.draw(self, lay, lk, {"breath": t, "impostor": true,
 			"lit": sin(t * rate) > 0.1, "tint": STUN_TINT, "tint_k": 0.55 if stun > 0.0 else 0.0})
+	if NetTeam.lamp_state(self) == NetTeam.Lamp.RED:   # СЕТЬ (MP-J): на перекличке — красный
+		Avatar.draw_rollcall(self, lay, false)
 	_face(false)
-	if display_name != "":
+	if display_name != "" and not masked:
 		var font: Font = ThemeDB.fallback_font
 		var fs: int = 8
 		# Меряем строку только при смене имени, а не каждый кадр.

@@ -370,3 +370,29 @@ static func draw(canvas: CanvasItem, lay: Dictionary, look: int, state: Dictiona
 	if hiding:
 		# Укрытие: квадратная рамка вокруг героя.
 		canvas.draw_rect(Rect2(-13.0, -15.0, 26.0, 28.0), Color(0.4, 0.9, 1.0, 0.5), false, 1.0)
+
+
+# ------------------------------------------------------------------ ПЕРЕКЛИЧКА (ADR-002 § 4.8, MP-J #95)
+## Огонёк переклички — квадрат 2×2 на макушке шлема, чуть за серединой (фонарь —
+## на переднем углу, антенна — на заднем; огонёк не спорит ни с тем, ни с другим).
+## Зелёный — ответил на перекличку (MP_ROLLCALL_LIGHT), красный — идёт перекличка,
+## а ответа нет; у двойника огонёк всегда красный. Рисуют NetTeam.RollcallLamp (герои)
+## и Phantom._draw_doppel той же раскладкой lay, что и скафандр.
+const ROLLCALL_GREEN: Color = Color("#5CF08C")
+const ROLLCALL_RED: Color = Color("#F0306A")
+
+
+## Место огонька в раскладке lay (локальные координаты героя).
+static func rollcall_rect(lay: Dictionary) -> Rect2:
+	var h: Rect2 = lay["helmet"]
+	var crown: Variant = lay.get(&"crown")
+	var top: float = (crown as Rect2).position.y if crown != null else h.position.y
+	var f: int = int(lay.get("facing", 1))
+	return Rect2(roundf(h.get_center().x) - 1.0 - float(f), top - 2.0, 2.0, 2.0)
+
+
+static func draw_rollcall(canvas: CanvasItem, lay: Dictionary, green: bool) -> void:
+	var r: Rect2 = rollcall_rect(lay)
+	var c: Color = ROLLCALL_GREEN if green else ROLLCALL_RED
+	canvas.draw_rect(r.grow(1.0), Color(c, 0.28))
+	canvas.draw_rect(r, c)
