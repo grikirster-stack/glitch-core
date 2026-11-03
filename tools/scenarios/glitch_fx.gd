@@ -13,6 +13,7 @@ extends ScenarioBase
 ##         --resolution 1280x720 -- --scenario=glitch_fx --seed=31337 --glitch-shot
 ## → docs/img/glitch_<вид>.png: слева кадр до события, справа — во время эффекта.
 
+## Временный профиль теста — свой у процесса (TestEnv.file, #132): параллельные прогоны не мешают.
 const TMP_PROFILE: String = "user://glitch_fx_test/profile.cfg"
 const SHOT_DIR: String = "res://docs/img/"
 
@@ -168,29 +169,30 @@ func run() -> void:
 	GlitchFx.set_calm(false)
 
 	# --- 7. Настройка в профиле: одно поле, туда-обратно.
+	var tmp_profile: String = TestEnv.file(TMP_PROFILE)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://glitch_fx_test"))
-	var p: Profile = Profile.load_or_create(TMP_PROFILE)
-	ok("профиль: по умолчанию глитч полный", not p.less_glitch and not Profile.read_less_glitch(TMP_PROFILE))
+	var p: Profile = Profile.load_or_create(tmp_profile)
+	ok("профиль: по умолчанию глитч полный", not p.less_glitch and not Profile.read_less_glitch(tmp_profile))
 	p.less_glitch = true
-	p.save_to(TMP_PROFILE)
-	ok("профиль: «меньше глитча» сохраняется", Profile.load_or_create(TMP_PROFILE).less_glitch
-			and Profile.read_less_glitch(TMP_PROFILE))
+	p.save_to(tmp_profile)
+	ok("профиль: «меньше глитча» сохраняется", Profile.load_or_create(tmp_profile).less_glitch
+			and Profile.read_less_glitch(tmp_profile))
 	var cfg: ConfigFile = ConfigFile.new()
-	cfg.load(TMP_PROFILE)
+	cfg.load(tmp_profile)
 	cfg.set_value("access", "less_glitch", "да")
-	cfg.save(TMP_PROFILE)
-	ok("профиль: битое поле — по умолчанию", not Profile.load_or_create(TMP_PROFILE).less_glitch
-			and not Profile.read_less_glitch(TMP_PROFILE))
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(TMP_PROFILE))
-	ok("нет профиля — глитч полный", not Profile.read_less_glitch(TMP_PROFILE))
-	var btn: Button = GlitchFx.menu_toggle(Button.new(), p, TMP_PROFILE)
+	cfg.save(tmp_profile)
+	ok("профиль: битое поле — по умолчанию", not Profile.load_or_create(tmp_profile).less_glitch
+			and not Profile.read_less_glitch(tmp_profile))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_profile))
+	ok("нет профиля — глитч полный", not Profile.read_less_glitch(tmp_profile))
+	var btn: Button = GlitchFx.menu_toggle(Button.new(), p, tmp_profile)
 	btn.button_pressed = false
 	ok("переключатель меню пишет флаг и профиль", not GlitchFx.calm and not p.less_glitch
 			and btn.text.ends_with("нет"))
 	btn.button_pressed = true
-	ok("переключатель меню: включён", GlitchFx.calm and Profile.read_less_glitch(TMP_PROFILE))
+	ok("переключатель меню: включён", GlitchFx.calm and Profile.read_less_glitch(tmp_profile))
 	btn.free()
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(TMP_PROFILE))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_profile))
 
 	GlitchFx.set_calm(calm0)
 	release_all()

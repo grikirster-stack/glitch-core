@@ -37,9 +37,12 @@ const MENU_SCRIPT: String = "res://scripts/ui/main_menu.gd"
 ## берём через get_node("/root/Net") — имя автозагрузки в --script недоступно.
 const NetScript = preload("res://scripts/autoload/net.gd")
 const PLAYER_SCRIPT: String = "res://scripts/entities/player.gd"
-## Временный профиль: настоящий user://profile.cfg тест не трогает.
+## Временный профиль: настоящий user://profile.cfg тест не трогает. Файл — свой у
+## процесса (TestEnv.file: profile~t<pid>.cfg), параллельные прогоны не мешают (#132).
 const TMP_DIR: String = "user://menu_test"
 const TMP_PROFILE: String = "user://menu_test/profile.cfg"
+## Синтетические сохранения «Загрузить» (#132): одиночное, сетевое, битое.
+const SAVE_SLOTS: Array = ["menu_a", "menu_b", "menu_c"]
 ## Скафандр концепта A по умолчанию (ADR-003 § 4.1) — вид 0.
 const SUIT_DEFAULT: Color = Color("#E8743B")
 
@@ -239,6 +242,7 @@ class Runner extends Node:
 		_check_avatar()
 		_check_profile()
 		_check_menu()
+		_check_saves()         # «Загрузить» (#132)
 		_check_net_forms()     # MP-H (#93)
 		_check_discovery()     # MP-H (#93)
 		if bench:
@@ -369,23 +373,23 @@ class Runner extends Node:
 	# --- Профиль туда-обратно
 	func _check_profile() -> void:
 		DirAccess.make_dir_recursive_absolute(TMP_DIR)
-		DirAccess.remove_absolute(TMP_PROFILE)
-		var p1: Profile = Profile.load_or_create(TMP_PROFILE)
-		_ok("нет файла — профиль создан и записан", FileAccess.file_exists(TMP_PROFILE) and p1.uid != 0
+		DirAccess.remove_absolute(TestEnv.file(TMP_PROFILE))
+		var p1: Profile = Profile.load_or_create(TestEnv.file(TMP_PROFILE))
+		_ok("нет файла — профиль создан и записан", FileAccess.file_exists(TestEnv.file(TMP_PROFILE)) and p1.uid != 0
 				and p1.nick == Profile.DEFAULT_NICK and p1.look == 0 and p1.port == Profile.DEFAULT_PORT)
-		var p2: Profile = Profile.load_or_create(TMP_PROFILE)
+		var p2: Profile = Profile.load_or_create(TestEnv.file(TMP_PROFILE))
 		_ok("uid создаётся один раз", p2.uid == p1.uid, "%d / %d" % [p1.uid, p2.uid])
 		p2.nick = "Аня-2"
 		p2.look = Profile.Look.pack(PackedInt32Array([5, 0, 0, 0]))
 		p2.recent_ips = PackedStringArray(["192.168.1.20", "10.0.0.5"])
 		p2.port = 25000
-		_ok("профиль записан", p2.save_to(TMP_PROFILE) == OK)
-		var p3: Profile = Profile.load_or_create(TMP_PROFILE)
+		_ok("профиль записан", p2.save_to(TestEnv.file(TMP_PROFILE)) == OK)
+		var p3: Profile = Profile.load_or_create(TestEnv.file(TMP_PROFILE))
 		_ok("профиль туда-обратно: uid, ник, вид, адреса, порт", p3.uid == p1.uid and p3.nick == "Аня-2"
 				and p3.look == p2.look and p3.recent_ips == p2.recent_ips and p3.port == 25000,
 				"%s look=%d ips=%s port=%d" % [p3.nick, p3.look, str(p3.recent_ips), p3.port])
 		var cfg: ConfigFile = ConfigFile.new()
-		cfg.load(TMP_PROFILE)
+		cfg.load(TestEnv.file(TMP_PROFILE))
 		_ok("в файле [profile] uid/nick/look и [net] recent_ips/port",
 				cfg.has_section_key("profile", "uid") and cfg.has_section_key("profile", "nick")
 				and cfg.has_section_key("profile", "look") and cfg.has_section_key("net", "recent_ips")
@@ -394,31 +398,31 @@ class Runner extends Node:
 		cfg.set_value("profile", "nick", "!!")
 		cfg.set_value("profile", "look", "красный")
 		cfg.set_value("net", "port", 99999)
-		cfg.save(TMP_PROFILE)
-		var p4: Profile = Profile.load_or_create(TMP_PROFILE)
+		cfg.save(TestEnv.file(TMP_PROFILE))
+		var p4: Profile = Profile.load_or_create(TestEnv.file(TMP_PROFILE))
 		_ok("битые поля — значения по умолчанию, uid тот же", p4.nick == Profile.DEFAULT_NICK
 				and p4.look == 0 and p4.port == Profile.DEFAULT_PORT and p4.uid == p1.uid)
-		var f: FileAccess = FileAccess.open(TMP_PROFILE, FileAccess.WRITE)
+		var f: FileAccess = FileAccess.open(TestEnv.file(TMP_PROFILE), FileAccess.WRITE)
 		f.store_string("это не ConfigFile [[[")
 		f.close()
-		var p5: Profile = Profile.load_or_create(TMP_PROFILE)
+		var p5: Profile = Profile.load_or_create(TestEnv.file(TMP_PROFILE))
 		_ok("мусор вместо файла — новый профиль", p5.uid != 0 and p5.nick == Profile.DEFAULT_NICK)
 		var unk: int = Profile.Look.pack(PackedInt32Array([12, 9, 15, 3]))
 		p5.look = unk
-		p5.save_to(TMP_PROFILE)
+		p5.save_to(TestEnv.file(TMP_PROFILE))
 		_ok("неизвестные индексы вида хранятся как есть",
-				Profile.load_or_create(TMP_PROFILE).look == unk)
+				Profile.load_or_create(TestEnv.file(TMP_PROFILE)).look == unk)
 		_ok("uid — 64 бита, разные", Profile.new_uid() != Profile.new_uid())
-		DirAccess.remove_absolute(TMP_PROFILE)
+		DirAccess.remove_absolute(TestEnv.file(TMP_PROFILE))
 
 	# --- Меню: сборка, ник, вид, заглушки (узлом-ребёнком, без смены сцены)
 	func _check_menu() -> void:
 		var net: Node = get_tree().root.get_node("Net")
 		var net_profile0: Dictionary = net.local_profile.duplicate()
-		DirAccess.remove_absolute(TMP_PROFILE)
+		DirAccess.remove_absolute(TestEnv.file(TMP_PROFILE))
 		var menu = load(MENU_SCENE).instantiate()
 		var mm = load(MENU_SCRIPT)
-		menu.set("profile_path", TMP_PROFILE)
+		menu.set("profile_path", TestEnv.file(TMP_PROFILE))
 		add_child(menu)
 		_menu = menu
 		_ok("меню построено: ник, сид, хардкор, 5 кнопок, «Случайно», версия",
@@ -437,7 +441,7 @@ class Runner extends Node:
 		menu._on_nick_changed(" Аня ")
 		_ok("валидный ник сохранён в профиль (без краевых пробелов)", not menu.single_button.disabled
 				and menu.nick_error_label.text == ""
-				and Profile.load_or_create(TMP_PROFILE).nick == "Аня")
+				and Profile.load_or_create(TestEnv.file(TMP_PROFILE)).nick == "Аня")
 		var arrows_on: bool = true
 		for b in menu.look_arrows:
 			arrows_on = arrows_on and not (b as Button).disabled
@@ -446,7 +450,7 @@ class Runner extends Node:
 		menu.step_part(Profile.Look.COLOR, 1)
 		menu.step_part(Profile.Look.HELMET, 1)
 		menu.step_part(Profile.Look.PACK, -1)
-		var saved: int = Profile.load_or_create(TMP_PROFILE).look
+		var saved: int = Profile.load_or_create(TestEnv.file(TMP_PROFILE)).look
 		_ok("стрелки: цвет 1, шлем 1, ранец по кругу 3, сохранено",
 				Profile.Look.part(saved, Profile.Look.COLOR) == 1
 				and Profile.Look.part(saved, Profile.Look.HELMET) == 1
@@ -481,13 +485,13 @@ class Runner extends Node:
 		net.local_profile = net_profile0
 		menu.queue_free()
 		_menu = null
-		DirAccess.remove_absolute(TMP_PROFILE)
+		DirAccess.remove_absolute(TestEnv.file(TMP_PROFILE))
 
 	# --- Сетевые экраны меню (MP-H, #93): переходы, поля по умолчанию, «Недавние»
 	func _check_net_screens(menu) -> void:
 		var net: Node = get_tree().root.get_node("Net")
-		_ok("сетевые экраны построены: создать, найти, по IP, подключение, лобби",
-				menu.screens.size() == 6 and menu.current_screen == "main"
+		_ok("сетевые экраны построены: создать, найти, по IP, подключение, лобби, загрузка",
+				menu.screens.size() == 7 and menu.current_screen == "main"
 				and not menu.screens["host"].visible and menu.screens["main"].visible)
 		menu.net_buttons[0].pressed.emit()
 		_ok("«Создать игру» — форма: имя «Экспедиция <ник>», сид пусто, мест 4, порт из профиля",
@@ -523,6 +527,150 @@ class Runner extends Node:
 					out.append("%s: %s" % [k, cc.get_class()])
 		menu.show_screen("main")
 		_ok("сетевые экраны не шире окна %d px" % int(menu.size.x), out.is_empty(), str(out.slice(0, 3)))
+
+	# --- «Загрузить» (#132): список сохранений, серые кнопки, выбор для одиночной и хоста.
+	# Файлы — синтетические (заголовок и словарь Save.encode), слоты — тестовые этого
+	# процесса (TestEnv): сохранения игрока не видны и не трогаются.
+	func _check_saves() -> void:
+		print("== Меню: «Загрузить» (#132) ==")
+		var save_s: GDScript = load("res://scripts/core/save.gd")
+		var mm = load(MENU_SCRIPT)
+		var pid: String = "%s%d" % [TestEnv.MARK, OS.get_process_id()]
+		_ok("тестовый прогон: слот и профиль — файлы процесса", TestEnv.active()
+				and save_s.path_for("1") == "user://save_1%s.sav" % pid
+				and Profile.default_path() == "user://profile%s.cfg" % pid and Profile.PATH == "user://profile.cfg",
+				"%s, %s" % [save_s.path_for("1"), Profile.default_path()])
+		for s in SAVE_SLOTS:
+			save_s.remove(s)
+		var had: PackedStringArray = save_s.slots()
+		DirAccess.remove_absolute(TestEnv.file(TMP_PROFILE))
+		var menu = load(MENU_SCENE).instantiate()
+		menu.set("profile_path", TestEnv.file(TMP_PROFILE))
+		add_child(menu)
+		if had.is_empty():
+			_ok("сохранений нет — «Загрузить» и «Из сохранения…» серые", menu.load_button.disabled
+					and menu.host_load_button.disabled and menu.load_button.tooltip_text == "Сохранений нет")
+		else:
+			print("  ПРОПУСК «нет сохранений»: у процесса уже есть слоты %s" % str(had))
+		# Одиночное (сид 4242, смена 3), сетевое (двое, сид 777, смена 5), мусор.
+		_write_save(save_s, SAVE_SLOTS[0], {"version": save_s.VERSION, "seed": 4242, "game": {"day_number": 3},
+				"world": {}, "player": {}})
+		_write_save(save_s, SAVE_SLOTS[1], {"version": save_s.VERSION, "seed": 777, "game": {"day_number": 5},
+				"session": {"name": "Экспедиция Аня", "max": 4},
+				"players": {101: {"nick": "Аня"}, 102: {"nick": "Борис"}}, "player": {}})
+		var f: FileAccess = FileAccess.open(save_s.path_for(SAVE_SLOTS[2]), FileAccess.WRITE)
+		f.store_string("не сохранение")
+		f.close()
+		var mine: PackedStringArray = save_s.slots()
+		var mine_ok: bool = true
+		for s in SAVE_SLOTS:
+			mine_ok = mine_ok and mine.has(s)
+		TestEnv._active = 0          # как у игрока: тестовых файлов не видно
+		var player_view: PackedStringArray = save_s.slots()
+		TestEnv._active = 1
+		var leaked: bool = false
+		for s in player_view:
+			leaked = leaked or String(s).contains(TestEnv.MARK) or SAVE_SLOTS.has(s)
+		_ok("слоты: тестовые видны только своему процессу, у игрока их нет", mine_ok and not leaked,
+				"свои %s, у игрока %d" % [str(mine), player_view.size()])
+		var t0: int = Time.get_ticks_usec()
+		menu._refresh_load_buttons()
+		var t1: int = Time.get_ticks_usec()
+		save_s.list_saves()
+		print("  ЗАМЕР: серая ли «Загрузить» (Save.slots, без чтения) — %.2f мс; список из %d файлов — %.2f мс"
+				% [float(t1 - t0) / 1000.0, mine.size(), float(Time.get_ticks_usec() - t1) / 1000.0])
+		_ok("есть сохранения — «Загрузить» активна", not menu.load_button.disabled)
+		menu.load_button.pressed.emit()
+		var rows: Array = []
+		for k in menu.save_buttons.size():
+			if SAVE_SLOTS.has(String(menu.saves[k]["slot"])):
+				rows.append(k)
+		var by_slot: Dictionary = {}
+		for k in rows:
+			by_slot[String(menu.saves[k]["slot"])] = k
+		_ok("экран «Загрузить»: строка на каждое сохранение", menu.current_screen == "load"
+				and rows.size() == 3 and menu.save_buttons.size() == menu.saves.size()
+				and menu.load_title.text == "Загрузить" and menu.load_go_button.text == "Загрузить")
+		var t_single: String = menu.save_buttons[by_slot.get(SAVE_SLOTS[0], 0)].text
+		var t_net: String = menu.save_buttons[by_slot.get(SAVE_SLOTS[1], 0)].text
+		var b_bad: Button = menu.save_buttons[by_slot.get(SAVE_SLOTS[2], 0)]
+		_ok("строка одиночного: дата, сид, смена, игроки", t_single.begins_with("Одиночная · ")
+				and t_single.contains("сид 4242 · смена 3 · игрок 1") and t_single.contains("\n"),
+				t_single.replace("\n", " | "))
+		_ok("строка сетевого: имя игры, сид, смена, ники", t_net.begins_with("Сетевая «Экспедиция Аня» · ")
+				and t_net.contains("сид 777 · смена 5 · игроков 2: Аня, Борис"), t_net.replace("\n", " | "))
+		_ok("битый файл — серая строка с причиной", b_bad.disabled and b_bad.text.contains("не читается"),
+				b_bad.text.replace("\n", " | "))
+		var ts: String = mm.format_time(int(menu.saves[by_slot.get(SAVE_SLOTS[0], 0)]["time"]))
+		_ok("дата файла — дд.мм.гггг чч:мм, сегодня", ts.length() == 16 and ts.substr(6, 4)
+				== str(Time.get_datetime_dict_from_system()["year"]) and mm.format_time(0) == "дата неизвестна", ts)
+		_ok("выбрана первая читаемая строка, «Загрузить» активна", menu.selected_save >= 0
+				and bool(menu.saves[menu.selected_save]["ok"]) and not menu.load_go_button.disabled
+				and menu.save_buttons[menu.selected_save].button_pressed)
+		var k_net: int = by_slot.get(SAVE_SLOTS[1], 0)
+		menu.save_buttons[k_net].pressed.emit()
+		b_bad.pressed.emit()
+		_ok("тап по строке — выбор (битая не выбирается)", menu.selected_save == k_net
+				and menu.save_buttons[k_net].button_pressed)
+		var ses: Dictionary = mm.load_session(menu.saves[by_slot.get(SAVE_SLOTS[0], 0)])
+		_ok("одиночная из сохранения: сид файла, без хардкора, слот в Net.session[load]",
+				ses == {"mode": "single", "seed": 4242, "hardcore": false, "load": SAVE_SLOTS[0]}, str(ses))
+		for b in menu.screens["load"].find_children("*", "Button", true, false):
+			if (b as Button).text == "Назад":
+				(b as Button).pressed.emit()
+		_ok("«Назад» — главный экран", menu.current_screen == "main")
+		# «Создать игру» из сохранения.
+		menu.net_buttons[0].pressed.emit()
+		_ok("«Создать игру»: мир новый, «Из сохранения…» активна", menu.current_screen == "host"
+				and menu.host_load_label.text == "новый" and not menu.host_load_button.disabled
+				and menu.host_load_slot == "")
+		menu.host_load_button.pressed.emit()
+		_ok("«Из сохранения…» — тот же список, кнопка «Выбрать»", menu.current_screen == "load"
+				and menu.load_for == "host" and menu.load_go_button.text == "Выбрать"
+				and menu.load_title.text == "Сохранение для сетевой игры")
+		k_net = -1
+		for k in menu.saves.size():
+			if String(menu.saves[k]["slot"]) == SAVE_SLOTS[1]:
+				k_net = k
+		menu.save_buttons[k_net].pressed.emit()
+		menu.load_go_button.pressed.emit()
+		var form: Dictionary = mm.host_form(menu.host_name_edit.text, menu.host_seed_edit.text, menu.host_slots,
+				menu.host_port_edit.text)
+		_ok("«Выбрать» — форма хоста: слот, сид из файла (поле закрыто), «Новый мир»",
+				menu.current_screen == "host" and menu.host_load_slot == SAVE_SLOTS[1]
+				and menu.host_seed_edit.text == "777" and not menu.host_seed_edit.editable
+				and menu.host_load_button.text == "Новый мир" and menu.host_load_label.text.contains("Экспедиция Аня")
+				and bool(form["ok"]) and int(form["seed"]) == 777, menu.host_load_label.text)
+		menu.host_load_button.pressed.emit()
+		_ok("«Новый мир» — без сохранения, сид снова свободный", menu.host_load_slot == ""
+				and menu.host_seed_edit.text == "" and menu.host_seed_edit.editable
+				and menu.host_load_button.text == "Из сохранения…")
+		menu.show_screen("main")
+		for s in SAVE_SLOTS:
+			save_s.remove(s)
+		_ok("тест убрал за собой свои слоты", not save_s.exists(SAVE_SLOTS[0]) and not save_s.exists(SAVE_SLOTS[1])
+				and not save_s.exists(SAVE_SLOTS[2]))
+		menu._refresh_load_buttons()
+		if had.is_empty():
+			_ok("файлы убраны — «Загрузить» снова серая", menu.load_button.disabled)
+		# Хвосты упавших прогонов (процесса уже нет) убирает TestEnv.sweep(), свои — не трогает.
+		var dead: String = "user://save_menu_dead%s999999999.sav" % TestEnv.MARK
+		_write_save(save_s, SAVE_SLOTS[0], {"version": save_s.VERSION, "seed": 1})
+		var fd: FileAccess = FileAccess.open(dead, FileAccess.WRITE)
+		fd.store_string("x")
+		fd.close()
+		var swept: int = TestEnv.sweep()
+		_ok("TestEnv.sweep: файл мёртвого процесса убран, свой остался", not FileAccess.file_exists(dead)
+				and save_s.exists(SAVE_SLOTS[0]) and swept >= 1, "убрано %d" % swept)
+		save_s.remove(SAVE_SLOTS[0])
+		DirAccess.remove_absolute(dead)
+		menu.queue_free()
+		DirAccess.remove_absolute(TestEnv.file(TMP_PROFILE))
+
+	func _write_save(save_s: GDScript, slot: String, d: Dictionary) -> void:
+		var f: FileAccess = FileAccess.open(save_s.path_for(slot), FileAccess.WRITE)
+		f.store_buffer(save_s.encode(d))
+		f.close()
 
 	# --- Формы: адрес «По IP», «Создать игру», «Недавние», кадр LOBBY
 	func _check_net_forms() -> void:
@@ -790,13 +938,64 @@ func _process(_delta: float) -> bool:
 			var sc: Node = current_scene
 			if sc != null and sc != _menu and sc.get("player") != null:
 				_check_single(sc)
-				_step = 4
+				_step = 7
 			elif _frames > 600:
 				_ok("мир из меню запустился", false, "нет сцены игры за 600 кадров")
 				_step = 4
+		# --- «Загрузить» (#132): сохранили → в меню видно → загрузили → мир тот же.
+		7:
+			_save_run(current_scene)
+			_open_menu()
+			_frames = 0
+			_step = 8
+		8:
+			_frames += 1
+			if _frames >= 3:
+				_tap_load()
+				_frames = 0
+				_step = 9
+		9:
+			_frames += 1
+			if not is_instance_valid(_menu):
+				_ok("список сохранений открыт", false, "меню закрылось раньше «Загрузить»")
+				_step = 4
+			elif _frames >= 3:
+				_tap_load_row()
+				_frames = 0
+				_step = 18
+		18:
+			_frames += 1
+			if _frames >= 3:
+				_tap(_menu.load_go_button)
+				_frames = 0
+				_step = 10
+		10, 17:
+			_frames += 1
+			var sc: Node = current_scene
+			if sc != null and sc != _menu and sc.get("player") != null and _frames >= 3:
+				_check_loaded(sc, _step == 17)
+				_step = 11 if _step == 10 else 4
+			elif _frames > 600:
+				_ok("мир из сохранения запустился", false, "нет сцены игры за 600 кадров")
+				_step = 4
+		11:
+			_open_menu()
+			_frames = 0
+			_step = 12
+		12, 13, 14, 15, 16:
+			_frames += 1
+			if _frames >= 3:
+				_tap_host(_step)
+				_frames = 0
+				_step += 1
 		4:
-			root.get_node("Net").session = {}
-			DirAccess.remove_absolute(TMP_PROFILE)
+			var net: Node = root.get_node("Net")
+			if net.is_online():
+				net.leave()
+			net.session = {}
+			load("res://scripts/core/save.gd").remove("1")
+			DirAccess.remove_absolute(TestEnv.file(TMP_PROFILE))
+			DirAccess.remove_absolute(Profile.default_path())
 			print("")
 			print("ИТОГ: проверок %d, провалов %d" % [_checks, _fails])
 			quit(1 if _fails > 0 else 0)
@@ -817,13 +1016,13 @@ func _ok(label: String, cond: bool, extra: String = "") -> void:
 func _start_single() -> void:
 	print("== Одиночная игра из меню ==")
 	DirAccess.make_dir_recursive_absolute(TMP_DIR)
-	DirAccess.remove_absolute(TMP_PROFILE)
-	var p: Profile = Profile.load_or_create(TMP_PROFILE)
+	DirAccess.remove_absolute(TestEnv.file(TMP_PROFILE))
+	var p: Profile = Profile.load_or_create(TestEnv.file(TMP_PROFILE))
 	p.look = Profile.Look.pack(PackedInt32Array([5, 0, 0, 0]))
-	p.save_to(TMP_PROFILE)
+	p.save_to(TestEnv.file(TMP_PROFILE))
 	root.get_node("Net").session = {}
 	_menu = load(MENU_SCENE).instantiate()
-	_menu.set("profile_path", TMP_PROFILE)
+	_menu.set("profile_path", TestEnv.file(TMP_PROFILE))
 	root.add_child(_menu)
 	current_scene = _menu
 	var ui: CanvasLayer = root.get_node("UI")
@@ -898,6 +1097,131 @@ func _check_single(sc: Node) -> void:
 	_ok("после меню пауза снята, HUD виден", not paused and (root.get_node("UI") as CanvasLayer).visible)
 
 
+# ------------------------------------------------------------- «Загрузить» (#132)
+## Мир из меню меняется (смена 3, метка в инвентаре, выкопанный столбик у героя) и
+## сохраняется в слот F5 — «1» (в тестовом прогоне — файл процесса, TestEnv). Дальше —
+## меню, тап «Загрузить» → строка → «Загрузить»: мир тот же; затем «Создать игру» →
+## «Из сохранения…» → «Выбрать» → «Создать» → «Старт»: хост грузит тот же слот.
+
+## Что сверяем после загрузки: {seed, tiles, day, mark}.
+var _saved: Dictionary = {}
+## Метка в инвентаре: id и сколько.
+var _mark_id: int = 0
+const MARK_N: int = 11
+
+
+func _save_run(sc: Node) -> void:
+	print("== «Загрузить» из меню (#132) ==")
+	var save_s: GDScript = load("res://scripts/core/save.gd")
+	var ids: GDScript = load("res://scripts/core/ids.gd")
+	var world: Node = root.get_node("World")
+	var game: Node = root.get_node("Game")
+	var pl = sc.get("player")
+	_mark_id = int(ids.I.SCRAP)
+	game.day_number = 3
+	pl.inv.add(_mark_id, MARK_N)
+	var c: Vector2i = world.world_to_cell(pl.global_position)
+	for dy in 3:
+		world.set_tile_raw(c.x + 4, c.y + 2 + dy, int(ids.T.AIR))
+	save_s.remove("1")
+	var ok: bool = save_s.save_game("1")
+	_ok("F5-слот «1» записан — файл процесса", ok and save_s.exists("1")
+			and save_s.path_for("1").contains(TestEnv.MARK), "%s %s" % [save_s.path_for("1"), save_s.last_error])
+	_saved = {"seed": int(world.world_seed), "tiles": (world.tiles as PackedByteArray).duplicate(), "day": 3,
+			"mark": int(pl.inv.count_of(_mark_id))}
+
+
+## Меню — снова текущая сцена (как после выхода из игры): сцена игры уходит.
+func _open_menu() -> void:
+	var old: Node = current_scene
+	root.get_node("Net").session = {}
+	_menu = load(MENU_SCENE).instantiate()
+	_menu.set("profile_path", TestEnv.file(TMP_PROFILE))
+	root.add_child(_menu)
+	current_scene = _menu
+	if old != null and old != _menu:
+		old.queue_free()
+
+
+func _tap_load() -> void:
+	_ok("сохранение есть — «Загрузить» активна", not _menu.load_button.disabled)
+	var t0: int = Time.get_ticks_usec()
+	_tap(_menu.load_button)
+	print("  ЗАМЕР: тап «Загрузить» → список (настоящий файл %.1f КБ) — %.2f мс" % [
+			float(FileAccess.get_file_as_bytes(load("res://scripts/core/save.gd").path_for("1")).size()) / 1024.0,
+			float(Time.get_ticks_usec() - t0) / 1000.0])
+
+
+## Экран «load» свёрстан: строка сохранения и тап по ней.
+func _tap_load_row() -> void:
+	var row: String = _menu.save_buttons[0].text if not _menu.save_buttons.is_empty() else ""
+	_ok("тап «Загрузить» — список, строка сохранения: сид 4242, смена 3", _menu.current_screen == "load"
+			and _menu.saves.size() == 1 and row.contains("сид 4242 · смена 3"), row.replace("\n", " | "))
+	_tap(_menu.save_buttons[0])
+	_ok("тап по строке — выбрана", _menu.selected_save == 0 and _menu.save_buttons[0].button_pressed)
+
+
+## Мир после загрузки — тот же, что в момент сохранения.
+func _check_loaded(sc: Node, host: bool) -> void:
+	var world: Node = root.get_node("World")
+	var game: Node = root.get_node("Game")
+	var net: Node = root.get_node("Net")
+	var pl = sc.get("player")
+	var tiles: PackedByteArray = world.tiles
+	var diff: int = 0
+	if tiles.size() == (_saved["tiles"] as PackedByteArray).size():
+		for i in tiles.size():
+			if tiles[i] != _saved["tiles"][i]:
+				diff += 1
+	else:
+		diff = -1
+	var who: String = "хост" if host else "одиночная"
+	_ok("%s: мир того же сида, клетки совпали" % who, int(world.world_seed) == int(_saved["seed"]) and diff == 0,
+			"сид %d, разных клеток %d" % [int(world.world_seed), diff])
+	_ok("%s: смена и инвентарь из сохранения" % who, int(game.day_number) == int(_saved["day"])
+			and int(pl.inv.count_of(_mark_id)) == int(_saved["mark"]),
+			"смена %d, метка %d" % [int(game.day_number), int(pl.inv.count_of(_mark_id))])
+	if host:
+		_ok("хост: сетевая игра, слот из меню в Net.session[load]", net.is_host()
+				and String(net.session.get("load", "")) == "1")
+	else:
+		_ok("одиночная: без хардкора, ключ load снят (перезапуск — новый забег)", sc.get("hardcore") == false
+				and not net.session.has("load") and String(net.session.get("mode", "")) == "single")
+
+
+## «Создать игру» тапами: 12 — форма, 13 — «Из сохранения…», 14 — «Выбрать»,
+## 15 — «Создать» (лобби), 16 — «Старт».
+func _tap_host(step: int) -> void:
+	var net: Node = root.get_node("Net")
+	match step:
+		12:
+			var port: int = 27300 + OS.get_process_id() % 200 * 2
+			_menu.net_bind = "127.0.0.1"   # петля — без окна брандмауэра
+			_menu.discovery_port = port + 1
+			_menu.discovery_targets = PackedStringArray(["127.0.0.1:%d" % (port + 1)])
+			_tap(_menu.net_buttons[0])
+			_menu.host_port_edit.text = str(port)
+			_ok("тап «Создать игру» — форма, «Из сохранения…» активна", _menu.current_screen == "host"
+					and not _menu.host_load_button.disabled)
+		13:
+			_tap(_menu.host_load_button)
+			_ok("тап «Из сохранения…» — список", _menu.current_screen == "load" and _menu.saves.size() == 1
+					and _menu.load_go_button.text == "Выбрать")
+		14:
+			_tap(_menu.save_buttons[0])
+			_tap(_menu.load_go_button)
+			_ok("тап «Выбрать» — форма: сид 4242 из файла, поле закрыто", _menu.current_screen == "host"
+					and _menu.host_load_slot == "1" and _menu.host_seed_edit.text == "4242"
+					and not _menu.host_seed_edit.editable)
+		15:
+			_tap(_menu.host_create_button)
+			_ok("тап «Создать» — лобби хоста, Net.session[load] = слот, сид файла", _menu.current_screen == "lobby"
+					and net.is_host() and String(net.session.get("load", "")) == "1"
+					and int(net.session.get("seed", -1)) == 4242, _menu.host_error_label.text)
+		16:
+			_tap(_menu.start_button)
+
+
 # ------------------------------------------------------------- снимок и листы
 
 ## Листы (--sheets=): {"vp": SubViewport, "sheet": Sheet, "file": имя, "groups": клетки}.
@@ -910,11 +1234,16 @@ func _shot_step() -> bool:
 	match _step:
 		0:
 			DirAccess.make_dir_recursive_absolute(TMP_DIR)
-			DirAccess.remove_absolute(TMP_PROFILE)
-			var p: Profile = Profile.load_or_create(TMP_PROFILE)
-			p.save_to(TMP_PROFILE)
+			DirAccess.remove_absolute(TestEnv.file(TMP_PROFILE))
+			var p: Profile = Profile.load_or_create(TestEnv.file(TMP_PROFILE))
+			p.save_to(TestEnv.file(TMP_PROFILE))
+			# Есть сохранение (#132) — «Загрузить» на снимке активна, как у играющего.
+			var save_s: GDScript = load("res://scripts/core/save.gd")
+			var f: FileAccess = FileAccess.open(save_s.path_for(SAVE_SLOTS[0]), FileAccess.WRITE)
+			f.store_buffer(save_s.encode({"version": save_s.VERSION, "seed": 31337, "game": {"day_number": 4}}))
+			f.close()
 			_menu = load(MENU_SCENE).instantiate()
-			_menu.set("profile_path", TMP_PROFILE)
+			_menu.set("profile_path", TestEnv.file(TMP_PROFILE))
 			root.add_child(_menu)
 			current_scene = _menu
 			_frames = 0
@@ -938,7 +1267,8 @@ func _shot_step() -> bool:
 				_step = 5
 				_sheets_finish()
 		6:
-			DirAccess.remove_absolute(TMP_PROFILE)
+			load("res://scripts/core/save.gd").remove(SAVE_SLOTS[0])
+			DirAccess.remove_absolute(TestEnv.file(TMP_PROFILE))
 			print("ИТОГ: проверок %d, провалов %d" % [_checks, _fails])
 			quit(1 if _fails > 0 else 0)
 			return true

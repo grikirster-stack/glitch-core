@@ -100,6 +100,7 @@ func _start() -> void:
 		srunner.start(self, scenarios)
 
 	_net_start()   # СЕТЬ (ADR-002): --mp-host, сетевые сценарии --mp-scenario
+	_menu_load()   # МЕНЮ «Загрузить» (#132): одиночная игра из сохранения
 
 
 ## Стартовый набор героя (свой и, в сети, каждого товарища — MP-D, #89).
@@ -423,3 +424,21 @@ func _net_team_start() -> void:
 	net_team = NetTeam.new()
 	add_child(net_team)
 	net_team.start(self)
+
+
+# ------------------------------------------------- МЕНЮ «ЗАГРУЗИТЬ» (#132)
+## Одиночная игра из меню «Загрузить»: Net.session = {mode: single, seed: сид файла,
+## load: слот} — мир уже построен по сиду, слот кладётся поверх (Save.load_game, как F9).
+## Ключ снимается: перезапуск (R после финала) — новый забег на том же сиде.
+func _menu_load() -> void:
+	if Net.is_online() or String(Net.session.get("mode", "")) != "single" or not Net.session.has("load"):
+		return
+	var slot: String = String(Net.session["load"])
+	Net.session.erase("load")
+	if Save.load_game(slot):
+		print("МЕНЮ: загружено сохранение «%s» (%.1f мс), смена %d" % [slot, Save.last_load_ms,
+				Game.day_number])
+		Game.notify("Забег загружен: смена %d." % Game.day_number, Color(0.6, 1.0, 0.75))
+	else:
+		print("МЕНЮ: сохранение «%s» не загружено: %s" % [slot, Save.last_error])
+		Game.notify("Загрузить нельзя: %s." % Save.last_error, Color(1.0, 0.6, 0.4))

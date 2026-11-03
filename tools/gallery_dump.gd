@@ -7,8 +7,12 @@ extends SceneTree
 ##      godot --headless --path . --script res://tools/gallery_dump.gd -- --seed=31337
 ##   2) вид в мире (_draw) и скриншоты — headless не рендерит, нужен короткий
 ##      прогон с окном ЗА ПРЕДЕЛАМИ ЭКРАНА и без звука; скрипт сам выходит:
-##      godot --path . --audio-driver Dummy --windowed --position -10000,-10000 \
-##            --resolution 960x540 --script res://tools/gallery_dump.gd -- --seed=31337
+##      godot --path . --audio-driver Dummy --disable-vsync --fixed-fps 60 --windowed \
+##            --position -10000,-10000 --resolution 1280x720 \
+##            --script res://tools/gallery_dump.gd -- --seed=31337
+##      (окно за экраном Windows с vsync рисует ~4 кадра/с — прогон не укладывается
+##       в лимит; --disable-vsync снимает это, --fixed-fps 60 держит игровое время
+##       кадра 1/60 с, чтобы ожидания в кадрах оставались прежними по времени игры)
 ##      (флаги после «--»: --no-world — только скриншоты, без вида машин и фантомов;
 ##       --shots-after=<имя> — досъёмка скриншотов, следующих за shots/<имя>.png)
 ##
@@ -711,6 +715,82 @@ func _dump_shots() -> void:
 			await _look_at(world.cell_to_world(hy + Vector2i(0, 3)), false)
 			await _frames(3)
 			await _grab("shots/place_cave_flora.png", true)
+	await _dump_readme_shots()
+
+
+## Кадры README (#docs/readme-rewrite): небесный тайник, оборона ночью, удержание
+## сигнала релея с трекером цели в HUD. Идут последними — их можно доснять
+## флагом --shots-after=place_cave_flora.
+func _dump_readme_shots() -> void:
+	var p: Node2D = scene.get("player")
+	var tile: float = float(world.TILE)
+	var bx: int = int(world.beacon_cell.x)
+	ui.get("hud").set("notes", [])
+	game.set("time_of_day", 0.40)
+
+	# Небесный тайник: обломок «Кербер-9» над рельефом; герой рядом — силуэт проступает.
+	var sky: Dictionary = world.get("sky_cache")
+	if not sky.is_empty():
+		var sc: Vector2i = sky["cell"]
+		await _look_at(world.cell_to_world(sc + Vector2i(-3, 0)) + Vector2(0, -3), true, 2.2)
+		await _frames(45)                  ## дымка силуэта сходит ≈ 0.4 с
+		await _grab("shots/place_sky.png", true)
+
+	# Оборона ночью: ТЭЦ, турель, прожектор, стальная стена со шлюзом; снаружи — стая
+	# роя, тень и эхо в погоне.
+	var mb: GDScript = load("res://scripts/machines/machine_base.gd")
+	var row: Callable = func(x: int) -> int: return int(world.surface[x]) - 1
+	var gx: int = bx - 8
+	if mb.place_machine("CoalGen", Vector2i(gx, row.call(gx))):
+		world.machines[Vector2i(gx, row.call(gx))].add_fuel(8)
+	mb.place_machine("Turret", Vector2i(bx - 10, row.call(bx - 10)))
+	mb.place_machine("Floodlight", Vector2i(bx - 12, row.call(bx - 12)))
+	var wx: int = bx - 15
+	var wr: int = row.call(wx)
+	world.set_tile(wx, wr, IDs.T.AIRLOCK)
+	world.set_tile(wx, wr - 1, IDs.T.AIRLOCK)
+	for dy in range(2, 5):
+		world.set_tile(wx, wr - dy, IDs.T.STEEL_WALL)
+	game.set("time_of_day", 0.80)
+	ui.get("hud").set("notes", [])
+	var ph_scr: GDScript = load("res://scripts/entities/phantom.gd")
+	var chase: int = int(ph_scr.get_script_constant_map()["St"]["CHASE"])
+	var crowd: Array = [["shade", -18, 0.0], ["echo", -21, 0.0], ["swarm", -17, -2.4],
+			["swarm", -16.6, -3.0], ["swarm", -17.6, -3.4], ["swarm", -18.4, -2.6]]
+	var spawned: Array = []
+	for e in crowd:
+		var ph: Node2D = ph_scr.create(String(e[0]))
+		scene.add_child(ph)
+		ph.set_physics_process(false)
+		var cx: int = bx + int(e[1])
+		ph.global_position = world.cell_to_world(Vector2i(cx, row.call(cx))) + Vector2(
+				(float(e[1]) - float(int(e[1]))) * tile, float(e[2]) * tile - 3.0)
+		ph.set("state", chase)
+		ph.set("facing", 1)
+		ph.set("jitter", 0.1)
+		spawned.append(ph)
+	await _look_at(world.cell_to_world(Vector2i(bx - 13, row.call(bx - 13))) + Vector2(0, -2.0 * tile), false, 3.0)
+	p.global_position = world.cell_to_world(Vector2i(bx - 7, row.call(bx - 7))) + Vector2(0, -3)
+	p.visible = true
+	p.set("facing", -1)
+	p.queue_redraw()
+	await _frames(60)                      ## питание разложено, турель навелась
+	await _grab("shots/defense_night.png", false)
+	for ph in spawned:
+		if is_instance_valid(ph):
+			ph.queue_free()
+
+	# Удержание сигнала: релей запущен, в HUD — «ЦЕЛЬ 4/4» и отсчёт до эвакуации.
+	game.set("time_of_day", 0.45)
+	game.set("objective_stage", 4)
+	game.set("relay_active", true)
+	game.set("relay_timer", 97.0)
+	ui.get("hud").set("notes", [])
+	await _look_at(world.cell_to_world(world.beacon_cell + Vector2i(2, 0)) + Vector2(0, -3), true)
+	p.set("facing", -1)
+	await _frames(30)
+	await _grab("shots/relay_hold.png", false)
+	game.set("relay_active", false)
 
 
 ## Первая клетка (подальше от краёв), где по правилам декора растёт вид kind и

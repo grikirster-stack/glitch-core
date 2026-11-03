@@ -2,7 +2,8 @@ class_name MainMenu
 extends Control
 ## Главный экран (ADR-002 § 4.6; MP-B, #87): название, живое превью героя тем же
 ## Avatar.draw, что в игре, ник с проверкой, параметры вида, «Одиночная игра»
-## (сид, хардкор галочкой), сетевые экраны (MP-H, #93: «Создать игру», «Найти игру»,
+## (сид, хардкор галочкой), «Загрузить» (#132: список сохранений — секция «ЗАГРУЗКА»
+## в конце), сетевые экраны (MP-H, #93: «Создать игру», «Найти игру»,
 ## «Подключиться по IP», подключение, лобби — секция «СЕТЕВЫЕ ЭКРАНЫ» в конце),
 ## номер версии в углу.
 ##
@@ -34,7 +35,7 @@ const COL_W: float = 360.0
 const ACCENT: Color = Color(0.40, 0.95, 0.80)
 
 ## Откуда профиль (тесты подставляют временный путь до add_child).
-var profile_path: String = Profile.PATH
+var profile_path: String = Profile.default_path()
 var profile: Profile = null
 
 var nick_edit: LineEdit
@@ -147,6 +148,7 @@ func _on_nick_changed(text: String) -> void:
 	single_button.disabled = err != ""
 	for b in net_buttons:
 		b.disabled = err != ""
+	_refresh_load_buttons()   # #132
 	if err == "" and text.strip_edges() != profile.nick:
 		profile.nick = text.strip_edges()
 		profile.save_to(profile_path)
@@ -268,9 +270,17 @@ func _build() -> void:
 	seed_row.add_child(hardcore_box)
 	right.add_child(GlitchFx.menu_toggle(_button(""), profile, profile_path))   # ADR-003 V7 (#108)
 
+	var single_row: HBoxContainer = HBoxContainer.new()
+	single_row.add_theme_constant_override("separation", 10)
+	right.add_child(single_row)
 	single_button = _button("Одиночная игра")
+	single_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	single_button.pressed.connect(start_single)
-	right.add_child(single_button)
+	single_row.add_child(single_button)
+	load_button = _button("Загрузить")   # #132: экран «load» со списком сохранений
+	load_button.custom_minimum_size = Vector2(150, BUTTON_H)
+	load_button.pressed.connect(show_load.bind(LOAD_SINGLE))
+	single_row.add_child(load_button)
 	var net_actions: Array[Callable] = [show_host_form, show_browser, show_ip]
 	for k in 3:
 		var b: Button = _button(["Создать игру", "Найти игру", "Подключиться по IP"][k])
@@ -507,6 +517,7 @@ func _build_net_screens() -> void:
 	_build_ip_screen()
 	_build_connecting_screen()
 	_build_lobby_screen()
+	_build_load_screen()   # #132
 	for k in screens:
 		(screens[k] as Control).visible = k == "main"
 	Net.session_started.connect(_on_net_started)
@@ -614,6 +625,7 @@ func _build_host_screen() -> void:
 	host_port_edit = _edit(str(Net.GAME_PORT))
 	host_port_edit.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_NUMBER
 	_field_row(page, "Порт", host_port_edit)
+	_build_host_load_row(page)   # #132: мир — новый или из сохранения
 	host_error_label = _label("", 15, ERR_COLOR)
 	host_error_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	host_error_label.custom_minimum_size = Vector2(NET_W, 22)
@@ -632,6 +644,7 @@ func show_host_form() -> void:
 		return
 	host_name_edit.text = ("Экспедиция " + profile.nick).substr(0, NAME_MAX)
 	host_seed_edit.text = ""
+	clear_host_load()   # #132
 	host_port_edit.text = str(profile.port)
 	set_slots(Balance.MP_MAX_PLAYERS)
 	host_error_label.text = ""
@@ -706,6 +719,8 @@ func create_game() -> void:
 		lobby.queue_free()
 		lobby = null
 		return
+	if host_load_slot != "":   # #132: при «Старт» хост грузит слот (main.gd → Save.load_net, MP-I)
+		Net.session["load"] = host_load_slot
 	show_screen("lobby")
 	_refresh_lobby()
 
@@ -1054,3 +1069,218 @@ func _lobby_row(e: Dictionary, rdy: bool) -> HBoxContainer:
 	rl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(rl)
 	return row
+
+
+# ------------------------------------------------------------------ ЗАГРУЗКА (#132)
+## «Загрузить» рядом с «Одиночной игрой» и «Мир: Из сохранения…» в «Создать игру» ведут
+## на один экран «load»: сохранения (Save.list_saves — новые сверху) кнопками в две
+## строки — тип и дата; сид, смена, игроки. Тап выбирает, «Загрузить» / «Выбрать» —
+## внизу. Нет сохранений — обе кнопки серые; битый файл — серая строка с причиной.
+##   Одиночная: Net.session = {mode: single, seed: сид файла, hardcore: false,
+##     load: слот} → main.gd строит мир по сиду и грузит слот (Save.load_game);
+##     ключ load снимается — перезапуск после финала начинает заново.
+##   «Создать игру»: сид формы — из файла (поле закрыто), после создания лобби
+##     Net.session["load"] = слот (крюк MP-I) — при «Старт» хост грузит его
+##     (Save.load_net); «Новый мир» — отказаться.
+
+const LOAD_SINGLE: String = "single"
+const LOAD_HOST: String = "host"
+## Высота строки сохранения (две строки текста), px.
+const SAVE_ROW_H: float = 66.0
+## Строк сохранений без прокрутки.
+const SAVE_ROWS_SHOWN: int = 5
+
+var load_button: Button
+var host_load_button: Button
+var host_load_label: Label
+## Слот, выбранный для «Создать игру» ("" — новый мир).
+var host_load_slot: String = ""
+## Для кого экран «load»: LOAD_SINGLE или LOAD_HOST.
+var load_for: String = LOAD_SINGLE
+## Последний список (Save.slot_info по порядку строк) и выбранная строка (−1 — нет).
+var saves: Array = []
+var save_buttons: Array[Button] = []
+var selected_save: int = -1
+var load_title: Label
+var load_list: VBoxContainer
+var load_hint_label: Label
+var load_go_button: Button
+
+
+func _build_load_screen() -> void:
+	var page: VBoxContainer = _net_page("Загрузить")
+	screens["load"] = page
+	load_title = page.get_child(0) as Label
+	var scroll: ScrollContainer = ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(NET_W, SAVE_ROWS_SHOWN * (SAVE_ROW_H + 6.0))
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	page.add_child(scroll)
+	load_list = VBoxContainer.new()
+	load_list.add_theme_constant_override("separation", 6)
+	load_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(load_list)
+	load_hint_label = _label("", 16, DIM_COLOR)
+	load_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	load_hint_label.custom_minimum_size = Vector2(NET_W, 22)
+	page.add_child(load_hint_label)
+	var back: Button = _button("Назад")
+	back.pressed.connect(func() -> void: show_screen("host" if load_for == LOAD_HOST else "main"))
+	load_go_button = _button("Загрузить")
+	load_go_button.pressed.connect(load_selected)
+	_buttons_row(page, [back, load_go_button])
+
+
+## «Создать игру»: строка «Мир» — подпись и кнопка «Из сохранения…» / «Новый мир».
+func _build_host_load_row(page: VBoxContainer) -> void:
+	var row: HBoxContainer = HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	host_load_label = _label("новый", 17, Color(0.9, 0.93, 1.0))
+	host_load_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	host_load_label.clip_text = true
+	host_load_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	row.add_child(host_load_label)
+	host_load_button = _button("Из сохранения…")
+	host_load_button.custom_minimum_size = Vector2(220, BUTTON_H)
+	host_load_button.pressed.connect(func() -> void:
+			if host_load_slot != "":
+				clear_host_load()
+			else:
+				show_load(LOAD_HOST))
+	row.add_child(host_load_button)
+	_field_row(page, "Мир", row)
+
+
+## Серые ли «Загрузить» и «Из сохранения…»: есть ли файлы (без чтения) и ник.
+func _refresh_load_buttons() -> void:
+	var has_saves: bool = not Save.slots().is_empty()
+	var nick_bad: bool = nick_edit != null and Net.nick_error(nick_edit.text) != ""
+	if load_button != null:
+		load_button.disabled = nick_bad or not has_saves
+		load_button.tooltip_text = "Загрузить сохранение" if has_saves else "Сохранений нет"
+	if host_load_button != null:
+		host_load_button.disabled = not has_saves and host_load_slot == ""
+
+
+## Экран «load» для одиночной игры (LOAD_SINGLE) или формы хоста (LOAD_HOST).
+func show_load(mode: String) -> void:
+	if Net.nick_error(nick_edit.text) != "":
+		return
+	load_for = mode
+	load_title.text = "Загрузить" if mode == LOAD_SINGLE else "Сохранение для сетевой игры"
+	load_go_button.text = "Загрузить" if mode == LOAD_SINGLE else "Выбрать"
+	refresh_saves()
+	show_screen("load")
+
+
+## Перечитать сохранения и построить строки; выбрана первая читаемая.
+func refresh_saves() -> void:
+	saves = Save.list_saves()
+	for b in save_buttons:
+		b.queue_free()
+	save_buttons.clear()
+	var group: ButtonGroup = ButtonGroup.new()
+	selected_save = -1
+	for i in saves.size():
+		var info: Dictionary = saves[i]
+		var b: Button = _button(save_row_text(info))
+		b.custom_minimum_size = Vector2(0, SAVE_ROW_H)
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.clip_text = true
+		b.add_theme_font_size_override("font_size", 17)
+		b.toggle_mode = true
+		b.button_group = group
+		b.disabled = not bool(info["ok"])
+		b.pressed.connect(select_save.bind(i))
+		load_list.add_child(b)
+		save_buttons.append(b)
+		if selected_save < 0 and bool(info["ok"]):
+			selected_save = i
+	if selected_save >= 0:
+		save_buttons[selected_save].set_pressed_no_signal(true)
+	_refresh_load_buttons()
+	load_go_button.disabled = selected_save < 0
+	if saves.is_empty():
+		load_hint_label.text = "Сохранений нет. В игре F5 — сохранить."
+	elif selected_save < 0:
+		load_hint_label.text = "Ни одно сохранение не читается."
+	else:
+		load_hint_label.text = "Тап по строке — выбрать."
+
+
+func select_save(i: int) -> void:
+	if i < 0 or i >= saves.size() or not bool(saves[i]["ok"]):
+		return
+	selected_save = i
+	save_buttons[i].set_pressed_no_signal(true)
+	load_go_button.disabled = false
+
+
+## «Загрузить» / «Выбрать» внизу экрана.
+func load_selected() -> void:
+	if selected_save < 0 or selected_save >= saves.size():
+		return
+	var info: Dictionary = saves[selected_save]
+	if load_for == LOAD_HOST:
+		pick_host_load(info)
+		show_screen("host")
+		return
+	if Net.nick_error(nick_edit.text) != "":
+		return
+	profile.save_to(profile_path)
+	Net.local_profile = profile.to_net()
+	Net.session = load_session(info)
+	_leave()
+	get_tree().change_scene_to_file(GAME_SCENE)
+
+
+## «Создать игру» из сохранения: сид — из файла (поле закрыто), слот — в create_game.
+func pick_host_load(info: Dictionary) -> void:
+	host_load_slot = String(info["slot"])
+	host_seed_edit.text = str(int(info["seed"]))
+	host_seed_edit.editable = false
+	host_load_label.text = save_row_text(info).get_slice("\n", 0)
+	host_load_label.tooltip_text = save_row_text(info)
+	host_load_button.text = "Новый мир"
+	host_load_button.disabled = false
+
+
+func clear_host_load() -> void:
+	host_load_slot = ""
+	if host_seed_edit != null and not host_seed_edit.editable:
+		host_seed_edit.text = ""
+		host_seed_edit.editable = true
+	if host_load_label != null:
+		host_load_label.text = "новый"
+		host_load_label.tooltip_text = ""
+		host_load_button.text = "Из сохранения…"
+	_refresh_load_buttons()
+
+
+## Сессия одиночной игры из сохранения (формат Net.session; main.gd → _menu_load).
+static func load_session(info: Dictionary) -> Dictionary:
+	return {"mode": "single", "seed": int(info["seed"]), "hardcore": false, "load": String(info["slot"])}
+
+
+## Строка списка: тип и дата; сид, смена, игроки (битый файл — причина).
+static func save_row_text(info: Dictionary) -> String:
+	var kind: String = "Одиночная"
+	if bool(info.get("net", false)):
+		kind = "Сетевая «%s»" % String(info["name"]) if String(info.get("name", "")) != "" else "Сетевая"
+	var head: String = "%s · %s" % [kind, format_time(int(info.get("time", 0)))]
+	if not bool(info.get("ok", false)):
+		return "%s\nне читается: %s" % [head, String(info.get("error", ""))]
+	var who: String = "игрок 1"
+	if bool(info.get("net", false)):
+		var nicks: PackedStringArray = info.get("nicks", PackedStringArray())
+		who = "игроков %d: %s" % [int(info["players"]), ", ".join(nicks)]
+	return "%s\nсид %d · смена %d · %s" % [head, int(info["seed"]), int(info["day"]), who]
+
+
+## Время файла (unix, UTC) по местным часам: «дд.мм.гггг чч:мм».
+static func format_time(unix: int) -> String:
+	if unix <= 0:
+		return "дата неизвестна"
+	var bias: int = int(Time.get_time_zone_from_system().get("bias", 0))
+	var t: Dictionary = Time.get_datetime_dict_from_unix_time(unix + bias * 60)
+	return "%02d.%02d.%04d %02d:%02d" % [int(t["day"]), int(t["month"]), int(t["year"]),
+			int(t["hour"]), int(t["minute"])]
