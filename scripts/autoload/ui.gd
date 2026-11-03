@@ -1,9 +1,11 @@
 extends CanvasLayer
-## Автозагрузка интерфейса: HUD, окно инвентаря, журнал (J), проброс эффектов в мир.
+## Автозагрузка интерфейса: HUD, окно инвентаря, журнал (J), пауза (ESC, #119),
+## проброс эффектов в мир.
 
 var hud: HUD
 var panel: InventoryPanel
 var journal: JournalPanel
+var pause: PauseMenu
 var world_fx: WorldFX = null
 var player: Player = null
 
@@ -16,6 +18,8 @@ func _ready() -> void:
 	add_child(panel)
 	journal = JournalPanel.new()
 	add_child(journal)
+	pause = PauseMenu.new()   # #119: свой CanvasLayer, работает и при паузе дерева
+	add_child(pause)
 	Game.notification.connect(_on_notification)
 
 
@@ -26,6 +30,8 @@ func bind(p: Player) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if pause.visible:
+		return   # пауза (#119) забирает клавиши; ESC в ней ловит сама панель
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k: InputEventKey = event
 		if k.keycode == KEY_I or k.keycode == KEY_TAB:
@@ -37,6 +43,9 @@ func _input(event: InputEvent) -> void:
 		elif k.keycode == KEY_ESCAPE and (panel.visible or journal.visible):
 			panel.close()
 			journal.close()
+			get_viewport().set_input_as_handled()
+		elif k.keycode == KEY_ESCAPE and pause.can_pause():   # окон нет — пауза (#119)
+			pause.open()
 			get_viewport().set_input_as_handled()
 		elif k.keycode == KEY_P and world_fx:
 			world_fx.show_power = not world_fx.show_power
@@ -58,7 +67,7 @@ signal run_loaded
 
 
 func quick_save() -> bool:
-	if _hardcore():
+	if hardcore():
 		Game.notify("Хардкор: сохранений нет.", Color(1.0, 0.6, 0.4))
 		return false
 	var why: String = Save.save_blocker()
@@ -74,7 +83,7 @@ func quick_save() -> bool:
 
 
 func quick_load() -> bool:
-	if _hardcore():
+	if hardcore():
 		Game.notify("Хардкор: сохранений нет.", Color(1.0, 0.6, 0.4))
 		return false
 	if not Save.load_game():
@@ -85,7 +94,7 @@ func quick_load() -> bool:
 	return true
 
 
-func _hardcore() -> bool:
+func hardcore() -> bool:
 	var sc: Node = get_tree().current_scene
 	return sc != null and sc.get("hardcore") == true
 
@@ -114,9 +123,20 @@ func open_chest(c: Chest) -> void:
 		panel.open_chest(player, c)
 
 
-## Открыто окно, которое забирает ввод у мира (инвентарь или журнал).
+## Открыто окно, которое забирает ввод у мира (инвентарь, журнал или пауза).
 func blocking() -> bool:
-	return panel.visible or journal.visible
+	return panel.visible or journal.visible or pause.visible
+
+
+## Пауза (#119): ESC и кнопка «II» на телефоне. Открыт инвентарь или журнал — сначала их.
+func toggle_pause() -> void:
+	if pause.visible:
+		pause.close()
+	elif panel.visible or journal.visible:
+		panel.close()
+		journal.close()
+	else:
+		pause.open()
 
 
 func _on_notification(text: String, color: Color) -> void:

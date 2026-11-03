@@ -1145,6 +1145,23 @@ func _open_menu() -> void:
 
 func _tap_load() -> void:
 	_ok("сохранение есть — «Загрузить» активна", not _menu.load_button.disabled)
+	# #119: «Продолжить» — последний одиночный забег, кнопка одна, меню по-прежнему влезает.
+	var out: Array = []
+	var screen: Rect2 = Rect2(Vector2.ZERO, _menu.size).grow(1.0)
+	for c in _menu.find_children("*", "Control", true, false):
+		if (c as Control).is_visible_in_tree() and not screen.encloses((c as Control).get_global_rect()):
+			out.append("%s %s" % [c.get_class(), str((c as Control).get_global_rect())])
+	var n_cont: int = 0
+	for b in _menu.find_children("*", "Button", true, false):
+		if (b as Button).is_visible_in_tree() and String((b as Button).text).begins_with("Продолжить"):
+			n_cont += 1
+	_ok("«Продолжить» — этот забег (смена 3), одна кнопка, фокус на ней", _menu.continue_button.visible
+			and not _menu.continue_button.disabled and _menu.continue_button.text == "Продолжить · смена 3"
+			and String(_menu.continue_info.get("slot", "")) == "1" and n_cont == 1
+			and _menu.get_viewport().gui_get_focus_owner() == _menu.continue_button, _menu.continue_button.text)
+	var page_h: float = (_menu.main_page as Control).get_combined_minimum_size().y
+	_ok("с «Продолжить» меню помещается в %dx%d и по высоте в 720" % [int(_menu.size.x), int(_menu.size.y)],
+			out.is_empty() and page_h <= 720.0, "страница %.0f px %s" % [page_h, str(out.slice(0, 3))])
 	var t0: int = Time.get_ticks_usec()
 	_tap(_menu.load_button)
 	print("  ЗАМЕР: тап «Загрузить» → список (настоящий файл %.1f КБ) — %.2f мс" % [

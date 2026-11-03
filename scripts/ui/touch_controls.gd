@@ -30,6 +30,10 @@ extends CanvasLayer
 ## миникартой тогда плашка команды (HUD.team_plate_rect): J и I встают под неё, а Q, V и
 ## G — одним рядом под ними (V слева от Q, G слева от V), чтобы колонка не опустилась
 ## на уведомления. В одиночной игре G нет, раскладка прежняя.
+##
+## Пауза (#119): ESC на телефоне нет — кнопка «II» в ряду I и J (слева от J) открывает
+## паузу (UI.toggle_pause). Пока пауза открыта, кнопок и джойстика нет: панель паузы —
+## обычные кнопки, тап по ним приходит кликом.
 
 ## Слой: над HUD и панелями (UI — 10), под экраном финала (EndScreen.LAYER — 20).
 const LAYER: int = 15
@@ -71,6 +75,7 @@ const BUTTONS: Array = [
 	{"id": "journal", "key": 0, "glyph": "J", "cap": "журнал"},
 	{"id": "build", "key": 0, "glyph": "", "cap": "строить"},
 	{"id": "g", "key": KEY_G, "glyph": "G", "cap": "перекличка"},   # только в сети (rollcall_shown)
+	{"id": "pause", "key": 0, "glyph": "II", "cap": "пауза"},   # #119: ESC на телефоне
 ]
 
 ## Включено ли сенсорное управление (видно и читает касания).
@@ -215,6 +220,8 @@ func _team_rows() -> int:
 
 ## Кнопку видно и она жмётся: G — только в сети, при открытой панели — только I и J.
 func _shown(id: String, blocking: bool) -> bool:
+	if UI.pause != null and UI.pause.visible:
+		return false   # #119: в паузе — только её панель
 	if blocking and id != "inv" and id != "journal":
 		return false
 	return id != "g" or rollcall_shown()
@@ -266,6 +273,7 @@ func _layout(sz: Vector2) -> void:
 		"e": Vector2(run.x - step, run.y),
 		"inv": inv,
 		"journal": Vector2(inv.x - step, inv.y),
+		"pause": Vector2(inv.x - 2.0 * step, inv.y),   # #119
 		"q": q,
 		"v": v,
 		"g": Vector2(v.x - step, q.y) if _layout_team > 0 else Vector2(q.x - step, q.y),
@@ -399,6 +407,8 @@ func _press(id: String) -> void:
 			UI.toggle_inventory()
 		"journal":
 			UI.toggle_journal()
+		"pause":
+			UI.toggle_pause()   # #119
 		"run":
 			run_latched = not run_latched
 		"build":

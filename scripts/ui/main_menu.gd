@@ -2,8 +2,8 @@ class_name MainMenu
 extends Control
 ## Главный экран (ADR-002 § 4.6; MP-B, #87): название, живое превью героя тем же
 ## Avatar.draw, что в игре, ник с проверкой, параметры вида, «Одиночная игра»
-## (сид, хардкор галочкой), «Загрузить» (#132: список сохранений — секция «ЗАГРУЗКА»
-## в конце), сетевые экраны (MP-H, #93: «Создать игру», «Найти игру»,
+## (сид, хардкор галочкой), «Продолжить» (#119: последний забег одним тапом) и
+## «Загрузить» (#132: список сохранений — секция «ЗАГРУЗКА» в конце), сетевые экраны (MP-H, #93: «Создать игру», «Найти игру»,
 ## «Подключиться по IP», подключение, лобби — секция «СЕТЕВЫЕ ЭКРАНЫ» в конце),
 ## номер версии в углу.
 ##
@@ -71,9 +71,10 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	profile = Profile.load_or_create(profile_path)
-	theme = _make_theme()
+	theme = make_theme()
 	_build()
 	_build_net_screens()   # MP-H (#93)
+	refresh_continue()     # #119
 	_refresh_look()
 	_on_nick_changed(nick_edit.text)
 	# Меню — сцена целиком: игровые автозагрузки спят, HUD не виден.
@@ -81,7 +82,7 @@ func _ready() -> void:
 		_paused_tree = true
 		get_tree().paused = true
 		_set_game_ui_visible(false)
-		single_button.grab_focus()
+		(continue_button if continue_button.visible else single_button).grab_focus()
 		if first_frame_ms < 0:
 			ready_ms = t_ready
 			# Без рендера (--headless) frame_post_draw не приходит — берём первый кадр цикла.
@@ -237,7 +238,7 @@ func _build() -> void:
 	# --- Правая колонка: ник, одиночная игра, сеть.
 	var right: VBoxContainer = VBoxContainer.new()
 	right.custom_minimum_size = Vector2(COL_W, 0)
-	right.add_theme_constant_override("separation", 8)
+	right.add_theme_constant_override("separation", 6)   # #119: с «Продолжить» колонка влезает в 720
 	cols.add_child(right)
 	right.add_child(_label("Ник", 20, ACCENT))
 	nick_edit = LineEdit.new()
@@ -269,6 +270,10 @@ func _build() -> void:
 	hardcore_box.custom_minimum_size = Vector2(0, BUTTON_H)
 	seed_row.add_child(hardcore_box)
 	right.add_child(GlitchFx.menu_toggle(_button(""), profile, profile_path))   # ADR-003 V7 (#108)
+	continue_button = _button("Продолжить")   # #119: последний забег; нечего продолжать — кнопки нет
+	continue_button.pressed.connect(continue_run)
+	continue_button.visible = false
+	right.add_child(continue_button)
 
 	var single_row: HBoxContainer = HBoxContainer.new()
 	single_row.add_theme_constant_override("separation", 10)
@@ -348,7 +353,8 @@ func _button(text: String) -> Button:
 	return b
 
 
-func _make_theme() -> Theme:
+## Тема меню (кнопки, поля); ею же оформлена пауза в забеге (PauseMenu, #119).
+static func make_theme() -> Theme:
 	var th: Theme = Theme.new()
 	th.default_font_size = 20
 	var normal: StyleBoxFlat = _box(Color(0.10, 0.13, 0.20, 0.92), Color(0.25, 0.32, 0.45))
@@ -374,7 +380,7 @@ func _make_theme() -> Theme:
 	return th
 
 
-func _box(bg: Color, border: Color) -> StyleBoxFlat:
+static func _box(bg: Color, border: Color) -> StyleBoxFlat:
 	var s: StyleBoxFlat = StyleBoxFlat.new()
 	s.bg_color = bg
 	s.border_color = border
@@ -1154,6 +1160,8 @@ func _build_host_load_row(page: VBoxContainer) -> void:
 func _refresh_load_buttons() -> void:
 	var has_saves: bool = not Save.slots().is_empty()
 	var nick_bad: bool = nick_edit != null and Net.nick_error(nick_edit.text) != ""
+	if continue_button != null:
+		continue_button.disabled = nick_bad   # #119
 	if load_button != null:
 		load_button.disabled = nick_bad or not has_saves
 		load_button.tooltip_text = "Загрузить сохранение" if has_saves else "Сохранений нет"
@@ -1224,6 +1232,11 @@ func load_selected() -> void:
 		pick_host_load(info)
 		show_screen("host")
 		return
+	_start_from_save(info)
+
+
+## Одиночная игра из сохранения: «Загрузить» → «Загрузить» и «Продолжить» (#119).
+func _start_from_save(info: Dictionary) -> void:
 	if Net.nick_error(nick_edit.text) != "":
 		return
 	profile.save_to(profile_path)
@@ -1284,3 +1297,30 @@ static func format_time(unix: int) -> String:
 	var t: Dictionary = Time.get_datetime_dict_from_unix_time(unix + bias * 60)
 	return "%02d.%02d.%04d %02d:%02d" % [int(t["day"]), int(t["month"]), int(t["year"]),
 			int(t["hour"]), int(t["minute"])]
+
+
+# ------------------------------------------------------------------ «ПРОДОЛЖИТЬ» (#119)
+## Последний одиночный забег одним тапом — без списка: Save.latest_single (самый новый по
+## времени файла читаемый не сетевой слот; автосохранение «Сохранить и выйти в меню»
+## пишется в слот F5 — его и берём). Путь тот же, что у «Загрузить» → строка →
+## «Загрузить» (load_session → main.gd _menu_load). Продолжать нечего — кнопки нет.
+## «Загрузить» остаётся для выбора слота; сетевые сохранения — «Создать игру» →
+## «Из сохранения…».
+
+var continue_button: Button
+## Что продолжит кнопка (Save.slot_info; {} — нечего).
+var continue_info: Dictionary = {}
+
+
+func refresh_continue() -> void:
+	continue_info = Save.latest_single()
+	continue_button.visible = not continue_info.is_empty()
+	if not continue_info.is_empty():
+		continue_button.text = "Продолжить · смена %d" % int(continue_info["day"])
+		continue_button.tooltip_text = save_row_text(continue_info)
+	continue_button.disabled = nick_edit != null and Net.nick_error(nick_edit.text) != ""
+
+
+func continue_run() -> void:
+	if not continue_info.is_empty():
+		_start_from_save(continue_info)
