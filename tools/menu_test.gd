@@ -490,8 +490,8 @@ class Runner extends Node:
 	# --- Сетевые экраны меню (MP-H, #93): переходы, поля по умолчанию, «Недавние»
 	func _check_net_screens(menu) -> void:
 		var net: Node = get_tree().root.get_node("Net")
-		_ok("сетевые экраны построены: создать, найти, по IP, подключение, лобби, загрузка",
-				menu.screens.size() == 7 and menu.current_screen == "main"
+		_ok("экраны построены: создать, найти, по IP, подключение, лобби, загрузка, кампания",
+				menu.screens.size() == 8 and menu.screens.has("campaign") and menu.current_screen == "main"
 				and not menu.screens["host"].visible and menu.screens["main"].visible)
 		menu.net_buttons[0].pressed.emit()
 		_ok("«Создать игру» — форма: имя «Экспедиция <ник>», сид пусто, мест 4, порт из профиля",

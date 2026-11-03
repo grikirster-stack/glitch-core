@@ -18,8 +18,8 @@ extends SceneTree
 
 ## Схема протокола PROTO = SCHEMA_PROTO. Поменяли кодек, порядок IDs или таблицы DB —
 ## поднимите Net.PROTO и впишите сюда новый PROTO и хэш, который напечатает тест.
-const SCHEMA_PROTO: int = 9
-const SCHEMA_HASH: String = "629c69054317a37c235e71ca4af31795"
+const SCHEMA_PROTO: int = 10
+const SCHEMA_HASH: String = "290fdf222df36573c5218582ef27b2a1"
 
 const PORT_BASE: int = 24900
 const LOOP: String = "127.0.0.1"
@@ -119,7 +119,8 @@ func _codec() -> void:
 	var big: PackedByteArray = var_to_bytes({"proto": 1, "build": "x".repeat(600), "uid": 1, "nick": "a", "look": 0})
 	ok("hello длиннее %d Б → {}" % NetCodec.HELLO_MAX, NetCodec.decode_hello(big).is_empty())
 	var welcome: Dictionary = {"ok": false, "reason": "версии разные: хост 0.5.0, у вас 0.4.2",
-			"seed": 4294967295, "slot": 3, "session_name": "Экспедиция Ани", "nick": "Аня 2"}
+			"seed": 4294967295, "slot": 3, "session_name": "Экспедиция Ани", "nick": "Аня 2",
+			"mission": "siege"}   # ADR-004: глава кампании хоста
 	ok("welcome туда-обратно", NetCodec.decode_welcome(NetCodec.encode_welcome(welcome)) == welcome)
 
 	# Список игроков
