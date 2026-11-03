@@ -653,6 +653,17 @@ class Runner extends Node:
 		menu._refresh_load_buttons()
 		if had.is_empty():
 			_ok("файлы убраны — «Загрузить» снова серая", menu.load_button.disabled)
+		# Хвосты упавших прогонов (процесса уже нет) убирает TestEnv.sweep(), свои — не трогает.
+		var dead: String = "user://save_menu_dead%s999999999.sav" % TestEnv.MARK
+		_write_save(save_s, SAVE_SLOTS[0], {"version": save_s.VERSION, "seed": 1})
+		var fd: FileAccess = FileAccess.open(dead, FileAccess.WRITE)
+		fd.store_string("x")
+		fd.close()
+		var swept: int = TestEnv.sweep()
+		_ok("TestEnv.sweep: файл мёртвого процесса убран, свой остался", not FileAccess.file_exists(dead)
+				and save_s.exists(SAVE_SLOTS[0]) and swept >= 1, "убрано %d" % swept)
+		save_s.remove(SAVE_SLOTS[0])
+		DirAccess.remove_absolute(dead)
 		menu.queue_free()
 		DirAccess.remove_absolute(TestEnv.file(TMP_PROFILE))
 

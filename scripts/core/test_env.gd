@@ -23,7 +23,30 @@ static var _active: int = -1
 static func active() -> bool:
 	if _active < 0:
 		_active = 1 if _detect() else 0
+		if _active == 1:
+			sweep()
 	return _active == 1
+
+
+## Убрать тестовые файлы user:// процессов, которых уже нет (упавший прогон, профиль,
+## созданный меню после конца сетевой сессии). Файлы живых процессов не трогаем.
+static func sweep() -> int:
+	var dir: DirAccess = DirAccess.open("user://")
+	if dir == null:
+		return 0
+	var n: int = 0
+	var me: int = OS.get_process_id()
+	for f in dir.get_files():
+		var at: int = f.rfind(MARK)
+		if at < 0:
+			continue
+		var tail: String = f.substr(at + MARK.length()).get_basename()
+		if not tail.is_valid_int():
+			continue
+		var pid: int = int(tail)
+		if pid != me and not OS.is_process_running(pid) and dir.remove(f) == OK:
+			n += 1
+	return n
 
 
 static func _detect() -> bool:
