@@ -165,12 +165,13 @@ func _traffic_end(what: String) -> void:
 		d[m] = int(Net.sent_bytes[m]) - int(_sent0.get(m, 0))
 	if is_host_side():
 		var n: int = maxi(Net.peers.size() - 1, 1)
-		# STATE и события «всем» — одна отправка на всех; OWN и INV — по каждому.
-		var per: float = (float(d.get(NetCodec.Msg.STATE, 0)) + float(d.get(NetCodec.Msg.EVENT, 0))
-				+ float(d.get(NetCodec.Msg.OWN, 0) + d.get(NetCodec.Msg.INV, 0)) / n) / sec
+		# События «всем» — одна отправка на всех; STATE (с MP-F свой у каждого: фантомы по
+		# зоне интереса), OWN и INV — по каждому.
+		var per: float = (float(d.get(NetCodec.Msg.EVENT, 0))
+				+ float(d.get(NetCodec.Msg.STATE, 0) + d.get(NetCodec.Msg.OWN, 0) + d.get(NetCodec.Msg.INV, 0)) / n) / sec
 		var pkts: float = float(Net.TICK_HZ) * 2.0     # STATE + OWN в секунду
 		print("  ЗАМЕР вниз (хост → клиент), %s %.1f с, %d игрока: кадры %.0f Б/с на игрока (STATE %.0f, OWN %.0f, INV %.0f, события %.0f); с накладными ≤ %.0f Б/с" % [
-				what, sec, n + 1, per, d.get(NetCodec.Msg.STATE, 0) / sec, d.get(NetCodec.Msg.OWN, 0) / n / sec,
+				what, sec, n + 1, per, d.get(NetCodec.Msg.STATE, 0) / n / sec, d.get(NetCodec.Msg.OWN, 0) / n / sec,
 				d.get(NetCodec.Msg.INV, 0) / n / sec, d.get(NetCodec.Msg.EVENT, 0) / sec,
 				per + pkts * DATAGRAM_OVERHEAD])
 	else:

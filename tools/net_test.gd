@@ -18,8 +18,8 @@ extends SceneTree
 
 ## Схема протокола PROTO = SCHEMA_PROTO. Поменяли кодек, порядок IDs или таблицы DB —
 ## поднимите Net.PROTO и впишите сюда новый PROTO и хэш, который напечатает тест.
-const SCHEMA_PROTO: int = 6
-const SCHEMA_HASH: String = "8e0ab13669649214757ebde9cb2c90a2"
+const SCHEMA_PROTO: int = 7
+const SCHEMA_HASH: String = "dd9a82fd2ad27ddf19bdec29bbe5acb2"
 
 const PORT_BASE: int = 24900
 const LOOP: String = "127.0.0.1"
@@ -259,6 +259,19 @@ func _codec() -> void:
 	var s8 = NetCodec.decode_str8(NetCodec.encode_str8(long_s))
 	ok("строка u8: обрезка до 255 Б по границе символа", s8 is String and String(s8).length() == 127
 			and String(s8) == "Ж".repeat(127))
+
+	# MP-F (#92): появление фантома (SPAWN вида Ent.PHANTOM), типы — те же, что Phantom.KINDS.
+	var fsp: Dictionary = {"kind": 4, "pack": 7, "name": "Ефим Л.", "pos": Vector2(5120.25, 1400.5)}
+	var fsd: Dictionary = NetCodec.decode_phantom_spawn(NetCodec.encode_phantom_spawn(65535, fsp))
+	ok("SPAWN фантома туда-обратно (двойник, стая, имя)", fsd.get("id") == 65535 and fsd.get("kind") == 4
+			and fsd.get("pack") == 7 and fsd.get("name") == "Ефим Л." and fsd.get("pos") == fsp["pos"], str(fsd))
+	ok("SPAWN чужого вида / битый → {}", NetCodec.decode_phantom_spawn(NetCodec.encode_spawn(NetCodec.Ent.ITEM, 1,
+			{"kind": 0, "pos": Vector2.ZERO})).is_empty() and NetCodec.decode_phantom_spawn(
+			NetCodec.encode_spawn(NetCodec.Ent.PHANTOM, 1, {"kind": 9, "pos": Vector2.ZERO})).is_empty()
+			and NetCodec.decode_phantom_spawn(PackedByteArray([1, 2])).is_empty())
+	var kinds_ok: bool = NetCodec.PHANTOM_KINDS == (load("res://scripts/entities/phantom.gd") as GDScript) \
+			.get_script_constant_map().get("KINDS", [])
+	ok("типы фантомов кодека = Phantom.KINDS (3 бита)", kinds_ok and NetCodec.PHANTOM_KINDS.size() <= 8)
 
 
 ## Размеры кодека против var_to_bytes(Dictionary) — таблица замера.
