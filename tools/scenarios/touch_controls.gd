@@ -93,6 +93,21 @@ func _mining_with_stick_held() -> void:
 	var mb: Dictionary = player.touch_input.get("mouse_buttons", {})
 	ok("мультитач: идти и копать одновременно", bool(keys.get(KEY_D, false))
 			and bool(mb.get(MOUSE_BUTTON_LEFT, false)))
+	# Джойстик и палец по миру — не щипок: палец на джойстике в зум не идёт, как его ни веди.
+	var z0: float = player.view_zoom.current
+	_drag(0, tc.stick_center + Vector2(-tc.stick_radius * 0.9, -tc.stick_radius * 0.5))
+	_drag(1, _screen(World.cell_to_world(cell)) + Vector2(4.0, 0.0))
+	await wait(0.1)
+	ok("джойстик + палец по миру не зумят и копка не сбрасывается",
+			is_equal_approx(player.view_zoom.current, z0) and tc.aim_cell == cell
+			and bool(player.touch_input.get("mouse_buttons", {}).get(MOUSE_BUTTON_LEFT, false)),
+			"зум %.2f → %.2f, цель %s" % [z0, player.view_zoom.current, str(tc.aim_cell)])
+	# Кнопка (бег, прыжок) и палец по миру — тоже не щипок.
+	_touch(2, tc.btn_center["e"], true)
+	await wait(0.1)
+	ok("кнопка + палец по миру не зумят", is_equal_approx(player.view_zoom.current, z0)
+			and tc.aim_cell == cell)
+	_touch(2, tc.btn_center["e"], false)
 	_touch(1, _screen(World.cell_to_world(cell)), false)
 	_touch(0, tc.stick_center, false)
 	await wait(0.2)
