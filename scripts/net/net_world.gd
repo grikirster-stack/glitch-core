@@ -102,6 +102,7 @@ func _ready() -> void:
 	Net.on(NetCodec.Msg.TILES, _on_tiles)
 	Net.on(NetCodec.Msg.FLUID, _on_fluid)
 	Net.on(NetCodec.Msg.GLOBAL, _on_global)
+	Net.on(NetCodec.Msg.MISSION, _on_mission)   # ADR-004: глава кампании хоста
 	# События глобального состояния — в ближайший такт, а не через секунду.
 	Game.day_started.connect(_mark_global.unbind(1))
 	Game.objective_changed.connect(_mark_global.unbind(1))
@@ -389,6 +390,8 @@ func _apply_snapshot(payload: PackedByteArray) -> void:
 	if is_joined:
 		print("СЕТЬ: снимок заново: %d Б, %.1f мс" % [payload.size(), last_apply_ms])
 		return
+	if d.get("mission") is Dictionary:   # ADR-004: глава кампании — марионеткой
+		Campaign.net_apply(d["mission"])
 	is_joined = true
 	# От Net.join() (Net._join_t0): рукопожатие, мир по сиду (main.gd строит его в
 	# обработчике session_started — раньше или позже нашего), просьба и снимок.
@@ -396,6 +399,15 @@ func _apply_snapshot(payload: PackedByteArray) -> void:
 	print("СЕТЬ: мир хоста получен: снимок %d Б, применён за %.1f мс; вход %d мс" % [
 			payload.size(), last_apply_ms, join_total_ms])
 	joined.emit()
+
+
+## Клиент: состояние главы кампании (кадр MISSION). До снимка — мимо: главу создаст снимок.
+func _on_mission(sender: int, payload: PackedByteArray) -> void:
+	if not Net.is_client() or sender != 1 or not is_joined:
+		return
+	var d: Dictionary = NetCodec.decode_mission(payload)
+	if not d.is_empty():
+		Campaign.net_apply(d)
 
 
 ## Просить снимок заново (расхождение сверки).

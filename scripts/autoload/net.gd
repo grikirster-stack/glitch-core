@@ -33,7 +33,7 @@ signal roster_changed
 enum Role { OFFLINE, HOST, CLIENT }
 
 # --- транспорт (§ 9.2: не баланс — калибровочный PR их не трогает)
-const PROTO: int = 9                 ## версия протокола: поднимать при смене кодека, IDs, таблиц DB (2 — MP-D: HIT, звуки, Fx; 3 — MP-H: LOBBY; 4 — MP-E: net_state машин, запись предмета в SPAWN; 5 — MP-G: CHEST, TECH, InvOp; 6 — MP-F: фантомы, Ent; 7 — MP-I: COOP; 8 — MP-J: TEAM; 9 — #139: требование релея в COOP RELAY)
+const PROTO: int = 10                ## версия протокола: поднимать при смене кодека, IDs, таблиц DB (2 — MP-D: HIT, звуки, Fx; 3 — MP-H: LOBBY; 4 — MP-E: net_state машин, запись предмета в SPAWN; 5 — MP-G: CHEST, TECH, InvOp; 6 — MP-F: фантомы, Ent; 7 — MP-I: COOP; 8 — MP-J: TEAM; 9 — #139: требование релея в COOP RELAY; 10 — ADR-004: MISSION, глава в приветствии)
 const GAME_PORT: int = 24642
 const DISCOVERY_PORT: int = 24643
 const TICK_HZ: int = 20              ## пакет состояния
@@ -75,6 +75,7 @@ const CHANNEL_OF: Dictionary = {
 	NetCodec.Msg.FLUID: 0, NetCodec.Msg.MACHINE_ADD: 0, NetCodec.Msg.MACHINE_DEL: 0,
 	NetCodec.Msg.MACHINES: 0, NetCodec.Msg.SPAWN: 0, NetCodec.Msg.DESPAWN: 0,
 	NetCodec.Msg.GLOBAL: 0, NetCodec.Msg.EVENT: 0,
+	NetCodec.Msg.MISSION: 0,   # ADR-004: тем же каналом, что GLOBAL, — итог главы раньше состояния забега
 	NetCodec.Msg.STATE: 1, NetCodec.Msg.OWN: 1,
 	NetCodec.Msg.INV: 2, NetCodec.Msg.CMD: 2, NetCodec.Msg.CMD_RESULT: 2,
 	NetCodec.Msg.BARRIER: 2, NetCodec.Msg.BARRIER_PASS: 2,
@@ -343,7 +344,7 @@ func _on_auth(id: int, data: PackedByteArray) -> void:
 		var welcome: Dictionary = {"ok": res["ok"], "reason": res["reason"],
 				"seed": int(session.get("seed", 0)) if res["ok"] else 0,
 				"slot": int(res["slot"]), "session_name": String(session.get("session_name", "")),
-				"nick": String(res["nick"])}
+				"nick": String(res["nick"]), "mission": String(session.get("mission", ""))}
 		api.send_auth(id, NetCodec.encode_welcome(welcome))
 		if bool(res["ok"]):
 			_accepted[id] = {"peer": id, "slot": int(res["slot"]), "uid": int(hello["uid"]),
@@ -369,6 +370,8 @@ func _on_auth(id: int, data: PackedByteArray) -> void:
 	session["slot"] = int(w["slot"])
 	session["session_name"] = String(w["session_name"])
 	session["nick"] = String(w["nick"])
+	if String(w["mission"]) != "":   # ADR-004: глава кампании хоста
+		session["mission"] = String(w["mission"])
 	api.complete_auth(1)
 
 

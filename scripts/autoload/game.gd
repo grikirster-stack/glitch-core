@@ -37,6 +37,10 @@ var scenario_mode: bool = false
 ## Этап цели по ADR-001 § 4.7: 0 — не начато, 1 — запитать станцию,
 ## 2 — собрать данные, 3 — собрать релей, 4 — удержать сигнал. Ведёт #32.
 var objective_stage: int = 0
+## Глава кампании (Mission, scripts/campaign/) или null — свободная игра. Без типа —
+## как player: цикл autoload → class_name. Цель главы заменяет четыре этапа релея:
+## update_objective молчит, трекер HUD показывает задачи главы.
+var mission = null
 
 # ------------------------------------------------- ИНДЕКС ИСТОЧНИКОВ ПИТАНИЯ
 ## Список генераторов (источников питания) — чтобы is_powered() не перебирал
@@ -125,6 +129,7 @@ func reset_run() -> void:
 	# Раннер сценариев зовёт reset_run() перед каждым сценарием — флаг должен
 	# пережить сброс, иначе директор угрозы просыпался посреди сценария.
 	objective_stage = 0
+	mission = null                  # главу создаёт main.gd после сброса (Campaign.start)
 	# --- Цель и релей (#32)
 	relay_speed = 1.0
 	_objective_t = 0.0
@@ -517,9 +522,16 @@ func _tick_objective(delta: float) -> void:
 func update_objective() -> void:
 	if not Net.is_authority():   # СЕТЬ (ADR-002): этап цели приходит от хоста
 		return
+	if in_mission():             # КАМПАНИЯ: цель — задачи главы, этапы релея молчат
+		return
 	var target: int = objective_target()
 	if target > objective_stage:
 		_enter_stage(target)
+
+
+## Идёт ли глава кампании (Game.mission жив).
+func in_mission() -> bool:
+	return mission != null and is_instance_valid(mission)
 
 
 ## Этап, до которого игрок дошёл: первый невыполненный, релей запущен — четвёртый.

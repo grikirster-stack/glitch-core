@@ -119,6 +119,9 @@ func quick_load() -> bool:
 	if hardcore():
 		Game.notify("Хардкор: сохранений нет.", Color(1.0, 0.6, 0.4))
 		return false
+	if Game.in_mission():   # ADR-004: поверх главы чужой забег не кладём
+		Game.notify("Загрузить нельзя: %s." % Save.MISSION_NO_SAVE, Color(1.0, 0.6, 0.4))
+		return false
 	if not Save.load_game():
 		Game.notify("Загрузить нельзя: %s." % Save.last_error, Color(1.0, 0.6, 0.4))
 		return false

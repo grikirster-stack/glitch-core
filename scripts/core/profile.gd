@@ -38,6 +38,8 @@ var recent_ips: PackedStringArray = PackedStringArray()
 var port: int = DEFAULT_PORT
 ## Меньше глитча и мерцания (доступность, ADR-003 V7): читает GlitchFx.
 var less_glitch: bool = false
+## Пройденные главы кампании (id из Campaign.CHAPTERS, ADR-004).
+var campaign_done: PackedStringArray = PackedStringArray()
 
 
 ## Параметры вида: 4 индекса по 4 бита в одном u16 (в сети — как есть).
@@ -127,6 +129,11 @@ static func load_or_create(path: String = "") -> Profile:
 			else DEFAULT_PORT
 	var v_lg: Variant = cfg.get_value("access", "less_glitch", false)
 	p.less_glitch = v_lg if v_lg is bool else false
+	var v_done: Variant = cfg.get_value("campaign", "done", PackedStringArray())
+	if v_done is PackedStringArray or v_done is Array:
+		for c in v_done:
+			if c is String and not p.campaign_done.has(c):
+				p.campaign_done.append(c)
 	if p.uid == 0:
 		p.uid = new_uid()
 		dirty = true
@@ -145,6 +152,16 @@ func save_to(path: String = "") -> Error:
 	cfg.set_value("net", "recent_ips", recent_ips)
 	cfg.set_value("net", "port", port)
 	cfg.set_value("access", "less_glitch", less_glitch)
+	# Главы отмечает и сама игра (Campaign.mark_done) — свой экземпляр, загруженный раньше
+	# (меню, пауза), не должен стереть отметку: в файл — объединение.
+	var old: ConfigFile = ConfigFile.new()
+	if old.load(path) == OK:
+		var v_done: Variant = old.get_value("campaign", "done", PackedStringArray())
+		if v_done is PackedStringArray or v_done is Array:
+			for c in v_done:
+				if c is String and not campaign_done.has(c):
+					campaign_done.append(c)
+	cfg.set_value("campaign", "done", campaign_done)
 	return cfg.save(path)
 
 

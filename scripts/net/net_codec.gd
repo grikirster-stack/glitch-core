@@ -41,6 +41,7 @@ enum Msg {
 	TECH,          ## 0: исследования, главы, обрывки — всем (MP-G, #91)
 	COOP,          ## 0 / 2: кооператив — смерть, вклад в релей, итоги (MP-I, #94)
 	TEAM,          ## 2: команда — перекличка (G), маска и «глюк» двойника (MP-J, #95)
+	MISSION,       ## 0: глава кампании — этап, задачи, итог (ADR-004)
 }
 
 ## Типы событий EVENT. Только дописывать в конец.
@@ -114,7 +115,8 @@ static func frame_payload(data: PackedByteArray) -> PackedByteArray:
 const HELLO_FIELDS: Dictionary = {"proto": TYPE_INT, "build": TYPE_STRING, "uid": TYPE_INT,
 		"nick": TYPE_STRING, "look": TYPE_INT}
 const WELCOME_FIELDS: Dictionary = {"ok": TYPE_BOOL, "reason": TYPE_STRING, "seed": TYPE_INT,
-		"slot": TYPE_INT, "session_name": TYPE_STRING, "nick": TYPE_STRING}
+		"slot": TYPE_INT, "session_name": TYPE_STRING, "nick": TYPE_STRING,
+		"mission": TYPE_STRING}   # ADR-004: id главы кампании ("" — свободная игра)
 
 
 static func encode_hello(d: Dictionary) -> PackedByteArray:
@@ -880,7 +882,7 @@ static func schema_sample() -> PackedByteArray:
 	var parts: Array = [
 		encode_hello({"proto": 1, "build": "dev", "uid": 123456789012, "nick": "Аня", "look": 0x1234}),
 		encode_welcome({"ok": true, "reason": "", "seed": 31337, "slot": 1,
-				"session_name": "Экспедиция", "nick": "Аня 2"}),
+				"session_name": "Экспедиция", "nick": "Аня 2", "mission": "siege"}),
 		encode_roster([{"slot": 0, "peer": 1, "uid": -5, "look": 7, "nick": "Хост"}]),
 		encode_cells(PackedInt32Array([0, 115199]), PackedByteArray([3, 9])),
 		encode_machine_add({"kind": "belt", "cell": Vector2i(3, 4)}),
@@ -928,6 +930,9 @@ static func schema_sample() -> PackedByteArray:
 	out.append_array(inv_schema_sample())
 	out.append_array(coop_schema_sample())   # MP-I (#94)
 	out.append_array(team_schema_sample())   # MP-J (#95)
+	out.append_array(encode_mission({"id": "siege", "stage": 1, "stages": 2, "title": "Осада",
+			"goals": [["Дожить до рассвета", 0, 1]], "hint": "Q — импульс", "result": 0,
+			"rt": "", "rx": ""}))   # ADR-004
 	return out
 
 
@@ -1424,3 +1429,21 @@ static func team_schema_sample() -> PackedByteArray:
 		out.append_array(p)
 	out.append_array(var_to_bytes([TeamEv.keys(), TEAM_NO_SLOT]))
 	return out
+
+
+# ------------------------------------------------------------------ КАМПАНИЯ (ADR-004)
+## MISSION: состояние главы (Mission.state()) — словарь простых типов, var_to_bytes.
+## Объекты bytes_to_var не декодирует: кадр не выполнит код. Больше MISSION_MAX — мусор.
+
+const MISSION_MAX: int = 4096
+
+
+static func encode_mission(d: Dictionary) -> PackedByteArray:
+	return var_to_bytes(d)
+
+
+static func decode_mission(b: PackedByteArray) -> Dictionary:
+	if b.size() < 4 or b.size() > MISSION_MAX:
+		return {}
+	var v = bytes_to_var(b)
+	return v if v is Dictionary else {}

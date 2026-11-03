@@ -133,6 +133,8 @@ const TUT_SCRAP: int = 6
 var tracker_stage: int = 1
 var tracker_title: String = ""
 var tracker_detail: String = ""
+## Глава кампании (ADR-004): задачи этапа после первой (она — в tracker_detail).
+var mission_lines: Array[String] = []
 ## Шаг цепочки обучения (Tut) и его строка ("" — цепочка пройдена).
 var tutorial_step: int = Tut.DIG
 var tutorial_text: String = ""
@@ -474,7 +476,7 @@ func _update_state(delta: float) -> void:
 	if cursor_changed:
 		power_gen = _pick_power_gen()
 		power_text = _power_line(power_gen)
-		_state_hash = hash([tracker_title, tracker_detail, tutorial_text, power_text])
+		_state_hash = hash([tracker_title, tracker_detail, tutorial_text, power_text, mission_lines])
 
 
 ## Генератор под курсором (в досягаемости), иначе ближайший к игроку.
@@ -542,6 +544,10 @@ func _power_line(g) -> String:
 ## строка под ним. Этап 0 («ещё не пересчитан») показываем как первый. Отсчёт
 ## удержания — в строке под этапом (м:сс), поэтому заголовок без него.
 func _compute_tracker() -> void:
+	if Game.in_mission():
+		_compute_mission()
+		return
+	mission_lines = []
 	var st: int = clampi(Game.objective_stage, 1, Game.OBJECTIVE_STAGES)
 	if Game.relay_active:
 		st = Game.OBJECTIVE_STAGES
@@ -590,8 +596,31 @@ func _compute_tracker() -> void:
 					"СИГНАЛ БЕЗ ПРИСМОТРА" if Game.relay_unattended else "держитесь"]   # MP-I: зона удержания
 
 
+## Глава кампании (ADR-004): «ГЛАВА n · НАЗВАНИЕ — этап k/N», задачи этапа строками
+## «[+] текст» / «[ ] текст есть/нужно»; первая — в tracker_detail.
+func _compute_mission() -> void:
+	var m = Game.mission
+	tracker_stage = int(m.stage) + 1
+	tracker_title = "ГЛАВА %d · %s — %s %d/%d" % [int(m.chapter), String(m.title).to_upper(),
+			String(m.stage_title), mini(int(m.stage) + 1, maxi(1, m.stages_total())), maxi(1, m.stages_total())]
+	var lines: Array[String] = []
+	for g in m.goals:
+		var have: int = int(g["have"])
+		var need: int = int(g["need"])
+		var line: String = ("[+] " if have >= need else "[ ] ") + String(g["text"])
+		if need > 1:
+			line += " %d/%d" % [have, need]
+		lines.append(line)
+	tracker_detail = lines[0] if not lines.is_empty() else ""
+	mission_lines = lines.slice(1)
+
+
 ## Шаг обучения: самый дальний выполненный признак (вперёд — сразу, назад — никогда).
+## В главе кампании вместо цепочки — подсказка этапа (Mission.hint).
 func _compute_tutorial() -> void:
+	if Game.in_mission():
+		tutorial_text = String(Game.mission.hint)
+		return
 	if tutorial_step == Tut.DONE:
 		tutorial_text = ""
 		return
@@ -988,11 +1017,15 @@ func _draw_status_block(font: Font) -> void:
 	var y: float = 54.0
 	# Трекер цели
 	draw_rect(Rect2(x, y, 4, 34), C_BIO)
-	draw_string(font, Vector2(x + 10, y + 13), tracker_title,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, C_BIO.lerp(C_LINE, 0.3))
-	draw_string(font, Vector2(x + 10, y + 30), tracker_detail,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(C_LINE, 0.9))
+	_text_on_plate(font, Vector2(x + 10, y + 13), tracker_title, 13, C_BIO.lerp(C_LINE, 0.3))
+	_text_on_plate(font, Vector2(x + 10, y + 30), tracker_detail, 12, Color(C_LINE, 0.95))
 	y += 44.0
+	if not mission_lines.is_empty():   # ADR-004: остальные задачи этапа
+		draw_rect(Rect2(x, y - 10, 4, 16.0 * mission_lines.size()), C_BIO)
+		for line in mission_lines:
+			_text_on_plate(font, Vector2(x + 10, y + 2), line, 12, Color(C_LINE, 0.95))
+			y += 16.0
+		y += 4.0
 	# Мощность: выбранный/ближайший генератор (§ 4.3)
 	var g = power_gen
 	if g != null and is_instance_valid(g):
@@ -1013,19 +1046,30 @@ func _draw_status_block(font: Font) -> void:
 			state = " · нет угля"
 		elif over:
 			state = " · ПЕРЕГРУЗ"
-		draw_string(font, Vector2(x + 128, y + 15), "%s: нагрузка %.1f / выход %.1f%s" % [power_text, ld, out, state],
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
-				C_WARN.lerp(C_LINE, 0.25) if (over or not g.enabled) else Color(C_HAZARD.lerp(C_LINE, 0.55), 0.92))
+		_text_on_plate(font, Vector2(x + 128, y + 15), "%s: нагрузка %.1f / выход %.1f%s" % [power_text, ld, out, state],
+				12, C_WARN.lerp(C_LINE, 0.25) if (over or not g.enabled) else Color(C_HAZARD.lerp(C_LINE, 0.55), 0.95))
 		y += 22.0
 	elif Game.brownout:
-		draw_string(font, Vector2(x, y + 15), "ПЕРЕГРУЗ СЕТИ — станки замедлены",
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, C_WARN.lerp(C_LINE, 0.25))
+		_text_on_plate(font, Vector2(x, y + 15), "ПЕРЕГРУЗ СЕТИ — станки замедлены", 12, C_WARN.lerp(C_LINE, 0.25))
 		y += 22.0
 	# Обучение: копай → крафт → ТЭЦ → питание → терминал
 	if tutorial_text != "":
-		draw_string(font, Vector2(x, y + 14), "ОБУЧЕНИЕ " + tutorial_text,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(C_HAZARD.lerp(C_LINE, 0.3), 0.95))
+		_text_on_plate(font, Vector2(x, y + 14), ("» " if Game.in_mission() else "ОБУЧЕНИЕ ") + tutorial_text,
+				13, C_HAZARD.lerp(C_LINE, 0.35))
 
+
+## Тёмная подложка строк блока под здоровьем: днём жёлтый и белый текст терялся на
+## светлом небе. Прямоугольник по ширине строки (квадратно, ADR-003) и тёмный контур букв.
+const C_TEXT_BACK: Color = Color("#221A20B8")   ## та же сливовая плашка, что C_PLATE, прозрачнее
+
+
+func _text_on_plate(font: Font, pos: Vector2, text: String, fsize: int, col: Color) -> void:
+	if text == "":
+		return
+	var w: float = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize).x
+	draw_rect(Rect2(pos.x - 5.0, pos.y - float(fsize) - 1.0, w + 10.0, float(fsize) + 6.0), C_TEXT_BACK)
+	draw_string_outline(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, 3, Color(0.0, 0.0, 0.0, 0.85))
+	draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, col)
 
 
 ## Ячейка хотбара i (0…9) на экране. Ею же попадает тап по хотбару (TouchControls, #81).

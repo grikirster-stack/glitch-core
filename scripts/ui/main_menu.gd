@@ -147,6 +147,7 @@ func _on_nick_changed(text: String) -> void:
 	var err: String = Net.nick_error(text)
 	nick_error_label.text = ("Ник: " + err) if err != "" else ""
 	single_button.disabled = err != ""
+	campaign_button.disabled = err != ""   # ADR-004
 	for b in net_buttons:
 		b.disabled = err != ""
 	_refresh_load_buttons()   # #132
@@ -275,6 +276,9 @@ func _build() -> void:
 	continue_button.visible = false
 	right.add_child(continue_button)
 
+	campaign_button = _button("Кампания")   # ADR-004: главы на готовой базе
+	campaign_button.pressed.connect(show_campaign)
+	right.add_child(campaign_button)
 	var single_row: HBoxContainer = HBoxContainer.new()
 	single_row.add_theme_constant_override("separation", 10)
 	right.add_child(single_row)
@@ -287,11 +291,19 @@ func _build() -> void:
 	load_button.pressed.connect(show_load.bind(LOAD_SINGLE))
 	single_row.add_child(load_button)
 	var net_actions: Array[Callable] = [show_host_form, show_browser, show_ip]
+	# «Создать» и «Найти» — в один ряд (ADR-004): с «Кампанией» колонка влезает в 720.
+	var net_row: HBoxContainer = HBoxContainer.new()
+	net_row.add_theme_constant_override("separation", 10)
+	right.add_child(net_row)
 	for k in 3:
 		var b: Button = _button(["Создать игру", "Найти игру", "Подключиться по IP"][k])
 		b.pressed.connect(net_actions[k])
 		net_buttons.append(b)
-		right.add_child(b)
+		if k < 2:
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			net_row.add_child(b)
+		else:
+			right.add_child(b)
 	var quit_b: Button = _button("Выход")
 	quit_b.pressed.connect(func() -> void: get_tree().quit())
 	right.add_child(quit_b)
@@ -540,6 +552,7 @@ func _build_net_screens() -> void:
 	_build_connecting_screen()
 	_build_lobby_screen()
 	_build_load_screen()   # #132
+	_build_campaign_screen()   # ADR-004
 	for k in screens:
 		(screens[k] as Control).visible = k == "main"
 	Net.session_started.connect(_on_net_started)
@@ -648,6 +661,9 @@ func _build_host_screen() -> void:
 	host_port_edit.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_NUMBER
 	_field_row(page, "Порт", host_port_edit)
 	_build_host_load_row(page)   # #132: мир — новый или из сохранения
+	host_mode_button = _button("")   # ADR-004: свободная игра или глава кампании
+	host_mode_button.pressed.connect(cycle_host_mode)
+	_field_row(page, "Режим", host_mode_button)
 	host_error_label = _label("", 15, ERR_COLOR)
 	host_error_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	host_error_label.custom_minimum_size = Vector2(NET_W, 22)
@@ -667,6 +683,7 @@ func show_host_form() -> void:
 	host_name_edit.text = ("Экспедиция " + profile.nick).substr(0, NAME_MAX)
 	host_seed_edit.text = ""
 	clear_host_load()   # #132
+	set_host_mission("")   # ADR-004
 	host_port_edit.text = str(profile.port)
 	set_slots(Balance.MP_MAX_PLAYERS)
 	host_error_label.text = ""
@@ -732,6 +749,8 @@ func create_game() -> void:
 		host_error_label.text = String(f["error"])
 		return
 	var sd: int = int(f["seed"]) if int(f["seed"]) >= 0 else int(_rng.randi() & 0x7FFFFFFF)
+	if host_mission != "":
+		sd = Campaign.SEED   # ADR-004: глава — на мире кампании
 	profile.port = int(f["port"])
 	profile.save_to(profile_path)
 	Net.local_profile = profile.to_net()
@@ -741,7 +760,9 @@ func create_game() -> void:
 		lobby.queue_free()
 		lobby = null
 		return
-	if host_load_slot != "":   # #132: при «Старт» хост грузит слот (main.gd → Save.load_net, MP-I)
+	if host_mission != "":   # ADR-004: глава кампании — main.gd строит её базу, клиентам — в приветствии
+		Net.session["mission"] = host_mission
+	elif host_load_slot != "":   # #132: при «Старт» хост грузит слот (main.gd → Save.load_net, MP-I)
 		Net.session["load"] = host_load_slot
 	show_screen("lobby")
 	_refresh_lobby()
@@ -1264,6 +1285,7 @@ func _start_from_save(info: Dictionary) -> void:
 
 ## «Создать игру» из сохранения: сид — из файла (поле закрыто), слот — в create_game.
 func pick_host_load(info: Dictionary) -> void:
+	set_host_mission("")   # ADR-004: из сохранения — свободная игра
 	host_load_slot = String(info["slot"])
 	host_seed_edit.text = str(int(info["seed"]))
 	host_seed_edit.editable = false
@@ -1340,3 +1362,129 @@ func refresh_continue() -> void:
 func continue_run() -> void:
 	if not continue_info.is_empty():
 		_start_from_save(continue_info)
+
+
+# ------------------------------------------------------------------ КАМПАНИЯ (ADR-004)
+## «Кампания» — экран глав: строка на главу (номер, название, пройдена / закрыта),
+## под списком — завязка и чему учит выбранная, «Начать главу». Глава открыта, когда
+## пройдена предыдущая (Profile.campaign_done, Campaign.unlocked). Старт —
+## Net.session = {mode: single, seed: Campaign.SEED, hardcore: false, mission: id}.
+## В «Создать игру» строка «Режим» листает «Свободная игра» и открытые главы: глава
+## кладётся в Net.session["mission"], сид — Campaign.SEED (сид из формы не нужен).
+
+var campaign_button: Button
+var campaign_rows: Array[Button] = []
+var campaign_info: Label
+var campaign_go: Button
+## Выбранная глава на экране «Кампания» ("" — нет открытых).
+var campaign_pick: String = ""
+var host_mode_button: Button
+## Глава сетевой игры ("" — свободная игра).
+var host_mission: String = ""
+
+
+func _build_campaign_screen() -> void:
+	var page: VBoxContainer = _net_page("Кампания")
+	screens["campaign"] = page
+	var sub: Label = _label("Пять глав на одном мире: готовая база, цель и короткая история. "
+			+ "Каждая знакомит с частью механик. Играть можно и по сети: «Создать игру» → «Режим».",
+			16, DIM_COLOR)
+	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	sub.custom_minimum_size = Vector2(NET_W, 0)
+	page.add_child(sub)
+	var group: ButtonGroup = ButtonGroup.new()
+	for id in Campaign.CHAPTERS:
+		var b: Button = _button("")
+		b.toggle_mode = true
+		b.button_group = group
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.pressed.connect(pick_chapter.bind(id))
+		campaign_rows.append(b)
+		page.add_child(b)
+	campaign_info = _label("", 16, Color(0.9, 0.93, 1.0))
+	campaign_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	campaign_info.custom_minimum_size = Vector2(NET_W, 64)
+	page.add_child(campaign_info)
+	campaign_go = _button("Начать главу")
+	campaign_go.pressed.connect(start_campaign)
+	_buttons_row(page, [_back_button(), campaign_go])
+
+
+func show_campaign() -> void:
+	if Net.nick_error(nick_edit.text) != "":
+		return
+	refresh_campaign()
+	show_screen("campaign")
+
+
+## Строки глав по профилю; выбрана первая непройденная открытая (всё пройдено — последняя).
+func refresh_campaign() -> void:
+	var done: PackedStringArray = Profile.load_or_create(profile_path).campaign_done
+	profile.campaign_done = done
+	var pick: String = ""
+	for i in Campaign.CHAPTERS.size():
+		var id: String = Campaign.CHAPTERS[i]
+		var info: Dictionary = Campaign.info(id)
+		var open: bool = Campaign.unlocked(id, done)
+		var mark: String = " — пройдена" if done.has(id) else ("" if open else " — закрыта")
+		campaign_rows[i].text = "%d. %s%s" % [int(info["chapter"]), String(info["title"]), mark]
+		campaign_rows[i].disabled = not open
+		if open and (pick == "" or not done.has(id) and done.has(pick)):
+			pick = id
+	pick_chapter(pick)
+
+
+func pick_chapter(id: String) -> void:
+	campaign_pick = id
+	var i: int = Campaign.CHAPTERS.find(id)
+	for k in campaign_rows.size():
+		campaign_rows[k].set_pressed_no_signal(k == i)
+	if i < 0:
+		campaign_info.text = ""
+		campaign_go.disabled = true
+		return
+	var info: Dictionary = Campaign.info(id)
+	campaign_info.text = "%s
+Чему учит: %s." % [String(info["brief"]), String(info["teaches"])]
+	campaign_go.disabled = false
+
+
+func start_campaign() -> void:
+	if campaign_pick == "" or Net.nick_error(nick_edit.text) != "":
+		return
+	profile.save_to(profile_path)
+	Net.local_profile = profile.to_net()
+	Net.session = campaign_session(campaign_pick)
+	_leave()
+	get_tree().change_scene_to_file(GAME_SCENE)
+
+
+## Сессия главы кампании для main.gd (формат Net.session).
+static func campaign_session(id: String) -> Dictionary:
+	return {"mode": "single", "seed": Campaign.SEED, "hardcore": false, "mission": id}
+
+
+## «Режим» в «Создать игру»: свободная игра → открытые главы по кругу.
+func cycle_host_mode() -> void:
+	var done: PackedStringArray = Profile.load_or_create(profile_path).campaign_done
+	var list: Array[String] = [""]
+	for id in Campaign.CHAPTERS:
+		if Campaign.unlocked(id, done):
+			list.append(id)
+	set_host_mission(list[(list.find(host_mission) + 1) % list.size()])
+
+
+func set_host_mission(id: String) -> void:
+	host_mission = id if Campaign.has(id) else ""
+	if host_mission == "":
+		host_mode_button.text = "Свободная игра"
+	else:
+		var info: Dictionary = Campaign.info(host_mission)
+		host_mode_button.text = "Кампания: %d. %s" % [int(info["chapter"]), String(info["title"])]
+	if host_mission != "":
+		clear_host_load()   # глава начинается с готовой базы — сохранение не нужно
+		host_seed_edit.text = str(Campaign.SEED)
+		host_seed_edit.editable = false
+	elif not host_seed_edit.editable and host_load_slot == "":
+		host_seed_edit.text = ""
+		host_seed_edit.editable = true

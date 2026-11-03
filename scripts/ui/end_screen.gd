@@ -8,6 +8,8 @@ extends Control
 ## мира, тумана войны и HUD.
 
 signal restart_requested
+## Глава кампании пройдена — дальше следующая (ADR-004): N, Enter или тап.
+signal next_requested
 
 ## Слой CanvasLayer экрана: выше UI (HUD, инвентарь, журнал — слой 10).
 const LAYER: int = 20
@@ -26,6 +28,8 @@ var t: float = 0.0
 var respawn_delay: float = -1.0
 ## Эпилог победы (абзацы через «\n»); пусто — обычный экран.
 var epilogue: String = ""
+## Итог главы кампании: есть следующая глава (подсказка «[N] — дальше»).
+var can_next: bool = false
 
 
 func _ready() -> void:
@@ -41,6 +45,7 @@ func show_end(p_title: String, p_subtitle: String, p_color: Color, p_stats: Arra
 	stats = p_stats
 	respawn_delay = -1.0
 	epilogue = ""
+	can_next = false
 	net_death = false
 	net_watch = ""
 	visible = true
@@ -55,6 +60,15 @@ func show_victory(p_epilogue: String, p_stats: Array) -> void:
 	epilogue = p_epilogue
 
 
+## Итог главы кампании (ADR-004): заголовок, глава, текст абзацами — раскладкой эпилога.
+## p_next — есть следующая глава: N / Enter / тап ведут дальше, R — заново.
+func show_mission(p_title: String, p_subtitle: String, p_text: String, p_color: Color,
+		p_stats: Array, p_next: bool) -> void:
+	show_end(p_title, p_subtitle, p_color, p_stats)
+	epilogue = p_text if p_text != "" else " "
+	can_next = p_next
+
+
 ## Экран смерти с эпитафией и отсчётом до респауна в капсуле.
 func show_death(p_epitaph: String, delay: float) -> void:
 	show_end("ТЕБЯ НАШЛИ", p_epitaph, Color(0.92, 0.28, 0.34), [])
@@ -64,6 +78,7 @@ func show_death(p_epitaph: String, delay: float) -> void:
 func hide_end() -> void:
 	visible = false
 	respawn_delay = -1.0
+	can_next = false
 	epilogue = ""
 	net_death = false
 	net_watch = ""
@@ -80,12 +95,17 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k: InputEventKey = event
-		if k.keycode == KEY_R or k.keycode == KEY_ENTER or k.keycode == KEY_SPACE:
+		if can_next and (k.keycode == KEY_N or k.keycode == KEY_ENTER):
+			next_requested.emit()
+		elif k.keycode == KEY_R or k.keycode == KEY_ENTER or k.keycode == KEY_SPACE:
 			restart_requested.emit()
 	# На телефоне клавиш нет: тап по экрану — новая попытка (#81). Не раньше чем
 	# через 1.5 с — случайный тап в момент смерти забег не перезапускает.
 	elif event is InputEventScreenTouch and event.pressed and t > 1.5:
-		restart_requested.emit()
+		if can_next:
+			next_requested.emit()
+		else:
+			restart_requested.emit()
 
 
 func _draw() -> void:
@@ -148,7 +168,7 @@ func _draw_victory(font: Font, a: float) -> void:
 
 func _draw_prompt(font: Font, a: float, y: float) -> void:
 	var blink: float = 0.55 + 0.45 * sin(t * 4.0)
-	draw_string(font, Vector2(0, y), "[R] — новая попытка",
+	draw_string(font, Vector2(0, y), "[N] — следующая глава   [R] — заново" if can_next else "[R] — новая попытка",
 			HORIZONTAL_ALIGNMENT_CENTER, size.x, 22, Color(1.0, 0.95, 0.7, a * blink))
 
 

@@ -94,6 +94,12 @@ func in_scenario() -> bool:
 	return Game.scenario_mode
 
 
+## Глава кампании ведёт волны сама (Mission.director = false): бюджета и состава
+## ночи нет, телеграфы и спавн — штатные (telegraph, _tick_pending).
+func scripted() -> bool:
+	return Game.in_mission() and not bool(Game.mission.director)
+
+
 # ------------------------------------------------------------------ ФОРМУЛЫ
 
 ## Уровень угрозы T по формуле § 4.5.
@@ -227,6 +233,9 @@ func tick(delta: float) -> void:
 	_light_t -= delta
 	Game.phantoms_alive = get_tree().get_nodes_in_group("phantom").size()
 	_tick_pending(delta)
+	if scripted():   # КАМПАНИЯ: волны ведёт глава (Mission.wave), телеграфы — здесь
+		_update_dusk_hum()
+		return
 	var now_active: bool = Game.is_night() or Game.relay_active
 	_update_dusk_hum()
 	if now_active and not active:
@@ -307,16 +316,22 @@ func request_spawn(kind: String) -> bool:
 	var ppos: Vector2 = spawn_anchor()
 	var vent: Vector2i = pick_vent(ppos)
 	if vent.x >= 0:
-		var pos: Vector2 = World.cell_to_world(vent)
-		var hum: int = Sfx.loop_start("vent_hum", pos, TELEGRAPH_HUM_DB)
-		pending.append({"cell": vent, "kind": kind, "t": Balance.VENT_TELEGRAPH, "hum": hum})
-		vent_warning.emit(vent)
+		telegraph(vent, kind)
 		return true
 	var cell: Vector2i = find_cave_cell(ppos)
 	if cell.x < 0:
 		return false
 	_spawn_now(kind, World.cell_to_world(cell))
 	return true
+
+
+## Телеграф из заданной вентиляции: гул и пар, через VENT_TELEGRAPH с — фантом.
+## Зовёт и директор (request_spawn), и глава кампании (Mission.wave).
+func telegraph(vent: Vector2i, kind: String) -> void:
+	var pos: Vector2 = World.cell_to_world(vent)
+	var hum: int = Sfx.loop_start("vent_hum", pos, TELEGRAPH_HUM_DB)
+	pending.append({"cell": vent, "kind": kind, "t": Balance.VENT_TELEGRAPH, "hum": hum})
+	vent_warning.emit(vent)
 
 
 func _tick_pending(delta: float) -> void:

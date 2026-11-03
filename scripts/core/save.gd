@@ -60,6 +60,8 @@ static func exists(s: String = slot) -> bool:
 static func save_blocker() -> String:
 	if Net.is_client():   # СЕТЬ (ADR-002 § 4.9): сохраняет только хост
 		return NET_HOST_SAVES
+	if Game.in_mission():   # ADR-004: глава короткая и начинается с готовой базы
+		return MISSION_NO_SAVE
 	var p = Game.player
 	if p == null or not is_instance_valid(p):
 		return "нет игрока"
@@ -369,6 +371,8 @@ static func gather_join() -> Dictionary:
 	# Требование релея от N (#139) — только во входе: файл сохранения его не пишет,
 	# хост пересчитывает по героям на связи.
 	(d["game"] as Dictionary)["relay_req"] = Game.relay_req.duplicate()
+	if Game.in_mission():   # ADR-004: глава кампании — клиенту марионеткой (Campaign.net_apply)
+		d["mission"] = Game.mission.state()
 	return d
 
 
@@ -396,6 +400,7 @@ static func apply_join(d: Dictionary) -> bool:
 ## входит со стартовым набором.
 
 const NET_HOST_SAVES: String = "сохраняет хост"
+const MISSION_NO_SAVE: String = "в главе кампании сохранений нет — её можно начать заново"
 const NET_LOAD_IN_MENU: String = "в сети загрузка — из меню при создании игры"
 
 static var _net_loading: bool = false

@@ -25,6 +25,10 @@ func _start() -> void:
 	for a in _args:
 		if a.begins_with("--seed="):
 			seed_value = int(a.substr(7))
+	# КАМПАНИЯ (ADR-004): глава — на своём мире. Клиент берёт сид у хоста (он тот же).
+	var mission_id: String = _mission_arg()
+	if mission_id != "" and not Net.is_client():
+		seed_value = Campaign.SEED
 
 	# Список сценариев печатаем до генерации мира — так быстрее.
 	var scenarios: Array = _scenario_args()
@@ -66,6 +70,17 @@ func _start() -> void:
 	player.global_position = World.spawn_point
 	Game.player = player
 	UI.bind(player)
+	if mission_id != "" and not Net.is_client():
+		Campaign.start(self, mission_id)   # база главы, время, первый этап — до набора героя
+	elif mission_id != "":
+		Campaign.net_apply({"id": mission_id})   # клиент: марионетка, состояние — со снимком
+
+	# ASCII-карта окрестностей базы (с --mission= — с базой главы) для проектирования глав:
+	# godot --headless --path . -- --map-dump --seed=31337 [--mission=siege]
+	if _args.has("--map-dump"):
+		load("res://tools/campaign_map.gd").dump(_args)
+		get_tree().quit(0)
+		return
 
 	# Экран финала/смерти — в своём CanvasLayer поверх HUD (#32): под Node2D сцены
 	# он рисовался в мировых координатах и уходил под туман войны.
@@ -75,16 +90,15 @@ func _start() -> void:
 	end_screen = EndScreen.new()
 	end_layer.add_child(end_screen)
 	end_screen.restart_requested.connect(_restart)
+	end_screen.next_requested.connect(_next_chapter)
 	Game.state_changed.connect(_on_state_changed)
 	_setup_respawn()
 	add_child(TouchControls.new())   # сенсорное управление (#81): сенсорный экран или --touch
 
 	give_starter_kit(player)
 
-	Game.notify("Экспедиция «Кербер-9». Связь с орбитой потеряна.", Color(0.8, 0.9, 1.0))
-	Game.notify("Цель: собрать релей-ядро и улететь. Начните с добычи руды.", Color(0.5, 0.95, 0.8))
-	Game.notify("Задания у терминалов дают данные. %s" % ("Копать — тап к стене, строить — блок в хотбаре."
-			if UI.touch_on else "Копать — ЛКМ, строить — ПКМ."), Color(0.85, 0.85, 0.7))
+	if not Game.in_mission() and not (Net.is_client() and mission_id != ""):
+		_intro_notify()
 
 	# Автотест логики: godot --path . -- --test
 	if _args.has("--test") and scenarios.is_empty():
@@ -108,8 +122,19 @@ func _start() -> void:
 	_menu_load()   # МЕНЮ «Загрузить» (#132): одиночная игра из сохранения
 
 
-## Стартовый набор героя (свой и, в сети, каждого товарища — MP-D, #89).
+func _intro_notify() -> void:
+	Game.notify("Экспедиция «Кербер-9». Связь с орбитой потеряна.", Color(0.8, 0.9, 1.0))
+	Game.notify("Цель: собрать релей-ядро и улететь. Начните с добычи руды.", Color(0.5, 0.95, 0.8))
+	Game.notify("Задания у терминалов дают данные. %s" % ("Копать — тап к стене, строить — блок в хотбаре."
+			if UI.touch_on else "Копать — ЛКМ, строить — ПКМ."), Color(0.85, 0.85, 0.7))
+
+
+## Стартовый набор героя (свой и, в сети, каждого товарища — MP-D, #89). В главе
+## кампании — набор главы (Mission.kit).
 func give_starter_kit(p: Player) -> void:
+	if Game.in_mission():
+		Game.mission.give_kit(p)
+		return
 	p.inv.add(IDs.I.LAMP, 3)
 	p.inv.add(IDs.I.COAL, 6)
 	p.inv.add(IDs.I.IRON_PLATE, 2)
@@ -153,7 +178,48 @@ func _restart() -> void:
 	get_tree().reload_current_scene()
 
 
+# ------------------------------------------------- КАМПАНИЯ (ADR-004)
+## Глава: Net.session["mission"] (меню «Кампания», «Создать игру» → «Режим», приветствие
+## хоста у клиента), иначе флаг --mission=<id>. "" — свободная игра.
+func _mission_arg() -> String:
+	var id: String = String(Net.session.get("mission", ""))
+	if id == "":
+		for a in _args:
+			if a.begins_with("--mission="):
+				id = a.substr(10).strip_edges()
+	return id if Campaign.has(id) else ""
+
+
+## Следующая глава после победы (N на экране итога): та же сцена с новой главой.
+func _next_chapter() -> void:
+	if not Game.in_mission() or Net.is_online():
+		return
+	var nxt: String = Campaign.next_of(String(Game.mission.id))
+	if nxt == "":
+		return
+	Net.session = {"mode": "single", "seed": Campaign.SEED, "hardcore": false, "mission": nxt}
+	get_tree().reload_current_scene()
+
+
+func _show_mission_end() -> void:
+	var m = Game.mission
+	m.on_game_state(Game.state)
+	var won: bool = int(m.result) == Mission.Result.WON or Game.state == Game.State.WON
+	var nxt: String = Campaign.next_of(String(m.id)) if won and not Net.is_online() else ""
+	var sub: String = "Глава %d «%s»" % [int(m.chapter), String(m.title)]
+	if nxt != "":
+		sub += " · дальше — «%s»" % String(Campaign.info(nxt).get("title", ""))
+	var head: String = String(m.result_title)
+	if head == "":
+		head = "ГЛАВА %d ПРОЙДЕНА" % int(m.chapter) if won else "ГЛАВА ПРОВАЛЕНА"
+	end_screen.show_mission(head, sub, String(m.result_text),
+			Mission.C_WIN if won else Mission.C_LOSE, _stats(), nxt != "")
+
+
 func _on_state_changed(s: int) -> void:
+	if Game.in_mission() and (s == Game.State.WON or s == Game.State.DEAD):
+		_show_mission_end()
+		return
 	if s == Game.State.DEAD:
 		end_screen.show_end("ТЕБЯ НАШЛИ", Lore.epitaph(), Color(0.92, 0.28, 0.34), _stats())
 	elif s == Game.State.WON:
@@ -214,6 +280,9 @@ func _respawn() -> void:
 		return
 	player.respawn_at(World.spawn_point)
 	end_screen.hide_end()
+	if Game.in_mission():   # ADR-004: ночь главы не перематывается — её надо пережить
+		Game.notify("Капсула на базе. Мешок с вещами остался на месте гибели.", Color(1.0, 0.85, 0.6))
+		return
 	# К рассвету: ставим время чуть раньше конца ночи — Game сам перейдёт рубеж
 	# и начнёт новую смену (day_number, «Смена N», роспуск фантомов — по сигналу).
 	Game.time_of_day = Balance.NIGHT_END - 0.0005

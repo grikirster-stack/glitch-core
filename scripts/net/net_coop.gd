@@ -236,7 +236,8 @@ func _wipe_respawn() -> void:
 	for h in Game.players:
 		if is_instance_valid(h) and h.dead:
 			_respawn(h, "Капсулы на базе. Мешки с вещами остались на местах гибели.")
-	Game.time_of_day = Balance.NIGHT_END - 0.0005
+	if not Game.in_mission():   # ADR-004: в главе ночь не перематывается — её надо пережить
+		Game.time_of_day = Balance.NIGHT_END - 0.0005
 
 
 # ------------------------------------------------------------------ КАМЕРА ЗА ТОВАРИЩЕМ
@@ -324,7 +325,7 @@ static func team_notify(text: String, color: Color) -> void:
 
 ## Хост: автосохранение на каждом рассвете (D13). В --hardcore сохранений нет.
 func _on_dawn(_day: int) -> void:
-	if not _active or not Net.is_host() or _hardcore():
+	if not _active or not Net.is_host() or _hardcore() or Game.in_mission():   # ADR-004: в главе не пишем
 		return
 	var slot: String = Save.net_auto_slot(String(Net.session.get("session_name", "")))
 	if Save.save_game(slot):
