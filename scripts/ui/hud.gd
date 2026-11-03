@@ -1158,15 +1158,23 @@ func _fill_team_key() -> void:
 		_key[b + 3] = m.get_instance_id() & 0x7fffffff
 
 
+## Рамка плашки команды при ширине экрана w и n товарищах (её обходит и сенсорная
+## раскладка, TouchControls._layout).
+static func team_plate_rect(w: float, n: int) -> Rect2:
+	return Rect2(w - MAP_OFFSET.x, MAP_OFFSET.y + MAP_SIZE.y + 6.0, MAP_SIZE.x,
+			TEAM_HEAD_H + TEAM_ROW_H * n + 2.0)
+
+
 ## Плашка команды под миникартой. Всё, что здесь рисуется, — в ключе [46..61].
 func _draw_team(font: Font, w: float) -> void:
 	var n: int = team_mates.size()
 	if n == 0:
 		return
-	var x: float = w - MAP_OFFSET.x
-	var y: float = MAP_OFFSET.y + MAP_SIZE.y + 6.0
+	var plate: Rect2 = team_plate_rect(w, n)
+	var x: float = plate.position.x
+	var y: float = plate.position.y
 	var win: int = _key[48]
-	draw_rect(Rect2(x, y, MAP_SIZE.x, TEAM_HEAD_H + TEAM_ROW_H * n + 2.0), C_PLATE)
+	draw_rect(plate, C_PLATE)
 	var head: String = "КОМАНДА" if win <= 0 else "ПЕРЕКЛИЧКА %d с · [G] — ответить" % win
 	draw_string(font, Vector2(x + 4, y + 11), head, HORIZONTAL_ALIGNMENT_LEFT, -1, 10,
 			C_BIO if win > 0 else Color(C_LINE, 0.6))

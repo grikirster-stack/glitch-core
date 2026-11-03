@@ -24,6 +24,12 @@ extends CanvasLayer
 ## справа снизу — E, бег, прыжок (ниже уведомлений, правее хотбара); справа под
 ## миникартой — J, I, ниже — Q и V. Размер кнопки — не меньше MIN_MM на экране.
 ## Всё рисуется одним Control и только при смене видимого состояния.
+##
+## Сеть (#135): в сетевой игре с товарищами есть G — перекличка (NetTeam читает G через
+## тот же шов Player._key, у клиента она уходит счётчиком нажатий пакета ввода). Под
+## миникартой тогда плашка команды (HUD.team_plate_rect): J и I встают под неё, а Q, V и
+## G — одним рядом под ними (V слева от Q, G слева от V), чтобы колонка не опустилась
+## на уведомления. В одиночной игре G нет, раскладка прежняя.
 
 ## Слой: над HUD и панелями (UI — 10), под экраном финала (EndScreen.LAYER — 20).
 const LAYER: int = 15
@@ -64,6 +70,7 @@ const BUTTONS: Array = [
 	{"id": "inv", "key": 0, "glyph": "I", "cap": "инвентарь"},
 	{"id": "journal", "key": 0, "glyph": "J", "cap": "журнал"},
 	{"id": "build", "key": 0, "glyph": "", "cap": "строить"},
+	{"id": "g", "key": KEY_G, "glyph": "G", "cap": "перекличка"},   # только в сети (rollcall_shown)
 ]
 
 ## Включено ли сенсорное управление (видно и читает касания).
@@ -84,6 +91,10 @@ var stick_vec: Vector2 = Vector2.ZERO
 
 var _pad: Control = null
 var _layout_size: Vector2 = Vector2.ZERO
+## Строк плашки команды, под которые сдвинута правая колонка (_team_rows; 0 — плашки нет).
+var _layout_team: int = 0
+## NetTeam (без типа — цикл зависимостей, как в HUD); ищется только в сети.
+var _team: Node = null
 var _k: float = 1.0
 ## Пальцы на экране: индекс -> {"kind": "stick"|"btn"|"world"|"hotbar"|"none", "id": String}.
 var _fingers: Dictionary = {}
@@ -183,6 +194,32 @@ func _active() -> bool:
 
 # ------------------------------------------------------------------ РАСКЛАДКА
 
+## Кнопка переклички G есть: сетевая игра и в ней есть товарищи.
+func rollcall_shown() -> bool:
+	return Net.is_online() and Game.players.size() > 1
+
+
+## Идёт перекличка (кнопка G подсвечена: тап — ответить).
+func _rollcall_on() -> bool:
+	if not rollcall_shown():
+		return false
+	if _team == null or not is_instance_valid(_team):
+		_team = get_tree().get_first_node_in_group("net_team")
+	return _team != null and bool(_team.call("rollcall_on"))
+
+
+## Товарищей на плашке команды HUD (её рисует HUD при игроках > 1): 0 — плашки нет.
+func _team_rows() -> int:
+	return mini(Game.players.size() - 1, HUD.TEAM_MAX) if Game.players.size() > 1 else 0
+
+
+## Кнопку видно и она жмётся: G — только в сети, при открытой панели — только I и J.
+func _shown(id: String, blocking: bool) -> bool:
+	if blocking and id != "inv" and id != "journal":
+		return false
+	return id != "g" or rollcall_shown()
+
+
 ## Множитель раскладки: кнопка не меньше MIN_MM на экране этого устройства.
 func _scale() -> float:
 	var dpi: int = DisplayServer.screen_get_dpi()
@@ -196,6 +233,7 @@ func _scale() -> float:
 
 func _relayout() -> void:
 	_layout_size = get_viewport().get_visible_rect().size
+	_layout_team = _team_rows()
 	_layout(_layout_size)
 	_pad.queue_redraw()
 
@@ -210,16 +248,27 @@ func _layout(sz: Vector2) -> void:
 	stick_center = Vector2(m + 10.0 * _k + stick_radius, sz.y - m - stick_radius)
 	var jump: Vector2 = Vector2(sz.x - m - jr, sz.y - m - jr)
 	var run: Vector2 = Vector2(jump.x - jr - g - r, sz.y - m - r)
-	# Под миникартой (HUD: до y = 112) — I и J, под ними столбиком Q и V.
-	var inv: Vector2 = Vector2(sz.x - m - r, 126.0 + r)
+	# Под миникартой (HUD: до y = 112) — I и J, под ними столбиком Q и V. В сети
+	# с товарищами — под плашкой команды, а Q, V и G (перекличка) — одним рядом:
+	# колонка на высоту плашки ниже налезла бы на уведомления.
+	var top: float = 126.0
+	if _layout_team > 0:
+		top = maxf(top, HUD.team_plate_rect(sz.x, _layout_team).end.y + 8.0)
+	var inv: Vector2 = Vector2(sz.x - m - r, top + r)
+	var step: float = 2.0 * r + g
+	var q: Vector2 = Vector2(inv.x, inv.y + step)
+	var v: Vector2 = Vector2(inv.x, q.y + step)
+	if _layout_team > 0:
+		v = Vector2(q.x - step, q.y)
 	btn_center = {
 		"jump": jump,
 		"run": run,
-		"e": Vector2(run.x - 2.0 * r - g, run.y),
+		"e": Vector2(run.x - step, run.y),
 		"inv": inv,
-		"journal": Vector2(inv.x - 2.0 * r - g, inv.y),
-		"q": Vector2(inv.x, inv.y + 2.0 * r + g),
-		"v": Vector2(inv.x, inv.y + 4.0 * r + 2.0 * g),
+		"journal": Vector2(inv.x - step, inv.y),
+		"q": q,
+		"v": v,
+		"g": Vector2(v.x - step, q.y) if _layout_team > 0 else Vector2(q.x - step, q.y),
 		"build": Vector2(m + r, stick_center.y - stick_radius - g - r),
 	}
 	btn_radius = {}
@@ -227,13 +276,14 @@ func _layout(sz: Vector2) -> void:
 		btn_radius[id] = jr if id == "jump" else r
 
 
-## Что под пальцем: "stick", id кнопки или "". При открытой панели живы только I и J.
+## Что под пальцем: "stick", id кнопки или "". При открытой панели живы только I и J,
+## G — только в сети (_shown).
 func control_at(pos: Vector2) -> String:
 	var blocking: bool = UI.blocking()
 	var best: String = ""
 	var best_d: float = INF
 	for id in btn_center:
-		if blocking and id != "inv" and id != "journal":
+		if not _shown(id, blocking):
 			continue
 		var d: float = pos.distance_to(btn_center[id])
 		if d <= float(btn_radius[id]) * BTN_GRAB and d < best_d:
@@ -394,6 +444,7 @@ func _physics_process(dt: float) -> void:
 	_keys[KEY_E] = held("e")
 	_keys[KEY_Q] = held("q")
 	_keys[KEY_V] = held("v")
+	_keys[KEY_G] = held("g")
 	for id in _btn_pulse:
 		_btn_pulse[id] = maxi(0, int(_btn_pulse[id]) - 1)
 	# Пока палец на экране, кнопки мыши — только наши: эмулированный клик
@@ -421,7 +472,7 @@ func _cell_empty(world: Vector2) -> bool:
 # ------------------------------------------------------------------ РИСОВАНИЕ
 
 func _process(_delta: float) -> void:
-	if get_viewport().get_visible_rect().size != _layout_size:
+	if get_viewport().get_visible_rect().size != _layout_size or _team_rows() != _layout_team:
 		_relayout()
 	_fill_key()
 	if _key != _last_key:
@@ -451,6 +502,7 @@ func _fill_key() -> void:
 	_key[10] = 1 if p.hiding else 0
 	_key[11] = int(p.task_progress * 24.0)
 	_key[12] = 1 if (_world_finger >= 0 and _world_place) else 0
+	_key[13] = (1 if rollcall_shown() else 0) | (2 if _rollcall_on() else 0)
 
 
 func _draw_pad() -> void:
@@ -463,7 +515,7 @@ func _draw_pad() -> void:
 	var p: Player = _player()
 	for b in BUTTONS:
 		var id: String = String(b["id"])
-		if blocking and id != "inv" and id != "journal":
+		if not _shown(id, blocking):
 			continue
 		var on: bool = held(id)
 		if id == "run":
@@ -472,6 +524,8 @@ func _draw_pad() -> void:
 			on = build_mode or (_world_finger >= 0 and _world_place)
 		elif id == "v":
 			on = on or p.hiding
+		elif id == "g":
+			on = on or _rollcall_on()   # идёт перекличка — G отвечает
 		elif id == "inv":
 			on = UI.panel.visible
 		elif id == "journal":

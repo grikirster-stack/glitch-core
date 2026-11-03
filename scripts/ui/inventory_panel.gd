@@ -24,7 +24,12 @@ extends Control
 
 const PANEL: Vector2 = Vector2(820, 540)
 const SLOT: int = 38
-const INV_COLS: int = 9
+## Сетка инвентаря (#135): в ряду 10 ячеек — верхний ряд ровно хотбар (Inventory.hotbar_size,
+## клавиши 1…0), ниже рюкзак. Шаг чуть мельче SLOT, чтобы 10 колонок встали левее рецептов.
+const INV_COLS: int = 10
+const INV_SLOT: int = 36
+## Зазор между хотбаром и рюкзаком (в нём — разделитель), px.
+const HOTBAR_GAP: int = 6
 const CHEST_COLS: int = 8
 const RECIPE_H: int = 46
 ## Сколько строк рецептов влезает в панель (дальше — колесо мыши).
@@ -260,9 +265,11 @@ func _inv_y() -> float:
 	return 258.0
 
 
+## Ячейка i инвентаря: верхний ряд — хотбар, рюкзак ниже на HOTBAR_GAP.
 func _inv_slot_rect(i: int) -> Rect2:
-	return Rect2(_panel_pos() + Vector2(16 + (i % INV_COLS) * SLOT, _inv_y() + 6 + int(i / INV_COLS) * SLOT),
-			Vector2(SLOT - 4, SLOT - 4))
+	var row: int = int(i / INV_COLS)
+	var y: float = _inv_y() + 6 + row * INV_SLOT + (HOTBAR_GAP if row > 0 else 0)
+	return Rect2(_panel_pos() + Vector2(16 + (i % INV_COLS) * INV_SLOT, y), Vector2(INV_SLOT - 4, INV_SLOT - 4))
 
 
 func _goal_rect() -> Rect2:
@@ -486,8 +493,17 @@ func _draw_inventory(origin: Vector2) -> void:
 	var inv_y: float = _inv_y()
 	var w: float = _text(origin + Vector2(16, inv_y - 6), "ВЫ", 40, 14, C_HEAD)
 	_text(origin + Vector2(16 + w + 8, inv_y - 6), "верхний ряд — хотбар (1…0)", 300 - w, 12, C_DIM)
+	# Разделитель хотбар | рюкзак — посередине зазора между рядами.
+	var a: Rect2 = _inv_slot_rect(0)
+	var b: Rect2 = _inv_slot_rect(INV_COLS * 2 - 1)
+	var ly: float = floorf((a.end.y + b.position.y) * 0.5) + 0.5
+	draw_line(Vector2(a.position.x, ly), Vector2(b.end.x, ly), Color(0.5, 0.8, 1.0, 0.25), 1.0)
 	for i in player.inv.size:
-		_draw_slot(_inv_slot_rect(i), _shown(player.inv.slots, NetCodec.Box.INV, i), i < player.inv.hotbar_size)
+		var r: Rect2 = _inv_slot_rect(i)
+		_draw_slot(r, _shown(player.inv.slots, NetCodec.Box.INV, i), i < player.inv.hotbar_size)
+		if i < player.inv.hotbar_size:
+			# Клавиша ячейки хотбара — как на HUD: 1…9, 0.
+			_str(r.position + Vector2(3, 11), str((i + 1) % 10), 10, Color(0.75, 0.88, 1.0, 0.55))
 
 
 func _draw_recipes(rx: float, origin: Vector2) -> void:
@@ -725,7 +741,8 @@ func _draw_slot(r: Rect2, stack: ItemStack, hotbar: bool) -> void:
 		draw_rect(Rect2(r.position, Vector2(r.size.x, 2)), Color(0.5, 0.8, 1.0, 0.4))
 	if stack.is_empty():
 		return
-	_icon(stack.id, Rect2(r.position + Vector2(5, 5), Vector2(SLOT - 14, SLOT - 14)))
+	var isz: Vector2 = Vector2(SLOT - 14, SLOT - 14)   # иконка 24 px по центру ячейки (34 или 32 px)
+	_icon(stack.id, Rect2((r.position + (r.size - isz) * 0.5).floor(), isz))
 	if stack.count > 1:
 		var s: String = str(stack.count)
 		var w: float = _w(s, 12)

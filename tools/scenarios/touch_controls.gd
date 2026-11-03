@@ -10,6 +10,7 @@ extends ScenarioBase
 ## пока первый держит джойстик (мультитач); тап по хотбару выбирает слот; долгий тап
 ## по пустой клетке ставит блок, короткий — нет; режим «строить» ставит коротким
 ## тапом; кнопки I и J открывают и закрывают окна, тап по миру при этом не копает.
+## В одиночной игре кнопки переклички G нет (#135; в сети её проверяет mp_doppel).
 
 var tc: TouchControls = null
 
@@ -25,6 +26,12 @@ func run() -> void:
 			not tc.enabled and not tc.visible and player.touch_input.is_empty())
 	tc.set_enabled(true)
 	ok("включается по запросу: шов игрока получил клавиши", tc.enabled and player.touch_input.has("keys"))
+	await wait(0.1)
+	ok("в одиночной игре кнопки G (перекличка) нет: не жмётся, колонка под миникартой на месте",
+			not tc.rollcall_shown() and tc.control_at(tc.btn_center["g"]) != "g"
+			and not bool(player.touch_input["keys"].get(KEY_G, false))
+			and is_equal_approx(tc.btn_center["inv"].y, 126.0 + float(tc.btn_radius["inv"])),
+			"под пальцем «%s», I на y=%.0f" % [tc.control_at(tc.btn_center["g"]), tc.btn_center["inv"].y])
 
 	await _mining_with_stick_held()
 	await _walk_and_jump()
