@@ -12,7 +12,8 @@ extends ScenarioBase
 ##
 ## Стенды #70 (ширина ямы, площадка без ям, яма с разрывом в полу) стоят в
 ## расчищенном прямоугольнике в небе справа от базы — им нужно больше места,
-## чем есть у ровной полки на земле.
+## чем есть у ровной полки на земле. Там же стенд #147: малая порция в широкой
+## замкнутой впадине стоит видимой лужей, а не плёнкой.
 ##
 ## Команда:
 ##   godot --headless --path . -- --scenario=fluid_pools --seed=31337
@@ -31,6 +32,7 @@ const SKY_X0: int = SKY_X1 - 80    # левый край расчистки
 const PIT_WIDTHS: Array = [12, 16, 24, 32, 48]
 const FLAT_LEN: int = 48       # ширина площадки без ям
 const GAP_PIT: int = 32        # ширина ямы с разрывом в полу
+const PUDDLE_PIT: int = 27     # ширина впадины для малой лужи (#147)
 
 # Пределы правила воды. Читаем из карты констант, а не World.FLUID_GAP напрямую:
 # так этот же сценарий меряет и прежнее правило (замер «до» в PR #70).
@@ -52,6 +54,7 @@ func run() -> void:
 	await _measure_wide_pits()
 	await _measure_flat()
 	await _measure_gap_pit()
+	await _measure_small_puddle()
 	_clear(SKY_X0, SKY_X1, SKY_TOP, SKY_BOTTOM)
 	print("  ЗАМЕР стенды #70: шагов воды %d, просмотрено клеток %d, больше всего клеток за шаг %d, худший шаг воды %.2f мс" % [
 			World.fluid_steps - sky_steps, World.fluid_scan_cells - sky_scans,
@@ -289,6 +292,49 @@ func _measure_gap_pit() -> void:
 					"в яме %d порций, дно %s" % [left,
 						str(_row_levels(x0 + 1, x0 + GAP_PIT, SKY_F - 1))])
 		_clear(x0, x0 + GAP_PIT + 1, SKY_TOP, SKY_F + 6)
+
+
+## Малая порция в широкой замкнутой впадине (#147): впадина PUDDLE_PIT клеток
+## с ровным дном, посередине льём сначала 2 порции, потом 8. Воды мало на всё
+## дно — она должна стоять видимой компактной лужей (каждая мокрая клетка не
+## меньше FLUID_VISIBLE), а не растечься невидимой плёнкой по 1 порции.
+func _measure_small_puddle() -> void:
+	var parts: Array = []
+	for amount in [2, 8]:
+		var v: int = int(amount)
+		var x0: int = SKY_X0 + 2
+		_build_pit(x0, PUDDLE_PIT, 2)
+		var src: Vector2i = Vector2i(x0 + 1 + PUDDLE_PIT / 2, SKY_F - 1)
+		World.set_fluid(src, v)
+		await wait(2.5)
+		var levels: Array = _row_levels(x0 + 1, x0 + PUDDLE_PIT, SKY_F - 1)
+		var wet: int = 0      # клеток с водой (любой уровень)
+		var film: int = 0     # из них невидимых (1 порция)
+		var first: int = -1
+		var last: int = -1
+		for i in levels.size():
+			var lv: int = int(levels[i])
+			if lv <= 0:
+				continue
+			wet += 1
+			if lv < World.FLUID_VISIBLE:
+				film += 1
+			if first < 0:
+				first = i
+			last = i
+		var total: int = _sum(x0 + 1, x0 + PUDDLE_PIT, SKY_F - 1, SKY_F - 1)
+		var visible: int = _wet(x0 + 1, x0 + PUDDLE_PIT, SKY_F - 1)
+		parts.append("%d порций → мокрых клеток %d, видимых %d, плёнки %d" % [v, wet, visible, film])
+		var dump: String = "дно %s" % str(levels)
+		ok("впадина %d, %d порций: вода не потерялась" % [PUDDLE_PIT, v], total == v,
+				"порций %d, %s" % [total, dump])
+		ok("впадина %d, %d порций: видимая лужа, а не плёнка" % [PUDDLE_PIT, v],
+				visible >= 1 and film == 0, dump)
+		ok("впадина %d, %d порций: лужа компактная (одним куском, не шире %d клеток)" % [
+				PUDDLE_PIT, v, v / World.FLUID_VISIBLE],
+				wet <= v / World.FLUID_VISIBLE and last - first + 1 == wet, dump)
+		_clear(x0, x0 + PUDDLE_PIT + 1, SKY_TOP, SKY_F)
+	print("  ЗАМЕР малая лужа во впадине %d клеток: %s" % [PUDDLE_PIT, "; ".join(parts)])
 
 
 ## Больше всего клеток сканирования за один шаг воды (0, если счётчика нет).

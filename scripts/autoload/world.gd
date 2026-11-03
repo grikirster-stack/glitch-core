@@ -1176,6 +1176,9 @@ func _fluid_tick() -> void:
 ##     ниже: так дно заливается ровно (разброс не больше порции), а не лесенкой.
 ## Одна порция — плёнка, её не видно; по ровному она стоит на месте и
 ## сползает, только если в той же яме есть куда стечь вниз.
+## На сухую клетку твёрдого дна лужа шагает, только если её воды хватит на
+## видимый слой и после шага (см. _fluid_may_spread, #147): малая порция в
+## широкой яме стоит компактной видимой лужей, а не плёнкой по всему дну.
 func _fluid_step_cell(idx: int) -> bool:
 	var lvl: int = fluid[idx]
 	if lvl <= 0:
@@ -1221,13 +1224,50 @@ func _fluid_step_cell(idx: int) -> bool:
 	var sr: int = _fluid_scan_side(x, y, 1, nr, lvl - 2)
 	if sr < 0:
 		return false
-	if lower_l and (lvl >= nl + 2 or sl == 1) and not (lower_r and lvl >= nr + 2 and lvl < nl + 2):
+	var go_l: bool = lower_l and (lvl >= nl + 2 or sl >= 1) and _fluid_may_spread(idx, idx - 1, nl, sl)
+	var go_r: bool = lower_r and (lvl >= nr + 2 or sr >= 1) and _fluid_may_spread(idx, idx + 1, nr, sr)
+	if go_l and not (go_r and lvl >= nr + 2 and lvl < nl + 2):
 		_fluid_move_side(idx, idx - 1, x, x - 1, y)
 		return true
-	if lower_r and (lvl >= nr + 2 or sr == 1):
+	if go_r:
 		_fluid_move_side(idx, idx + 1, x, x + 1, y)
 		return true
 	return false
+
+
+## Можно ли луже по ровному дну ямы шагнуть из клетки idx в соседнюю n
+## (уровень nlvl, итог сканирования в ту сторону — s). Ограничивает растекание
+## количество воды, а не ширина ямы (#147):
+##   * в мокрую клетку и к ямке в дне (s == 2) — всегда: внутри лужи вода
+##     выравнивается, а к самой низкой точке впадины стекает даже плёнка;
+##   * на сухую клетку над водой (полная вода — пол) — всегда: тонкий слой на
+##     поверхности озера сливается с ним и выглядит ровной гладью;
+##   * на сухую клетку твёрдого дна — только если воды в луже (связный ряд
+##     мокрых клеток вокруг idx) хватит на видимый слой и после шага:
+##     объём ≥ FLUID_VISIBLE × (длина + 1). Иначе лужа стоит компактно, а не
+##     растекается плёнкой по 1 порции. Воды достаточно — лужа шагает дальше
+##     и наполняет яму любой ширины до FLUID_SCAN.
+func _fluid_may_spread(idx: int, n: int, nlvl: int, s: int) -> bool:
+	if nlvl > 0 or s == 2:
+		return true
+	if _fluid_open(tiles[n + W]):
+		return true
+	var vol: int = fluid[idx]
+	var cells: int = 1
+	for d in [-1, 1]:
+		var i: int = idx
+		var cx: int = idx % W
+		for k in FLUID_SCAN:
+			i += d
+			cx += d
+			if cx < 0 or cx >= W:
+				break
+			fluid_scan_cells += 1
+			if fluid[i] == 0 or not _fluid_open(tiles[i]):
+				break
+			vol += fluid[i]
+			cells += 1
+	return vol >= FLUID_VISIBLE * (cells + 1)
 
 
 ## Перелить одну порцию вбок: из клетки idx в соседнюю n.
@@ -1256,25 +1296,27 @@ func _fluid_supported(i: int) -> bool:
 ## Возвращает:
 ##   -1 — до стенки разрыв в полу или стенки нет ближе FLUID_SCAN клеток:
 ##        это ровная земля, а не яма;
-##    1 — стенка есть, и за соседом (уровень nlvl) по ровному или под горку
-##        лежит клетка не выше low или ямка в дне — воде есть куда «скатиться»;
+##    2 — стенка есть, и за соседом (уровень nlvl) по ровному или под горку
+##        лежит ямка в дне — самая низкая точка, вода стекает туда (#147);
+##    1 — стенка есть, и за соседом по ровному или под горку лежит клетка
+##        не выше low — воде есть куда «скатиться»;
 ##    0 — стенка есть, а ниже ничего нет.
 func _fluid_scan_side(x: int, y: int, d: int, nlvl: int, low: int) -> int:
 	if y + 1 >= H:
 		return 0   # нижний ряд мира: под ним бедрок, пол сплошной
 	var row: int = y * W
 	var cx: int = x
-	var state: int = 0  # 0 — ищем низину, 1 — нашли, 2 — путь к ней закрыт горкой
+	var state: int = 0  # 0 — ищем низину, 1 — нашли клетку не выше low, 2 — путь закрыт горкой, 3 — нашли ямку
 	var gap: int = 0    # клеток подряд без опоры под рядом
 	for k in FLUID_SCAN:
 		cx += d
 		if cx < 0 or cx >= W:
-			return 1 if state == 1 else 0
+			return _fluid_scan_result(state)
 		fluid_scan_cells += 1
 		var i: int = row + cx
 		var t: int = tiles[i]
 		if t != IDs.T.AIR and t != IDs.T.WATER:
-			return 1 if state == 1 else 0
+			return _fluid_scan_result(state)
 		var bt: int = tiles[i + W]
 		var hole: bool = (bt == IDs.T.AIR or bt == IDs.T.WATER) and fluid[i + W] < FLUID_MAX
 		if hole:
@@ -1283,13 +1325,26 @@ func _fluid_scan_side(x: int, y: int, d: int, nlvl: int, low: int) -> int:
 				return -1
 		else:
 			gap = 0
-		if k > 0 and state == 0:
+		if k > 0 and (state == 0 or state == 1):
+			# Низину нашли — смотрим дальше, нет ли за ней ямки (пока не горка).
 			var f: int = fluid[i]
-			if f <= low or hole:
+			if hole:
+				state = 3
+			elif f <= low:
 				state = 1
 			elif f > nlvl:
-				state = 2
+				state = 2 if state == 0 else 4   # 4 — низина есть, к ямке не пройти
 	return -1
+
+
+## Итог _fluid_scan_side по состоянию поиска низины.
+func _fluid_scan_result(state: int) -> int:
+	match state:
+		3:
+			return 2
+		1, 4:
+			return 1
+	return 0
 
 
 ## Заперт ли ряд y вокруг клетки x стенками с обеих сторон — стоит ли вода
