@@ -135,7 +135,8 @@ func run_host() -> void:
 				"%.0f px, взгляд %d, окно %s, обзор %s, копка %s" % [dop.global_position.distance_to(p1.global_position),
 				p1.facing, str(p1.net_window_open), str(dop._compute_los(World.world_to_cell(dop.global_position),
 				World.world_to_cell(p1.global_position))), str(p1.mining_cell)])
-		ok("цель двойника — клиент 1 (ближайший)", dop.player == p1)
+		# MP-J (#95, ADR-002 § 4.8): цель двойника — самый отбившийся, а не ближайший.
+		ok("цель двойника — самый отбившийся герой", _doppel_target_ok(dop), _who(dop.player))
 	await barrier("frozen")
 	await barrier("window")
 	await wait(0.5)
@@ -153,12 +154,44 @@ func run_host() -> void:
 	finish()
 
 
+## Цель каждого фантома — ближайший доступный герой; у двойника — самый отбившийся
+## доступный (MP-J, #95, ADR-002 § 4.8).
 func _targets_nearest() -> bool:
 	for p in alive_phantoms():
 		var ph: Phantom = p
-		if ph.player != nearest_target(ph.global_position):
+		if ph.kind == "doppel":
+			if not _doppel_target_ok(ph):
+				return false
+		elif ph.player != nearest_target(ph.global_position):
 			return false
 	return true
+
+
+## Цель двойника — доступный герой с наибольшей дистанцией до ближайшего живого
+## товарища (с допуском гистерезиса Phantom.MASK_SWITCH_PX).
+func _doppel_target_ok(dop: Phantom) -> bool:
+	var t: Player = dop.player as Player if is_instance_valid(dop.player) else null
+	if t == null or not t.net_targetable():
+		return false
+	var best: float = -1.0
+	for h in Game.players:
+		var p: Player = h as Player
+		if p.net_targetable():
+			best = maxf(best, _isolation(p))
+	return _isolation(t) >= best - Phantom.MASK_SWITCH_PX
+
+
+func _isolation(p: Player) -> float:
+	var iso: float = INF
+	for h in Game.players:
+		var o: Player = h as Player
+		if o != p and not o.dead:
+			iso = minf(iso, p.global_position.distance_to(o.global_position))
+	return iso
+
+
+func _who(h: Node) -> String:
+	return String(h.get("nick")) if h != null and is_instance_valid(h) else "—"
 
 
 func _pursuers(h: Player) -> int:
