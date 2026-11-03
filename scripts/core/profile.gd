@@ -10,7 +10,9 @@ extends RefCounted
 ##             look — параметры вида, Look (u16: 4 части по 4 бита);
 ##   [net]     recent_ips — последние адреса «Подключиться по IP» (MP-H, #93);
 ##             port       — порт игры;
-##   [access]  less_glitch — «Меньше глитча и мерцания» (ADR-003 V7, #108): GlitchFx.calm.
+##   [access]  less_glitch — «Меньше глитча и мерцания» (ADR-003 V7, #108): GlitchFx.calm;
+##   [view]    zoom — зум камеры (ViewZoom): его пишет сама игра, не меню, поэтому
+##                    поля в профиле нет — read_zoom/write_zoom, save_to его сохраняет.
 ##
 ## Чужой или битый файл не валит игру: неверный ник и тип поля — значение по
 ## умолчанию, uid 0 — новый uid. Неизвестные индексы вида хранятся как есть,
@@ -162,6 +164,10 @@ func save_to(path: String = "") -> Error:
 				if c is String and not campaign_done.has(c):
 					campaign_done.append(c)
 	cfg.set_value("campaign", "done", campaign_done)
+	# Зум пишет игра (write_zoom) — профиль меню его не знает и не стирает.
+	var v_zoom: Variant = old.get_value("view", "zoom", 0.0)
+	if v_zoom is float:
+		cfg.set_value("view", "zoom", v_zoom)
 	return cfg.save(path)
 
 
@@ -177,6 +183,28 @@ static func read_less_glitch(path: String = "") -> bool:
 		return false
 	var v: Variant = cfg.get_value("access", "less_glitch", false)
 	return v if v is bool else false
+
+
+## Зум камеры из файла (ViewZoom); 0.0 — не выбирали, нет файла или битое поле.
+static func read_zoom(path: String = "") -> float:
+	if path == "":
+		path = default_path()
+	var cfg: ConfigFile = ConfigFile.new()
+	if cfg.load(path) != OK:
+		return 0.0
+	var v: Variant = cfg.get_value("view", "zoom", 0.0)
+	return float(v) if v is float or v is int else 0.0
+
+
+## Записать зум в файл, не трогая остальное. Файла нет — создаётся только с зумом
+## (uid и прочее досоздаст load_or_create).
+static func write_zoom(z: float, path: String = "") -> Error:
+	if path == "":
+		path = default_path()
+	var cfg: ConfigFile = ConfigFile.new()
+	cfg.load(path)
+	cfg.set_value("view", "zoom", z)
+	return cfg.save(path)
 
 
 ## «Подключиться по IP» (MP-H, #93): адрес — в начало списка последних, без повторов,

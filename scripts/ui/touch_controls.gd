@@ -15,6 +15,13 @@ extends CanvasLayer
 ## лучу дальше, но не дальше пальца; постройка — одна на клетку под пальцем, ведёшь
 ## пальцем — ставишь линией. Долгого тапа больше нет: он спорил с копкой.
 ##
+## Зум — щипок двумя пальцами по миру (ViewZoom.set_now): второй палец лёг на мир, пока
+## первый там, — оба ведут зум, а не копку. Чтобы щипок не успел копнуть или поставить
+## блок первым пальцем (пальцы ложатся не разом), палец по миру начинает работать через
+## PINCH_WAIT кадров; короткий тап, отпущенный раньше, всё равно срабатывает — ещё
+## PULSE_FRAMES кадров после отпускания. Пока щипок, третий палец по миру ничего не делает,
+## отпущен один палец щипка — второй тоже молчит до отпускания.
+##
 ## Режим — кнопка над джойстиком: «копать» (кирка) или «строить» (блок). Тап по
 ## ячейке хотбара сам выбирает режим: блок или машина — «строить», остальное — «копать».
 ##
@@ -81,6 +88,9 @@ const C_FOE: Color = Color(1.0, 0.4, 0.4)
 ## Короткий тап держит клавишу хотя бы столько физических кадров: нажатие и
 ## отпускание в одном кадре иначе прошли бы мимо Player.
 const PULSE_FRAMES: int = 3
+## Палец по миру начинает копать и строить через столько физических кадров (~67 мс):
+## успеет лечь второй палец щипка, и щипок ничего не копнёт.
+const PINCH_WAIT: int = 4
 ## Длина ключа видимого состояния (см. _fill_key).
 const KEY_LEN: int = 16
 
@@ -139,6 +149,15 @@ var _world_cell: Vector2i = NO_CELL
 var _world_loose: bool = true
 ## Постройка по этому касанию сделана — ждём, пока палец уйдёт на другую клетку.
 var _world_spent: bool = false
+## Кадров до того, как палец по миру начнёт работать (PINCH_WAIT).
+var _world_wait: int = 0
+## Короткий тап отпущен до конца ожидания: столько кадров он ещё работает по _world_screen.
+var _world_ghost: int = 0
+## Щипок: пальцы (−1 — щипка нет), расстояние между ними и зум в начале.
+var _pinch_a: int = -1
+var _pinch_b: int = -1
+var _pinch_dist: float = 1.0
+var _pinch_zoom: float = ViewZoom.DEFAULT
 ## Мировая точка цели для шва (центр клетки или фантом) и направление ленты или
 ## манипулятора под прицелом (поворот — один на касание; -1 — не они).
 var _aim_point: Vector2 = Vector2.ZERO
@@ -200,6 +219,9 @@ func release_all() -> void:
 	_btn_pulse.clear()
 	_stick_finger = -1
 	_world_finger = -1
+	_world_ghost = 0
+	_pinch_a = -1
+	_pinch_b = -1
 	aim_cell = NO_CELL
 	aim_foe = false
 	stick_vec = Vector2.ZERO
@@ -389,10 +411,15 @@ func _finger_down(index: int, pos: Vector2) -> bool:
 		build_mode = not st.is_empty() and DB.item_place(st.id) != ""
 		_fingers[index] = {"kind": "hotbar", "id": ""}
 		return true
-	if _world_finger < 0:
+	if _world_finger >= 0 and _pinch_a < 0 and _zoom() != null:
+		_pinch_start(index, pos)
+		return true
+	if _world_finger < 0 and _pinch_a < 0:
 		_world_finger = index
 		_world_screen = pos
 		_world_start = pos
+		_world_wait = PINCH_WAIT
+		_world_ghost = 0
 		_world_aim_reset(pos)
 		_fingers[index] = {"kind": "world", "id": ""}
 	else:
@@ -415,9 +442,19 @@ func _finger_up(index: int) -> bool:
 			_btn_hold[id] = maxi(0, int(_btn_hold.get(id, 0)) - 1)
 		"world":
 			_world_finger = -1
-			aim_cell = NO_CELL
-			aim_foe = false
-	return kind == "stick" or kind == "btn" or kind == "hotbar"
+			if _world_wait > 0:
+				_world_ghost = PULSE_FRAMES   # короткий тап: отработает и отпущенный
+				_world_wait = 0
+			else:
+				aim_cell = NO_CELL
+				aim_foe = false
+		"pinch":
+			var other: int = _pinch_b if index == _pinch_a else _pinch_a
+			if _fingers.has(other):
+				_fingers[other] = {"kind": "none", "id": ""}   # оставшийся палец не копает
+			_pinch_a = -1
+			_pinch_b = -1
+	return kind == "stick" or kind == "btn" or kind == "hotbar" or kind == "pinch"
 
 
 func _finger_move(index: int, pos: Vector2) -> bool:
@@ -430,7 +467,10 @@ func _finger_move(index: int, pos: Vector2) -> bool:
 		_world_screen = pos
 		if World.world_to_cell(world_point(pos)) != _world_cell:
 			_world_aim_reset(pos)   # палец ушёл на другую клетку — прицел заново
-	return kind == "stick" or kind == "btn" or kind == "hotbar"
+	elif kind == "pinch":
+		_fingers[index]["pos"] = pos
+		_pinch_update()
+	return kind == "stick" or kind == "btn" or kind == "hotbar" or kind == "pinch"
 
 
 ## Палец по миру встал на новую клетку: допуск снова действует, постройка снова можно.
@@ -472,6 +512,37 @@ func world_point(screen: Vector2) -> Vector2:
 	return get_viewport().get_canvas_transform().affine_inverse() * screen
 
 
+# ------------------------------------------------------------------ ЩИПОК
+
+## Зум камеры своего героя или null.
+func _zoom() -> ViewZoom:
+	var p: Player = _player()
+	return p.view_zoom if p != null and p.view_zoom != null and p.view_zoom.allowed() else null
+
+
+## Второй палец лёг на мир, пока первый там: оба — щипок, копка первого отменяется.
+func _pinch_start(index: int, pos: Vector2) -> void:
+	_pinch_a = _world_finger
+	_pinch_b = index
+	_fingers[_pinch_a] = {"kind": "pinch", "id": "", "pos": _world_screen}
+	_fingers[_pinch_b] = {"kind": "pinch", "id": "", "pos": pos}
+	_world_finger = -1
+	_world_wait = 0
+	aim_cell = NO_CELL
+	aim_foe = false
+	_pinch_dist = maxf(_world_screen.distance_to(pos), 1.0)
+	_pinch_zoom = _zoom().current
+
+
+## Пальцы щипка сдвинулись: зум — во столько раз, во сколько изменилось расстояние.
+func _pinch_update() -> void:
+	var z: ViewZoom = _zoom()
+	if z == null or not _fingers.has(_pinch_a) or not _fingers.has(_pinch_b):
+		return
+	var d: float = Vector2(_fingers[_pinch_a]["pos"]).distance_to(Vector2(_fingers[_pinch_b]["pos"]))
+	z.set_now(_pinch_zoom * d / _pinch_dist)
+
+
 # ------------------------------------------------------------------ ШОВ
 
 func _physics_process(_dt: float) -> void:
@@ -497,11 +568,14 @@ func _physics_process(_dt: float) -> void:
 		_btn_pulse[id] = maxi(0, int(_btn_pulse[id]) - 1)
 	# Пока палец на экране, кнопки мыши — только наши: эмулированный клик
 	# под джойстиком или кнопкой мир не копает.
-	if _fingers.is_empty():
+	if _fingers.is_empty() and _world_ghost <= 0:
 		p.touch_input.erase("mouse_buttons")
 		p.touch_input.erase("mouse")
 		return
-	var world: bool = _world_finger >= 0
+	var waiting: bool = _world_finger >= 0 and _world_wait > 0
+	if waiting:
+		_world_wait -= 1   # ждём второй палец щипка: мир пока не трогаем
+	var world: bool = (_world_finger >= 0 and not waiting) or _world_ghost > 0
 	if world:
 		_update_aim(p)
 	var aimed: bool = world and aim_cell != NO_CELL
@@ -514,6 +588,11 @@ func _physics_process(_dt: float) -> void:
 		p.touch_input["mouse"] = world_point(_world_screen)
 	elif not p.touch_input.has("mouse"):
 		p.touch_input["mouse"] = world_point(_world_start)
+	if _world_ghost > 0:
+		_world_ghost -= 1
+		if _world_ghost == 0:
+			aim_cell = NO_CELL   # отпущенный тап отработал
+			aim_foe = false
 
 
 # ------------------------------------------------------------------ УМНЫЙ ПРИЦЕЛ (#149)
