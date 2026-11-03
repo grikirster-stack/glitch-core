@@ -13,7 +13,9 @@ extends ScenarioBase
 ## копает ближнюю стену по лучу, тап на полклетки мимо камня копает камень; кнопки I и J
 ## открывают и закрывают окна, тап по миру при этом не копает; кнопка «меню» открывает
 ## паузу (#119); «Назад» Android закрывает окно, открывает и закрывает паузу, свернули
-## приложение — пауза и сохранение (#149).
+## приложение — пауза и сохранение (#149). Щипок двумя пальцами по миру ведёт зум
+## (ViewZoom) и ничего не копает и не ставит; короткий тап быстрее ожидания щипка
+## всё равно ставит блок.
 ## В одиночной игре кнопки переклички G нет (#135; в сети её проверяет mp_doppel).
 
 var tc: TouchControls = null
@@ -40,6 +42,7 @@ func run() -> void:
 	await _mining_with_stick_held()
 	await _walk_and_jump()
 	await _smart_aim()
+	await _pinch_zoom()
 	await _windows_by_buttons()
 	await _back_and_app_pause()
 
@@ -90,6 +93,21 @@ func _mining_with_stick_held() -> void:
 	var mb: Dictionary = player.touch_input.get("mouse_buttons", {})
 	ok("мультитач: идти и копать одновременно", bool(keys.get(KEY_D, false))
 			and bool(mb.get(MOUSE_BUTTON_LEFT, false)))
+	# Джойстик и палец по миру — не щипок: палец на джойстике в зум не идёт, как его ни веди.
+	var z0: float = player.view_zoom.current
+	_drag(0, tc.stick_center + Vector2(-tc.stick_radius * 0.9, -tc.stick_radius * 0.5))
+	_drag(1, _screen(World.cell_to_world(cell)) + Vector2(4.0, 0.0))
+	await wait(0.1)
+	ok("джойстик + палец по миру не зумят и копка не сбрасывается",
+			is_equal_approx(player.view_zoom.current, z0) and tc.aim_cell == cell
+			and bool(player.touch_input.get("mouse_buttons", {}).get(MOUSE_BUTTON_LEFT, false)),
+			"зум %.2f → %.2f, цель %s" % [z0, player.view_zoom.current, str(tc.aim_cell)])
+	# Кнопка (бег, прыжок) и палец по миру — тоже не щипок.
+	_touch(2, tc.btn_center["e"], true)
+	await wait(0.1)
+	ok("кнопка + палец по миру не зумят", is_equal_approx(player.view_zoom.current, z0)
+			and tc.aim_cell == cell)
+	_touch(2, tc.btn_center["e"], false)
 	_touch(1, _screen(World.cell_to_world(cell)), false)
 	_touch(0, tc.stick_center, false)
 	await wait(0.2)
@@ -190,6 +208,61 @@ func _smart_aim() -> void:
 	_touch(1, _screen(miss), false)
 	await wait(0.1)
 	World.set_tile(rock.x, rock.y, IDs.T.AIR)
+
+
+## Щипок: второй палец лёг на мир чуть позже первого (как у человека) — оба ведут зум,
+## прицела нет, в режиме «строить» ни один блок не встаёт. Короткий тап ставит блок.
+func _pinch_zoom() -> void:
+	var base: int = stand_in_corridor(4)
+	var vz: ViewZoom = player.view_zoom
+	vz.set_now(ViewZoom.DEFAULT)
+	_settle_camera()
+	await wait(0.6)
+	player.inv.slots[5] = ItemStack.new(IDs.I.STONE, 10)
+	_tap(3, UI.hud.hotbar_slot_rect(5).get_center())
+	await wait(0.1)
+	ok("щипок проверяем в режиме «строить»", tc.build_mode)
+	var stones: int = player.inv.slots[5].count
+	var c: Vector2 = _screen(player.global_position) + Vector2(0.0, -30.0)
+	_touch(4, c + Vector2(-50.0, 0.0), true)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_touch(5, c + Vector2(50.0, 0.0), true)
+	await wait(0.1)
+	ok("второй палец на мире — щипок, прицела нет", tc.aim_cell == TouchControls.NO_CELL
+			and not bool(player.touch_input.get("mouse_buttons", {}).get(MOUSE_BUTTON_RIGHT, false)))
+	_drag(4, c + Vector2(-100.0, 0.0))
+	_drag(5, c + Vector2(100.0, 0.0))
+	await wait(0.1)
+	ok("пальцы разошлись вдвое — зум вдвое ближе (до MAX)",
+			is_equal_approx(vz.current, minf(ViewZoom.DEFAULT * 2.0, ViewZoom.MAX))
+			and is_equal_approx(player.camera.zoom.x, vz.current), "%.3f" % vz.current)
+	_drag(4, c + Vector2(-25.0, 0.0))
+	_drag(5, c + Vector2(25.0, 0.0))
+	await wait(0.1)
+	ok("свели — зум дальше, не дальше MIN",
+			is_equal_approx(vz.current, maxf(ViewZoom.DEFAULT * 0.5, ViewZoom.MIN)), "%.3f" % vz.current)
+	_touch(4, c + Vector2(-25.0, 0.0), false)
+	await wait(0.3)
+	ok("один палец щипка отпущен — второй не строит", tc.aim_cell == TouchControls.NO_CELL
+			and player.inv.slots[5].count == stones)
+	_touch(5, c + Vector2(25.0, 0.0), false)
+	await wait(0.2)
+	ok("щипок не поставил ни блока", player.inv.slots[5].count == stones,
+			"камней %d → %d" % [stones, player.inv.slots[5].count])
+
+	vz.set_now(ViewZoom.DEFAULT)
+	_settle_camera()
+	await wait(0.2)
+	var pc: Vector2i = World.world_to_cell(player.global_position)
+	var cell: Vector2i = Vector2i(pc.x + 2, base - 1)
+	_tap(4, _screen(World.cell_to_world(cell)))
+	var placed: bool = await wait_until(func() -> bool: return World.get_tile_v(cell) == IDs.T.STONE, 0.6)
+	ok("короткий тап (быстрее ожидания щипка) ставит блок", placed and player.inv.slots[5].count == stones - 1,
+			DB.tile_name(World.get_tile_v(cell)))
+	World.set_tile(cell.x, cell.y, IDs.T.AIR)
+	_tap(3, UI.hud.hotbar_slot_rect(6).get_center())
+	await wait(0.1)
 
 
 ## I и J открывают и закрывают окна; при открытом окне тап по миру не копает.

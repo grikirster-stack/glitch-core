@@ -141,10 +141,20 @@ func give_starter_kit(p: Player) -> void:
 	p.inv.add(IDs.I.COPPER_ORE, 4)
 
 
-## Имена сценариев из --scenario=walk,mining
+## Имена сценариев из --scenario=walk,mining. С --scenario-shard=K/N — только каждый
+## N-й, начиная с K-го (1..N): CI гоняет реестр частями параллельно, целиком он
+## не влезает в лимит шага.
 func _scenario_args() -> Array:
 	var out: Array = []
+	var shard: int = 0
+	var shards: int = 1
 	for a in _args:
+		if a.begins_with("--scenario-shard="):
+			var kn: PackedStringArray = a.substr(17).split("/")
+			if kn.size() == 2 and kn[0].is_valid_int() and kn[1].is_valid_int() \
+					and int(kn[1]) > 0 and int(kn[0]) >= 1 and int(kn[0]) <= int(kn[1]):
+				shard = int(kn[0]) - 1
+				shards = int(kn[1])
 		if not a.begins_with("--scenario="):
 			continue
 		for part in String(a.substr(11)).split(",", false):
@@ -153,7 +163,13 @@ func _scenario_args() -> Array:
 				out.append_array(ScenarioRunner.scenario_names())
 			elif name != "":
 				out.append(name)
-	return out
+	if shards == 1:
+		return out
+	var mine: Array = []
+	for i in out.size():
+		if i % shards == shard:
+			mine.append(out[i])
+	return mine
 
 
 ## Печать списка сценариев (удобно для CI и для человека).

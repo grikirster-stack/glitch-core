@@ -119,17 +119,19 @@ jobs:
           if-no-files-found: ignore
 
   # Игровые сценарии (tools/scenarios, issue #71): бот играет через шов ввода.
-  # Весь реестр (--scenario=all) идёт ~4–5 мин на сид, поэтому сиды — параллельными
-  # джобами матрицы, а не шагами одной джобы. fail-fast выключен: провал на одном
-  # сиде не должен прятать результат остальных.
+  # Весь реестр (--scenario=all) с кампанией идёт ~18 мин на сид, поэтому сиды и
+  # части реестра (--scenario-shard=K/3: каждый третий сценарий) — параллельными
+  # джобами матрицы. fail-fast выключен: провал в одной джобе не должен прятать
+  # результат остальных.
   scenarios:
-    name: Сценарии (сид ${{ matrix.seed }})
+    name: Сценарии (сид ${{ matrix.seed }}, часть ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         seed: [31337, 4242, 12345]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -149,26 +151,27 @@ jobs:
 
       # Лог — в файл и в артефакт: при провале видно весь прогон, а в конце шага
       # печатаются только провалы с именем сценария.
-      - name: Все сценарии (сид ${{ matrix.seed }})
+      - name: Сценарии (сид ${{ matrix.seed }}, часть ${{ matrix.shard }}/3)
         timeout-minutes: 12
         run: |
           set +e -o pipefail   # не выходить на провале: сначала напечатать сводку
           mkdir -p .tools
-          godot --headless --path . -- --scenario=all --seed=${{ matrix.seed }} 2>&1 \
-            | tee .tools/scenarios_${{ matrix.seed }}.log
+          godot --headless --path . -- --scenario=all --scenario-shard=${{ matrix.shard }}/3 \
+            --seed=${{ matrix.seed }} 2>&1 \
+            | tee .tools/scenarios_${{ matrix.seed }}_${{ matrix.shard }}.log
           rc=$?
           echo "--- провалы:"
-          awk '/== Сценарий/{sc=$0} /FAIL|SCRIPT ERROR/{print sc " :: " $0}' .tools/scenarios_${{ matrix.seed }}.log
-          grep -q "^ИТОГ: сценариев" .tools/scenarios_${{ matrix.seed }}.log || { echo "нет строки ИТОГ — прогон оборвался"; exit 1; }
+          awk '/== Сценарий/{sc=$0} /FAIL|SCRIPT ERROR/{print sc " :: " $0}' .tools/scenarios_${{ matrix.seed }}_${{ matrix.shard }}.log
+          grep -q "^ИТОГ: сценариев" .tools/scenarios_${{ matrix.seed }}_${{ matrix.shard }}.log || { echo "нет строки ИТОГ — прогон оборвался"; exit 1; }
           # Ошибка скрипта не всегда даёт FAIL (корутина сценария просто обрывается) —
           # роняем шаг и на ней.
-          if grep -q "SCRIPT ERROR" .tools/scenarios_${{ matrix.seed }}.log; then echo "в прогоне есть SCRIPT ERROR"; exit 1; fi
+          if grep -q "SCRIPT ERROR" .tools/scenarios_${{ matrix.seed }}_${{ matrix.shard }}.log; then echo "в прогоне есть SCRIPT ERROR"; exit 1; fi
           exit $rc
 
       - name: Лог сценариев
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: scenarios-${{ matrix.seed }}
-          path: .tools/scenarios_${{ matrix.seed }}.log
+          name: scenarios-${{ matrix.seed }}-${{ matrix.shard }}
+          path: .tools/scenarios_${{ matrix.seed }}_${{ matrix.shard }}.log
           if-no-files-found: ignore

@@ -61,6 +61,8 @@ var emp_cd: float = 0.0
 var emp_max: float = 8.0
 var walk_anim: float = 0.0
 var camera: Camera2D
+## Зум камеры (колесо, +/−, щипок на телефоне); есть только у своего героя, как и камера.
+var view_zoom: ViewZoom = null
 var dead: bool = false
 var _regen: float = 0.0
 var _breath: float = 0.0
@@ -106,7 +108,7 @@ func _ready() -> void:
 		z_index = 5
 		return
 	camera = Camera2D.new()
-	camera.zoom = Vector2(2.2, 2.2)
+	camera.zoom = Vector2(ViewZoom.DEFAULT, ViewZoom.DEFAULT)
 	camera.position_smoothing_enabled = true
 	camera.position_smoothing_speed = 9.0
 	camera.limit_left = 0
@@ -116,6 +118,9 @@ func _ready() -> void:
 	camera.limit_smoothed = true
 	add_child(camera)
 	camera.make_current()
+	view_zoom = ViewZoom.new()
+	view_zoom.camera = camera
+	add_child(view_zoom)   # зум из профиля — в своём _ready
 	z_index = 5
 
 
@@ -299,6 +304,8 @@ func _handle_input(dt: float) -> void:
 		if _place_cd <= 0.0:
 			_place_cd = 0.16
 			_do_place(cell)
+	else:
+		_place_cd = 0.0   # новое нажатие ставит сразу: короткий клик или тап не теряется
 
 	# Q — импульс
 	if _key(KEY_Q) and emp_cd <= 0.0:
