@@ -27,7 +27,9 @@ extends RefCounted
 ## возвращается сразу после раскладки питания (Floodlight.relight).
 
 ## Версия формата. Поднимать, когда старый файл уже нельзя прочитать как есть.
-const VERSION: int = 1
+## 2 — сетевая игра (ADR-002 § 4.9, MP-I #94): у хоста ещё session и players по uid;
+## раздел player остался, поэтому версия 1 читается как раньше (одиночная).
+const VERSION: int = 2
 const MAGIC: String = "GCSV"
 const HEADER_SIZE: int = 12
 
@@ -51,6 +53,8 @@ static func exists(s: String = slot) -> bool:
 
 ## Почему сейчас нельзя сохраниться (пустая строка — можно).
 static func save_blocker() -> String:
+	if Net.is_client():   # СЕТЬ (ADR-002 § 4.9): сохраняет только хост
+		return NET_HOST_SAVES
 	var p = Game.player
 	if p == null or not is_instance_valid(p):
 		return "нет игрока"
@@ -83,6 +87,7 @@ static func gather() -> Dictionary:
 	var p = Game.player
 	if p != null and is_instance_valid(p):
 		d["player"] = p.save_state()
+	_net_gather(d)   # СЕТЬ (ADR-002 § 4.9): у хоста — session и players по uid
 	return d
 
 
@@ -90,11 +95,14 @@ static func gather() -> Dictionary:
 static func _items_state() -> Array:
 	var out: Array = []
 	for e in _item_nodes():
-		out.append({
+		var rec: Dictionary = {
 			"id": e.item_id, "count": e.count, "pos": e.global_position, "vel": e.vel,
 			"grounded": e.grounded, "age": e.age, "despawn": e.despawn,
 			"pickup_delay": e.pickup_delay, "bag": e.bag.duplicate(true),
-		})
+		}
+		if e.bag_owner != 0:   # мешок погибшего в сети — чей (MP-I, #94)
+			rec["bag_owner"] = e.bag_owner
+		out.append(rec)
 	return out
 
 
@@ -145,6 +153,7 @@ static func apply(d: Dictionary) -> bool:
 	var p = Game.player
 	if p != null and is_instance_valid(p) and d.has("player"):
 		p.load_state(d["player"])
+	_net_apply(d)   # СЕТЬ (ADR-002 § 4.9): у хоста — герои по uid, остальные ждут в Net.parked
 	Game.load_state(d.get("game", {}))
 	Tech.load_state(d.get("tech", {}))
 	Threat.load_state(d.get("threat", {}))
@@ -229,6 +238,7 @@ static func _place_items(list: Array) -> void:
 		e.count = int(it.get("count", 1))
 		e.despawn = bool(it.get("despawn", true))
 		e.bag = Array(it.get("bag", [])).duplicate(true)
+		e.bag_owner = int(it.get("bag_owner", 0))
 		e.global_position = it.get("pos", Vector2.ZERO)
 		World.add_world_node(e)
 		# _ready() даёт случайный подброс — ставим сохранённое после него.
@@ -317,6 +327,9 @@ static func save_game(s: String = slot) -> bool:
 
 ## Загрузить забег из слота. false — файла нет или он не подходит.
 static func load_game(s: String = slot) -> bool:
+	if Net.is_online() and not _net_loading:   # СЕТЬ (ADR-002 § 4.9): F9 в сети выключена
+		last_error = NET_LOAD_IN_MENU
+		return false
 	var t0: int = Time.get_ticks_usec()
 	var path: String = path_for(s)
 	if not FileAccess.file_exists(path):
@@ -346,6 +359,8 @@ static func remove(s: String) -> void:
 static func gather_join() -> Dictionary:
 	var d: Dictionary = gather()
 	d.erase("player")
+	d.erase("players")   # MP-I (#94): чужие инвентари клиенту не нужны
+	d.erase("session")
 	return d
 
 
@@ -355,4 +370,82 @@ static func gather_join() -> Dictionary:
 static func apply_join(d: Dictionary) -> bool:
 	var j: Dictionary = d.duplicate()
 	j.erase("player")
+	j.erase("players")
 	return apply(j)
+
+
+# ------------------------------------------------------------------ СЕТЬ (ADR-002 § 4.9, MP-I #94)
+## Сохраняет только хост: F5 и автосохранение на каждом рассвете (NetCoop) в слот
+## net_auto_slot(имя игры). У клиента F5 молчит с подсказкой (save_blocker), F9 в сети
+## выключена у всех (load_game): загрузка — при создании игры (load_net, флаг --mp-load=).
+## Версия 2: к словарю добавляются
+##   session {name, max} и
+##   players {uid: {nick, look, state = Player.save_state(), stats, dead}} —
+## и подключённые (с героем хоста), и запаркованные (Net.parked). Раздел player остаётся
+## (герой хоста): одиночная игра читает версию 2, беря только его, а файл версии 1
+## в сети грузится как одиночный (без players). При загрузке у хоста герои на связи
+## (и свой) получают своё по uid, остальные ждут в Net.parked до входа; незнакомый uid
+## входит со стартовым набором.
+
+const NET_HOST_SAVES: String = "сохраняет хост"
+const NET_LOAD_IN_MENU: String = "в сети загрузка — из меню при создании игры"
+
+static var _net_loading: bool = false
+
+
+## Слот автосохранения сетевой игры: mp_<имя игры>_auto (в имени — буквы и цифры).
+static func net_auto_slot(session_name: String) -> String:
+	var s: String = ""
+	for i in session_name.length():
+		var c: String = session_name[i]
+		var u: int = c.unicode_at(0)
+		var alnum: bool = (u >= 0x30 and u <= 0x39) or (u >= 0x41 and u <= 0x5A) \
+				or (u >= 0x61 and u <= 0x7A) or (u >= 0x410 and u <= 0x44F) or u == 0x401 or u == 0x451
+		s += c if alnum else "_"
+	return "mp_%s_auto" % s
+
+
+## Хост: загрузить сетевое сохранение (в обход запрета F9 в сети).
+static func load_net(s: String) -> bool:
+	_net_loading = true
+	var res: bool = load_game(s)
+	_net_loading = false
+	return res
+
+
+## Запись героя в players / Net.parked.
+static func hero_entry(p) -> Dictionary:
+	return {"nick": String(p.nick), "look": int(p.look), "state": p.save_state(),
+			"stats": (p.net_stats as Dictionary).duplicate(true), "dead": bool(p.dead)}
+
+
+static func _net_gather(d: Dictionary) -> void:
+	if not Net.is_host():
+		return
+	d["session"] = {"name": String(Net.session.get("session_name", "")), "max": Net.max_players}
+	var players: Dictionary = {}
+	for uid in Net.parked:
+		players[int(uid)] = (Net.parked[uid] as Dictionary).duplicate(true)
+	for h in Game.players:
+		if is_instance_valid(h) and int(h.net_uid) != 0:
+			players[int(h.net_uid)] = hero_entry(h)
+	d["players"] = players
+
+
+static func _net_apply(d: Dictionary) -> void:
+	if not Net.is_host() or not (d.get("players") is Dictionary):
+		return
+	var on_line: Dictionary = {}
+	for h in Game.players:
+		if is_instance_valid(h) and int(h.net_uid) != 0:
+			on_line[int(h.net_uid)] = h
+	Net.parked.clear()   # прежние парковки — из другого забега
+	var players: Dictionary = d["players"]
+	for uid in players:
+		var e = players[uid]
+		if not (e is Dictionary):
+			continue
+		if on_line.has(int(uid)):
+			NetCoop.restore_hero(on_line[int(uid)], e)
+		else:
+			Net.parked[int(uid)] = (e as Dictionary).duplicate(true)

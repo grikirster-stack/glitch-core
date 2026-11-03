@@ -565,7 +565,7 @@ func _compute_tracker() -> void:
 			var miss: String = ""
 			for id in Game.relay_req:
 				var need: int = int(Game.relay_req[id])
-				var have: int = player.inv.count_of(id) if player != null else 0
+				var have: int = Game.relay_count(id) + (player.inv.count_of(id) if player != null else 0)   # + сдано в ядро (MP-I)
 				if have >= need:
 					have_all += 1
 				elif miss == "":
@@ -573,7 +573,8 @@ func _compute_tracker() -> void:
 			tracker_detail = "детали %d/%d%s · [E] у ядра" % [have_all, Game.relay_req.size(), miss]
 		_:
 			var left: int = int(ceil(Game.relay_timer))
-			tracker_detail = "до эвакуации %d:%02d · держитесь" % [left / 60, left % 60]
+			tracker_detail = "до эвакуации %d:%02d · %s" % [left / 60, left % 60,
+					"СИГНАЛ БЕЗ ПРИСМОТРА" if Game.relay_unattended else "держитесь"]   # MP-I: зона удержания
 
 
 ## Шаг обучения: самый дальний выполненный признак (вперёд — сразу, назад — никогда).

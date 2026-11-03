@@ -125,6 +125,8 @@ func reset_run() -> void:
 	# --- Цель и релей (#32)
 	relay_speed = 1.0
 	_objective_t = 0.0
+	relay_have = {}                 # вклад деталей в ядро (MP-I, #94)
+	relay_unattended = false
 	_power_index_size = -1          ## мир мог смениться — индекс пересоберётся
 	# --- Исследования (#28): дерево и журнал живут один забег.
 	Tech.reset()
@@ -473,7 +475,9 @@ func _set_brownout(on: bool) -> void:
 ##   1. Запитать станцию — оба терминала базы прочитаны (читаются они только
 ##      под питанием); +10 данных и главы 1–2 дают сами терминалы, релей отзывается.
 ##   2. Собрать данные — открыт узел T5: антенна релея в рецептах сборщика.
-##   3. Собрать релей — E у ядра с полным набором relay_req запускает отсчёт.
+##   3. Собрать релей — E у ядра (держать 3 с) сдаёт из инвентаря героя то, чего
+##      ядру ещё не хватает (relay_have, ADR-002 § 4.7, MP-I #94 — во всех режимах);
+##      набрано всё — отсчёт пошёл. С полным набором — как раньше, одним удержанием.
 ##   4. Удержать сигнал — Balance.RELAY_TIME с; директор угрозы в режиме релея
 ##      (cap RELAY_HOLD_CAP, двойник — сразу после разведчика). Победа → эпилог Lore.
 ## Этап можно перескочить (данные с анализаторов, детали из тайников): сигнал
@@ -490,6 +494,10 @@ const RELAY_COLOR: Color = Color(0.4, 1.0, 0.8)
 ## Ускорение отсчёта релея — для тестов (сценарий relay). В игре всегда 1.
 var relay_speed: float = 1.0
 var _objective_t: float = 0.0
+## Вклад деталей в релей-ядро: id → сколько уже сдано (MP-I, #94). Пишется в сохранение.
+var relay_have: Dictionary = {}
+## Сеть: отсчёт стоит — у ядра нет живого не спрятавшегося героя (§ 4.7, «зона удержания»).
+var relay_unattended: bool = false
 
 
 func _tick_objective(delta: float) -> void:
@@ -561,6 +569,8 @@ func _enter_stage(s: int) -> void:
 
 
 func _tick_relay(dt: float) -> void:
+	if not _relay_hold_ok():   # СЕТЬ (ADR-002 § 4.7): у ядра никого — отсчёт стоит
+		return
 	var before: float = relay_timer
 	relay_timer -= dt
 	for r in RELAY_REMINDERS:
@@ -578,28 +588,69 @@ func epilogue_stats() -> Dictionary:
 	return {"days": day_number, "kills": stats_kills, "deaths": stats_deaths, "time": game_time}
 
 
-## Попытка запустить релей-ядро. Возвращает true, если запуск прошёл.
-func try_finish() -> bool:
+## Попытка запустить релей-ядро: сначала вклад деталей героя hero (по умолчанию —
+## Game.player), потом запуск, если набрано всё. Возвращает true, если запуск прошёл.
+func try_finish(hero = null) -> bool:
 	if not Net.is_authority():   # СЕТЬ (ADR-002): релей запускает хост
 		return false
-	if player == null or relay_active:
+	if hero == null:
+		hero = player
+	if hero == null or relay_active:
 		return false
+	var given: Array = relay_deposit(hero)
 	var missing: Array = []
 	for id in relay_req.keys():
-		var have: int = player.inv.count_of(id)
+		var have: int = relay_count(id)
 		if have < int(relay_req[id]):
 			missing.append("%s (%d/%d)" % [DB.item_name(id), have, int(relay_req[id])])
 	if not missing.is_empty():
-		notify("Релею не хватает: " + ", ".join(missing), Color(1.0, 0.6, 0.4))
+		if not given.is_empty():
+			_relay_say(hero, "В релей сдано: " + ", ".join(given), RELAY_COLOR, true)
+		_relay_say(hero, "Релею не хватает: " + ", ".join(missing), Color(1.0, 0.6, 0.4), false)
 		return false
-	for id in relay_req.keys():
-		player.inv.remove_id(id, int(relay_req[id]))
+	relay_have = {}
+	_net_relay_changed()
 	relay_active = true
 	relay_timer = RELAY_TIME
 	notify("РЕЛЕЙ ЗАПУЩЕН! Держитесь %d секунд." % int(RELAY_TIME), RELAY_COLOR)
 	Sfx.play("power", -2.0)
 	update_objective()          # этап 4 — сразу, а не через 0.25 с
 	return true
+
+
+## Сколько деталей id уже сдано в ядро.
+func relay_count(id: int) -> int:
+	return int(relay_have.get(id, 0))
+
+
+## Вклад деталей (ADR-002 § 4.7, MP-I #94): из инвентаря героя — то, чего ядру ещё не
+## хватает. Итог — строки «Предмет ×N» сданного (пусто — нечего было сдать).
+func relay_deposit(hero) -> Array:
+	var given: Array = []
+	if not Net.is_authority() or hero == null or relay_active:
+		return given
+	for id in relay_req.keys():
+		var n: int = mini(int(relay_req[id]) - relay_count(id), hero.inv.count_of(id))
+		if n <= 0:
+			continue
+		hero.inv.remove_id(id, n)
+		relay_have[id] = relay_count(id) + n
+		given.append("%s ×%d" % [DB.item_name(id), n])
+	if not given.is_empty():
+		hero.stats_changed.emit()
+		_net_relay_changed()
+	return given
+
+
+## Уведомление релея: в одиночной — как раньше (Game.notify). В сети: team — всем с
+## ником героя, иначе — лично ему (у прокси — владельцу).
+func _relay_say(hero, text: String, color: Color, team: bool) -> void:
+	if not Net.is_online():
+		notify(text, color)
+	elif team:
+		NetCoop.team_notify("%s: %s" % [String(hero.nick), text], color)
+	else:
+		hero._notify(text, color)
 
 
 # ------------------------------------------------- СОХРАНЕНИЕ (#37)
@@ -611,6 +662,7 @@ const SAVE_FIELDS: Array[String] = [
 	"game_time", "relay_active", "relay_timer", "stats_mined", "stats_crafted",
 	"stats_kills", "stats_deaths", "objective_stage",
 	"relay_speed",                       # цель и релей (#32)
+	"relay_have",                        # вклад деталей в релей (MP-I, #94)
 ]
 
 
@@ -618,6 +670,7 @@ func save_state() -> Dictionary:
 	var d: Dictionary = {}
 	for f in SAVE_FIELDS:
 		d[f] = get(f)
+	d["relay_have"] = relay_have.duplicate()   # снимок, а не ссылка на живой словарь
 	return d
 
 
@@ -626,6 +679,9 @@ func load_state(d: Dictionary) -> void:
 	for f in SAVE_FIELDS:
 		if d.has(f):
 			set(f, d[f])
+	if not d.has("relay_have"):     # файл до MP-I (#94): вклада ещё не было
+		relay_have = {}
+	relay_have = relay_have.duplicate()
 	set_state(State.PLAYING)
 	_power_index_size = -1          ## машины поставлены заново — индекс пересоберётся
 	_power_timer = 0.0
@@ -677,7 +733,7 @@ func _net_client_process(delta: float) -> void:
 		return
 	game_time += delta
 	time_of_day = fmod(time_of_day + delta / DAY_LENGTH, 1.0)
-	if relay_active:
+	if relay_active and _relay_hold_ok():   # MP-I (#94): без присмотра отсчёт стоит и здесь
 		relay_timer = maxf(0.0, relay_timer - delta * relay_speed)
 
 
@@ -720,3 +776,48 @@ func net_apply_global(d: Dictionary) -> void:
 	Threat.active = (int(d["threat"]) & 1) != 0
 	Threat.budget = float(d["threat_budget"])
 	set_state(int(d["state"]))
+
+
+# --- Кооператив (MP-I, #94; § 4.7): зона удержания релея и вклад деталей по сети.
+## Отсчёт релея в сети идёт, пока хотя бы один живой не спрятавшийся герой на связи
+## ближе Balance.MP_RELAY_HOLD_RADIUS_TILES к ядру; иначе стоит (не сбрасывается),
+## HUD и уведомление — «Сигнал без присмотра». Только в сети (решение #99): одиночный
+## баланс откалиброван. Каждый процесс считает сам по позициям всех героев (у клиента —
+## свой и марионетки), поэтому и его отсчёт между глобальными пакетами стоит вместе с хостом.
+const RELAY_UNATTENDED_TEXT: String = "Сигнал без присмотра: у ядра никого — отсчёт стоит."
+
+
+## true — отсчёт релея сейчас идёт (в одиночной — всегда).
+func _relay_hold_ok() -> bool:
+	if not Net.is_online():
+		return true
+	var ok: bool = relay_attended()
+	if ok == relay_unattended:
+		relay_unattended = not ok
+		if relay_unattended:
+			notify(RELAY_UNATTENDED_TEXT, Color(1.0, 0.55, 0.35))
+		else:
+			notify("Сигнал снова под присмотром — отсчёт идёт.", RELAY_COLOR)
+	return ok
+
+
+## Есть ли у ядра живой не спрятавшийся герой на связи.
+func relay_attended() -> bool:
+	var bp: Vector2 = World.cell_to_world(World.beacon_cell)
+	var r: float = Balance.MP_RELAY_HOLD_RADIUS_TILES * float(World.TILE)
+	for h in players:
+		if is_instance_valid(h) and h.is_inside_tree() and h.net_targetable() \
+				and h.global_position.distance_to(bp) < r:
+			return true
+	return false
+
+
+## Хост: вклад в ядро изменился — всем (канал 0, после снимка — по порядку).
+func _net_relay_changed() -> void:
+	if Net.is_host():
+		Net.send_on(0, NetCodec.Msg.COOP, NetCodec.encode_coop_relay(relay_have))
+
+
+## Клиент: вклад в ядро с хоста.
+func net_apply_relay(have: Dictionary) -> void:
+	relay_have = have.duplicate()
