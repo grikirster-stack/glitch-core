@@ -120,7 +120,7 @@ static func create(p_kind: String) -> Phantom:
 func _ready() -> void:
 	# Лимит живых копий: лишний фантом растворяется, не успев толпиться в мире.
 	var tree: SceneTree = get_tree()
-	if tree != null and tree.get_nodes_in_group("phantom").size() >= MAX_PHANTOMS:
+	if tree != null and not net_puppet and tree.get_nodes_in_group("phantom").size() >= MAX_PHANTOMS:
 		alive = false
 		queue_free()
 		return
@@ -151,6 +151,9 @@ func _apply_kind() -> void:
 func _physics_process(delta: float) -> void:
 	if not alive:
 		return
+	if net_puppet:   # СЕТЬ (ADR-002 § 4.2.5): у клиента ИИ нет — позиция из пакета
+		_net_puppet_tick(delta)
+		return
 	jitter += delta
 	var dt: float = delta
 	_age += dt
@@ -161,6 +164,8 @@ func _physics_process(delta: float) -> void:
 		_flank_t = FLIP_T
 		_flank_side = -_flank_side
 
+	if Game.players.size() > 1 or (player != null and not is_instance_valid(player)):   # СЕТЬ: цель — ближайший герой
+		_net_pick_target(dt)
 	if player == null:
 		player = get_tree().get_first_node_in_group("player")
 	if player == null:
@@ -217,7 +222,10 @@ func _physics_process(delta: float) -> void:
 		var was: bool = frozen
 		frozen = stun <= 0.0 and _gazed_at(dist)
 		if frozen and not was:
-			Sfx.play("doppel_whisper", -10.0)
+			if Game.players.size() > 1:   # СЕТЬ: шёпот — в точке двойника
+				Sfx.play_at("doppel_whisper", global_position, -10.0)
+			else:
+				Sfx.play("doppel_whisper", -10.0)
 
 	# --- Движение ------------------------------------------------------------
 	var speed: float = _move_speed(player_light)
@@ -292,7 +300,10 @@ func _physics_process(delta: float) -> void:
 			and stun <= 0.0 and player.has_method("damage"):
 		var knock: Vector2 = (player.global_position - global_position).normalized() * 190.0
 		player.damage(dmg, knock)
-		Sfx.play("hit", -4.0, 0.8)
+		if Game.players.size() > 1:   # СЕТЬ: удар по товарищу слышен в его точке
+			Sfx.play_at("hit", player.global_position, -4.0, 0.8)
+		else:
+			Sfx.play("hit", -4.0, 0.8)
 		alert = 3.0
 
 	# Перерисовка: канальный сдвиг, мерцание визора и индикатор состояния
@@ -385,6 +396,8 @@ func _move_speed(player_light: float) -> float:
 ## Смотрит ли игрок на двойника: лицом к нему, ближе DOPPEL_GAZE_PX, прямая
 ## видимость. Копает или крафтит — значит, не смотрит (§ 4.5).
 func _gazed_at(dist: float) -> bool:
+	if Game.players.size() > 1:   # СЕТЬ (ADR-002 § 4.2.5): взгляд любого героя
+		return _net_gazed()
 	if dist >= Balance.DOPPEL_GAZE_PX:
 		return false
 	var dx: float = global_position.x - player.global_position.x
@@ -571,6 +584,8 @@ func _burrow(dt: float) -> void:
 		repath = 0.0
 		UI.spawn_chip(cell, DB.tile_color(t))
 		Sfx.play_at("mine", World.cell_to_world(cell), -12.0, 0.6)
+		if Net.is_host():   # СЕТЬ: крошка и звук копки — клиентам
+			_net_dig_fx(cell, t)
 		return
 	# Рыть нечего (или порода не по зубам) — пробуем снова чуть позже.
 	_dig_t = Balance.BURROWER_DIG_PERIOD * 0.5
@@ -607,6 +622,8 @@ func _player_light_value(ppos: Vector2) -> float:
 	## Свет в точке игрока. Кэш общий для всех фантомов сцены: считать его
 	## отдельно на каждого фантома — та же самая дорогая сумма по всем
 	## источникам света, только раз за другим.
+	if Game.players.size() > 1:   # СЕТЬ: у каждого героя-цели свой свет
+		return _net_player_light(ppos)
 	var now: int = Time.get_ticks_msec()
 	var sources: int = _light_source_count()
 	if sources != _shared_light_sources or now - _shared_player_light_ms >= int(PLAYER_LIGHT_INTERVAL * 1000.0):
@@ -764,11 +781,13 @@ func _rebuild_path() -> void:
 # ------------------------------------------------------------------ УРОН
 
 func apply_stun(t: float) -> void:
+	if net_puppet:   # СЕТЬ: оглушение считает хост
+		return
 	stun = maxf(stun, t)
 
 
 func take_damage(amount: float, from: Vector2) -> void:
-	if not alive:
+	if not alive or net_puppet:   # СЕТЬ: урон марионетке считает хост
 		return
 	hp -= amount
 	# Рой рассыпается с одного удара — и от взмаха, и от импульса (§ 4.5).
@@ -783,6 +802,8 @@ func take_damage(amount: float, from: Vector2) -> void:
 		Game.stats_kills += 1
 		Game.notify("Фантом рассеян! Хорошая работа.", Color(0.5, 0.9, 1.0))
 		Sfx.play("craft", -6.0, 0.8)
+		if Net.is_host():   # СЕТЬ: «рассеян» — всей команде
+			_net_killed()
 		_drop_black_box()
 		queue_free()
 
@@ -802,6 +823,149 @@ func _drop_black_box() -> void:
 	e.count = 1
 	e.global_position = global_position
 	World.add_world_node(e)
+
+
+# ------------------------------------------------------------------ СЕТЬ (ADR-002, MP-F #92)
+# § 4.2.5. Хост с товарищами (Game.players > 1): цель — ближайший живой, не спрятавшийся,
+# на связи герой (пересчёт раз в SEEK_INTERVAL), шум, обзор и свет — по нему; двойник
+# замирает под взглядом любого героя, «окно открыто» — из пакета ввода (Player._ui_blocking).
+# Клиент: марионетка (net_puppet) — ИИ нет, позицию и состояние ставит NetPhantoms.
+# Без товарищей (одиночная, хост один) ни одна строка ниже не работает.
+
+## Клиент: марионетка — ИИ, путь, урон не считаются; рисунок прежний.
+var net_puppet: bool = false
+## Номер в сети (NetPhantoms): у хоста — с объявления, у клиента — из SPAWN; 0 — нет.
+var net_id: int = 0
+var _net_seek_t: float = 0.0
+## Свет героя-цели в сети: instance_id героя → [свет, мс, источников] (кэш общий).
+static var _net_light: Dictionary = {}
+
+
+## Цель — ближайший доступный герой (Player.net_targetable); доступных нет — ближайший
+## живой (как в одиночной: спрятавшегося фантом всё равно стережёт). Цель вышла из
+## игры (узел освобождён) — выбор заново, и без товарищей.
+func _net_pick_target(dt: float) -> void:
+	if player != null and not is_instance_valid(player):
+		player = null           # товарищ вышел из игры — цель заново
+		_net_seek_t = 0.0
+	_net_seek_t -= dt
+	var cur: Player = player as Player if is_instance_valid(player) else null
+	if _net_seek_t > 0.0 and cur != null and cur.net_targetable():
+		return
+	_net_seek_t = SEEK_INTERVAL
+	var best: Player = null
+	var best_d: float = INF
+	var alive_best: Player = null
+	var alive_d: float = INF
+	for h in Game.players:
+		if not is_instance_valid(h):
+			continue
+		var hero: Player = h as Player
+		if hero == null or hero.dead:
+			continue
+		var d: float = global_position.distance_squared_to(hero.global_position)
+		if d < alive_d:
+			alive_d = d
+			alive_best = hero
+		if d < best_d and hero.net_targetable():
+			best_d = d
+			best = hero
+	if best == null:
+		best = alive_best
+	if best != null and best != cur:
+		player = best
+		_los_ms = -1000000      # обзор — уже до нового героя
+		repath = 0.0
+
+
+## Смотрит ли на двойника хоть один герой (те же условия, что _gazed_at в одиночной).
+func _net_gazed() -> bool:
+	var my_cell: Vector2i = World.world_to_cell(global_position)
+	for h in Game.players:
+		if not is_instance_valid(h):
+			continue
+		var hero: Player = h as Player
+		if hero == null or hero.dead:
+			continue
+		if global_position.distance_to(hero.global_position) >= Balance.DOPPEL_GAZE_PX:
+			continue
+		var dx: float = global_position.x - hero.global_position.x
+		if absf(dx) > 4.0 and (1 if dx > 0.0 else -1) != hero.facing:
+			continue
+		if hero.mining_cell.x >= 0 or hero._ui_blocking():
+			continue
+		if hero == player:
+			if _has_los():
+				return true
+		elif _compute_los(my_cell, World.world_to_cell(hero.global_position)):
+			return true
+	return false
+
+
+func _net_player_light(ppos: Vector2) -> float:
+	var key: int = player.get_instance_id() if player != null else 0
+	var now: int = Time.get_ticks_msec()
+	var sources: int = _light_source_count()
+	var e: Array = _net_light.get(key, [])
+	if e.is_empty() or int(e[2]) != sources or now - int(e[1]) >= int(PLAYER_LIGHT_INTERVAL * 1000.0):
+		e = [World.light_at(World.world_to_cell(ppos)), now, sources]
+		_net_light[key] = e
+	return float(e[0])
+
+
+## Хост: строка пакета состояния (NetCodec._put_phantom, 12 Б).
+func net_row() -> Dictionary:
+	var flags: int = 0
+	if on_ground:
+		flags |= NetCodec.PHF_ON_GROUND
+	if target_machine != null:
+		flags |= NetCodec.PHF_MACHINE
+	return {"id": net_id, "pos": global_position, "vel": vel,
+			"kind": maxi(0, NetCodec.PHANTOM_KINDS.find(kind)), "state": state,
+			"facing_left": facing < 0, "frozen": frozen, "stunned": stun > 0.0,
+			"hp": hp / maxf(max_hp, 0.001), "stun": stun, "flags": flags}
+
+
+## Клиент: состояние из строки (NetPhantoms._interp — уже на момент рисования).
+func net_apply(pos: Vector2, v: Vector2, row: Dictionary) -> void:
+	global_position = pos
+	vel = v
+	state = int(row["state"])
+	facing = -1 if bool(row["facing_left"]) else 1
+	var fz: bool = bool(row["frozen"])
+	if kind == "doppel" and fz and not frozen:
+		Sfx.play_at("doppel_whisper", global_position, -10.0)
+	frozen = fz
+	stun = float(row["stun"]) if bool(row["stunned"]) else 0.0
+	hp = float(row["hp"]) * max_hp
+	on_ground = (int(row["flags"]) & NetCodec.PHF_ON_GROUND) != 0
+
+
+## Клиент: кадр марионетки — анимация и жужжание роя своими часами.
+func _net_puppet_tick(dt: float) -> void:
+	jitter += dt
+	stun = maxf(0.0, stun - dt)
+	if not visible:
+		return
+	if kind == "swarm" and state == St.CHASE:
+		_buzz_t -= dt
+		if _buzz_t <= 0.0:
+			_buzz_t = randf_range(BUZZ_MIN, BUZZ_MAX)
+			Sfx.play_at("swarm", global_position, -10.0, randf_range(0.92, 1.08))
+	queue_redraw()
+
+
+## Хост: копатель вырыл клетку — крошка и звук клиентам.
+func _net_dig_fx(cell: Vector2i, t: int) -> void:
+	NetPlayers.send_fx(NetCodec.Fx.CHIP_TILE, World.cell_to_world(cell), t)
+	NetPlayers.send_sound(World.cell_to_world(cell), "mine", -12.0, 0.6)
+
+
+## Хост: фантом рассеян — уведомление и звук всей команде (канал 0).
+func _net_killed() -> void:
+	Net.send(NetCodec.Msg.EVENT, NetCodec.encode_notify(global_position, "Фантом рассеян! Хорошая работа.",
+			Color(0.5, 0.9, 1.0)))
+	NetPlayers.send_sound(global_position, "craft", -6.0, 0.8)
 
 
 # ------------------------------------------------------------------ ОТРИСОВКА

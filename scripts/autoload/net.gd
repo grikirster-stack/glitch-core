@@ -33,7 +33,7 @@ signal roster_changed
 enum Role { OFFLINE, HOST, CLIENT }
 
 # --- транспорт (§ 9.2: не баланс — калибровочный PR их не трогает)
-const PROTO: int = 5                 ## версия протокола: поднимать при смене кодека, IDs, таблиц DB (2 — MP-D: HIT, звуки, Fx; 3 — MP-H: LOBBY; 4 — MP-E: net_state машин, запись предмета в SPAWN; 5 — MP-G: CHEST, TECH, InvOp)
+const PROTO: int = 6                 ## версия протокола: поднимать при смене кодека, IDs, таблиц DB (2 — MP-D: HIT, звуки, Fx; 3 — MP-H: LOBBY; 4 — MP-E: net_state машин, запись предмета в SPAWN; 5 — MP-G: CHEST, TECH, InvOp; 6 — MP-F: фантомы, Ent)
 const GAME_PORT: int = 24642
 const DISCOVERY_PORT: int = 24643
 const TICK_HZ: int = 20              ## пакет состояния
@@ -689,3 +689,4 @@ const THROTTLE_SCALE: int = 32       ## ENET_PEER_PACKET_THROTTLE_SCALE
 
 func _no_throttle(pp: ENetPacketPeer) -> void:
 	pp.throttle_configure(THROTTLE_INTERVAL_MS, THROTTLE_SCALE, 0)
+
