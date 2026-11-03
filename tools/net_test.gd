@@ -18,8 +18,8 @@ extends SceneTree
 
 ## Схема протокола PROTO = SCHEMA_PROTO. Поменяли кодек, порядок IDs или таблицы DB —
 ## поднимите Net.PROTO и впишите сюда новый PROTO и хэш, который напечатает тест.
-const SCHEMA_PROTO: int = 8
-const SCHEMA_HASH: String = "1d6ff93df2dcc21c2589e1e5a9584b94"
+const SCHEMA_PROTO: int = 9
+const SCHEMA_HASH: String = "629c69054317a37c235e71ca4af31795"
 
 const PORT_BASE: int = 24900
 const LOOP: String = "127.0.0.1"
@@ -659,6 +659,12 @@ func _codec_coop() -> void:
 			and NetCodec.encode_coop_relay({3: 48, 9: 24}) == NetCodec.encode_coop_relay({9: 24, 3: 48}))
 	ok("COOP RELAY пустой — 2 Б", NetCodec.encode_coop_relay({}).size() == 2
 			and (NetCodec.decode_coop(NetCodec.encode_coop_relay({})).get("have", null) as Dictionary).is_empty())
+	# Требование релея от N (#139) — в том же кадре; деталь без вклада — с нулём «сдано».
+	var need: Dictionary = {3: 60, 9: 30, 12: 2}
+	var rq: Dictionary = NetCodec.decode_coop(NetCodec.encode_coop_relay({9: 24}, need))
+	ok("COOP RELAY с требованием туда-обратно", rq.get("have") == {9: 24} and rq.get("req") == need
+			and NetCodec.encode_coop_relay({9: 24}, need).size() == 2 + 5 * 3,
+			"%s / %s" % [str(rq.get("have")), str(rq.get("req"))])
 	var s: Dictionary = NetCodec.decode_coop(NetCodec.encode_coop_stats([120, 30, 7, 2],
 			[["Аня", 1], ["Борис", 65535]]))
 	ok("COOP STATS туда-обратно", s.get("team") == [120, 30, 7, 2]
@@ -666,6 +672,7 @@ func _codec_coop() -> void:
 	var bad: bool = NetCodec.decode_coop(PackedByteArray()).is_empty() \
 			and NetCodec.decode_coop(PackedByteArray([NetCodec.CoopEv.DEATH, 1, 2])).is_empty() \
 			and NetCodec.decode_coop(PackedByteArray([NetCodec.CoopEv.RELAY, 2, 9, 1])).is_empty() \
+			and NetCodec.decode_coop(PackedByteArray([NetCodec.CoopEv.RELAY, 1, 9, 1, 0])).is_empty() \
 			and NetCodec.decode_coop(PackedByteArray([99])).is_empty()
 	ok("COOP: битый кадр — пусто", bad)
 

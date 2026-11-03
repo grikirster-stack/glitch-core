@@ -1255,7 +1255,8 @@ static func inv_schema_sample() -> PackedByteArray:
 ## Кадр COOP (ADR-002 § 4.7, § 3 D11): u8 вид (CoopEv) + данные.
 ##   DEATH (хост → владельцу, канал 2): f32 секунд до респауна (< 0 — зритель до конца
 ##     забега, --hardcore) · u8 флаги (COOP_WIPE — погибла вся команда).
-##   RELAY (хост → всем, канал 0): вклад деталей в релей-ядро — u8 n · n × (u8 id, u16 count).
+##   RELAY (хост → всем, канал 0): вклад деталей в релей-ядро и требование релея от N
+##     (#139) — u8 n · n × (u8 id, u16 сдано, u16 нужно); 0 — нет в словаре.
 ##   STATS (хост → всем, канал 0, при конце забега): итоги команды 4 × u32 (добыто,
 ##     изготовлено, фантомов, смертей) · u8 n · n × (str8 ник, u16 смертей).
 
@@ -1272,17 +1273,22 @@ static func encode_coop_death(delay: float, wipe: bool) -> PackedByteArray:
 	return s.data_array
 
 
-## have — {id: count} вклада в ядро (по возрастанию id: байты не зависят от порядка ключей).
-static func encode_coop_relay(have: Dictionary) -> PackedByteArray:
+## have — {id: count} вклада в ядро, req — {id: count} требования (Game.relay_req). По
+## возрастанию id: байты не зависят от порядка ключей.
+static func encode_coop_relay(have: Dictionary, req: Dictionary = {}) -> PackedByteArray:
 	var s: StreamPeerBuffer = StreamPeerBuffer.new()
 	s.put_u8(CoopEv.RELAY)
 	var ids: Array = have.keys()
+	for id in req.keys():
+		if not ids.has(id):
+			ids.append(id)
 	ids.sort()
 	var n: int = mini(ids.size(), 255)
 	s.put_u8(n)
 	for i in n:
 		s.put_u8(int(ids[i]) & 0xFF)
-		s.put_u16(clampi(int(have[ids[i]]), 0, 0xFFFF))
+		s.put_u16(clampi(int(have.get(ids[i], 0)), 0, 0xFFFF))
+		s.put_u16(clampi(int(req.get(ids[i], 0)), 0, 0xFFFF))
 	return s.data_array
 
 
@@ -1300,7 +1306,7 @@ static func encode_coop_stats(team: Array, players: Array) -> PackedByteArray:
 	return s.data_array
 
 
-## {kind: DEATH, delay, wipe} · {kind: RELAY, have} · {kind: STATS, team, players} · {} у битого.
+## {kind: DEATH, delay, wipe} · {kind: RELAY, have, req} · {kind: STATS, team, players} · {} у битого.
 static func decode_coop(b: PackedByteArray) -> Dictionary:
 	var s: StreamPeerBuffer = _reader(b)
 	if s.get_available_bytes() < 1:
@@ -1317,13 +1323,20 @@ static func decode_coop(b: PackedByteArray) -> Dictionary:
 			if s.get_available_bytes() < 1:
 				return {}
 			var n: int = s.get_u8()
-			if s.get_available_bytes() != 3 * n:
+			if s.get_available_bytes() != 5 * n:
 				return {}
 			var have: Dictionary = {}
+			var req: Dictionary = {}
 			for i in n:
 				var id: int = s.get_u8()
-				have[id] = s.get_u16()
+				var h: int = s.get_u16()
+				var r: int = s.get_u16()
+				if h > 0:
+					have[id] = h
+				if r > 0:
+					req[id] = r
 			d["have"] = have
+			d["req"] = req
 		CoopEv.STATS:
 			if s.get_available_bytes() < 17:
 				return {}
@@ -1353,6 +1366,7 @@ static func coop_schema_sample() -> PackedByteArray:
 		encode_coop_death(15.0, false),
 		encode_coop_death(-1.0, true),
 		encode_coop_relay({9: 24, 3: 48}),
+		encode_coop_relay({9: 24}, {3: 60, 9: 30, 12: 2}),
 		encode_coop_stats([120, 30, 7, 2], [["Аня", 1], ["Борис", 0]]),
 	]
 	for p in parts:

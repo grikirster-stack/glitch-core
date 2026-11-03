@@ -301,7 +301,7 @@ func _on_coop(sender: int, payload: PackedByteArray) -> void:
 			if es != null:
 				es.show_net_death(Lore.epitaph(), float(d["delay"]), bool(d["wipe"]))
 		NetCodec.CoopEv.RELAY:
-			Game.net_apply_relay(d["have"])
+			Game.net_apply_relay(d["have"], d["req"])
 		NetCodec.CoopEv.STATS:
 			var team: Array = d["team"]
 			Game.stats_mined = int(team[0])
