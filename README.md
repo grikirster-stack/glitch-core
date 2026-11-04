@@ -908,7 +908,7 @@ godot --headless --path . -- --mp-scenario=all --seed=31337  # сеть: хос�
 [ADR-002](docs/adr/0002-multiplayer.md) — кооператив по локальной сети.
 [ADR-003](docs/adr/0003-visual-style.md) — визуальный стиль «Споровый луг».
 [ADR-004](docs/adr/0004-campaign.md) — кампания: главы на готовой базе.
-[ADR-005](docs/adr/0005-light-constructor.md) — световой конструктор: лучи, цвета, читаемость (предложен).
+[ADR-005](docs/adr/0005-light-constructor.md) — световой конструктор вместо фабрики: лучи, цвета, читаемость (предложен).
 
 **CI.** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) на каждый PR гоняет автотест
 на трёх сидах, анимацию, питание, лор, сетевые сценарии, сторож фризов и все игровые
