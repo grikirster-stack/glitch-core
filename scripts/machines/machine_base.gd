@@ -50,6 +50,10 @@ var _destroyed: bool = false
 ## Готовое, ждущее манипулятора (#30): id -> count. См. deliver() и take_output().
 var _output: Dictionary = {}
 var _output_count: int = 0
+## Направление постройки: 0 — вправо, 1 — вниз, 2 — влево, 3 — вверх (как у конвейера).
+## Поворачивается ПКМ или тапом, только если can_turn (ADR-005 § 4).
+var dir: int = 0
+var can_turn: bool = false
 ## Неразборная постройка: её нельзя снять и вернуть в инвентарь (постройки
 ## кампании, тайники руин). Ставится кодом мира, не игроком.
 var permanent: bool = false
@@ -117,6 +121,19 @@ func _process(delta: float) -> void:
 	# Непрерывная анимация отрисовки (вращение бура, мерцание горна).
 	if has_time_animation():
 		queue_redraw()
+
+
+## Повернуть на четверть оборота по часовой. Один вызов — один поворот; «один поворот
+## на нажатие» обеспечивает игрок (Player._do_place).
+func turn() -> void:
+	dir = (dir + 1) % 4
+	queue_redraw()
+	_on_turned()
+
+
+## Хук наследника: направление изменилось (пересчитать луч, зеркало и т. п.).
+func _on_turned() -> void:
+	pass
 
 
 ## Нужен ли этой машине статус питания.
@@ -412,6 +429,7 @@ func save_state() -> Dictionary:
 	return {
 		"kind": kind,
 		"cell": cell,
+		"dir": dir,
 		"hp": hp,
 		"max_hp": max_hp,
 		"progress": progress,
@@ -424,6 +442,7 @@ func save_state() -> Dictionary:
 ## Восстановить состояние после place_machine. Неизвестные ключи игнорируются,
 ## отсутствующие оставляют значение, как у только что построенной машины.
 func load_state(d: Dictionary) -> void:
+	dir = int(d.get("dir", dir)) & 3
 	hp = float(d.get("hp", hp))
 	max_hp = float(d.get("max_hp", max_hp))
 	progress = float(d.get("progress", progress))
@@ -486,6 +505,7 @@ const NF_POWERED: int = 1
 const NF_ACTIVE: int = 2      ## power_active (генераторы)
 const NF_ENABLED: int = 4     ## рубильник генератора
 const NF_OVERLOAD: int = 8    ## генератор перегружен (браун-аут в радиусе)
+const NF_DIR_SHIFT: int = 4   ## dir — биты 4–5 байта флагов (0–3)
 
 
 func net_state() -> PackedByteArray:
@@ -493,6 +513,7 @@ func net_state() -> PackedByteArray:
 	b.resize(NET_BASE_BYTES)
 	b[0] = net_u8(hp / maxf(max_hp, 0.001))
 	b[1] = (NF_POWERED if powered else 0) | (NF_ACTIVE if power_active else 0)
+	b[1] |= (dir & 3) << NF_DIR_SHIFT
 	b[2] = net_u8(efficiency)
 	b[3] = net_u8(progress)
 	return b
@@ -504,6 +525,10 @@ func apply_net_state(b: PackedByteArray) -> int:
 		return -1
 	hp = float(b[0]) / 255.0 * max_hp
 	power_active = (b[1] & NF_ACTIVE) != 0
+	var d: int = (b[1] >> NF_DIR_SHIFT) & 3
+	if d != dir:
+		dir = d
+		queue_redraw()
 	apply_power((b[1] & NF_POWERED) != 0, float(b[2]) / 255.0)
 	progress = float(b[3]) / 255.0
 	return NET_BASE_BYTES

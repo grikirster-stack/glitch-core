@@ -622,9 +622,9 @@ func _update_aim(p: Player) -> void:
 	aim_cell = t["cell"]
 	_aim_point = t["point"]
 	aim_foe = t.has("foe")
-	var turn = World.machines.get(aim_cell) if build_mode else null
-	if turn is Belt or turn is Inserter:
-		_aim_dir = int(turn.dir)
+	var turn: MachineBase = World.machines.get(aim_cell) if build_mode else null
+	if turn != null and turn.can_turn:
+		_aim_dir = turn.dir
 
 
 ## Цель копки для тапа в мировой точке tap: {"cell", "point"[, "foe"]} или {} — копать
@@ -668,7 +668,7 @@ func place_target(p: Player, tap: Vector2) -> Dictionary:
 	var c: Vector2i = World.world_to_cell(tap)
 	if _in_reach(from, c):
 		var m = World.machines.get(c)
-		if m is Belt or m is Inserter or p.can_place_at(c):
+		if (m != null and m.can_turn) or p.can_place_at(c):
 			return _cell_target(c)
 	var free: Vector2i = _ray(from, tap, true, p)
 	return _cell_target(free) if free != NO_CELL else {}
