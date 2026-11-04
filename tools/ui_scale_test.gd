@@ -232,17 +232,26 @@ func _t_panels() -> void:
 		if pause_w > vp.x or PauseMenu.DESIGN_H * UI.pause.scale.x > vp.y:
 			bad.append("пауза при %s: %.0f × %.0f на холсте %s" % [UI.scale_text(s), pause_w,
 					PauseMenu.DESIGN_H * UI.pause.scale.x, str(vp)])
+	# Достигнутый коэффициент панелей на эмулированных холстах при 250 % (воспроизводимо:
+	# окно headless 64×64, холст у него свой).
 	UI.set_ui_scale(2.5, false)
-	var f_inv: float = UI.panel.scale.x * UI.ui_scale
-	print("  ЗАМЕР: панель инвентаря при 250 %% на холсте %s: достигнутый коэффициент %.2f (%.0f × %.0f px)" % [
-			str(vp), f_inv, InventoryPanel.PANEL.x * f_inv, InventoryPanel.PANEL.y * f_inv])
+	var narrow: bool = true
+	for canvas in CANVASES:
+		var f_inv: float = UI.panel_scale(InventoryPanel.PANEL, canvas)
+		var f_jrn: float = UI.panel_scale(Vector2(JournalPanel.W, JournalPanel.H), canvas)
+		var ppm: float = UI.px_per_mm(int(PHONE[1]), PHONE[2], canvas)
+		print("  ЗАМЕР: холст %s, 250 %%: панель инвентаря ×%.2f (%.0f × %.0f px), журнал ×%.2f; "
+				% [str(canvas), f_inv, InventoryPanel.PANEL.x * f_inv, InventoryPanel.PANEL.y * f_inv, f_jrn]
+				+ "на 6,1″ шрифты панели: FONT.small %.2f мм, FONT.body %.2f мм" % [
+				UI.size_mm(float(UI.FONT["small"]), f_inv, ppm), UI.size_mm(float(UI.FONT["body"]), f_inv, ppm)])
+		narrow = narrow and f_inv <= 2.5 + 0.001 \
+				and InventoryPanel.PANEL.x * f_inv <= canvas.x - 2.0 * UI.PANEL_MARGIN + 0.5 \
+				and InventoryPanel.PANEL.y * f_inv <= canvas.y + 0.5
 	UI.set_ui_scale(s0, false)
 	_ok("панели (инвентарь, журнал, пауза) при каждом коэффициенте влезают в экран целиком",
 			bad.is_empty(), "\n       ".join(bad.slice(0, 6)))
-	_ok("панель при 250 % — не больше коэффициента интерфейса и подогнана под экран",
-			f_inv <= 2.5 + 0.001 and InventoryPanel.PANEL.x * f_inv <= vp.x - 2.0 * UI.PANEL_MARGIN + 0.5,
-			"%.2f" % f_inv)
-
+	_ok("панель инвентаря при 250 % на холстах 1280×720 и 1560×720 — не больше коэффициента интерфейса, "
+			+ "в экране целиком", narrow)
 
 # --------------------------------------------------------------------------- шрифты
 

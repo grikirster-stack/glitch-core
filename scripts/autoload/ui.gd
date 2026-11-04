@@ -85,9 +85,10 @@ func logical_size() -> Vector2:
 
 
 ## Коэффициент панели: не больше ui_scale и так, чтобы панель размера design целиком
-## влезала в экран.
-func panel_scale(design: Vector2) -> float:
-	var vp: Vector2 = get_viewport().get_visible_rect().size
+## влезала в экран. vp — холст (по умолчанию холст игры; тест подставляет эмулированный).
+func panel_scale(design: Vector2, vp: Vector2 = Vector2.ZERO) -> float:
+	if vp == Vector2.ZERO:
+		vp = get_viewport().get_visible_rect().size
 	return maxf(0.1, minf(ui_scale, minf((vp.x - 2.0 * PANEL_MARGIN) / design.x,
 			(vp.y - PANEL_MARGIN) / design.y)))
 
