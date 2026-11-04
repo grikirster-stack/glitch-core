@@ -81,6 +81,12 @@ func _start() -> void:
 		load("res://tools/campaign_map.gd").dump(_args)
 		get_tree().quit(0)
 		return
+	# Перепись руды для баланса (ADR-005): жилы и столбцы бура.
+	# godot --headless --path . -- --ore-census --seed=31337
+	if _args.has("--ore-census"):
+		load("res://tools/ore_census.gd").dump(_args)
+		get_tree().quit(0)
+		return
 
 	# Экран финала/смерти — в своём CanvasLayer поверх HUD (#32): под Node2D сцены
 	# он рисовался в мировых координатах и уходил под туман войны.
