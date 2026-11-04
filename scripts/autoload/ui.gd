@@ -13,9 +13,130 @@ var player: Player = null
 ## Включено сенсорное управление (TouchControls.set_enabled): подсказки — про тапы.
 var touch_on: bool = false
 
+# ------------------------------------------------------------- РАЗМЕР ИНТЕРФЕЙСА (#159)
+## Размеры шрифтов интерфейса, логические px слоя UI. Меньше FONT.small в игре нет:
+## вшитые числа в draw_string и _text запрещены (tools/ui_scale_test.gd).
+const FONT: Dictionary = {"small": 14, "body": 18, "title": 28}
+## Доступные коэффициенты «Размера интерфейса» (ADR-005 § 8.1).
+const SCALES: Array[float] = [1.0, 1.5, 2.0, 2.5]
+## Основной текст (кегль FONT.body) не мельче столько мм: телефон и монитор.
+const BODY_MM_PHONE: float = 4.0
+const BODY_MM_PC: float = 3.0
+## Экран с dpi не выше — монитор: умолчание 100 %.
+const PC_DPI: int = 110
+## Запас по краям панели при подгонке под экран, px.
+const PANEL_MARGIN: float = 20.0
+
+## Коэффициент интерфейса. Это scale слоёв UI; мир (камера, ViewZoom) от него не зависит.
+var ui_scale: float = 1.0
+## Коэффициент сменили (меню, профиль): раскладка пересчитана.
+signal ui_scale_changed
+
+
+## Логических px в миллиметре: dpi экрана, окно в физических px, холст (viewport) — как
+## в TouchControls._scale.
+static func px_per_mm(dpi: int, win: Vector2, vp: Vector2) -> float:
+	if dpi <= 0 or win.y <= 0.0 or vp.y <= 0.0:
+		return 0.0
+	return float(dpi) / 25.4 * vp.y / win.y
+
+
+## Кегль font_px при коэффициенте s на экране с px_per_mm, мм.
+static func size_mm(font_px: float, s: float, ppm: float) -> float:
+	return font_px * s / ppm if ppm > 0.0 else 0.0
+
+
+## Умолчание от экрана (первый запуск): наименьший коэффициент, при котором FONT.body не
+## мельче BODY_MM_PHONE; монитор (dpi ≤ PC_DPI) и неизвестный dpi — 1.0.
+static func default_scale(dpi: int, win: Vector2, vp: Vector2) -> float:
+	var ppm: float = px_per_mm(dpi, win, vp)
+	if ppm <= 0.0 or dpi <= PC_DPI:
+		return 1.0
+	for s in SCALES:
+		if size_mm(float(FONT["body"]), s, ppm) >= BODY_MM_PHONE:
+			return s
+	return SCALES[SCALES.size() - 1]
+
+
+## Ближайший доступный коэффициент (битое значение из профиля → 1.0).
+static func snap_scale(v: float) -> float:
+	var best: float = 1.0
+	var bd: float = INF
+	for s in SCALES:
+		if absf(s - v) < bd:
+			bd = absf(s - v)
+			best = s
+	return best
+
+
+## Следующий коэффициент по кругу (кнопка в меню).
+static func next_scale(v: float) -> float:
+	var i: int = SCALES.find(snap_scale(v))
+	return SCALES[(i + 1) % SCALES.size()]
+
+
+static func scale_text(v: float) -> String:
+	return "%d %%" % int(roundf(v * 100.0))
+
+
+## Логический размер холста слоя UI: холст игры, поделённый на коэффициент.
+func logical_size() -> Vector2:
+	return get_viewport().get_visible_rect().size / ui_scale
+
+
+## Коэффициент панели: не больше ui_scale и так, чтобы панель размера design целиком
+## влезала в экран. vp — холст (по умолчанию холст игры; тест подставляет эмулированный).
+func panel_scale(design: Vector2, vp: Vector2 = Vector2.ZERO) -> float:
+	if vp == Vector2.ZERO:
+		vp = get_viewport().get_visible_rect().size
+	return maxf(0.1, minf(ui_scale, minf((vp.x - 2.0 * PANEL_MARGIN) / design.x,
+			(vp.y - PANEL_MARGIN) / design.y)))
+
+
+## Поставить Control слоя UI на весь экран, сжав его в f раз относительно слоя
+## (панель, которой не хватает места при большом коэффициенте): size — логический,
+## чтобы Control, уменьшенный на f, всё равно заполнял холст.
+func place_full(c: Control, f: float = 1.0) -> void:
+	c.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	c.scale = Vector2.ONE * f
+	c.position = Vector2.ZERO
+	c.size = logical_size() / f
+
+
+## Задать коэффициент (меню, профиль) и сразу применить. save — записать в профиль.
+func set_ui_scale(v: float, save: bool = true) -> void:
+	ui_scale = snap_scale(v)
+	if save:
+		Profile.write_ui_scale(ui_scale)
+	_apply_scale()
+	ui_scale_changed.emit()
+
+
+## Применить коэффициент: scale слоя, размер HUD и подгонка панелей и паузы.
+func _apply_scale() -> void:
+	if hud == null:
+		return
+	scale = Vector2.ONE * ui_scale
+	place_full(hud)
+	place_full(panel, panel_scale(InventoryPanel.PANEL) / ui_scale)
+	place_full(journal, panel_scale(Vector2(JournalPanel.W, JournalPanel.H)) / ui_scale)
+	pause.apply_scale(panel_scale(Vector2(PauseMenu.COL_W + 40.0, PauseMenu.DESIGN_H)))
+
+
+## Коэффициент при запуске: из профиля; поля нет (первый запуск) — от экрана, и записать.
+func _initial_scale() -> float:
+	var saved: float = Profile.read_ui_scale()
+	if saved > 0.0:
+		return snap_scale(saved)
+	var s: float = default_scale(DisplayServer.screen_get_dpi(), Vector2(get_window().size),
+			get_viewport().get_visible_rect().size)
+	Profile.write_ui_scale(s)
+	return s
+
 
 func _ready() -> void:
 	layer = 10
+	ui_scale = _initial_scale()
 	hud = HUD.new()
 	add_child(hud)
 	panel = InventoryPanel.new()
@@ -25,6 +146,8 @@ func _ready() -> void:
 	pause = PauseMenu.new()   # #119: свой CanvasLayer, работает и при паузе дерева
 	add_child(pause)
 	Game.notification.connect(_on_notification)
+	get_viewport().size_changed.connect(_apply_scale)
+	_apply_scale()
 
 
 func _notification(what: int) -> void:

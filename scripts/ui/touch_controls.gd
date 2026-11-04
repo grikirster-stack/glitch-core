@@ -131,6 +131,8 @@ var stick_vec: Vector2 = Vector2.ZERO
 
 var _pad: Control = null
 var _layout_size: Vector2 = Vector2.ZERO
+## Размер интерфейса, под который посчитана раскладка (UI.ui_scale).
+var _layout_ui: float = 1.0
 ## Строк плашки команды, под которые сдвинута правая колонка (_team_rows; 0 — плашки нет).
 var _layout_team: int = 0
 ## NetTeam (без типа — цикл зависимостей, как в HUD); ищется только в сети.
@@ -281,8 +283,14 @@ func _shown(id: String, blocking: bool) -> bool:
 	return id != "g" or rollcall_shown()
 
 
+## Множитель раскладки, заданный тестом (> 0): окно headless — 64×64 px, по нему dpi не посчитать.
+var force_k: float = 0.0
+
+
 ## Множитель раскладки: кнопка не меньше MIN_MM на экране этого устройства.
 func _scale() -> float:
+	if force_k > 0.0:
+		return force_k
 	var dpi: int = DisplayServer.screen_get_dpi()
 	var win: Vector2i = get_window().size
 	var vp: Vector2 = get_viewport().get_visible_rect().size
@@ -294,6 +302,7 @@ func _scale() -> float:
 
 func _relayout() -> void:
 	_layout_size = get_viewport().get_visible_rect().size
+	_layout_ui = UI.ui_scale
 	_layout_team = _team_rows()
 	_layout(_layout_size)
 	_pad.queue_redraw()
@@ -309,17 +318,16 @@ func _layout(sz: Vector2) -> void:
 	stick_center = Vector2(m + 10.0 * _k + stick_radius, sz.y - m - stick_radius)
 	var jump: Vector2 = Vector2(sz.x - m - jr, sz.y - m - jr)
 	var run: Vector2 = Vector2(jump.x - jr - g - r, sz.y - m - r)
-	# Под миникартой (HUD: до y = 112) — I и J, под ними столбиком Q и V. В сети
-	# с товарищами — под плашкой команды, а Q, V и G (перекличка) — одним рядом:
-	# колонка на высоту плашки ниже налезла бы на уведомления.
-	var top: float = 126.0
-	if _layout_team > 0:
-		top = maxf(top, HUD.team_plate_rect(sz.x, _layout_team).end.y + 8.0)
+	# Под правым столбцом HUD (миникарта, плашка команды: HUD.right_column_bottom) — I и J,
+	# под ними столбиком Q и V. В сети с товарищами и при размере интерфейса выше 100 % —
+	# Q, V и G (перекличка) одним рядом: колонка ниже налезла бы на уведомления и нижние кнопки.
+	var top: float = maxf(126.0, HUD.right_column_bottom(sz.x / UI.ui_scale, _layout_team) * UI.ui_scale + 8.0)
 	var inv: Vector2 = Vector2(sz.x - m - r, top + r)
 	var step: float = 2.0 * r + g
 	var q: Vector2 = Vector2(inv.x, inv.y + step)
 	var v: Vector2 = Vector2(inv.x, q.y + step)
-	if _layout_team > 0:
+	var one_row: bool = _layout_team > 0 or UI.ui_scale > 1.0
+	if one_row:
 		v = Vector2(q.x - step, q.y)
 	btn_center = {
 		"jump": jump,
@@ -330,7 +338,7 @@ func _layout(sz: Vector2) -> void:
 		"pause": Vector2(inv.x - 2.0 * step, inv.y),   # #119
 		"q": q,
 		"v": v,
-		"g": Vector2(v.x - step, q.y) if _layout_team > 0 else Vector2(q.x - step, q.y),
+		"g": Vector2(v.x - step, q.y) if one_row else Vector2(q.x - step, q.y),
 		"build": Vector2(m + r, stick_center.y - stick_radius - g - r),
 	}
 	btn_radius = {}
@@ -722,7 +730,8 @@ func _ray(from: Vector2, to: Vector2, place: bool, p: Player = null) -> Vector2i
 # ------------------------------------------------------------------ РИСОВАНИЕ
 
 func _process(_delta: float) -> void:
-	if get_viewport().get_visible_rect().size != _layout_size or _team_rows() != _layout_team:
+	if get_viewport().get_visible_rect().size != _layout_size or _team_rows() != _layout_team \
+			or UI.ui_scale != _layout_ui:
 		_relayout()
 	_fill_key()
 	if _key != _last_key:
@@ -869,7 +878,7 @@ func _draw_button(font: Font, id: String, glyph: String, cap: String, on: bool, 
 			var fs: int = int(28.0 * _k)
 			_pad.draw_string(font, Vector2(c.x - r, c.y + dy + fs * 0.36), glyph,
 					HORIZONTAL_ALIGNMENT_CENTER, r * 2.0, fs, ink)
-	var cs: int = int(12.0 * _k)
+	var cs: int = maxi(int(UI.FONT["small"]), int(12.0 * _k))
 	_pad.draw_string(font, Vector2(c.x - r, c.y + r * 0.62), cap, HORIZONTAL_ALIGNMENT_CENTER,
 			r * 2.0, cs, Color(1, 1, 1, 0.75))
 	# Перезарядка импульса и прогресс удержания E — дугой по кромке.

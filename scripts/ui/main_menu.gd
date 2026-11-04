@@ -43,6 +43,8 @@ var nick_error_label: Label
 var seed_edit: LineEdit
 ## «Хардкор» — кнопка-переключатель (крупнее галочки под палец).
 var hardcore_box: Button
+## «Интерфейс: 100 %» (#159): размер интерфейса игры, в одной строке с «Меньше глитча».
+var ui_scale_button: Button
 var single_button: Button
 var net_buttons: Array[Button] = []
 var status_label: Label
@@ -270,7 +272,22 @@ func _build() -> void:
 	hardcore_box.tooltip_text = "Одна жизнь, без сохранений"
 	hardcore_box.custom_minimum_size = Vector2(0, BUTTON_H)
 	seed_row.add_child(hardcore_box)
-	right.add_child(GlitchFx.menu_toggle(_button(""), profile, profile_path))   # ADR-003 V7 (#108)
+	# Доступность: «Меньше глитча» (ADR-003 V7, #108) и «Интерфейс» (#159) — одна строка,
+	# чтобы колонка с «Продолжить» по-прежнему влезала в 720 по высоте.
+	var access_row: HBoxContainer = HBoxContainer.new()
+	access_row.add_theme_constant_override("separation", 10)
+	right.add_child(access_row)
+	var calm_button: Button = GlitchFx.menu_toggle(_button(""), profile, profile_path)
+	calm_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	calm_button.add_theme_font_size_override("font_size", UI.FONT["body"])
+	access_row.add_child(calm_button)
+	ui_scale_button = _button("")
+	ui_scale_button.add_theme_font_size_override("font_size", UI.FONT["body"])
+	ui_scale_button.custom_minimum_size = Vector2(170, BUTTON_H)
+	ui_scale_button.tooltip_text = "Размер интерфейса игры: 100–250 %. Подпись и кнопки в забеге крупнее"
+	ui_scale_button.pressed.connect(_on_ui_scale_pressed)
+	_refresh_ui_scale_button()
+	access_row.add_child(ui_scale_button)
 	continue_button = _button("Продолжить")   # #119: последний забег; нечего продолжать — кнопки нет
 	continue_button.pressed.connect(continue_run)
 	continue_button.visible = false
@@ -318,6 +335,19 @@ func _build() -> void:
 	version_label.offset_right = -16
 	version_label.offset_bottom = -10
 	add_child(version_label)
+
+
+func _refresh_ui_scale_button() -> void:
+	ui_scale_button.text = "Интерфейс: " + UI.scale_text(UI.ui_scale)
+
+
+## Тап по «Интерфейс»: следующий коэффициент по кругу, применяется сразу и пишется в профиль.
+func _on_ui_scale_pressed() -> void:
+	var v: float = UI.next_scale(UI.ui_scale)
+	UI.set_ui_scale(v, false)
+	profile.ui_scale = v
+	profile.save_to(profile_path)
+	_refresh_ui_scale_button()
 
 
 func _look_row(i: int) -> HBoxContainer:

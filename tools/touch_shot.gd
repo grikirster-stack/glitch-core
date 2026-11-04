@@ -6,6 +6,8 @@ extends SceneTree
 ##   godot --path . --audio-driver Dummy --windowed --position -10000,-10000 \
 ##         --resolution 1280x720 --script res://tools/touch_shot.gd -- --touch --seed=31337
 ##
+## Флаг --ui-scale=2.5 ставит «Размер интерфейса» (#159, 1.0…2.5; профиль не пишется), флаг
+## --out=путь пишет снимок не в docs/img, а в указанный файл (проверка без перезаписи README).
 ## Флаг --touch включает TouchControls и на ПК без сенсорного экрана. Кадр — день,
 ## подсказка управления погасла, стартовые уведомления ещё видны (видно, что
 ## кнопки их не перекрывают), джойстик чуть отклонён вправо.
@@ -16,6 +18,8 @@ extends SceneTree
 ## с Q и правую колонку под плашкой команды (худший случай — 3 товарища).
 
 const OUT: String = "res://docs/img/touch_controls.png"
+## Куда писать снимок (--out=путь); по умолчанию OUT.
+var out_path: String = OUT
 const HARD_LIMIT: float = 18.0
 
 var scene: Node = null
@@ -61,6 +65,11 @@ func _run() -> void:
 	game.set("game_time", 30.0)              ## подсказка управления уже погасла
 	game.set("time_of_day", 0.40)
 	root.size = Vector2i(1280, 720)
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--ui-scale="):
+			root.get_node("UI").call("set_ui_scale", float(a.substr(11)), false)
+		elif a.begins_with("--out="):
+			out_path = a.substr(6)
 	await _frames(20)
 	var tc: Node = get_first_node_in_group("touch_controls")
 	if tc == null or not bool(tc.get("enabled")):
@@ -80,8 +89,8 @@ func _run() -> void:
 		push_error("touch_shot: пустой кадр")
 		quit(1)
 		return
-	var err: int = img.save_png(ProjectSettings.globalize_path(OUT))
-	print("снято: %s (%dx%d), код %d" % [OUT, img.get_width(), img.get_height(), err])
+	var err: int = img.save_png(ProjectSettings.globalize_path(out_path))
+	print("снято: %s (%dx%d), код %d" % [out_path, img.get_width(), img.get_height(), err])
 	quit(0 if err == OK else 1)
 
 
