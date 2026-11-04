@@ -680,16 +680,8 @@ func _has_los() -> bool:
 
 
 func _compute_los(from: Vector2i, to: Vector2i) -> bool:
-	var steps: int = maxi(absi(to.x - from.x), absi(to.y - from.y))
-	if steps <= 0:
-		return true
-	for i in range(1, steps):
-		var t: float = float(i) / float(steps)
-		var cx: int = int(round(lerpf(from.x, to.x, t)))
-		var cy: int = int(round(lerpf(from.y, to.y, t)))
-		if World.is_solid_cell(Vector2i(cx, cy)):
-			return false
-	return true
+	var hit: Vector2i = World.first_solid_on_ray(World.cell_to_world(from), World.cell_to_world(to), false)
+	return hit == Vector2i(-1, -1) or hit == to
 
 
 # ------------------------------------------------------------------ ПУТЬ

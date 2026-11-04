@@ -14,6 +14,8 @@ const JUMP_VELOCITY: float = -305.0
 const GRAVITY: float = 900.0
 const MAX_FALL: float = 520.0
 const REACH: float = 5.6 * 16.0
+## Сколько секунд горит красный крест на клетке, которую копать нельзя.
+const DIG_DENIED_TIME: float = 0.3
 const MAX_HP: float = 100.0
 
 # ------------------------------------------------ ОЩУЩЕНИЕ УПРАВЛЕНИЯ
@@ -48,6 +50,13 @@ var facing: int = 1
 var mining_progress: float = 0.0
 var mining_cell: Vector2i = Vector2i(-1, -1)
 var building_cell: Vector2i = Vector2i(-1, -1)
+## Клетка, которую копнёт ЛКМ сейчас (первая твёрдая по лучу от героя к курсору), или (-1, -1).
+var dig_cell: Vector2i = Vector2i(-1, -1)
+## Твёрдая клетка под курсором, которую копать нельзя (за стеной или за радиусом): HUD рисует
+## на ней красный крест DIG_DENIED_TIME секунд.
+var dig_denied_cell: Vector2i = Vector2i(-1, -1)
+var dig_denied_t: float = 0.0
+var _lmb_was: bool = false   ## ЛКМ была нажата в прошлом кадре
 var task_progress: float = 0.0
 var hiding: bool = false
 ## Сколько ещё можно сидеть в вентиляции, с (тикает от Balance.HIDE_MAX к нулю).
@@ -285,6 +294,7 @@ func _handle_input(dt: float) -> void:
 	if net_role == NetRole.OWNER:   # СЕТЬ (ADR-002): действия своего героя клиента — у хоста
 		return
 	if _ui_blocking():
+		dig_cell = Vector2i(-1, -1)
 		return
 
 	var mouse: Vector2 = _mouse_pos()
@@ -293,14 +303,21 @@ func _handle_input(dt: float) -> void:
 
 	var in_reach: bool = mouse.distance_to(global_position) <= REACH
 
-	if _mouse_down(MOUSE_BUTTON_LEFT):
-		if in_reach:
-			if _slash_at(mouse):
-				return
-			_do_mining(cell, dt)
+	dig_cell = dig_target(mouse)
+	var lmb: bool = _mouse_down(MOUSE_BUTTON_LEFT)
+	dig_denied_t = maxf(0.0, dig_denied_t - dt)
+	if lmb:
+		if in_reach and _slash_at(mouse):
+			return
+		_flag_denied(cell)
+		if dig_cell.x >= 0:
+			_do_mining(dig_cell, dt)
+		else:
+			mining_progress = 0.0
 	else:
 		mining_progress = 0.0
 		mining_cell = Vector2i(-1, -1)
+		_lmb_was = false
 
 	if _mouse_down(MOUSE_BUTTON_RIGHT) and in_reach:
 		_place_cd -= dt
@@ -387,6 +404,34 @@ func _empulse() -> void:
 		if p.global_position.distance_to(global_position) < 130.0:
 			p.apply_stun(3.0)
 			p.take_damage(10.0, global_position)
+
+
+## Клетка, которую копнёт ЛКМ с курсором в точке mouse: первая твёрдая клетка на луче от
+## героя к курсору (сквозь стену копать нельзя — единое правило с тапом на телефоне), если
+## она копаемая и в радиусе. (-1, -1) — копать нечего.
+func dig_target(mouse: Vector2) -> Vector2i:
+	var hit: Vector2i = World.first_solid_on_ray(global_position, mouse)
+	if hit.x < 0 or not can_dig(hit):
+		return Vector2i(-1, -1)
+	if World.cell_to_world(hit).distance_to(global_position) > REACH:
+		return Vector2i(-1, -1)
+	return hit
+
+
+## Можно ли копать клетку: твёрдая, не машина и не слишком крепкая (как _do_mining).
+static func can_dig(c: Vector2i) -> bool:
+	var tid: int = World.get_tile_v(c)
+	return tid != IDs.T.AIR and not DB.is_liquid(tid) and DB.tile_hard(tid) <= 100.0
+
+
+## Нажатая ЛКМ на твёрдую клетку под курсором, которую копать нельзя (упёрлись в другую
+## или далеко): помечаем её красным крестом на DIG_DENIED_TIME секунд, раз на нажатие.
+func _flag_denied(cursor_cell: Vector2i) -> void:
+	var denied: bool = World.is_solid_cell(cursor_cell) and cursor_cell != dig_cell
+	if denied and (not _lmb_was or dig_denied_cell != cursor_cell):
+		dig_denied_cell = cursor_cell
+		dig_denied_t = DIG_DENIED_TIME
+	_lmb_was = true
 
 
 func _do_mining(cell: Vector2i, dt: float) -> void:

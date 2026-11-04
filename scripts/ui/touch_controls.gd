@@ -638,10 +638,8 @@ func dig_target(p: Player, tap: Vector2, loose: bool) -> Dictionary:
 		if pp.distance_to(tap) <= PHANTOM_GRAB and pp.distance_to(from) <= Player.REACH:
 			return {"cell": World.world_to_cell(pp), "point": pp, "foe": true}
 	var c: Vector2i = World.world_to_cell(tap)
-	if diggable(c) and _in_reach(from, c):
-		return _cell_target(c)
-	var hit: Vector2i = _ray(from, tap, false)
-	if hit != NO_CELL:
+	var hit: Vector2i = World.first_solid_on_ray(from, tap)
+	if hit != NO_CELL and diggable(hit) and _in_reach(from, hit):
 		return _cell_target(hit)
 	if not loose:
 		return {}
@@ -670,7 +668,7 @@ func place_target(p: Player, tap: Vector2) -> Dictionary:
 		var m = World.machines.get(c)
 		if m is Belt or m is Inserter or p.can_place_at(c):
 			return _cell_target(c)
-	var free: Vector2i = _ray(from, tap, true, p)
+	var free: Vector2i = _ray(from, tap, p)
 	return _cell_target(free) if free != NO_CELL else {}
 
 
@@ -688,9 +686,9 @@ static func _cell_target(c: Vector2i) -> Dictionary:
 	return {"cell": c, "point": World.cell_to_world(c)}
 
 
-## Луч от героя к пальцу (не дальше радиуса). Копка: первая твёрдая клетка, если она в
-## радиусе. Постройка: последняя клетка, куда можно поставить, до первой занятой.
-func _ray(from: Vector2, to: Vector2, place: bool, p: Player = null) -> Vector2i:
+## Луч от героя к пальцу (не дальше радиуса) для постройки: последняя клетка, куда можно
+## поставить, до первой занятой. Копка идёт по World.first_solid_on_ray.
+func _ray(from: Vector2, to: Vector2, p: Player) -> Vector2i:
 	var d: Vector2 = to - from
 	var dist: float = d.length()
 	if dist < 0.01:
@@ -708,10 +706,6 @@ func _ray(from: Vector2, to: Vector2, place: bool, p: Player = null) -> Vector2i
 		prev = c
 		var tid: int = World.get_tile_v(c)
 		var solid: bool = tid != IDs.T.AIR and not DB.is_liquid(tid)
-		if not place:
-			if solid:   # крепче копаемого или за радиусом — сквозь не копаем
-				return c if diggable(c) and _in_reach(from, c) else NO_CELL
-			continue
 		if solid or World.machines.has(c):
 			break
 		if _in_reach(from, c) and p.can_place_at(c):

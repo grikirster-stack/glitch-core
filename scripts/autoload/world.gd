@@ -1437,6 +1437,46 @@ func is_solid_at(p: Vector2) -> bool:
 	return is_solid_cell(world_to_cell(p))
 
 
+## Первая твёрдая клетка на отрезке from → to (мировые px), считая конечную; стартовая
+## клетка не проверяется — луч выходит из неё. Обход по клеткам (DDA): ни один угол не
+## пропускается. Жидкости и воздух — пусто. machines_block — машины тоже твёрдые
+## (копка; трассировка видимости фантомов и турели их не считает). Нет такой — (-1, -1).
+## Единая трассировка: копка мышью, тач, турель, фантомы, дальше — луч света.
+func first_solid_on_ray(from: Vector2, to: Vector2, machines_block: bool = true) -> Vector2i:
+	var a: Vector2i = world_to_cell(from)
+	var b: Vector2i = world_to_cell(to)
+	if a == b:
+		return Vector2i(-1, -1)
+	var d: Vector2 = (to - from) / float(TILE)
+	var fx: float = from.x / float(TILE)
+	var fy: float = from.y / float(TILE)
+	var sx: int = 1 if d.x > 0.0 else -1
+	var sy: int = 1 if d.y > 0.0 else -1
+	var inf: float = 1.0e30
+	var dtx: float = absf(1.0 / d.x) if d.x != 0.0 else inf
+	var dty: float = absf(1.0 / d.y) if d.y != 0.0 else inf
+	var tx: float = inf
+	var ty: float = inf
+	if d.x != 0.0:
+		tx = (float(a.x + (1 if sx > 0 else 0)) - fx) / d.x
+	if d.y != 0.0:
+		ty = (float(a.y + (1 if sy > 0 else 0)) - fy) / d.y
+	var cx: int = a.x
+	var cy: int = a.y
+	var steps: int = absi(b.x - a.x) + absi(b.y - a.y)
+	for _i in range(steps):
+		if tx < ty:
+			cx += sx
+			tx += dtx
+		else:
+			cy += sy
+			ty += dty
+		var tid: int = tiles[cy * W + cx] if cx >= 0 and cx < W and cy >= 0 and cy < H else get_tile(cx, cy)
+		if _solid_tbl[tid] != 0 or (machines_block and machines.has(Vector2i(cx, cy))):
+			return Vector2i(cx, cy)
+	return Vector2i(-1, -1)
+
+
 func world_to_cell(p: Vector2) -> Vector2i:
 	return Vector2i(int(floor(p.x / TILE)), int(floor(p.y / TILE)))
 
