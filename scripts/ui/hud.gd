@@ -178,6 +178,9 @@ var stat_power_scans: int = 0
 var stat_mark_redraws: int = 0
 ## Рамка интерактива на экране (пустая — объекта рядом нет). Читают сценарии.
 var mark_rect: Rect2i = Rect2i()
+## Доля удержания, нарисованная последний раз: перерисовываем рамку, только
+## когда полоса заметно изменилась (иначе — перерисовка с текстом каждый кадр).
+var _mark_progress: float = -1.0
 
 # ------------------------------------------------------------ ВНУТРЕННЕЕ
 var _cross: Control = null
@@ -880,11 +883,18 @@ func _update_mark() -> void:
 	if _hint_target.size != Vector2.ZERO:
 		var sr: Rect2 = get_viewport().get_canvas_transform() * _hint_target
 		r = Rect2i(sr.position.round(), sr.size.round())
+	var pr: float = _interact_progress()
 	if r != mark_rect:
 		mark_rect = r
+		_mark_progress = pr
 		_mark.queue_redraw()
-	elif _interact_progress() > 0.0:
-		_mark.queue_redraw()   # плашка «E» наполняется (удержание: разбор)
+	elif absf(pr - _mark_progress) > 0.03:
+		# Плашка «E» наполняется при удержании (разбор постройки): слой
+		# перерисовываем, только когда полоса изменилась заметно — перерисовка
+		# каждый кадр (с текстом!) съедала бы кадр хоста.
+		_mark_progress = pr
+		if mark_rect.size != Vector2i.ZERO:
+			_mark.queue_redraw()
 
 
 ## Доля удержания E (0..1): разбор постройки или чтение терминала.
