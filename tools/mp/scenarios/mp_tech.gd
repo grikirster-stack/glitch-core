@@ -38,6 +38,12 @@ func run_host() -> void:
 	ok("до открытия рецепт T1 заперт", not DB.recipe_unlocked(_assembler_rec()))
 	await barrier("data")
 
+	# Все клиенты подтвердили, что данные хоста до них дошли. Только после этого
+	# клиент 0 просит открыть T1: иначе хост спишет данные (8 → 3) и пришлёт
+	# TECH UNLOCK раньше, чем медленный клиент увидит 8, — тот не найдёт окна,
+	# в котором Game.research == 8 (сценарий падал в CI).
+	await barrier("data_ok")
+
 	await barrier("unlock")
 	ok("хост: T1 открыт командой клиента 0", await wait_until(func() -> bool: return Tech.is_unlocked("T1"), WAIT))
 	ok("хост: данные списаны", Game.research == 3, "данных %d" % Game.research)
@@ -65,6 +71,10 @@ func run_client(i: int) -> void:
 	ok("обрывок, найденный на хосте, — и у клиента (TECH)",
 			await wait_until(func() -> bool: return Tech.fragments.has(FRAGMENT), WAIT))
 	ok("до открытия рецепт T1 заперт и у клиента", not DB.recipe_unlocked(_assembler_rec()))
+	# Данные у всех. Только теперь клиент 0 может просить открыть T1: пока он
+	# не попросил, хост не списывает 8 → 3, и у каждого клиента есть окно,
+	# в котором Game.research == 8 (без этого медленный клиент его пропускал).
+	await barrier("data_ok")
 	var panel: InventoryPanel = UI.panel
 	if i == 0:
 		panel.open(player)
