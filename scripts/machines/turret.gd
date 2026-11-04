@@ -81,15 +81,9 @@ func pick_target() -> Node2D:
 
 ## Прямая видимость по клеткам (как у фантома): твёрдое между — не видно.
 func _los(to: Vector2) -> bool:
-	var a: Vector2i = cell
 	var b: Vector2i = World.world_to_cell(to)
-	var steps: int = maxi(absi(b.x - a.x), absi(b.y - a.y))
-	for i in range(1, steps):
-		var k: float = float(i) / float(steps)
-		var c: Vector2i = Vector2i(int(round(lerpf(a.x, b.x, k))), int(round(lerpf(a.y, b.y, k))))
-		if World.is_solid_cell(c):
-			return false
-	return true
+	var hit: Vector2i = World.first_solid_on_ray(World.cell_to_world(cell), World.cell_to_world(b), false)
+	return hit == Vector2i(-1, -1) or hit == b
 
 
 func _fire(t: Node2D) -> void:
