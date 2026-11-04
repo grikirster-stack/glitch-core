@@ -97,7 +97,11 @@ static func host_check(sc: MpScenarioBase) -> void:
 	Game.net_world.check_now()
 	var ok_s: bool = await sc.wait_until(func() -> bool: return Game.net_world.hash_sent > sent, 2.0)
 	sc.ok("хост: сверка мира отправлена", ok_s)
-	await sc.barrier("checked", 1, 60.0)
+	# Барьер — на ВСЕХ клиентов: хост отпускает тех, кто уже пришёл, и BARRIER_PASS
+	# уходит только дошедшим (mp_runner: BARRIER_PASS по списку пришедших). С count=1
+	# хост отпускал барьер после первого клиента, и второй висел до своего таймаута
+	# (сценарий mp_factory падал на «хэши тайлов… (1 из 2)»).
+	await sc.barrier("checked", -1, 60.0)
 
 
 ## Хост: хэши клиента (имя его барьера «h:…») против своих.
