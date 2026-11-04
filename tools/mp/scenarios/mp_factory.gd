@@ -197,27 +197,35 @@ func run_host() -> void:
 		(World.machines[far] as CoalGen).add_fuel(4)    # топливо убывает — net_state меняется
 	await wait(1.0)                         # события постройки и первый полный обход прошли
 	var pid: int = peer_of_uid(client_uid(0))
-	nm.reset_traffic()
-	var b0: int = int(nm.peer_bytes.get(pid, 0))
-	var t0: float = now()
-	var feed_t: float = 0.0
-	while now() - t0 < MEASURE_S:
-		await wait(0.1)
-		feed_t += 0.1
-		if feed_t >= 0.5:
-			feed_t = 0.0
-			_feed_base()
-	var dt: float = now() - t0
-	var bps: float = float(int(nm.peer_bytes.get(pid, 0)) - b0) / dt
+	# Замер такта: хост должен быть не в мягком пределе (там машины идут 1 Гц —
+	# проверка ниже), иначе счёт за 5 с меньше 20 не из-за поломки сети. Всплеск
+	# от постройки базы (130 MACHINE_ADD) поднимает хост над пределом на секунду;
+	# ждём, пока окно бюджета (1 с) его отпустит.
+	var m: Dictionary = await _measure_hz(nm, pid)
+	if not bool(m["cadence_ok"]):
+		# Первый замер попал в мягкий предел — меряем заново, уже чистое окно.
+		m = await _measure_hz(nm, pid)
+	var dt: float = float(m["dt"])
+	var pf: int = int(m["pf"])
+	var bps: float = float(m["bps"])
 	var sbps: float = float(nm.state_bytes) / dt / float(maxi(1, clients))
-	var avg_us: float = float(nm.gather_us_sum) / float(maxi(1, nm.gather_n))
-	print("  ЗАМЕР база %d машин (всего в мире %d) в зоне: машины хост → клиент %.0f Б/с (net_state %.0f Б/с, оценка ADR %d), записей %d за %.1f с; сбор net_state %.0f мкс/такт (худший %d, из последнего постройка %d, машин %d, тактов %d); мягкий предел — %s" % [
+	var avg_us: float = float(m["avg_us"])
+	print("  ЗАМЕР база %d машин (всего в мире %d) в зоне: машины хост → клиент %.0f Б/с (net_state %.0f Б/с, оценка ADR %d), записей %d за %.1f с; сбор net_state %.0f мкс/такт (худший %d, из последнего постройка %d, машин %d, тактов %d); физ. кадров %d (ожидаем %d); в мягком пределе %d из %d замеров; мягкий предел — %s" % [
 			base.size(), World.machines.size(), bps, sbps, ADR_MACHINES_BPS, nm.states_tx, dt, avg_us,
-			nm.gather_us_max, nm.build_us, nm.gather_machines, nm.gather_n, "1 Гц" if nm.slow else "не достигнут"])
+			nm.gather_us_max, nm.build_us, nm.gather_machines, nm.gather_n, pf, int(m["want"]),
+			int(m["slow_n"]), int(m["samples"]), "1 Гц" if nm.slow else "не достигнут"])
 	ok("хост: машины базы — меньше мягкого предела %d Б/с" % Net.SOFT_BUDGET, bps < float(Net.SOFT_BUDGET),
 			"%.0f Б/с" % bps)
-	ok("хост: машины идут 4 Гц (тактов сбора %d за %.1f с)" % [nm.gather_n, dt],
-			absi(nm.gather_n - roundi(dt * Net.MACHINE_HZ)) <= 1)
+	# Такт сбора состояний — каждые 15 физических кадров хоста: 3 кадра на сетевой
+	# такт (NetWorld.TICK_FRAMES) × 5 тактов на сбор (Net.TICK_HZ / Net.MACHINE_HZ).
+	# Сверяем число сборов с числом физических кадров: физика — честный счётчик
+	# тактов, от скорости раннера не зависит.
+	var per_gather: int = NetWorld.TICK_FRAMES * (Net.TICK_HZ / Net.MACHINE_HZ)
+	ok("хост: машины идут 4 Гц (тактов сбора %d за %d физ. кадров, по %d на такт)" % [
+			nm.gather_n, pf, per_gather], bool(m["cadence_ok"]),
+			"ожидаем %d сборов" % int(m["want"]))
+	ok("хост: во время замера хост не был в мягком пределе", int(m["slow_n"]) == 0,
+			"в пределе %d из %d замеров" % [int(m["slow_n"]), int(m["samples"])])
 	ok("хост: сбор net_state ≤ %d мкс/такт (%.0f)" % [GATHER_LIMIT_US, avg_us], avg_us <= float(GATHER_LIMIT_US))
 	var far_idx: int = far.y * World.W + far.x
 	var far_sent: bool = false
@@ -396,6 +404,44 @@ func _feed_base() -> void:
 			var b = World.belts.get(Vector2i(_bx + i, _g - 10 + r))
 			if b != null:
 				b.add_item(IDs.I.IRON_ORE, 1)
+
+
+## Окно замера такта сбора состояний (MEASURE_S с): хост в обычном режиме, не в
+## мягком пределе. Отдаёт метрики окна: сколько сборов, сколько физических
+## кадров, сколько замеров попало в мягкий предел.
+func _measure_hz(nm, pid: int) -> Dictionary:
+	await wait_until(func() -> bool: return not nm.slow, 3.0)
+	await wait(1.1)                          # окно бюджета (1 с) отпустило всплеск
+	nm.reset_traffic()
+	var pf0: int = Engine.get_physics_frames()
+	var b0: int = int(nm.peer_bytes.get(pid, 0))
+	var t0: float = now()
+	var feed_t: float = 0.0
+	var slow_n: int = 0
+	var samples: int = 0
+	while now() - t0 < MEASURE_S:
+		await wait(0.1)
+		samples += 1
+		if nm.slow:
+			slow_n += 1
+		feed_t += 0.1
+		if feed_t >= 0.5:
+			feed_t = 0.0
+			_feed_base()
+	var dt: float = now() - t0
+	var pf: int = Engine.get_physics_frames() - pf0
+	var per_gather: int = NetWorld.TICK_FRAMES * (Net.TICK_HZ / Net.MACHINE_HZ)
+	var want: int = int(round(float(pf) / float(per_gather)))
+	return {
+		"dt": dt,
+		"pf": pf,
+		"want": want,
+		"slow_n": slow_n,
+		"samples": samples,
+		"bps": float(int(nm.peer_bytes.get(pid, 0)) - b0) / dt,
+		"avg_us": float(nm.gather_us_sum) / float(maxi(1, nm.gather_n)),
+		"cadence_ok": slow_n == 0 and absi(nm.gather_n - want) <= 1,
+	}
 
 
 # ------------------------------------------------------------------ КЛИЕНТ
