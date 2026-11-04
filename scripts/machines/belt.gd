@@ -5,13 +5,13 @@ extends MachineBase
 const SPEED: float = 1.5   ## тайлов в секунду
 const GAP: float = 0.34
 
-var dir: int = 0
 var items: Array = []      ## [{id:int, count:int, pos:float}]
 
 
 func _init() -> void:
 	kind = "Belt"
 	z_index = 2
+	can_turn = true
 
 
 func dir_vector() -> Vector2:
@@ -20,11 +20,6 @@ func dir_vector() -> Vector2:
 		1: return Vector2.DOWN
 		2: return Vector2.LEFT
 		_: return Vector2.UP
-
-
-func turn() -> void:
-	dir = (dir + 1) % 4
-	queue_redraw()
 
 
 ## Ставит предмет на ленту, если есть место. Возвращает true при успехе.

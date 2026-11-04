@@ -45,8 +45,11 @@ func run() -> void:
 	aim(World.cell_to_world(c0 + Vector2i(1, 0)))
 	press_mouse(MOUSE_BUTTON_RIGHT)
 	await wait_until(func() -> bool: return ins.dir != 0, 2.0)
+	var dir_first: int = ins.dir
+	await wait(0.5)   # кнопка удержана ещё ~3 периода повтора (0,16 с): по кругу крутить нельзя
 	release_mouse(MOUSE_BUTTON_RIGHT)
-	ok("ПКМ поворачивает манипулятор", ins.dir != 0, "dir=%d" % ins.dir)
+	ok("ПКМ поворачивает манипулятор", dir_first == 1, "dir=%d" % dir_first)
+	ok("удержание ПКМ — один поворот на нажатие", ins.dir == dir_first, "dir=%d → %d" % [dir_first, ins.dir])
 	ins.dir = 0
 
 	# Фильтр: E с рудой в руке — только руда; песок в сундуке остаётся.
