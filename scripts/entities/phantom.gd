@@ -54,8 +54,8 @@ var _flee_from: Vector2 = Vector2.ZERO
 var hp: float = MAX_HP
 var max_hp: float = MAX_HP
 var dmg: float = 24.0				## Урон по игроку за удар.
-## Главы 1–3 (ADR-005 § 9): эхо подходит и отступает, но не бьёт. Ставит глава
-## до добавления в дерево. Урон 0 не выключает остальное поведение.
+## До главы 4 кампании «Свет» эхо отступает, но не бьёт (#177, #178). Главы
+## ставят флаг после спавна: глава 4 бьёт, глава 3 фантомов не зовёт.
 var harmless: bool = false
 var light_flee: float = 0.55		## Порог света, от которого фантом убегает (INF — не боится).
 var speed_mul: float = 1.0			## Скорость типа относительно эха.
@@ -323,9 +323,9 @@ func _physics_process(delta: float) -> void:
 
 	# --- Атака ---------------------------------------------------------------
 	# Бьём игрока, только если цель — он сам (у роя и тени цель бывает машиной).
-	# harmless (главы 1–3): эхо подходит, но не бьёт и не звенит ударом.
-	if not harmless and state == St.CHASE and target_machine == null and not frozen \
-			and dist < 22.0 and stun <= 0.0 and player.has_method("damage"):
+	# harmless — обучение до главы 4: эхо подходит и отступает, удара нет.
+	if not harmless and state == St.CHASE and target_machine == null and not frozen and dist < 22.0 \
+			and stun <= 0.0 and player.has_method("damage"):
 		var knock: Vector2 = (player.global_position - global_position).normalized() * 190.0
 		player.damage(dmg, knock)
 		if Game.players.size() > 1:   # СЕТЬ: удар по товарищу слышен в его точке
