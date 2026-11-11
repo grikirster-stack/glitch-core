@@ -299,7 +299,7 @@ func toggle_pause() -> void:
 
 
 func _on_notification(text: String, color: Color) -> void:
-	hud.notify(text, color)
+	hud.notify(text, color, Game.last_note_icon)
 
 
 func flash_damage() -> void:

@@ -198,7 +198,7 @@ func _build_item_defs() -> void:
 
 	_item("Буровая станция", Color(0.55, 0.58, 0.63), "drill", 5, "machine:Drill")
 	_item("Плавильня", Color(0.72, 0.42, 0.28), "smelter", 5, "machine:Smelter")
-	_item("Сборщик", Color(0.45, 0.62, 0.78), "assembler", 3, "machine:Assembler")
+	_item("Верстак", Color(0.45, 0.62, 0.78), "assembler", 3, "machine:Assembler")
 	_item("Конвейер", Color(0.75, 0.60, 0.25), "belt", 30, "machine:Belt")
 	_item("Сундук", Color(0.55, 0.36, 0.20), "chest", 10, "machine:Chest")
 	_item("Угольная ТЭЦ", Color(0.35, 0.35, 0.40), "gen", 5, "machine:CoalGen")
@@ -219,7 +219,7 @@ func _build_item_defs() -> void:
 	# #30 (манипулятор, анализатор, глубинный бур) и #31 (турель, прожектор).
 	# До этого постройка отвечает «Сюда нельзя поставить».
 	# Автоматизация (§ 4.2)
-	_add_item_def(IDs.I.INSERTER, "Манипулятор", Color(0.80, 0.62, 0.30), "inserter", 30, "machine:Inserter")
+	_add_item_def(IDs.I.INSERTER, "Рука", Color(0.80, 0.62, 0.30), "inserter", 30, "machine:Inserter")
 	_add_item_def(IDs.I.ANALYZER, "Анализатор", Color(0.40, 0.75, 0.70), "analyzer", 3, "machine:Analyzer")
 	_add_item_def(IDs.I.DEEP_DRILL, "Глубинный бур", Color(0.40, 0.44, 0.52), "deep_drill", 3, "machine:DeepDrill")
 	# Оборона (§ 4.4)
@@ -227,7 +227,7 @@ func _build_item_defs() -> void:
 	_add_item_def(IDs.I.FLOODLIGHT, "Прожектор", Color(0.95, 0.90, 0.60), "floodlight", 10, "machine:Floodlight")
 	_add_item_def(IDs.I.STEEL_WALL, "Стальная стена", Color(0.58, 0.62, 0.68), "wall", 99, "tile:%d" % IDs.T.STEEL_WALL)
 	_add_item_def(IDs.I.AIRLOCK, "Шлюз", Color(0.85, 0.70, 0.20), "airlock", 10, "tile:%d" % IDs.T.AIRLOCK)
-	_add_item_def(IDs.I.VENT_GRATE, "Решётка вентиляции", Color(0.50, 0.55, 0.60), "grate", 20, "tile:%d" % IDs.T.VENT_GRATE)
+	_add_item_def(IDs.I.VENT_GRATE, "Решётка", Color(0.50, 0.55, 0.60), "grate", 20, "tile:%d" % IDs.T.VENT_GRATE)
 	# Релей и лор (§ 4.7, § 4.9) — не ставятся, только носятся.
 	_add_item_def(IDs.I.RELAY_ANTENNA, "Антенна релея", Color(0.35, 0.95, 0.80), "antenna", 1, "")
 	_add_item_def(IDs.I.BLACK_BOX, "Чёрный ящик", Color(0.90, 0.35, 0.20), "blackbox", 20, "")
@@ -270,64 +270,61 @@ func item_color(id: int) -> Color:
 
 # ---------------------------------------------------------------- РЕЦЕПТЫ
 
-## Поле "tech" снято (#169): рецепт, чей выход в Balance.BLUEPRINT_ORDER, виден
-## только при чертеже (Game.has_blueprint). Остальные открыты сразу; открытие
-## по подбору ингредиента — задача E1.
+## Руками — сразу (время 0). reveal "seen" — строка появляется, когда хоть один
+## вход уже был в рюкзаке (#171). Чертёж (Balance.BLUEPRINT_ORDER) проверяет
+## recipe_unlocked отдельно: поле tech снято в #169.
 func _recipe(out: int, amount: int, inputs: Dictionary, station: String, time: float, name: String,
-		_tech: String = "") -> void:
+		reveal: String = "") -> void:
 	recipes.append({
 		"out": out, "amount": amount, "in": inputs,
-		"station": station, "time": time, "name": name,
+		"station": station, "time": time, "name": name, "reveal": reveal,
 	})
 
 
 func _build_recipes() -> void:
-	# --- Ручной крафт: с чего начать -----------------------------------------
-	# Ручная выплавка — грубая (2 руды на слиток), зато доступна без станций.
-	# Правило ADR-001 D3: у всего есть машинный рецепт, ручной — дороже или медленнее.
-	_recipe(IDs.I.COPPER_INGOT, 1, {IDs.I.COPPER_ORE: 2}, "hand", 1.0, "Ручная выплавка меди")
-	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 2}, "hand", 1.2, "Ковка железа")
-	_recipe(IDs.I.GLASS, 1, {IDs.I.SAND: 2}, "hand", 1.0, "Обжиг стекла")
-	_recipe(IDs.I.COPPER_PLATE, 1, {IDs.I.COPPER_INGOT: 2}, "hand", 1.0, "Медная пластина")
-	_recipe(IDs.I.IRON_PLATE, 1, {IDs.I.IRON_INGOT: 2}, "hand", 1.2, "Железная пластина")
-	_recipe(IDs.I.LAMP, 1, {IDs.I.CRYSTAL: 1, IDs.I.COAL: 1}, "hand", 0.8, "Светокристалл")
-	_recipe(IDs.I.COPPER_BLOCK, 1, {IDs.I.COPPER_INGOT: 4}, "hand", 1.0, "Медный блок")
-	_recipe(IDs.I.IRON_BLOCK, 1, {IDs.I.IRON_INGOT: 4}, "hand", 1.0, "Железный блок")
-	_recipe(IDs.I.CRYSTAL_BLOCK, 1, {IDs.I.CRYSTAL: 3}, "hand", 1.0, "Кристальный блок")
-	# Первые постройки собираются вручную — иначе не с чего начать.
-	_recipe(IDs.I.SOLAR, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.GLASS: 1}, "hand", 2.0, "Солнечная панель")
-	_recipe(IDs.I.SMELTER, 1, {IDs.I.STONE: 6, IDs.I.SCRAP: 4}, "hand", 2.0, "Плавильня")
-	_recipe(IDs.I.COAL_GEN, 1, {IDs.I.IRON_PLATE: 2, IDs.I.SCRAP: 6}, "hand", 2.5, "Угольная ТЭЦ")
-	_recipe(IDs.I.ASSEMBLER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.COPPER_PLATE: 2}, "hand", 3.0, "Сборщик")
-	# Конвейер и сундук доступны с первой смены руками (T0): сборщик делает их выгоднее.
-	_recipe(IDs.I.BELT, 1, {IDs.I.IRON_PLATE: 1}, "hand", 1.5, "Конвейер вручную")
-	_recipe(IDs.I.CHEST, 1, {IDs.I.IRON_PLATE: 4}, "hand", 2.5, "Сундук вручную")
+	# Итоговый список руками — таблица #171 (ADR-005 § 4). Время 0: руками сразу.
+	# Имени в строке нет — панель пишет имя предмета из словаря.
+	# Рецепт без предмета в IDs.I не добавляется: горелка, зеркало, смеситель,
+	# призма, коллектор, накопитель, маяк, сирена, линза, радужное ядро — C1–C5, E2, F1.
+	# По подбору (ADR § 7.1): слитки, стекло, светокристалл, сундук.
+	_recipe(IDs.I.COPPER_INGOT, 1, {IDs.I.COPPER_ORE: 2}, "hand", 0.0, "", "seen")
+	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 2}, "hand", 0.0, "", "seen")
+	_recipe(IDs.I.GLASS, 1, {IDs.I.SAND: 2}, "hand", 0.0, "", "seen")
+	_recipe(IDs.I.LAMP, 1, {IDs.I.CRYSTAL: 1, IDs.I.COAL: 1}, "hand", 0.0, "", "seen")
+	_recipe(IDs.I.CHEST, 1, {IDs.I.COPPER_INGOT: 4}, "hand", 0.0, "", "seen")
+	# Стена и решётка — чертёж (#169). Цена — из таблицы #171, не из пластин.
+	_recipe(IDs.I.STEEL_WALL, 4, {IDs.I.IRON_INGOT: 2, IDs.I.COAL: 1}, "hand", 0.0, "")
+	_recipe(IDs.I.VENT_GRATE, 1, {IDs.I.IRON_INGOT: 2}, "hand", 0.0, "")
 
-	# --- Плавильня: вдвое больше слитков за ту же руду -----------------------
-	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 1}, "smelter", 2.0, "Выплавка железа")
-	_recipe(IDs.I.COPPER_INGOT, 1, {IDs.I.COPPER_ORE: 1}, "smelter", 1.6, "Выплавка меди")
-	_recipe(IDs.I.GLASS, 1, {IDs.I.SAND: 2}, "smelter", 2.2, "Плавка стекла")
-	_recipe(IDs.I.STEEL_PLATE, 1, {IDs.I.IRON_INGOT: 2, IDs.I.COAL: 1}, "smelter", 3.5, "Стальная пластина")
-	# Пластины на плавильне — чтобы цепочка «руда → релей» собиралась без рук (§ 4.2).
-	_recipe(IDs.I.COPPER_PLATE, 1, {IDs.I.COPPER_INGOT: 2}, "smelter", 2.0, "Прокат меди")
-	_recipe(IDs.I.IRON_PLATE, 1, {IDs.I.IRON_INGOT: 2}, "smelter", 2.0, "Прокат железа")
-	_recipe(IDs.I.STEEL_WALL, 4, {IDs.I.STEEL_PLATE: 2}, "smelter", 2.0, "Стальная стена")
-
-	# --- Сборщик: сложные изделия ------------------------------------------
-	_recipe(IDs.I.CIRCUIT, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.CRYSTAL: 2}, "assembler", 3.0, "Микросхема")
-	_recipe(IDs.I.POWER_CELL, 1, {IDs.I.IRON_PLATE: 1, IDs.I.CRYSTAL: 1}, "assembler", 3.0, "Энергоячейка")
-	_recipe(IDs.I.BELT, 2, {IDs.I.IRON_PLATE: 1}, "assembler", 1.5, "Конвейер")
-	_recipe(IDs.I.CHEST, 1, {IDs.I.IRON_PLATE: 3}, "assembler", 2.0, "Сундук")
-	_recipe(IDs.I.DRILL, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 4.0, "Буровая станция")
-	# ADR-001: автоматизация (§ 4.2), оборона (§ 4.4), релей (§ 4.7).
-	_recipe(IDs.I.INSERTER, 1, {IDs.I.IRON_PLATE: 1, IDs.I.COPPER_PLATE: 1}, "assembler", 2.0, "Манипулятор")
-	_recipe(IDs.I.TURRET, 1, {IDs.I.STEEL_PLATE: 3, IDs.I.CIRCUIT: 2, IDs.I.POWER_CELL: 1}, "assembler", 5.0, "Турель-разрядник")
-	_recipe(IDs.I.AIRLOCK, 1, {IDs.I.STEEL_PLATE: 2, IDs.I.CIRCUIT: 1}, "assembler", 3.0, "Шлюз")
-	_recipe(IDs.I.ANALYZER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2, IDs.I.GLASS: 2}, "assembler", 4.0, "Анализатор")
-	_recipe(IDs.I.FLOODLIGHT, 1, {IDs.I.COPPER_PLATE: 2, IDs.I.GLASS: 1, IDs.I.CRYSTAL: 1}, "assembler", 2.5, "Прожектор")
-	_recipe(IDs.I.VENT_GRATE, 1, {IDs.I.IRON_PLATE: 2}, "assembler", 1.5, "Решётка вентиляции")
-	_recipe(IDs.I.DEEP_DRILL, 1, {IDs.I.DRILL: 1, IDs.I.STEEL_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 6.0, "Глубинный бур")
-	_recipe(IDs.I.RELAY_ANTENNA, 1, {IDs.I.COPPER_PLATE: 6, IDs.I.GLASS: 4, IDs.I.CRYSTAL_BLOCK: 2}, "assembler", 8.0, "Антенна релея")
+	# Станки фабрики. #170 снимет сами машины; до тех пор цепочка «руда → релей»
+	# должна собираться. Пластины в ручной список #171 не входят.
+	_recipe(IDs.I.COPPER_INGOT, 1, {IDs.I.COPPER_ORE: 1}, "smelter", 1.6, "")
+	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 1}, "smelter", 2.0, "")
+	_recipe(IDs.I.GLASS, 1, {IDs.I.SAND: 2}, "smelter", 2.2, "")
+	_recipe(IDs.I.COPPER_PLATE, 1, {IDs.I.COPPER_INGOT: 2}, "smelter", 2.0, "")
+	_recipe(IDs.I.IRON_PLATE, 1, {IDs.I.IRON_INGOT: 2}, "smelter", 2.0, "")
+	_recipe(IDs.I.STEEL_PLATE, 1, {IDs.I.IRON_INGOT: 2, IDs.I.COAL: 1}, "smelter", 3.5, "")
+	_recipe(IDs.I.CIRCUIT, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.CRYSTAL: 2}, "assembler", 3.0, "")
+	_recipe(IDs.I.POWER_CELL, 1, {IDs.I.IRON_PLATE: 1, IDs.I.CRYSTAL: 1}, "assembler", 3.0, "")
+	_recipe(IDs.I.BELT, 2, {IDs.I.IRON_PLATE: 1}, "assembler", 1.5, "")
+	_recipe(IDs.I.DRILL, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 4.0, "")
+	_recipe(IDs.I.INSERTER, 1, {IDs.I.IRON_PLATE: 1, IDs.I.COPPER_PLATE: 1}, "assembler", 2.0, "")
+	_recipe(IDs.I.TURRET, 1, {IDs.I.STEEL_PLATE: 3, IDs.I.CIRCUIT: 2, IDs.I.POWER_CELL: 1}, "assembler", 5.0, "")
+	_recipe(IDs.I.AIRLOCK, 1, {IDs.I.STEEL_PLATE: 2, IDs.I.CIRCUIT: 1}, "assembler", 3.0, "")
+	_recipe(IDs.I.ANALYZER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2, IDs.I.GLASS: 2}, "assembler", 4.0, "")
+	_recipe(IDs.I.FLOODLIGHT, 1, {IDs.I.COPPER_PLATE: 2, IDs.I.GLASS: 1, IDs.I.CRYSTAL: 1}, "assembler", 2.5, "")
+	_recipe(IDs.I.DEEP_DRILL, 1, {IDs.I.DRILL: 1, IDs.I.STEEL_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 6.0, "")
+	_recipe(IDs.I.RELAY_ANTENNA, 1, {IDs.I.COPPER_PLATE: 6, IDs.I.GLASS: 4, IDs.I.CRYSTAL_BLOCK: 2}, "assembler", 8.0, "")
+	# Первые станки всё ещё руками: иначе не с чего начать, пока #170 не снял фабрику.
+	# Подбор прячет строку, пока ингредиента не было в рюкзаке.
+	_recipe(IDs.I.SOLAR, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.GLASS: 1}, "hand", 0.0, "", "seen")
+	_recipe(IDs.I.SMELTER, 1, {IDs.I.STONE: 6, IDs.I.SCRAP: 4}, "hand", 0.0, "", "seen")
+	_recipe(IDs.I.COAL_GEN, 1, {IDs.I.IRON_PLATE: 2, IDs.I.SCRAP: 6}, "hand", 0.0, "", "seen")
+	_recipe(IDs.I.ASSEMBLER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.COPPER_PLATE: 2}, "hand", 0.0, "", "seen")
+	_recipe(IDs.I.BELT, 1, {IDs.I.IRON_PLATE: 1}, "hand", 0.0, "", "seen")
+	_recipe(IDs.I.COPPER_BLOCK, 1, {IDs.I.COPPER_INGOT: 4}, "hand", 0.0, "", "seen")
+	_recipe(IDs.I.IRON_BLOCK, 1, {IDs.I.IRON_INGOT: 4}, "hand", 0.0, "", "seen")
+	_recipe(IDs.I.CRYSTAL_BLOCK, 1, {IDs.I.CRYSTAL: 3}, "hand", 0.0, "", "seen")
 
 
 func recipes_for(station: String) -> Array:
@@ -338,13 +335,66 @@ func recipes_for(station: String) -> Array:
 	return out
 
 
-## Виден ли рецепт в крафте (#169). Выход из списка чертежей — только при чертеже
-## (Game.has_blueprint); остальные открыты. Панель не рисует закрытый вовсе.
-func recipe_unlocked(r: Dictionary) -> bool:
+## Виден ли рецепт герою who (null — свой). Чертёж (#169) и подбор (#171):
+## закрытое панель не рисует. Станки фабрики без reveal "seen" видны сразу.
+func recipe_unlocked(r: Dictionary, who = null) -> bool:
 	var out_id: int = int(r.get("out", -1))
-	if Game.blueprint_name(out_id) == "":
-		return true
-	return Game.has_blueprint(out_id)
+	if Game.blueprint_name(out_id) != "" and not Game.has_blueprint(out_id):
+		return false
+	if String(r.get("reveal", "")) == "seen" and not _ingredient_seen(r, who):
+		return false
+	return true
+
+
+## Хоть один вход рецепта уже попадался в рюкзак who (null — свой герой).
+func _ingredient_seen(r: Dictionary, who = null) -> bool:
+	var inv = _inv_of(who)
+	if inv == null:
+		return false
+	for id in r["in"].keys():
+		if bool(inv.call("has_seen", int(id))):
+			return true
+	return false
+
+
+func _inv_of(who):
+	var p = who
+	if p == null:
+		p = get_node_or_null("/root/Game").get("player") if get_node_or_null("/root/Game") != null else null
+	if p == null or not is_instance_valid(p):
+		return null
+	var inv = p.get("inv")
+	if inv == null or not inv.has_method("has_seen"):
+		return null
+	return inv
+
+
+## Рецепты по подбору, которые открывает первое появление id у героя who.
+## Пустой массив — ничего нового (вход уже был виден другим ингредиентом).
+func recipes_opened_by(id: int, who = null) -> Array:
+	var out: Array = []
+	for r in recipes:
+		if String(r.get("reveal", "")) != "seen":
+			continue
+		if not (r["in"] as Dictionary).has(id):
+			continue
+		if Game.blueprint_name(int(r["out"])) != "" and not Game.has_blueprint(int(r["out"])):
+			continue
+		var fresh: bool = true
+		for k in r["in"].keys():
+			if int(k) != id and _seen_now(int(k), who):
+				fresh = false
+				break
+		if fresh:
+			out.append(r)
+	return out
+
+
+func _seen_now(id: int, who = null) -> bool:
+	var inv = _inv_of(who)
+	if inv == null:
+		return false
+	return bool(inv.call("has_seen", id))
 
 
 func find_recipe_for(item_id: int) -> Dictionary:

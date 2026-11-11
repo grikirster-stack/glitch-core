@@ -1104,6 +1104,7 @@ func save_state() -> Dictionary:
 	return {
 		"pos": global_position, "vel": vel, "on_ground": on_ground, "facing": facing,
 		"hp": hp, "inv": slots_out, "selected": inv.selected,
+		"seen": inv.seen_items.keys(),
 		"hiding": hiding, "hide_timer": hide_timer, "hide_cd": hide_cd,
 		"invuln": invuln, "emp_cd": emp_cd, "slash_cd": slash_cd, "noise": noise,
 		"regen": _regen,
@@ -1124,6 +1125,13 @@ func load_state(d: Dictionary) -> void:
 		else:
 			inv.slots[i] = ItemStack.new()
 	inv.selected = clampi(int(d.get("selected", 0)), 0, inv.hotbar_size - 1)
+	inv.seen_items = {}
+	if d.has("seen"):
+		for id in d["seen"]:
+			inv.seen_items[int(id)] = true
+	else:
+		for id in inv.held_ids():
+			inv.seen_items[id] = true
 	hiding = bool(d.get("hiding", false))
 	hide_timer = float(d.get("hide_timer", 0.0))
 	hide_cd = float(d.get("hide_cd", 0.0))

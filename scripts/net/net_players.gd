@@ -531,6 +531,8 @@ func _on_inv(sender: int, payload: PackedByteArray) -> void:
 	for i in mini(slots.size(), own.inv.size):
 		var e: Array = slots[i]
 		own.inv.slots[i] = ItemStack.new(int(e[0]), int(e[1])) if int(e[1]) > 0 else ItemStack.new()
+		if int(e[1]) > 0:
+			own.inv.mark_seen(int(e[0]))
 	own.inv.changed.emit()
 	own.stats_changed.emit()
 

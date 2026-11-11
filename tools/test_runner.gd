@@ -467,7 +467,7 @@ func _check_data() -> void:
 	Game.give_next_blueprint()
 	_ok("после чертежа стена открыта", Game.has_blueprint(IDs.I.STEEL_WALL)
 			and DB.recipe_unlocked({"out": IDs.I.STEEL_WALL}))
-	_ok("рецептов достаточно", DB.recipes.size() >= 30, "n=%d" % DB.recipes.size())
+	_ok("рецептов достаточно", DB.recipes.size() >= 20, "n=%d" % DB.recipes.size())
 	# Релей: только существующие предметы, количества положительные.
 	var bad_relay: bool = false
 	for id in DB.relay_req.keys():

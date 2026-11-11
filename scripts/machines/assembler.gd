@@ -1,6 +1,6 @@
 class_name Assembler
 extends MachineBase
-## Сборщик: соединяет компоненты в сложные изделия.
+## Верстак: соединяет компоненты в сложные изделия.
 
 var stock: Dictionary = {}
 var recipe: Dictionary = {}
@@ -94,7 +94,7 @@ func _draw() -> void:
 		_draw_progress(-13.0)
 
 
-## Сборщик сняли или снесли — сырьё из него на землю, ничего не пропадает.
+## Верстак сняли или снесли — сырьё из него на землю, ничего не пропадает.
 func _on_destroyed() -> void:
 	for id in stock.keys():
 		spawn_item(int(id), int(stock[id]), global_position + Vector2(0.0, -4.0))

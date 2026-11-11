@@ -21,7 +21,7 @@ func _init() -> void:
 
 
 func kit() -> Array:
-	return [[IDs.I.LAMP, 3], [IDs.I.COAL, 6], [IDs.I.IRON_PLATE, 2], [IDs.I.COPPER_ORE, 4]]
+	return [[IDs.I.LAMP, 3], [IDs.I.COAL, 6], [IDs.I.IRON_PLATE, 2], [IDs.I.STONE, 4], [IDs.I.SCRAP, 4]]
 
 
 func stages() -> Array:

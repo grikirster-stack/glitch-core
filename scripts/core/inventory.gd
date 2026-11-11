@@ -4,11 +4,15 @@ extends RefCounted
 ## Размер хотбара — 6 или 10 (#161); число 10 вшито только как потолок пакета и ключа HUD.
 
 signal changed
+## id впервые попал в рюкзак этого забега (#171).
+signal item_first_seen(id: int)
 
 var slots: Array[ItemStack] = []
 var size: int = 36
 var hotbar_size: int = 10
 var selected: int = 0
+## Что уже попадало в рюкзак за этот забег (id → true). Пишет Save, не профиль.
+var seen_items: Dictionary = {}
 
 ## Допустимые размеры хотбара (#161): телефон — 6, ПК — 10. Больше 10 пакет ввода не несёт.
 const HOTBAR_MIN: int = 6
@@ -66,8 +70,32 @@ func add(id: int, amount: int = 1) -> int:
 		return amount
 	var left: int = stack_into(slots, id, amount)
 	if left != amount:
+		mark_seen(id)
 		changed.emit()
 	return left
+
+
+## Предмет уже был в рюкзаке этого забега.
+func has_seen(id: int) -> bool:
+	return seen_items.has(id)
+
+
+## Запомнить первое появление. true — это первый раз (сигнал уже ушёл).
+func mark_seen(id: int) -> bool:
+	if id == IDs.I.NONE or seen_items.has(id):
+		return false
+	seen_items[id] = true
+	item_first_seen.emit(id)
+	return true
+
+
+## id, которые сейчас лежат в слотах.
+func held_ids() -> Array:
+	var out: Array = []
+	for s in slots:
+		if not s.is_empty() and not out.has(s.id):
+			out.append(s.id)
+	return out
 
 
 ## Разложить amount предметов id по массиву стопок: сначала докладываем

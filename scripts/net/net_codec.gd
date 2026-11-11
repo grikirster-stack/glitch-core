@@ -746,7 +746,7 @@ static func decode_event(b: PackedByteArray) -> Dictionary:
 
 # ------------------------------------------------------------------ ИНВЕНТАРЬ
 ## u8 n + n × (u8 id, u16 count) + u8 selected. 36 слотов — 110 Б.
-## slots — массив [id, count].
+## slots — массив [id, count]. seen_items в пакет не входит (Save забега, не провод).
 
 static func encode_inv(slots: Array, selected: int) -> PackedByteArray:
 	var n: int = mini(slots.size(), 255)

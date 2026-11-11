@@ -144,8 +144,10 @@ func give_starter_kit(p: Player) -> void:
 		return
 	p.inv.add(IDs.I.LAMP, 3)
 	p.inv.add(IDs.I.COAL, 6)
-	p.inv.add(IDs.I.IRON_PLATE, 2)
-	p.inv.add(IDs.I.COPPER_ORE, 4)
+	p.inv.add(IDs.I.STONE, 4)
+	p.inv.add(IDs.I.SCRAP, 4)
+	# Камень и хлам — чтобы горелка открылась, когда предмет появится (C1).
+	# Медной руды в наборе нет: слиток открывается первым подбором.
 
 
 ## Имена сценариев из --scenario=walk,mining. С --scenario-shard=K/N — только каждый

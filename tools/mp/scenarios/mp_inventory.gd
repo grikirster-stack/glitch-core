@@ -100,6 +100,7 @@ func run_host() -> void:
 	await barrier("poll")
 
 	# --- Крафт с клиента 0.
+	p0.inv.mark_seen(IDs.I.COPPER_ORE)
 	var ore0: int = p0.inv.count_of(IDs.I.COPPER_ORE)
 	var ingot0: int = p0.inv.count_of(IDs.I.COPPER_INGOT)
 	var crafted0: int = Game.stats_crafted
@@ -266,9 +267,10 @@ func run_client(i: int) -> void:
 	await barrier("craft")
 	if i == 0:
 		var rec: Dictionary = {}
-		for r in DB.recipes:
-			if String(r["name"]) == "Ручная выплавка меди":
+		for r in DB.recipes_for("hand"):
+			if int(r["out"]) == IDs.I.COPPER_INGOT:
 				rec = r
+				break
 		var ore0: int = player.inv.count_of(IDs.I.COPPER_ORE)
 		var ingot0: int = player.inv.count_of(IDs.I.COPPER_INGOT)
 		var rtt0: int = (InvOps.stats["rtt_ms"] as PackedFloat32Array).size()
