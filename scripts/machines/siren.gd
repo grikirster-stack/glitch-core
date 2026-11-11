@@ -46,7 +46,10 @@ func beam_pass(_in_dir: int, _color: int) -> Array:
 
 
 ## Любой цвет заряжает. 0 — луча нет, заряд стоит.
+## Клиент заряд не растит: «луч есть» приходит байтом net_state (#180).
 func beam_receive(mask: int) -> void:
+	if not Net.is_authority():
+		return
 	var next: bool = mask != 0
 	if next == charging:
 		return
