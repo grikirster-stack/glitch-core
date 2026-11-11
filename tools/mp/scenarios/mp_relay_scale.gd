@@ -115,7 +115,7 @@ func run_client(_i: int) -> void:
 		var line: String = _hud_line()
 		var want: String = "%s %d/%d" % [DB.item_name(PLATE),   # сдано (хост мог уже сдать) + своё
 				Game.relay_count(PLATE) + player.inv.count_of(PLATE), int(req[PLATE])]
-		ok("c0: HUD (этап 3) — «%s»" % want, line.contains(want), "«%s»" % line)
+		ok("c0: HUD (этап 2, собрать релей) — «%s»" % want, line.contains(want), "«%s»" % line)
 		ok("c0: окно цели в инвентаре — то же требование", UI.panel != null and UI.panel._goal_req() == req)
 	await barrier("dep")
 	var have = share_get("have")
@@ -126,14 +126,17 @@ func run_client(_i: int) -> void:
 	finish()
 
 
-## Строка трекера HUD на этапе 3 «Собрать релей» (этап здесь — только на время пересчёта:
-## у клиента его ведёт глобальный пакет хоста).
+## Строка трекера HUD на этапе 2 «Собрать релей» (#169: этап 3 — уже удержание;
+## этап здесь — только на время пересчёта: у клиента его ведёт глобальный пакет хоста).
 func _hud_line() -> String:
 	var hud: HUD = UI.hud
 	if hud == null:
 		return ""
 	var st: int = Game.objective_stage
-	Game.objective_stage = 3
+	var hold: bool = Game.relay_active
+	Game.objective_stage = 2
+	Game.relay_active = false
 	hud._compute_tracker()
 	Game.objective_stage = st
+	Game.relay_active = hold
 	return hud.tracker_detail

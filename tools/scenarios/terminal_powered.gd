@@ -38,6 +38,9 @@ func _read_powered(t: Vector2i, chapter: int) -> void:
 	var done_before: int = Game.tasks_done
 	var bp_before: int = Game.blueprints.size()
 	var want: String = Game.next_blueprint_name()
+	var inv_before: Dictionary = {}
+	for e in World.terminal_gift(chapter):
+		inv_before[int(e[0])] = player.inv.count_of(int(e[0]))
 	hold(KEY_E)
 	await wait(0.6)
 	ok("прогресс задания растёт", player.task_progress > 0.05, "%.2f" % player.task_progress)
@@ -49,22 +52,25 @@ func _read_powered(t: Vector2i, chapter: int) -> void:
 	ok("задание засчитано", done, "%d → %d" % [done_before, Game.tasks_done])
 	ok("выдан следующий чертёж «%s»" % want, want != "" and Game.blueprints.size() == bp_before + 1
 			and String(Game.blueprints[bp_before]) == want, str(Game.blueprints))
-	ok("подарок терминала на полу", _gift_on_ground(World.terminal_gift(chapter)))
+	# Герой стоит в 19 px от точки падения: магнит забирает подарок, пока E ещё
+	# зажата. Считаем и пол, и то, что уже в инвентаре.
+	ok("подарок терминала выдан", _gift_received(World.terminal_gift(chapter), spot, inv_before))
 	ok("глава %d «%s» прочитана" % [chapter + 1, Lore.chapter_title(chapter)], Tech.is_chapter_read(chapter),
 			str(Tech.read_chapters))
 	ok("терминал отработал", World.get_tile_v(t) == IDs.T.PANEL and not World.terminals.has(t),
 			str(World.get_tile_v(t)))
 
 
-## Подарок этой главы лежит на полу (id и число из World.terminal_gift).
-func _gift_on_ground(gift: Array) -> bool:
+## Подарок этой главы дошёл до героя: на полу у терминала или уже в инвентаре
+## (магнит подбирает, пока E ещё зажата). Прошлый подарок той же главы не считается.
+func _gift_received(gift: Array, at: Vector2, inv_before: Dictionary) -> bool:
 	if gift.is_empty():
 		return false
 	for e in gift:
 		var id: int = int(e[0])
-		var n: int = 0
+		var n: int = player.inv.count_of(id) - int(inv_before.get(id, 0))
 		for c in scene.get_children():
-			if c is ItemEntity and c.item_id == id:
+			if c is ItemEntity and c.item_id == id and c.global_position.distance_to(at) < 80.0:
 				n += c.count
 		if n < int(e[1]):
 			return false

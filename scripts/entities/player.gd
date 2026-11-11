@@ -791,22 +791,21 @@ func _read_terminal(t: Vector2i) -> void:
 
 
 ## Уведомление терминала: место, глава, чертёж (если выдан) и подарок.
-## Чертёж — с иконкой выхода и кольцом, как открытие предмета.
+## Кольцо не рисуем: цвет кольца сеть не несёт, а импульс Q занимает свой FX.
 func _announce_terminal(chapter: int, blueprint_id: int, gift: Array) -> void:
 	var place: String = Lore.chapter_place(chapter) if chapter >= 0 else ""
 	var where: String = "Терминал «%s»" % place if place != "" else "Терминал"
 	if blueprint_id >= 0:
 		var label: String = Game.blueprint_label(Game.blueprint_name(blueprint_id))
-		Game.notify("Чертёж: %s" % label, Color(0.45, 0.9, 1.0))
-		UI.flash_ring(World.cell_to_world(World.world_to_cell(global_position)), Color(0.45, 0.9, 1.0))
-		Game.notify("%s: глава журнала, чертёж и подарок." % where, Color(0.4, 0.95, 0.6))
+		_notify("Чертёж: %s" % label, Color(0.45, 0.9, 1.0))
+		_notify("%s: глава журнала, чертёж и подарок." % where, Color(0.4, 0.95, 0.6))
 	else:
-		Game.notify("%s: глава журнала и подарок." % where, Color(0.4, 0.95, 0.6))
+		_notify("%s: глава журнала и подарок." % where, Color(0.4, 0.95, 0.6))
 	if not gift.is_empty():
 		var parts: PackedStringArray = PackedStringArray()
 		for e in gift:
 			parts.append("%s ×%d" % [DB.item_name(int(e[0])), int(e[1])])
-		Game.notify("Подарок: " + ", ".join(parts), Color(0.85, 0.8, 0.45))
+		_notify("Подарок: " + ", ".join(parts), Color(0.85, 0.8, 0.45))
 
 
 ## Ремонт хламом: +Balance.REPAIR_PER_SCRAP HP машине-цели E (ET_REPAIR) за
