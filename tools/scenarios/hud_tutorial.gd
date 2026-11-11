@@ -17,8 +17,11 @@ func run() -> void:
 	var hud: HUD = UI.hud
 	var bx: int = World.beacon_cell.x
 	await _frames(hud, 3)
+	# Стартовый набор уже несёт хлам: шаг «копай» считает его, не ноль.
+	var scrap0: int = player.inv.count_of(IDs.I.SCRAP)
 	ok("старт: шаг «копай»", hud.tutorial_step == HUD.Tut.DIG and hud.tutorial_text.contains("Копай")
-			and hud.tutorial_text.contains("0/%d" % HUD.TUT_SCRAP), "«%s»" % hud.tutorial_text)
+			and hud.tutorial_text.contains("%d/%d" % [mini(scrap0, HUD.TUT_SCRAP), HUD.TUT_SCRAP]),
+			"«%s»" % hud.tutorial_text)
 
 	# Хлам на ТЭЦ накопан → крафт.
 	player.inv.add(IDs.I.SCRAP, HUD.TUT_SCRAP)

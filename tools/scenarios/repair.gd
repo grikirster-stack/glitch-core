@@ -20,6 +20,7 @@ func run() -> void:
 	gen.take_damage(50.0)
 	ok("ТЭЦ повреждена", gen.hp < gen.max_hp, "hp %.0f/%.0f" % [gen.hp, gen.max_hp])
 
+	player.inv.remove_id(IDs.I.SCRAP, player.inv.count_of(IDs.I.SCRAP))
 	player.inv.slots[4] = ItemStack.new(IDs.I.SCRAP, 5)
 	await _tap(KEY_5)
 	var hp0: float = gen.hp

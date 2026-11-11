@@ -41,8 +41,9 @@ func run() -> void:
 	var machine_secs: float = float(st_time.get("smelter", 0.0)) + float(st_time.get("assembler", 0.0))
 	need[IDs.I.COAL] = int(need.get(IDs.I.COAL, 0)) + int(ceil(machine_secs / Balance.COAL_BURN))
 	# Стартовый набор (как в ScenarioRunner._reset_world и в обычной игре).
+	# Медной руды в наборе нет (#171): слиток открывается первым подбором.
 	var kit: Dictionary = {}
-	for id in [IDs.I.COAL, IDs.I.IRON_PLATE, IDs.I.COPPER_ORE]:
+	for id in [IDs.I.COAL, IDs.I.STONE, IDs.I.SCRAP]:
 		expand(int(id), _start_count(int(id)), ["hand"], kit)
 	for id in kit.keys():
 		need[id] = maxi(0, int(need.get(id, 0)) - int(kit[id]))
@@ -86,8 +87,8 @@ func run() -> void:
 func _start_count(id: int) -> int:
 	match id:
 		IDs.I.COAL: return 6
-		IDs.I.IRON_PLATE: return 2
-		IDs.I.COPPER_ORE: return 4
+		IDs.I.STONE: return 4
+		IDs.I.SCRAP: return 4
 	return 0
 
 

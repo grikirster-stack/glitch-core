@@ -558,6 +558,7 @@ const ET_TERMINAL: String = "terminal"          ## терминал под пи�
 const ET_TERMINAL_OFF: String = "terminal_off"  ## без питания: E даёт только «нет питания»
 const ET_BEACON: String = "beacon"              ## релей-ядро: держать E
 const ET_GENERATOR: String = "generator"        ## уголь в руке — топка, иначе — рубильник
+const ET_BURNER: String = "burner"              ## топливо в руке — топка, пустая — рубильник
 const ET_INSERTER: String = "inserter"          ## предмет в руке — фильтр, пустая рука — сброс
 const ET_CHEST: String = "chest"                ## сундук и тайники руин / небесный тайник
 const ET_REPAIR: String = "repair"              ## хлам в руке, машина повреждена
@@ -694,11 +695,13 @@ func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable,
 			tg["kind"] = ET_REPAIR
 		elif m is Generator and d < E_MACHINE:
 			tg["kind"] = ET_GENERATOR
+		elif m is Burner and d < E_MACHINE:
+			tg["kind"] = ET_BURNER
 		elif m is Inserter and (d < E_MACHINE or (aimed and d <= REACH)):
 			tg["kind"] = ET_INSERTER
 		elif m is Chest and d < E_MACHINE and not _chest_empty(m):
 			tg["kind"] = ET_CHEST
-		elif not sel.is_empty() and d <= E_STATION and not (m is Belt or m is Chest or m is Generator) \
+		elif not sel.is_empty() and d <= E_STATION and not (m is Belt or m is Chest or m is Generator or m is Burner) \
 				and m.input_accepts(sel.id):
 			tg["kind"] = ET_LOAD
 		elif allow_dismantle and d < E_MACHINE and sel.is_empty() and _can_dismantle(m):
@@ -756,8 +759,9 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 			if task_progress >= 1.0:
 				task_progress = 0.0
 				Game.try_finish(self)   # вклад деталей — из своего инвентаря (MP-I, #94)
-		ET_GENERATOR, ET_INSERTER:
-			# ТЭЦ: уголь — топка, иначе рубильник (#25); манипулятор: фильтр/сброс (#30).
+		ET_GENERATOR, ET_INSERTER, ET_BURNER:
+			# ТЭЦ: уголь — топка, иначе рубильник (#25); манипулятор: фильтр/сброс (#30);
+			# горелка: топливо — топка, пустая рука — рубильник (#164).
 			tg["node"].interact(self)
 		ET_CHEST:
 			# Сундук — через сетевую обёртку: у прокси окно открывает владелец (MP-G).

@@ -54,6 +54,15 @@ func run_host() -> void:
 		if MachineBase.place_machine(String(kv[0]), Vector2i(_col + int(kv[1]), _ground - 1)):
 			placed += 1
 	ok("хост: постройки поставлены (сундук, панель, прожектор)", placed == 3, "%d из 3" % placed)
+	# Горелка (#164): клиент после входа сам строит луч из реплицированного состояния.
+	var bcell: Vector2i = Vector2i(_col - 12, _ground - 1)
+	for k in range(0, 8):
+		World.set_tile(bcell.x + k, bcell.y, IDs.T.AIR)
+	if MachineBase.place_machine("Burner", bcell):
+		var burner: Burner = World.machines[bcell]
+		burner.add_fuel(IDs.I.COAL, 1)
+		World.beams.rebuild()
+	ok("хост: горелка горит до входа клиента", World.beams.color_at(bcell + Vector2i(1, 0)) == Beams.R)
 	_pour(Vector2i(_col + 1, _ground - 4), 3, 2)
 	ok("хост: вода течёт, когда клиент входит", World.fluid_pending() > 0,
 			"в очереди %d" % World.fluid_pending())
@@ -156,7 +165,13 @@ func run_client(i: int) -> void:
 			i, nw.join_total_ms, Net.join_ms, nw.snapshot_bytes, nw.last_apply_ms])
 	ok("c%d: вход ≤ %d мс (цель ADR § 2)" % [i, JOIN_TARGET_MS], nw.join_total_ms <= JOIN_TARGET_MS,
 			"%d мс" % nw.join_total_ms)
-	ok("c%d: постройки хоста на месте" % i, World.machines.size() >= 3, "%d" % World.machines.size())
+	ok("c%d: постройки хоста на месте" % i, World.machines.size() >= 4, "%d" % World.machines.size())
+	var saw: bool = false
+	for m in World.machines.values():
+		if m is Burner and m.burning():
+			World.beams.rebuild()
+			saw = World.beams.color_at(m.cell + Vector2i(1, 0)) == Beams.R
+	ok("c%d: после входа видит луч горелки" % i, saw)
 	await barrier("joined")
 	await client_report(self, i)
 	# Клиент не считает мир: вода, питание, цель, угроза.

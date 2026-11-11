@@ -27,6 +27,17 @@ const FLOODLIGHT_MIN_EFF: float = 0.5  ## прожектор гаснет при
 const COAL_BURN: float = 45.0          ## секунд горения одной единицы угля
 const POWER_CHECK_INTERVAL: float = 0.25
 
+# --------------------------------------------------------- Луч (ADR-005 § 4–5)
+## Горелка бьёт на BEAM_LEN клеток; белый (коллектор или смесь W) — длиннее.
+## Каждая постройка луча на пути съедает BEAM_BLOCK_COST клеток длины.
+## Свет клетки луча — BEAM_LIGHT; белый ярче. Топливо горелки: предмет → секунды.
+const BEAM_LEN: int = 24
+const BEAM_LEN_WHITE: int = 32
+const BEAM_BLOCK_COST: int = 2
+const BEAM_LIGHT: float = 1.0
+const BEAM_LIGHT_WHITE: float = 1.5
+const FUEL: Dictionary = {IDs.I.COAL: 45.0, IDs.I.COPPER_ORE: 30.0, IDs.I.CRYSTAL: 60.0}
+
 # ------------------------------------------------------- § 4.2 Автоматизация
 const DRILL_CYCLE: float = 2.0         ## с на единицу руды
 const DRILL_REACH: int = 16            ## клеток вниз

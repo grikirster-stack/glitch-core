@@ -232,6 +232,8 @@ func _build_item_defs() -> void:
 	_add_item_def(IDs.I.RELAY_ANTENNA, "Антенна релея", Color(0.35, 0.95, 0.80), "antenna", 1, "")
 	_add_item_def(IDs.I.BLACK_BOX, "Чёрный ящик", Color(0.90, 0.35, 0.20), "blackbox", 20, "")
 	_add_item_def(IDs.I.LOOT_BAG, "Мешок", Color(0.45, 0.38, 0.30), "bag", 1, "")
+	# Свет (ADR-005, #164): горелка ставится руками, стак небольшой — это не расходник.
+	_add_item_def(IDs.I.BURNER, "Горелка", Color(0.55, 0.32, 0.22), "burner", 10, "machine:Burner")
 
 	# Требования релей-ядра — из Balance (§ 4.7).
 	relay_req = Balance.RELAY_REQ.duplicate()
@@ -284,16 +286,20 @@ func _recipe(out: int, amount: int, inputs: Dictionary, station: String, time: f
 func _build_recipes() -> void:
 	# Итоговый список руками — таблица #171 (ADR-005 § 4). Время 0: руками сразу.
 	# Имени в строке нет — панель пишет имя предмета из словаря.
-	# Рецепт без предмета в IDs.I не добавляется: горелка, зеркало, смеситель,
-	# призма, коллектор, накопитель, маяк, сирена, линза, радужное ядро — C1–C5, E2, F1.
-	# По подбору (ADR § 7.1): слитки, стекло, светокристалл, сундук.
+	# Рецепт без предмета в IDs.I не добавляется: зеркало, смеситель, призма,
+	# коллектор, накопитель, маяк, сирена, линза, радужное ядро — C2–C5, E2, F1.
+	# По подбору (ADR § 7.1): слитки, стекло, светокристалл, горелка, сундук.
 	_recipe(IDs.I.COPPER_INGOT, 1, {IDs.I.COPPER_ORE: 2}, "hand", 0.0, "", "seen")
 	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 2}, "hand", 0.0, "", "seen")
 	_recipe(IDs.I.GLASS, 1, {IDs.I.SAND: 2}, "hand", 0.0, "", "seen")
 	_recipe(IDs.I.LAMP, 1, {IDs.I.CRYSTAL: 1, IDs.I.COAL: 1}, "hand", 0.0, "", "seen")
+	_recipe(IDs.I.BURNER, 1, {IDs.I.STONE: 4, IDs.I.SCRAP: 2}, "hand", 0.0, "", "seen")
 	_recipe(IDs.I.CHEST, 1, {IDs.I.COPPER_INGOT: 4}, "hand", 0.0, "", "seen")
-	# Стена и решётка — чертёж (#169). Цена — из таблицы #171, не из пластин.
+	# Стена и решётка — чертёж (#169). Цена руками — из таблицы #171.
+	# На плавильне стена по-прежнему из пластин: иначе слиток уходит в стену,
+	# а линия релея не набирает сталь (#170 снимет станок).
 	_recipe(IDs.I.STEEL_WALL, 4, {IDs.I.IRON_INGOT: 2, IDs.I.COAL: 1}, "hand", 0.0, "")
+	_recipe(IDs.I.STEEL_WALL, 4, {IDs.I.STEEL_PLATE: 2}, "smelter", 2.5, "")
 	_recipe(IDs.I.VENT_GRATE, 1, {IDs.I.IRON_INGOT: 2}, "hand", 0.0, "")
 
 	# Станки фабрики. #170 снимет сами машины; до тех пор цепочка «руда → релей»
@@ -1573,6 +1579,19 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 			for x in range(3, 13):
 				_px(img, x, 5, c.lightened(0.25))
 			_px(img, 11, 7, Color(0.3, 1.0, 0.4))
+		"burner":
+			# Корпус и окно топки; носик вправо — туда бьёт луч.
+			for y in range(3, 13):
+				for x in range(2, 11):
+					_px(img, x, y, c.darkened(0.15))
+			for y in range(6, 11):
+				for x in range(4, 9):
+					_px(img, x, y, Color("#FFD86E"))
+			for y in range(6, 10):
+				_px(img, 11, y, c.darkened(0.35))
+				_px(img, 12, y, c.darkened(0.35))
+			_px(img, 13, 7, Color("#FFD86E"))
+			_px(img, 14, 7, Color("#FFD86E"))
 		"bag":
 			for y in range(5, 14):
 				var half: int = 5 - int(absf(float(y) - 10.0) * 0.5)

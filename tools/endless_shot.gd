@@ -4,7 +4,7 @@ extends SceneTree
 ## Headless не рисует. Окно за экраном, без звука, скрипт сам выходит:
 ##   timeout 120 godot --path . --audio-driver Dummy --disable-vsync --fixed-fps 60 \
 ##     --windowed --position -10000,-10000 --resolution 1280x720 \
-##     --script res://tools/endless_shot.gd -- --seed=31337
+##     --script res://tools/endless_shot.gd -- --seed=31337 --less-glitch
 ##
 ## Победа свободной игры: эпилог, итоги и кнопка «Остаться на планете». Мир под
 ## экраном — база на сиде, не простыня трекера.

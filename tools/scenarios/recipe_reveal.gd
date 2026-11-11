@@ -28,7 +28,7 @@ func run() -> void:
 	else:
 		ok("горелки ещё нет в IDs — рецепт не заведён", true)
 
-	var notes0: int = _count_notes("Теперь можно сделать")
+	var notes0: int = _count_notes("Теперь можно сделать: Стекло")
 	player.inv.add(IDs.I.SAND, 1)
 	await wait(0.2)
 	panel._check_cache()

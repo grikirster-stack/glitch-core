@@ -57,6 +57,11 @@ var spawn_point: Vector2 = Vector2.ZERO
 var lights: Array[Dictionary] = []
 var machines: Dictionary = {}       # Vector2i -> Node (машина)
 var belts: Dictionary = {}         # Vector2i -> {dir:int, items:Array}
+## Лучи света (ADR-005, #164). Перестраиваются в _process, не чаще раза в кадр.
+var beams: Beams = Beams.new()
+## Ручки света луча: клетка → источник World.add_light_source. Снимаются целиком
+## при перестроении, чтобы погасшие клетки не продолжали светить.
+var _beam_lights: Dictionary = {}
 var astar: AStarGrid2D = null
 var gen_stats: Dictionary = {}     # замеры последней генерации мира
 
@@ -168,6 +173,14 @@ func generate(p_seed: int) -> void:
 	belts.clear()
 	lights.clear()
 	_light_cells.clear()
+	_beam_lights.clear()
+	if beams != null:
+		beams.cells.clear()
+		beams.segments.clear()
+		# Словарь машин уже пуст, а плоская карта занятости — нет: иначе луч
+		# нового забега упирается в клетки построек прошлого мира.
+		beams.note_machines()
+		beams.mark_dirty()
 	_reset_light_chunks()
 	_light_max_radius = 0.0
 	_light_reach = 1
@@ -1160,6 +1173,7 @@ func _fluid_mark_cell(x: int, y: int) -> void:
 func _process(delta: float) -> void:
 	_explore_tick()   # туман войны (#59): работа только при смене клетки героя
 	_defense_tick(delta)   # оборона (#31): шлюзы и решётки, раз в 0.1 с
+	_beams_tick()     # луч (#164): не чаще раза в кадр, только если мир изменился
 	_fluid_timer += delta
 	if _fluid_timer < FLUID_STEP:
 		return
@@ -1575,6 +1589,8 @@ func set_tile(x: int, y: int, id: int) -> void:
 	_update_astar(x, y)
 	_update_lights_around(x, y)
 	_defense_on_set_tile(Vector2i(x, y), id)
+	if beams != null and old != id:
+		beams.mark_dirty()
 	if _net_track:   # СЕТЬ (ADR-002): клетка — в батч хоста
 		_net_mark_tile(idx)
 
@@ -1996,6 +2012,32 @@ func damage_grate(c: Vector2i, amount: float) -> bool:
 	Sfx.play_at("break", cell_to_world(c), -8.0, 0.7)
 	grate_broken.emit(c)
 	return true
+
+
+## Луч (#164): перестроить карту, если мир или горелка изменились, и зажечь
+## клетки луча. Не чаще раза в кадр. Клиент считает сам — состояния машин
+## уже пришли от хоста, трассировка детерминирована.
+func _beams_tick() -> void:
+	if beams == null or not beams.dirty:
+		return
+	var before: int = beams.changed
+	beams.rebuild()
+	if beams.changed != before:
+		_apply_beam_lights()
+
+
+## Свет луча: на каждую клетку — источник 20 px. Белый ярче. Старые ручки
+## снимаются целиком: погасшая клетка не должна продолжать светить.
+func _apply_beam_lights() -> void:
+	for c in _beam_lights.keys():
+		remove_light_source(_beam_lights[c])
+	_beam_lights.clear()
+	for c in beams.cells.keys():
+		var mask: int = int(beams.cells[c])
+		if mask == 0:
+			continue
+		var power: float = Balance.BEAM_LIGHT_WHITE if mask == Beams.W else Balance.BEAM_LIGHT
+		_beam_lights[c] = add_light_source(cell_to_world(c), 20.0, power)
 
 
 ## Источник света от машины (прожектор). Возвращает ручку для remove_light_source.

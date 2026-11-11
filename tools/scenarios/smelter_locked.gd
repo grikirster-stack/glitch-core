@@ -68,7 +68,7 @@ func run() -> void:
 
 	# ---- Прокат и сталь открыты; стена — руками и только с чертежом ------------
 	ok("медный слиток принимается сразу (прокат открыт)", sm.input_accepts(IDs.I.COPPER_INGOT))
-	ok("уголь принимается (сталь открыта)", sm.input_accepts(IDs.I.COAL))
+	ok("стальная пластина без чертежа стены не принимается", not sm.input_accepts(IDs.I.STEEL_PLATE))
 	ok("железный слиток принимается (сталь открыта)", sm.input_accepts(IDs.I.IRON_INGOT))
 	ok("руда принимается", sm.input_accepts(IDs.I.COPPER_ORE))
 	ok("верстак сразу берёт пластину и кристалл", asm.input_accepts(IDs.I.COPPER_PLATE)
