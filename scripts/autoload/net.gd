@@ -33,7 +33,7 @@ signal roster_changed
 enum Role { OFFLINE, HOST, CLIENT }
 
 # --- транспорт (§ 9.2: не баланс — калибровочный PR их не трогает)
-const PROTO: int = 18                ## версия протокола: поднимать при смене кодека, IDs, таблиц DB (2 — MP-D: HIT, звуки, Fx; 3 — MP-H: LOBBY; 4 — MP-E: net_state машин, запись предмета в SPAWN; 5 — MP-G: CHEST, TECH, InvOp; 6 — MP-F: фантомы, Ent; 7 — MP-I: COOP; 8 — MP-J: TEAM; 9 — #139: требование релея в COOP RELAY; 10 — ADR-004: MISSION, глава в приветствии; 11 — #164: предмет горелки и рецепт, байт пламени в net_state; 12 — #167: предмет маяка и рецепт; 13 — #165: зеркало, смеситель, призма; 14 — #171: хвост seen в INV, байт иконки в NOTIFY, ручной список на слитках и оптика по подбору; 15 — #166: предметы коллектора и накопителя и их рецепты, байт запаса и байт цвет+режим в net_state накопителя; 16 — #172: сирена, линза, звук сирены; 17 — #175: предмет Радужного ядра и рецепт, дуги u8 и клетка ядра u32 в global, событие COOP CORE; 18 — #170: рецепты фабрики сняты, предметы остались legacy)
+const PROTO: int = 19                ## версия протокола: поднимать при смене кодека, IDs, таблиц DB (2 — MP-D: HIT, звуки, Fx; 3 — MP-H: LOBBY; 4 — MP-E: net_state машин, запись предмета в SPAWN; 5 — MP-G: CHEST, TECH, InvOp; 6 — MP-F: фантомы, Ent; 7 — MP-I: COOP; 8 — MP-J: TEAM; 9 — #139: требование релея в COOP RELAY; 10 — ADR-004: MISSION, глава в приветствии; 11 — #164: предмет горелки и рецепт, байт пламени в net_state; 12 — #167: предмет маяка и рецепт; 13 — #165: зеркало, смеситель, призма; 14 — #171: хвост seen в INV, байт иконки в NOTIFY, ручной список на слитках и оптика по подбору; 15 — #166: предметы коллектора и накопителя и их рецепты, байт запаса и байт цвет+режим в net_state накопителя; 16 — #172: сирена, линза, звук сирены; 17 — #175: предмет Радужного ядра и рецепт, дуги u8 и клетка ядра u32 в global, событие COOP CORE; 18 — #176: Ent.CAT, Msg.CAT, звук cat_meow; 19 — #170: рецепты фабрики сняты, предметы остались legacy)
 const GAME_PORT: int = 24642
 const DISCOVERY_PORT: int = 24643
 const TICK_HZ: int = 20              ## пакет состояния
@@ -76,7 +76,7 @@ const CHANNEL_OF: Dictionary = {
 	NetCodec.Msg.MACHINES: 0, NetCodec.Msg.SPAWN: 0, NetCodec.Msg.DESPAWN: 0,
 	NetCodec.Msg.GLOBAL: 0, NetCodec.Msg.EVENT: 0,
 	NetCodec.Msg.MISSION: 0,   # ADR-004: тем же каналом, что GLOBAL, — итог главы раньше состояния забега
-	NetCodec.Msg.STATE: 1, NetCodec.Msg.OWN: 1,
+	NetCodec.Msg.STATE: 1, NetCodec.Msg.OWN: 1, NetCodec.Msg.CAT: 1,
 	NetCodec.Msg.INV: 2, NetCodec.Msg.CMD: 2, NetCodec.Msg.CMD_RESULT: 2,
 	NetCodec.Msg.BARRIER: 2, NetCodec.Msg.BARRIER_PASS: 2,
 	NetCodec.Msg.INPUT: 3,

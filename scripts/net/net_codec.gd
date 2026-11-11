@@ -42,6 +42,7 @@ enum Msg {
 	COOP,          ## 0 / 2: кооператив — смерть, вклад в релей, итоги (MP-I, #94)
 	TEAM,          ## 2: команда — перекличка (G), маска и «глюк» двойника (MP-J, #95)
 	MISSION,       ## 0: глава кампании — этап, задачи, итог (ADR-004)
+	CAT,           ## 1: радужный кот, 20 Гц (#176). Не в STATE: длина фантома не растёт.
 }
 
 ## Типы событий EVENT. Только дописывать в конец.
@@ -958,6 +959,8 @@ static func schema_sample() -> PackedByteArray:
 	out.append_array(var_to_bytes(Fx.keys()))
 	out.append_array(var_to_bytes([IF_FACING_LEFT, IF_ON_GROUND, IF_EPOCH_SHIFT, OF_EPOCH_SHIFT, PRESS_KEYS]))
 	out.append_array(schema_sample_phantoms())   # MP-F (#92)
+	out.append_array(schema_sample_cat())   # #176: Msg.CAT
+	out.append_array(encode_cat({}))   # пустой кадр — кота нет
 	out.append_array(lobby_schema_sample())   # MP-H (#93)
 	# MP-G (#91): команды InvOps, сундук, исследования.
 	out.append_array(inv_schema_sample())
@@ -974,7 +977,7 @@ static func schema_sample() -> PackedByteArray:
 ## Звуки EVENT.SOUND: id u8 — индекс здесь. Только дописывать в конец (иначе — PROTO).
 const SOUNDS: Array = ["mine", "break", "place", "pickup", "craft", "place_machine", "hit",
 		"alarm", "power", "step", "vent_hum", "turret_zap", "swarm", "doppel_whisper", "brownout",
-		"siren"]
+		"siren", "cat_meow"]
 
 ## Виды EVENT.FX (аргумент — в скобках). Только дописывать в конец.
 enum Fx {
@@ -1012,7 +1015,8 @@ static func sound_name(id: int) -> String:
 ## Вид сущности в SPAWN/DESPAWN (первый байт). Только дописывать в конец.
 ## ITEM — предметы (MP-E, #90; = NetMachines.ENT_ITEM), PHANTOM — фантомы (MP-F): их
 ## принимает NetMachines и отдаёт по виду в entity_handlers.
-enum Ent { NONE, ITEM, PHANTOM }
+## CAT — радужный кот (#176): позиция едет Msg.CAT, не строкой STATE.
+enum Ent { NONE, ITEM, PHANTOM, CAT }
 
 ## Типы фантомов по сети: 3 бита «вид» пакета фантома — индекс здесь. Тот же порядок,
 ## что Phantom.KINDS (кодек не ссылается на классы сцены: его грузит net_test).
@@ -1054,6 +1058,49 @@ static func schema_sample_phantoms() -> PackedByteArray:
 	out.append_array(var_to_bytes(PHANTOM_KINDS))
 	out.append_array(var_to_bytes([PHF_ON_GROUND, PHF_MACHINE]))
 	return out
+
+
+# ------------------------------------------------------------------ КОТ (#176)
+## Msg.CAT, канал 1, 20 Гц — тем же тактом, что STATE, отдельным кадром.
+## Пустой (0 Б) — кота нет. Иначе 8 Б: x,y u16 · состояние u8 · флаги u8 · запас u16.
+## Флаги: бит 0 — смотрит влево. Состояние: 0 OUT, 1 летит домой.
+
+const CAT_BYTES: int = 8
+const CATF_LEFT: int = 1
+
+
+static func encode_cat(row: Dictionary) -> PackedByteArray:
+	if row.is_empty():
+		return PackedByteArray()
+	var pos: Vector2 = row.get("pos", Vector2.ZERO)
+	var out: PackedByteArray = PackedByteArray()
+	out.resize(CAT_BYTES)
+	out.encode_u16(0, pos_u16(pos.x))
+	out.encode_u16(2, pos_u16(pos.y))
+	out.encode_u8(4, int(row.get("state", 0)) & 0xFF)
+	var flags: int = CATF_LEFT if bool(row.get("facing_left", false)) else 0
+	out.encode_u8(5, flags)
+	out.encode_u16(6, int(row.get("id", 0)) & 0xFFFF)
+	return out
+
+
+## {} — кота нет или кадр битый. Иначе {pos, state, facing_left, id}.
+static func decode_cat(b: PackedByteArray) -> Dictionary:
+	if b.is_empty():
+		return {}
+	if b.size() != CAT_BYTES:
+		return {"bad": true}
+	var flags: int = b.decode_u8(5)
+	return {
+		"pos": Vector2(u16_pos(b.decode_u16(0)), u16_pos(b.decode_u16(2))),
+		"state": b.decode_u8(4),
+		"facing_left": (flags & CATF_LEFT) != 0,
+		"id": b.decode_u16(6),
+	}
+
+
+static func schema_sample_cat() -> PackedByteArray:
+	return encode_cat({"pos": Vector2(4000.5, 900.25), "state": 1, "facing_left": true, "id": 7})
 
 
 # ------------------------------------------------------------------ ЛОББИ (MP-H, #93)

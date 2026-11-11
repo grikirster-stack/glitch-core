@@ -41,6 +41,11 @@ var _rows: Array = []             ## строки этого такта (все 
 ## Номер → Phantom-марионетка.
 var puppets: Dictionary = {}
 var _buf: Dictionary = {}         ## номер → Array[{t, pos, vel, row}]
+## Кот (#176): одна марионетка. Хост шлёт Msg.CAT тем же тактом, что STATE.
+var cat_puppet: RainbowCat = null
+var _cat_buf: Array = []
+var _cat_id: int = 0
+var _cat_spawned: bool = false
 
 
 func start(p_np: NetPlayers) -> void:
@@ -61,7 +66,11 @@ func _begin() -> void:
 	_peers_sent.clear()
 	_rows.clear()
 	_buf.clear()
+	_cat_buf.clear()
+	_cat_id = 0
+	_cat_spawned = false
 	_free_puppets()
+	_free_cat()
 	_hook()
 
 
@@ -71,7 +80,9 @@ func _end(_reason: String = "") -> void:
 	_known_ids.clear()
 	_peers_sent.clear()
 	_rows.clear()
+	_cat_buf.clear()
 	_free_puppets()
+	_free_cat()
 
 
 # ------------------------------------------------------------------ ХОСТ
@@ -109,12 +120,16 @@ func host_sync() -> void:
 		_peers_sent[id] = true
 		for key in _known:
 			Net.send(NetCodec.Msg.SPAWN, _spawn_payload(_known[key]), int(id))
+		if _cat_id != 0 and RainbowCat.live != null and is_instance_valid(RainbowCat.live):
+			Net.send(NetCodec.Msg.SPAWN, NetCodec.encode_spawn(NetCodec.Ent.CAT, _cat_id,
+					{"pos": RainbowCat.live.global_position}), int(id))
 	for id in _peers_sent.keys():
 		if not synced.has(id):
 			_peers_sent.erase(id)
 	_rows.clear()
 	for key in _known:
 		_rows.append((_known[key] as Phantom).net_row())
+	_host_cat()
 
 
 ## Строки фантомов в зоне интереса героя (у хоста герой клиента — прокси).
@@ -134,6 +149,29 @@ func rows_for(hero: Node2D) -> Array:
 ## Сколько фантомов объявлено клиентам.
 func known_count() -> int:
 	return _known.size()
+
+
+## Кот жив — SPAWN один раз, потом 8 Б на такте. Сел — DESPAWN и пустой CAT.
+func _host_cat() -> void:
+	var cat: RainbowCat = RainbowCat.live
+	var up: bool = cat != null and is_instance_valid(cat) and cat.alive and cat.is_inside_tree()
+	if up and cat.net_id == 0:
+		cat.net_id = _next_id
+		_next_id = _next_id % 0xFFFF + 1
+		_send_all(NetCodec.encode_spawn(NetCodec.Ent.CAT, cat.net_id, {"pos": cat.global_position}))
+		_cat_spawned = true
+		stats["spawn"] = int(stats["spawn"]) + 1
+	elif not up and _cat_id != 0:
+		_send_all(NetCodec.encode_despawn(NetCodec.Ent.CAT, _cat_id))
+		_cat_id = 0
+		_cat_spawned = false
+		stats["despawn"] = int(stats["despawn"]) + 1
+	if up:
+		_cat_id = cat.net_id
+	var row: Dictionary = cat.net_row() if up else {}
+	var payload: PackedByteArray = NetCodec.encode_cat(row)
+	for id in _peers_sent:
+		Net.send(NetCodec.Msg.CAT, payload, int(id))
 
 
 func _spawn_payload(p: Phantom) -> PackedByteArray:
@@ -156,6 +194,7 @@ func _hook() -> bool:
 	if Game.net_machines == null:
 		return false
 	Game.net_machines.entity_handlers[NetCodec.Ent.PHANTOM] = {"spawn": _on_spawn, "despawn": _on_despawn}
+	Game.net_machines.entity_handlers[NetCodec.Ent.CAT] = {"spawn": _on_cat_spawn, "despawn": _on_cat_despawn}
 	return true
 
 
@@ -184,6 +223,52 @@ func _on_spawn(id_: int, data: Dictionary) -> void:
 	p.global_position = d["pos"]
 	p.spawn_point = d["pos"]
 	p.visible = false        # покажется с первой строкой состояния
+
+
+func _on_cat_spawn(id_: int, data: Dictionary) -> void:
+	if not _active or not Net.is_client():
+		return
+	var pos: Vector2 = data.get("pos", Vector2.ZERO) if typeof(data.get("pos")) == TYPE_VECTOR2 else Vector2.ZERO
+	if not is_instance_valid(cat_puppet):
+		var host: Node = get_tree().current_scene
+		if host == null:
+			host = get_tree().root
+		cat_puppet = RainbowCat.create(pos)
+		cat_puppet.net_puppet = true
+		cat_puppet.name = "RainbowCat"
+		host.add_child(cat_puppet)
+		stats["spawned"] = int(stats["spawned"]) + 1
+	cat_puppet.net_id = id_
+	cat_puppet.global_position = pos
+	cat_puppet.visible = true
+	_cat_buf.clear()
+
+
+func _on_cat_despawn(_id: int) -> void:
+	if not _active or not Net.is_client():
+		return
+	_free_cat()
+	stats["despawned"] = int(stats["despawned"]) + 1
+
+
+## Строка Msg.CAT (часы — те же, что у STATE этого такта).
+## Пустой кадр — кот сел: марионетку прячем, DESPAWN снимет её по каналу 0.
+## Непустой без SPAWN — всё равно рисуем: кадр сам говорит, что кот снаружи.
+func on_cat(t: float, row: Dictionary) -> void:
+	if not _active or not Net.is_client():
+		return
+	if row.is_empty():
+		return
+	if not is_instance_valid(cat_puppet):
+		_on_cat_spawn(int(row.get("id", 1)), {"pos": row["pos"]})
+	if not is_instance_valid(cat_puppet):
+		return
+	if not _cat_buf.is_empty() and t - float(_cat_buf[_cat_buf.size() - 1]["t"]) > STALE:
+		_cat_buf.clear()
+	_cat_buf.append({"t": t, "pos": row["pos"], "row": row})
+	while _cat_buf.size() > 2 and float(_cat_buf[0]["t"]) < t - BUF_SEC:
+		_cat_buf.pop_front()
+	stats["rx_rows"] = int(stats["rx_rows"]) + 1
 
 
 func _on_despawn(id: int) -> void:
@@ -215,8 +300,8 @@ func on_state(t: float, rows: Array) -> void:
 func _process(_delta: float) -> void:
 	if not _active or not Net.is_client() or np == null:
 		return
-	if Game.net_machines != null and not Game.net_machines.entity_handlers.has(NetCodec.Ent.PHANTOM):
-		_hook()                 # NetMachines заводится отложенно
+	if Game.net_machines != null and not Game.net_machines.entity_handlers.has(NetCodec.Ent.CAT):
+		_hook()                 # NetMachines заводится отложенно; кот — отдельно от фантома
 	var rt: float = np.render_time
 	for id in puppets.keys():
 		if not is_instance_valid(puppets[id]):
@@ -230,6 +315,7 @@ func _process(_delta: float) -> void:
 			continue
 		p.visible = true
 		_interp(p, b, rt)
+	_interp_cat(rt)
 	Game.phantoms_alive = puppets.size()
 
 
@@ -266,6 +352,33 @@ func _interp(p: Phantom, b: Array, rt: float) -> void:
 		vel = (a["vel"] as Vector2).lerp(c["vel"], f)
 		row = c["row"] if f >= 0.5 else a["row"]
 	p.net_apply(pos, vel, row)
+
+
+func _interp_cat(rt: float) -> void:
+	if not is_instance_valid(cat_puppet):
+		return
+	if _cat_buf.is_empty() or rt - float(_cat_buf[_cat_buf.size() - 1]["t"]) > STALE:
+		cat_puppet.visible = false
+		return
+	cat_puppet.visible = true
+	var last: Dictionary = _cat_buf[_cat_buf.size() - 1]
+	var pos: Vector2 = last["pos"]
+	var row: Dictionary = last["row"]
+	if rt < float(last["t"]) and _cat_buf.size() >= 2:
+		var a: Dictionary = _cat_buf[_cat_buf.size() - 2]
+		var f: float = (rt - float(a["t"])) / maxf(float(last["t"]) - float(a["t"]), 0.0001)
+		f = clampf(f, 0.0, 1.0)
+		pos = (a["pos"] as Vector2).lerp(last["pos"], f)
+		row = last["row"] if f >= 0.5 else a["row"]
+	cat_puppet.net_apply(pos, row)
+
+
+func _free_cat() -> void:
+	_cat_buf.clear()
+	_cat_id = 0
+	if is_instance_valid(cat_puppet):
+		cat_puppet.queue_free()
+	cat_puppet = null
 
 
 func _remove(id: int) -> void:

@@ -550,6 +550,23 @@ func _draw_goal(origin: Vector2) -> void:
 		if (lit & (1 << i)) != 0:
 			col = Beams.COLOR[Game.CORE_ARC_COLOR[i]]
 		draw_rect(Rect2(origin.x + 96.0 + float(i) * 14.0, y - 10.0, 10.0, 10.0), col)
+	_draw_cat_chip(origin, y)
+
+
+## Значок кота и полоска заряда — справа от дуг, в блоке цели.
+func _draw_cat_chip(origin: Vector2, y: float) -> void:
+	var x: float = origin.x + 204.0
+	var body: Color = Color(0.55, 0.56, 0.58)
+	if Game.cat_state == Game.CatState.OUT:
+		body = Color(0.85, 0.7, 1.0)
+	draw_rect(Rect2(x + 2.0, y - 8.0, 8.0, 6.0), body)
+	draw_rect(Rect2(x + 2.0, y - 11.0, 3.0, 3.0), body)
+	draw_rect(Rect2(x + 7.0, y - 11.0, 3.0, 3.0), body)
+	var frac: float = clampf(Game.cat_charge / Balance.CAT_RECHARGE, 0.0, 1.0)
+	var bar: Rect2 = Rect2(x + 16.0, y - 8.0, 40.0, 6.0)
+	draw_rect(bar, Color(0.16, 0.18, 0.22))
+	draw_rect(Rect2(bar.position, Vector2(bar.size.x * frac, bar.size.y)),
+			Color(0.45, 0.95, 0.55) if frac >= 1.0 else Color(1.0, 0.72, 0.35))
 
 
 func _draw_bottom(origin: Vector2) -> void:

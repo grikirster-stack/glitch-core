@@ -43,6 +43,15 @@ var core_arcs: int = 0
 var core_cell: Vector2i = Vector2i(-1, -1)
 ## Все поставленные ядра, последнее — активное.
 var core_cells: Array[Vector2i] = []
+## Радужный кот (#176). Выходит из клетки активного ядра (core_cell).
+## IN_CORE — сидит, заряд полон. OUT — летит. RECHARGE — сидит, копит луч.
+enum CatState { IN_CORE, OUT, RECHARGE }
+var cat_state: int = CatState.IN_CORE
+## Секунды луча, уже накопленные в ядре. Полон при CAT_RECHARGE.
+var cat_charge: float = Balance.CAT_RECHARGE
+var cat_timer: float = 0.0
+## Уже выходил в эту ночь после сигнала. Сбрасывается на рассвете.
+var _cat_night: bool = false
 var stats_mined: int = 0
 var stats_crafted: int = 0
 var stats_kills: int = 0
@@ -80,6 +89,10 @@ func reset_run() -> void:
 	core_arcs = 0
 	core_cell = Vector2i(-1, -1)
 	core_cells = []
+	cat_state = CatState.IN_CORE
+	cat_charge = Balance.CAT_RECHARGE
+	cat_timer = 0.0
+	_cat_night = false
 	stats_mined = 0
 	stats_crafted = 0
 	stats_kills = 0
@@ -116,8 +129,10 @@ func _process(delta: float) -> void:
 	# цикла, дважды за цикл слал «Смена N» и никогда не рос дальше двух.
 	if prev_t < Balance.NIGHT_END and time_of_day >= Balance.NIGHT_END:
 		day_number += 1
+		_cat_night = false
 		day_started.emit(day_number)
 		notify("Смена %d. Фантомы голоднее." % day_number, Color(0.9, 0.9, 0.7))
+	_tick_cat(delta)
 	_tick_objective(delta)
 
 
@@ -383,7 +398,8 @@ func objective_target() -> int:
 
 ## Стоит ли хоть одно ядро (активная клетка жива).
 func core_placed() -> bool:
-	return core_cell.x >= 0 and World.machines.get(core_cell) is RainbowCore
+	var core = World.machines.get(core_cell)
+	return core_cell.x >= 0 and core != null and String(core.kind) == "RainbowCore"
 
 
 ## Сколько дуг уже горит (0..7).
@@ -481,14 +497,102 @@ func _tick_relay(dt: float) -> void:
 		set_state(State.WON)
 
 
-## Первая ночь удержания: кот выходит из активного ядра. Поведение — #176.
+# ------------------------------------------------- РАДУЖНЫЙ КОТ (#176)
+## Выходит из клетки активного ядра (core_cell). Ночь удержания зовёт
+## RainbowCore.cat_hatch(); после сигнала — каждую ночь, если заряд полон.
+
+## Мировая точка ядра. Ядра нет — капсула лагеря.
+func cat_home() -> Vector2:
+	var c: Vector2i = core_cell if core_cell.x >= 0 else World.beacon_cell
+	return World.cell_to_world(c)
+
+
+## Крючок выхода. Ядро зовёт его из cat_hatch(); тесты могут звать сами.
+## Без типа RainbowCat: class_name в автозагрузке замыкает загрузку машин.
+func cat_hatch_at(at: Vector2 = Vector2.INF):
+	if not Net.is_authority():
+		return null
+	if cat_state != CatState.IN_CORE or cat_charge < Balance.CAT_RECHARGE:
+		return null
+	var script: GDScript = load("res://scripts/entities/rainbow_cat.gd")
+	if script.live != null and is_instance_valid(script.live):
+		return null
+	var pos: Vector2 = at if at != Vector2.INF else cat_home()
+	var cat = script.create(pos)
+	World.add_world_node(cat)
+	cat.global_position = pos
+	cat_state = CatState.OUT
+	cat_timer = Balance.CAT_TIME
+	notify("Радужный кот вышел из ядра.", Color(0.85, 0.7, 1.0))
+	return cat
+
+
+## Кот сел в ядро: заряд с нуля, пока в клетку не попадёт луч.
+func cat_returned() -> void:
+	if not Net.is_authority():
+		return
+	cat_state = CatState.RECHARGE
+	cat_charge = 0.0
+	cat_timer = 0.0
+	notify("Кот в ядре. Ему нужен луч — %d с." % int(Balance.CAT_RECHARGE), Color(0.7, 0.85, 1.0))
+
+
+## Маска луча, упёршегося в ядро. В клетке приёмника color_at пуст: луч обрывается перед ней.
+func _cat_beam_mask() -> int:
+	var core = World.machines.get(core_cell) if core_cell.x >= 0 else null
+	if core == null:
+		return 0
+	return int(core.get("_beam")) & 7
+
+
+## Любой луч в клетку ядра кормит перезарядку. Дуги зажигает ядро само.
+func _cat_drink(dt: float) -> void:
+	cat_beam(_cat_beam_mask(), dt)
+
+
+## Любой луч в клетку ядра кормит перезарядку.
+func cat_beam(mask: int, dt: float) -> void:
+	if not Net.is_authority() or cat_state != CatState.RECHARGE:
+		return
+	if (mask & 7) == 0 or dt <= 0.0:
+		return
+	cat_charge = minf(Balance.CAT_RECHARGE, cat_charge + dt)
+	if cat_charge >= Balance.CAT_RECHARGE:
+		cat_state = CatState.IN_CORE
+		notify("Кот заряжен. Ждёт ночь.", Color(0.85, 0.7, 1.0))
+
+
+func cat_charged() -> bool:
+	return cat_state == CatState.IN_CORE and cat_charge >= Balance.CAT_RECHARGE
+
+
+## Ночь после сигнала — каждую, если заряжен. Ночь удержания зовёт _tick_relay.
+func _tick_cat(delta: float) -> void:
+	if cat_state == CatState.OUT:
+		cat_timer = maxf(0.0, cat_timer - delta)
+		return
+	if cat_state == CatState.RECHARGE:
+		_cat_drink(delta)
+		return
+	if cat_state != CatState.IN_CORE or not cat_charged():
+		return
+	if signal_sent and is_night() and not _cat_night:
+		_cat_night = true
+		cat_hatch_at()
+
+
+## Первая ночь удержания: кот выходит из активного ядра.
 func _hatch_cat_if_night() -> void:
-	if _core_cat_hatched or not is_night() or not core_placed():
+	if _core_cat_hatched or not is_night() or not core_placed() or not cat_charged():
 		return
 	_core_cat_hatched = true
 	var core = World.machines.get(core_cell)
 	if core != null and core.has_method("cat_hatch"):
 		core.cat_hatch()
+		if cat_state == CatState.IN_CORE:
+			cat_hatch_at()
+		return
+	cat_hatch_at()
 
 
 ## Итоги забега для Lore.epilogue(): смены, убитые фантомы, смерти, время.
@@ -541,6 +645,7 @@ func _try_finish_parts(hero = null) -> bool:
 	_net_relay_changed()
 	relay_active = true
 	relay_timer = RELAY_TIME
+	_core_cat_hatched = false
 	notify("РЕЛЕЙ ЗАПУЩЕН! Держитесь %d секунд." % int(RELAY_TIME), RELAY_COLOR)
 	Sfx.play("power", -2.0)
 	update_objective()
@@ -947,9 +1052,11 @@ func hero_count() -> int:
 func _rebuild_cores() -> void:
 	core_cells = []
 	for c in World.machines.keys():
-		if World.machines[c] is RainbowCore:
+		var m = World.machines[c]
+		if m != null and String(m.kind) == "RainbowCore":
 			core_cells.append(c)
-	if core_cell.x >= 0 and not (World.machines.get(core_cell) is RainbowCore):
+	var active = World.machines.get(core_cell)
+	if core_cell.x >= 0 and (active == null or String(active.kind) != "RainbowCore"):
 		core_cell = core_cells[core_cells.size() - 1] if not core_cells.is_empty() else Vector2i(-1, -1)
 	elif core_cell.x < 0 and not core_cells.is_empty():
 		core_cell = core_cells[core_cells.size() - 1]

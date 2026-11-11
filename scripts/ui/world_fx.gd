@@ -36,6 +36,8 @@ const MAX_STEAM: int = 120
 const MAX_STEAM_VENTS: int = 16
 ## Максимум живых дуг турели.
 const MAX_ARCS: int = 24
+## Точек следа кота. Столько же источников света — старые снимаются (#176).
+const CAT_TRAIL: int = 30
 
 # ------------------------------------------------- ПАР И ДУГИ (#34)
 ## Шаг выдоха вентиляции при телеграфе, с между клубами.
@@ -87,6 +89,8 @@ var steams: Array = []
 var steam_vents: Array = []
 ## Дуги турели: {pts: PackedVector2Array, t, color}.
 var arcs: Array = []
+## След кота: {pos, t, color, light}. Свет живёт CAT_TRAIL_LIFE и гаснет вместе с точкой.
+var cat_pts: Array = []
 
 var show_power: bool = false:
 	set(value):
@@ -223,6 +227,7 @@ func _advance_effects(delta: float) -> bool:
 			slashes.remove_at(i)
 		i -= 1
 	_advance_steam(delta)
+	_advance_cat(delta)
 	i = arcs.size() - 1
 	while i >= 0:
 		var a: Dictionary = arcs[i]
@@ -231,7 +236,8 @@ func _advance_effects(delta: float) -> bool:
 			arcs.remove_at(i)
 		i -= 1
 	return not chips.is_empty() or not rings.is_empty() or not slashes.is_empty() \
-			or not steams.is_empty() or not steam_vents.is_empty() or not arcs.is_empty()
+			or not steams.is_empty() or not steam_vents.is_empty() or not arcs.is_empty() \
+			or not cat_pts.is_empty()
 
 
 ## Выдохи вентиляций и клубы пара.
@@ -411,6 +417,38 @@ func _on_pharos_fired(from: Vector2, to: Vector2, color: Color) -> void:
 	spawn_arc(from, to, color)
 
 
+## Точка следа кота (#176). Цвета — по кругу семи. Старше 30 — свет снимается.
+func cat_trail(pos: Vector2) -> void:
+	var col: Color = Beams.COLOR[1 + (cat_pts.size() % 7)]
+	var light: Dictionary = World.add_light_source(pos, 24.0, Balance.CAT_TRAIL_LIGHT)
+	cat_pts.append({"pos": pos, "t": 0.0, "color": col, "light": light})
+	while cat_pts.size() > CAT_TRAIL:
+		_drop_cat_point(0)
+	_dirty = true
+
+
+## Снять все источники следа (кот сел или мир сброшен).
+func cat_trail_clear() -> void:
+	while not cat_pts.is_empty():
+		_drop_cat_point(cat_pts.size() - 1)
+
+
+func _drop_cat_point(i: int) -> void:
+	var p: Dictionary = cat_pts[i]
+	World.remove_light_source(p["light"])
+	cat_pts.remove_at(i)
+
+
+func _advance_cat(delta: float) -> void:
+	var i: int = cat_pts.size() - 1
+	while i >= 0:
+		var p: Dictionary = cat_pts[i]
+		p["t"] = float(p["t"]) + delta
+		if float(p["t"]) >= Balance.CAT_TRAIL_LIFE:
+			_drop_cat_point(i)
+		i -= 1
+
+
 # ------------------------------------------------------------ ОТРИСОВКА
 
 func _draw() -> void:
@@ -458,6 +496,17 @@ func _draw() -> void:
 	_draw_beams(view)
 	_draw_core_arcs()
 	_draw_domes(view)
+
+	# --- След кота: ломаная из семи цветов, гаснет за 1,5 с ------------------
+	if cat_pts.size() >= 2:
+		var poly: PackedVector2Array = PackedVector2Array()
+		var cols: PackedColorArray = PackedColorArray()
+		for p in cat_pts:
+			var a: float = 1.0 - float(p["t"]) / Balance.CAT_TRAIL_LIFE
+			var c: Color = p["color"]
+			poly.append(p["pos"])
+			cols.append(Color(c.r, c.g, c.b, clampf(a, 0.0, 1.0)))
+		draw_polyline_colors(poly, cols, 2.0)
 
 	# --- Дуги турели ----------------------------------------------------------
 	for a in arcs:

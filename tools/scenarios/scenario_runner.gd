@@ -356,6 +356,9 @@ const REGISTRY: Dictionary = {
 		"desc": "без линзы маяк не бьёт эхо на 9 клетках, с линзой бьёт; разбор возвращает линзу"},
 	"sky_secret_lens": {"file": "sky_secret_lens.gd", "title": "линза в небесном тайнике",
 		"desc": "линза лежит в сундуке тайника на сидах 31337, 4242 и 12345"},
+	# --- Радужный кот (ADR-005 § 7, #176) ---
+	"rainbow_cat": {"file": "rainbow_cat.gd", "title": "радужный кот", "timeout_ms": 90000,
+		"desc": "5 эхо в 15 клетках мертвы за ≤ 30 с; через 90 с кот в ядре; заряд только под лучом; след ≥ 1.5"},
 }
 
 var scene: Node = null
@@ -510,6 +513,10 @@ func _reset_world() -> void:
 		if is_instance_valid(n):
 			n.get_parent().remove_child(n)
 			n.queue_free()
+	# Кот прошлого сценария (#176) — тоже: он не в группе phantom.
+	if RainbowCat.live != null and is_instance_valid(RainbowCat.live):
+		RainbowCat.live.queue_free()
+		RainbowCat.live = null
 	# Выпавшие предметы — тоже.
 	for c in scene.get_children():
 		if c is ItemEntity:
