@@ -34,11 +34,14 @@ const COLOR: Array[Color] = [
 	Color.WHITE,                            ## W
 ]
 
-## Защита от петель: смеситель «всех входов» будет в C2, здесь только потолок.
+## Защита от петель: кольцо зеркал и смеситель, который кормит сам себя.
 const MAX_RAYS: int = 64
 const MAX_STEPS: int = 4096
+## Полей луча в очереди: x, y, dir, color, left, len, budget.
+const RAY: int = 7
 ## Два прохода мало, если цепочка преобразователей кормит саму себя цветом.
-## Повторяем, пока карта клеток не успокоится.
+## Повторяем, пока карта клеток не успокоится. Смеситель копит входы между
+## проходами и отдаёт смесь только со второго — поэтому одного мало.
 const MAX_PASSES: int = 8
 
 ## Направления как у MachineBase.dir: 0 вправо, 1 вниз, 2 влево, 3 вверх.
@@ -46,7 +49,7 @@ const DIR: Array[Vector2i] = [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), V
 
 ## Клетка → маска цвета (битовое ИЛИ всех лучей, прошедших клетку).
 ## Публичный вид — словарь; внутри прохода маска лежит в плоском массиве мира,
-## чтобы 20 горелок укладывались в 300 мкс.
+## чтобы 20 горелок укладывались в 1 мс (порог сценария, не 300 мкс CI).
 var cells: Dictionary = {}
 ## Сегменты для отрисовки: {from, to, color, strength}. strength — доля длины
 ## у начала сегмента (1 у источника, меньше к концу).
@@ -93,9 +96,10 @@ func mark_dirty() -> void:
 
 
 ## Перестроить карту и сегменты. Повторяет проход, пока карта цветов меняется,
-## не больше MAX_PASSES: в C1 преобразователей нет и второй проход совпадает
-## с первым; смеситель «всех входов» (C2) допишет сюда же. Возвращает мкс.
-## Лишний вызов без изменений карты changed не растит.
+## не больше MAX_PASSES. Без преобразователей хватает одного прохода.
+## Смеситель видит все входы только после полного прохода, поэтому перед
+## каждым проходом его inputs сбрасывается, а выход стабилен со второго.
+## Возвращает мкс. Лишний вызов без изменений карты changed не растит.
 func rebuild() -> int:
 	var t0: int = Time.get_ticks_usec()
 	dirty = false
@@ -109,6 +113,10 @@ func rebuild() -> int:
 	var passes: int = MAX_PASSES if _passers > 0 else 1
 	var kept: Array = []
 	for _pass in passes:
+		# Карта занятости — на каждый проход: между проходами могли поставить
+		# или снять постройку, а note_machines зовут не из каждого кадра.
+		_fill_occ()
+		_reset_pass_inputs()
 		next_segs = []
 		_run = 0
 		_trace(next_segs)
@@ -198,7 +206,10 @@ func note_machines() -> void:
 			_emitters.append(m)
 		if m.has_method("beam_receive"):
 			_receivers.append(m)
-		# C2: зеркало и смеситель сами объявят beam_pass и поднимут _passers.
+		# Зеркало, смеситель, призма: beam_pass и проход, пока карта не успокоится.
+		# Маяк beam_pass имеет, но луч гасит — в _passers его не кладём.
+		if m.has_method("beam_pass") and bool(m.get("beam_passer")):
+			_passers += 1
 	_fill_occ()
 	dirty = true
 
@@ -217,10 +228,23 @@ func _fill_occ() -> void:
 		var c: Vector2i = m.cell
 		if not World.in_bounds(c.x, c.y):
 			continue
-		# C1: любая постройка гасит луч (beam_pass базы возвращает []).
-		# C2 запишет сюда код ≥ 2 и узел в _occ_nodes.
-		# Приёмник (маяк) тоже гасит: луч упирается в башню, сквозь неё не идёт.
-		_occ[c.y * World.W + c.x] = 1
+		# Постройка без beam_passer гасит луч (код 1). Маяк — тоже: башня конец линии.
+		# Пропускающая — код ≥ 2 и узел в _occ_nodes: горячий цикл не ищет машину в словаре.
+		var passer: bool = m.get("beam_passer") == true
+		if m.has_method("beam_pass") and passer:
+			_occ_nodes.append(m)
+			_occ[c.y * World.W + c.x] = _occ_nodes.size() - 1
+		else:
+			_occ[c.y * World.W + c.x] = 1
+
+
+## Смеситель копит входы за проход. Перед следующим — чистый лист,
+## иначе цвет прошлого прохода останется в смеси навсегда.
+func _reset_pass_inputs() -> void:
+	for i in range(2, _occ_nodes.size()):
+		var m = _occ_nodes[i]
+		if is_instance_valid(m) and m.has_method("beam_reset_inputs"):
+			m.beam_reset_inputs()
 
 
 func _clear_occ() -> void:
@@ -235,7 +259,10 @@ func _clear_occ() -> void:
 
 
 func _trace(next_segs: Array) -> void:
-	# Луч — шесть чисел в одном массиве: x, y, dir, color, left, len.
+	# Луч — семь чисел: x, y, dir, color, left, len, budget.
+	# budget — длина у источника этого луча (24 или 32). После зеркала и призмы
+	# left падает на BEAM_BLOCK_COST, len (для яркости) остаётся прежним.
+	# Смеситель смотрит на budget, не на left: белый выход — всегда 32.
 	var q: PackedInt32Array = PackedInt32Array()
 	var steps: int = 0
 	var solid: PackedByteArray = World._solid_tbl
@@ -261,9 +288,10 @@ func _trace(next_segs: Array) -> void:
 			q.append(int(e[1]) & 7)
 			q.append(length)
 			q.append(length)
-			if q.size() >= MAX_RAYS * 6:
+			q.append(length)
+			if q.size() >= MAX_RAYS * RAY:
 				break
-		if q.size() >= MAX_RAYS * 6:
+		if q.size() >= MAX_RAYS * RAY:
 			break
 	var ri: int = 0
 	var dxs: PackedInt32Array = PackedInt32Array([1, 0, -1, 0])
@@ -275,11 +303,15 @@ func _trace(next_segs: Array) -> void:
 		var color: int = q[ri + 3]
 		var left: int = q[ri + 4]
 		var length: int = maxi(1, q[ri + 5])
-		ri += 6
+		var budget: int = q[ri + 6]
+		ri += RAY
 		if color == 0 or left <= 0:
 			continue
+
 		var sx: int = dxs[dir]
 		var sy: int = dys[dir]
+
+
 		var fx: int = x
 		var fy: int = y
 		var seg_left: int = left
@@ -294,17 +326,31 @@ func _trace(next_segs: Array) -> void:
 			var occ: int = _occ[nidx]
 			if occ != 0:
 				_close_seg(next_segs, Vector2i(fx, fy), Vector2i(x, y), dir, color, seg_left, length, walked)
-				if occ >= 2 and q.size() < MAX_RAYS * 6:
-					var outs: Array = _occ_nodes[occ].beam_pass(dir, color)
-					for o in outs:
-						if q.size() >= MAX_RAYS * 6 or not (o is Array) or o.size() < 2:
-							break
-						q.append(nx)
-						q.append(ny)
-						q.append(int(o[0]) & 3)
-						q.append(int(o[1]) & 7)
-						q.append(left - Balance.BEAM_BLOCK_COST)
-						q.append(length)
+				if occ >= 2 and q.size() < MAX_RAYS * RAY:
+					var node = _occ_nodes[occ]
+					if is_instance_valid(node):
+						var outs: Array = node.beam_pass(dir, color)
+
+						var out_left: int = left - Balance.BEAM_BLOCK_COST
+						var out_budget: int = budget
+						# Смеситель: длина — max(бюджет входов) − 2, белый — 32.
+						# Зеркало и призма бюджет не меняют, только платят 2.
+						if node.has_method("beam_out_budget"):
+							out_budget = int(node.beam_out_budget(budget))
+							out_left = out_budget
+
+						for o in outs:
+							if q.size() >= MAX_RAYS * RAY or not (o is Array) or o.size() < 2:
+								break
+
+							var span: int = maxi(1, out_left)
+							q.append(nx)
+							q.append(ny)
+							q.append(int(o[0]) & 3)
+							q.append(int(o[1]) & 7)
+							q.append(out_left)
+							q.append(span)
+							q.append(out_budget)
 				break
 			if solid[tiles[nidx]] != 0:
 				# Упирается в породу: линия доходит до стены, сквозь неё не идёт.
