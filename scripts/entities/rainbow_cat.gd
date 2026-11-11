@@ -178,6 +178,10 @@ func _sit() -> void:
 
 
 func _fly_toward(aim: Vector2, delta: float) -> void:
+	# Тело уже в породе: move_body из стены не выпускает, кот крутит хвост на месте.
+	# Так сценарий «радужный кот» ставит стену в клетку кота на обратном пути.
+	if World.rect_solid(Rect2(global_position - SIZE * 0.5, SIZE), true):
+		_unstick()
 	var dir: Vector2 = _steer(aim)
 	if dir.length_squared() < 0.0001:
 		dir = Vector2.RIGHT
@@ -195,6 +199,17 @@ func _fly_toward(aim: Vector2, delta: float) -> void:
 		facing = -1
 	elif vel.x > 8.0:
 		facing = 1
+
+
+## Ближайшая свободная клетка. Стена, выросшая в клетке кота, не должна его хоронить.
+func _unstick() -> void:
+	var free: Vector2i = _free_near(World.world_to_cell(global_position))
+	if free.x < 0:
+		return
+	global_position = World.cell_to_world(free)
+	vel = Vector2.ZERO
+	_path.clear()
+	_path_i = 0
 
 
 ## Прямая, пока клетка впереди свободна. Упор — путь A* или шаг вбок.
