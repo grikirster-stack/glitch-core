@@ -1233,11 +1233,12 @@ func _sfx_self(id: String, v: float = 0.0, p: float = 1.0) -> void:
 
 
 ## Личное уведомление: видит только этот игрок. Прокси — владельцу (канал 2).
-func _notify(text: String, color: Color = Color(0.85, 0.9, 1.0)) -> void:
+## icon — картинка предмета в кадре NOTIFY (#171).
+func _notify(text: String, color: Color = Color(0.85, 0.9, 1.0), icon: int = 0) -> void:
 	if net_role == NetRole.PROXY:
-		NetPlayers.send_notify(peer_id, global_position, text, color)
+		NetPlayers.send_notify(peer_id, global_position, text, color, icon)
 	elif _net_view():
-		Game.notify(text, color)
+		Game.notify(text, color, icon)
 
 
 ## Эффект в мире (крошка, кольцо, удар): видят все — хост рисует и рассылает.

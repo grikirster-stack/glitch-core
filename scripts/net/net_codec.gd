@@ -679,7 +679,9 @@ static func encode_sound(pos: Vector2, sound_id: int, volume_db: float, pitch: f
 	return encode_event(Ev.SOUND, pos, a)
 
 
-static func encode_notify(pos: Vector2, text: String, color: Color) -> PackedByteArray:
+## icon — id предмета уведомления (0 — без картинки). Байт есть всегда (#171, PROTO 12):
+## «Теперь можно сделать» едет с иконкой выхода, старые клиенты PROTO 11 кадр не примут.
+static func encode_notify(pos: Vector2, text: String, color: Color, icon: int = 0) -> PackedByteArray:
 	var t: PackedByteArray = text.to_utf8_buffer()
 	if t.size() > 0xFFFF:
 		t = t.slice(0, 0xFFFF)
@@ -688,8 +690,9 @@ static func encode_notify(pos: Vector2, text: String, color: Color) -> PackedByt
 	a.encode_u16(0, t.size())
 	a.append_array(t)
 	var c: PackedByteArray = PackedByteArray()
-	c.resize(4)
+	c.resize(5)
 	c.encode_u32(0, color.to_rgba32())
+	c.encode_u8(4, icon & 0xFF)
 	a.append_array(c)
 	return encode_event(Ev.NOTIFY, pos, a)
 
@@ -722,13 +725,14 @@ static func decode_event(b: PackedByteArray) -> Dictionary:
 			d["volume_db"] = float(a.decode_s8(1))
 			d["pitch"] = a.decode_u8(2) / 100.0
 		Ev.NOTIFY:
-			if a.size() < 6:
+			if a.size() < 7:
 				return {}
 			var n: int = a.decode_u16(0)
-			if a.size() != 2 + n + 4:
+			if a.size() != 2 + n + 5:
 				return {}
 			d["text"] = a.slice(2, 2 + n).get_string_from_utf8()
 			d["color"] = Color.hex(a.decode_u32(2 + n))
+			d["icon"] = a.decode_u8(2 + n + 4)
 		Ev.FX:
 			if a.size() != 2:
 				return {}
@@ -745,31 +749,51 @@ static func decode_event(b: PackedByteArray) -> Dictionary:
 
 
 # ------------------------------------------------------------------ ИНВЕНТАРЬ
-## u8 n + n × (u8 id, u16 count) + u8 selected. 36 слотов — 110 Б.
-## slots — массив [id, count]. seen_items в пакет не входит (Save забега, не провод).
+## u8 n + n × (u8 id, u16 count) + u8 selected + u8 seen_n + seen_n × u8 id.
+## 36 слотов без seen — 111 Б (раньше 110: счётчика seen не было). Хвост
+## (#171, PROTO 12) везёт уже виденное, даже если предмет потрачен. seen — массив id.
 
-static func encode_inv(slots: Array, selected: int) -> PackedByteArray:
+static func encode_inv(slots: Array, selected: int, seen: Array = []) -> PackedByteArray:
 	var n: int = mini(slots.size(), 255)
+	var ids: PackedByteArray = PackedByteArray()
+	for id in seen:
+		var v: int = int(id) & 0xFF
+		if v == 0 or ids.has(v):
+			continue
+		ids.append(v)
+		if ids.size() >= 255:
+			break
 	var out: PackedByteArray = PackedByteArray()
-	out.resize(2 + 3 * n)
+	out.resize(3 + 3 * n + ids.size())
 	out.encode_u8(0, n)
 	for i in n:
 		out.encode_u8(1 + 3 * i, int(slots[i][0]) & 0xFF)
 		out.encode_u16(2 + 3 * i, clampi(int(slots[i][1]), 0, 0xFFFF))
-	out.encode_u8(1 + 3 * n, selected & 0xFF)
+	var at: int = 1 + 3 * n
+	out.encode_u8(at, selected & 0xFF)
+	out.encode_u8(at + 1, ids.size())
+	for i in ids.size():
+		out.encode_u8(at + 2 + i, ids[i])
 	return out
 
 
 static func decode_inv(b: PackedByteArray) -> Dictionary:
-	if b.size() < 2:
+	if b.size() < 3:
 		return {}
 	var n: int = b.decode_u8(0)
-	if b.size() != 2 + 3 * n:
+	var at: int = 1 + 3 * n
+	if b.size() < at + 2:
+		return {}
+	var seen_n: int = b.decode_u8(at + 1)
+	if b.size() != at + 2 + seen_n:
 		return {}
 	var slots: Array = []
 	for i in n:
 		slots.append([b.decode_u8(1 + 3 * i), b.decode_u16(2 + 3 * i)])
-	return {"slots": slots, "selected": b.decode_u8(1 + 3 * n)}
+	var seen: Array = []
+	for i in seen_n:
+		seen.append(b.decode_u8(at + 2 + i))
+	return {"slots": slots, "selected": b.decode_u8(at), "seen": seen}
 
 
 # ------------------------------------------------------------------ КОМАНДЫ
@@ -906,10 +930,10 @@ static func schema_sample() -> PackedByteArray:
 				"relay_active": true, "relay_timer": 90.5, "tasks_done": 2, "tasks_total": 5,
 				"threat": 1, "threat_budget": 7.5, "brownout": true, "hash": 0xDEADBEEF, "game_time": 1234.5}),
 		encode_sound(Vector2(100, 200), 5, -6.0, 1.2),
-		encode_notify(Vector2(0, 0), "Рядом нет вентиляции", Color(1.0, 0.5, 0.25)),
+		encode_notify(Vector2(0, 0), "Рядом нет вентиляции", Color(1.0, 0.5, 0.25), 0),
 		encode_fx(Vector2(1, 2), 3, 4),
 		encode_hit(Vector2(5, 6), Vector2(-120.0, -80.0), 0.12),
-		encode_inv([[9, 99], [0, 0], [255, 65535]], 2),
+		encode_inv([[9, 99], [0, 0], [255, 65535]], 2, [9, 3]),
 		encode_cmd(4, 77, PackedByteArray([1, 2])),
 		encode_cmd_result(77, false, "далеко"),
 		encode_str8("барьер"),

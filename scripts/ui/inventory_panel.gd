@@ -961,8 +961,12 @@ func _bind_seen(p: Player) -> void:
 func _on_item_first_seen(id: int) -> void:
 	_cache_size = -1
 	for r in DB.recipes_opened_by(id, player):
-		Game.notify("Теперь можно сделать: %s" % DB.item_name(int(r["out"])),
-				Color(0.55, 0.95, 0.7), int(r["out"]))
+		var text: String = "Теперь можно сделать: %s" % DB.item_name(int(r["out"]))
+		var icon: int = int(r["out"])
+		if player != null and player.has_method("_notify"):
+			player._notify(text, Color(0.55, 0.95, 0.7), icon)
+		else:
+			Game.notify(text, Color(0.55, 0.95, 0.7), icon)
 	queue_redraw()
 
 

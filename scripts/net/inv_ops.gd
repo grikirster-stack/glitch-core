@@ -612,7 +612,7 @@ func _push_inv(peer: int, p: Player) -> void:
 	var slots: Array = []
 	for s in p.inv.slots:
 		slots.append([s.id, s.count])
-	Net.send(NetCodec.Msg.INV, NetCodec.encode_inv(slots, p.inv.selected), peer)
+	Net.send(NetCodec.Msg.INV, NetCodec.encode_inv(slots, p.inv.selected, p.inv.seen_items.keys()), peer)
 
 
 static func _chest_slots(c: Chest) -> Array:
