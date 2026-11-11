@@ -25,6 +25,9 @@ extends CanvasLayer
 const LAYER: int = 25
 ## Ширина колонки кнопок и высота кнопки, px при 1280×720 (палец попадает, как в меню).
 const COL_W: float = 420.0
+## Высота колонки паузы с запасом (заголовок, подсказка, четыре кнопки, статус), px: по ней
+## UI подбирает коэффициент, чтобы пауза влезала в экран (#159).
+const DESIGN_H: float = 460.0
 const BUTTON_H: float = MainMenu.BUTTON_H
 const ACCENT: Color = MainMenu.ACCENT
 const DIM: Color = Color(0.72, 0.78, 0.88)
@@ -71,6 +74,15 @@ func _ready() -> void:
 	_build()
 	visible = false
 	set_process(false)
+
+
+## Размер интерфейса (#159): у паузы свой слой, масштаб родительского UI на него не
+## распространяется. f — коэффициент с подгонкой под экран (UI.panel_scale).
+func apply_scale(f: float) -> void:
+	scale = Vector2.ONE * f
+	root.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	root.position = Vector2.ZERO
+	root.size = get_viewport().get_visible_rect().size / f
 
 
 func is_open() -> bool:
@@ -242,10 +254,10 @@ func _build() -> void:
 	page.add_theme_constant_override("separation", 10)
 	center.add_child(page)
 
-	title_label = _label("ПАУЗА", 40, ACCENT)
+	title_label = _label("ПАУЗА", UI.FONT["title"], ACCENT)
 	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	page.add_child(title_label)
-	hint_label = _label("", 16, DIM)
+	hint_label = _label("", UI.FONT["small"], DIM)
 	hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint_label.custom_minimum_size = Vector2(COL_W, 0)
@@ -270,7 +282,7 @@ func _build() -> void:
 	confirm_box = VBoxContainer.new()
 	confirm_box.add_theme_constant_override("separation", 8)
 	page.add_child(confirm_box)
-	confirm_label = _label("", 18, WARN)
+	confirm_label = _label("", UI.FONT["body"], WARN)
 	confirm_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	confirm_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	confirm_label.custom_minimum_size = Vector2(COL_W, 0)
@@ -282,7 +294,7 @@ func _build() -> void:
 	confirm_back_button.pressed.connect(_show_items)
 	confirm_box.add_child(confirm_back_button)
 
-	status_label = _label("", 16, OK_COLOR)
+	status_label = _label("", UI.FONT["small"], OK_COLOR)
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	status_label.custom_minimum_size = Vector2(COL_W, 22)

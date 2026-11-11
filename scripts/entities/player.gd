@@ -320,10 +320,11 @@ func _handle_input(dt: float) -> void:
 		_lmb_was = false
 
 	if _mouse_down(MOUSE_BUTTON_RIGHT) and in_reach:
+		var fresh: bool = _place_cd == 0.0   # первый кадр нажатия: поворот — только по нему
 		_place_cd -= dt
 		if _place_cd <= 0.0:
 			_place_cd = 0.16
-			_do_place(cell)
+			_do_place(cell, fresh)
 	else:
 		_place_cd = 0.0   # новое нажатие ставит сразу: короткий клик или тап не теряется
 
@@ -410,7 +411,9 @@ func _empulse() -> void:
 ## героя к курсору (сквозь стену копать нельзя — единое правило с тапом на телефоне), если
 ## она копаемая и в радиусе. (-1, -1) — копать нечего.
 func dig_target(mouse: Vector2) -> Vector2i:
-	var hit: Vector2i = World.first_solid_on_ray(global_position, mouse)
+	# От центра клетки героя, как у турели и фантомов: луч из точки ног цепляет пол.
+	var origin: Vector2 = World.cell_to_world(World.world_to_cell(global_position))
+	var hit: Vector2i = World.first_solid_on_ray(origin, mouse)
 	if hit.x < 0 or not can_dig(hit):
 		return Vector2i(-1, -1)
 	if World.cell_to_world(hit).distance_to(global_position) > REACH:
@@ -469,11 +472,13 @@ func _break_tile(cell: Vector2i) -> void:
 		spawn_item(drop, 1, World.cell_to_world(cell))
 
 
-func _do_place(cell: Vector2i) -> void:
-	# ПКМ по конвейеру или манипулятору (#30) — повернуть.
-	var turnable = World.machines.get(cell)
-	if turnable is Belt or turnable is Inserter:
-		turnable.turn()
+func _do_place(cell: Vector2i, fresh: bool = true) -> void:
+	# ПКМ по поворотной постройке (конвейер, манипулятор, блоки луча) — повернуть.
+	# Удержание не крутит по кругу: один поворот на одно нажатие.
+	var turnable: MachineBase = World.machines.get(cell)
+	if turnable != null and turnable.can_turn:
+		if fresh:
+			turnable.turn()
 		_sfx_here("place", -14.0, 1.3)
 		return
 	var stack: ItemStack = inv.selected_stack()

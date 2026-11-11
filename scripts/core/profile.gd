@@ -11,6 +11,8 @@ extends RefCounted
 ##   [net]     recent_ips — последние адреса «Подключиться по IP» (MP-H, #93);
 ##             port       — порт игры;
 ##   [access]  less_glitch — «Меньше глитча и мерцания» (ADR-003 V7, #108): GlitchFx.calm;
+##             ui_scale — «Размер интерфейса» (#159, UI.SCALES: 1.0…2.5); 0 — не выбирали,
+##                    UI при первом запуске считает умолчание от экрана и записывает;
 ##   [view]    zoom — зум камеры (ViewZoom): его пишет сама игра, не меню, поэтому
 ##                    поля в профиле нет — read_zoom/write_zoom, save_to его сохраняет.
 ##
@@ -40,6 +42,8 @@ var recent_ips: PackedStringArray = PackedStringArray()
 var port: int = DEFAULT_PORT
 ## Меньше глитча и мерцания (доступность, ADR-003 V7): читает GlitchFx.
 var less_glitch: bool = false
+## Размер интерфейса (UI.SCALES); 0.0 — в файле поля нет (первый запуск).
+var ui_scale: float = 0.0
 ## Пройденные главы кампании (id из Campaign.CHAPTERS, ADR-004).
 var campaign_done: PackedStringArray = PackedStringArray()
 
@@ -131,6 +135,8 @@ static func load_or_create(path: String = "") -> Profile:
 			else DEFAULT_PORT
 	var v_lg: Variant = cfg.get_value("access", "less_glitch", false)
 	p.less_glitch = v_lg if v_lg is bool else false
+	var v_us: Variant = cfg.get_value("access", "ui_scale", 0.0)
+	p.ui_scale = float(v_us) if (v_us is float or v_us is int) and float(v_us) > 0.0 else 0.0
 	var v_done: Variant = cfg.get_value("campaign", "done", PackedStringArray())
 	if v_done is PackedStringArray or v_done is Array:
 		for c in v_done:
@@ -154,6 +160,13 @@ func save_to(path: String = "") -> Error:
 	cfg.set_value("net", "recent_ips", recent_ips)
 	cfg.set_value("net", "port", port)
 	cfg.set_value("access", "less_glitch", less_glitch)
+	# Размер интерфейса: профиль меню мог загрузиться до первого запуска UI — не стираем
+	# то, что UI записал (write_ui_scale).
+	var us: float = ui_scale
+	if us <= 0.0:
+		us = read_ui_scale(path)
+	if us > 0.0:
+		cfg.set_value("access", "ui_scale", us)
 	# Главы отмечает и сама игра (Campaign.mark_done) — свой экземпляр, загруженный раньше
 	# (меню, пауза), не должен стереть отметку: в файл — объединение.
 	var old: ConfigFile = ConfigFile.new()
@@ -183,6 +196,28 @@ static func read_less_glitch(path: String = "") -> bool:
 		return false
 	var v: Variant = cfg.get_value("access", "less_glitch", false)
 	return v if v is bool else false
+
+
+## «Размер интерфейса» из файла, не создавая профиль (#159). 0.0 — не выбирали, нет файла
+## или битое поле; значение до снапа к UI.SCALES — снапает вызывающий.
+static func read_ui_scale(path: String = "") -> float:
+	if path == "":
+		path = default_path()
+	var cfg: ConfigFile = ConfigFile.new()
+	if cfg.load(path) != OK:
+		return 0.0
+	var v: Variant = cfg.get_value("access", "ui_scale", 0.0)
+	return float(v) if (v is float or v is int) and float(v) > 0.0 else 0.0
+
+
+## Записать «Размер интерфейса» в файл, не трогая остальное (как write_zoom).
+static func write_ui_scale(s: float, path: String = "") -> Error:
+	if path == "":
+		path = default_path()
+	var cfg: ConfigFile = ConfigFile.new()
+	cfg.load(path)
+	cfg.set_value("access", "ui_scale", s)
+	return cfg.save(path)
 
 
 ## Зум камеры из файла (ViewZoom); 0.0 — не выбирали, нет файла или битое поле.

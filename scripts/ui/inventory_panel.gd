@@ -411,7 +411,7 @@ func _draw() -> void:
 	draw_rect(Rect2(origin, PANEL), Color(0.35, 0.55, 0.75, 0.8), false, 2.0)
 	_scan_stations()
 	_tag = "panel"
-	_text(origin + Vector2(16, 26), "ИНВЕНТАРЬ И КРАФТ", 360, 18, C_TITLE)
+	_text(origin + Vector2(16, 26), "ИНВЕНТАРЬ И КРАФТ", 360, UI.FONT["body"], C_TITLE)
 
 	# ---- Вкладки -------------------------------------------------------------
 	_tag = "tabs"
@@ -420,7 +420,7 @@ func _draw() -> void:
 		var active: bool = (station_tab == i)
 		draw_rect(r, Color(0.16, 0.24, 0.34) if active else Color(0.10, 0.12, 0.16))
 		draw_rect(r, Color(0.4, 0.8, 1.0, 0.9) if active else Color(1, 1, 1, 0.2), false, 1.0)
-		_text(r.position + Vector2(10, 20), String(TABS[i]), r.size.x - 30, 14,
+		_text(r.position + Vector2(10, 20), String(TABS[i]), r.size.x - 30, UI.FONT["small"],
 				Color(1, 1, 1) if active else Color(0.7, 0.75, 0.85), HORIZONTAL_ALIGNMENT_LEFT, r)
 		var dot: Vector2 = r.position + Vector2(r.size.x - 12, r.size.y * 0.5)
 		# Есть что открыть — огонёк на вкладке «Исследования».
@@ -455,15 +455,15 @@ func _draw_chest(origin: Vector2) -> void:
 		var box: Rect2 = Rect2(origin + Vector2(16, 78), Vector2(300, 158))
 		draw_rect(box, Color(0.08, 0.09, 0.12, 0.6))
 		draw_rect(box, Color(1, 1, 1, 0.08), false, 1.0)
-		_text(origin + Vector2(28, 108), "СУНДУК НЕ ОТКРЫТ", 276, 14, Color(C_CHEST, 0.7),
+		_text(origin + Vector2(28, 108), "СУНДУК НЕ ОТКРЫТ", 276, UI.FONT["small"], Color(C_CHEST, 0.7),
 				HORIZONTAL_ALIGNMENT_LEFT, box)
 		var y: float = 132.0
 		for line in _wrap("Подойди к сундуку или тайнику руины и нажми E — его ячейки появятся здесь. "
-				+ "Shift+ЛКМ перекладывает стопку между сундуком и инвентарём.", 276, 13, 5):
-			_text(origin + Vector2(28, y), line, 276, 13, C_DIM, HORIZONTAL_ALIGNMENT_LEFT, box)
+				+ "Shift+ЛКМ перекладывает стопку между сундуком и инвентарём.", 276, UI.FONT["small"], 5):
+			_text(origin + Vector2(28, y), line, 276, UI.FONT["small"], C_DIM, HORIZONTAL_ALIGNMENT_LEFT, box)
 			y += 18.0
 		return
-	_text(origin + Vector2(16, 92), _chest_title, 300, 14, C_CHEST)
+	_text(origin + Vector2(16, 92), _chest_title, 300, UI.FONT["small"], C_CHEST)
 	for i in Chest.CAP:
 		_draw_slot(_chest_slot_rect(i), _shown(chest.slots, NetCodec.Box.CHEST, i), false)
 	var has_chest: bool = false
@@ -484,15 +484,15 @@ func _button(r: Rect2, label: String, enabled: bool) -> void:
 	var hot: bool = enabled and r.has_point(mouse_pos)
 	draw_rect(r, Color(0.14, 0.26, 0.34) if hot else (Color(0.11, 0.18, 0.24) if enabled else Color(0.10, 0.11, 0.14)))
 	draw_rect(r, Color(0.45, 0.8, 1.0, 0.7) if enabled else Color(1, 1, 1, 0.12), false, 1.0)
-	_text(r.position + Vector2(4, 16), label, r.size.x - 8, 13, C_TEXT if enabled else Color(0.5, 0.53, 0.6),
+	_text(r.position + Vector2(4, 16), label, r.size.x - 8, UI.FONT["small"], C_TEXT if enabled else Color(0.5, 0.53, 0.6),
 			HORIZONTAL_ALIGNMENT_CENTER, r)
 
 
 func _draw_inventory(origin: Vector2) -> void:
 	_tag = "inv"
 	var inv_y: float = _inv_y()
-	var w: float = _text(origin + Vector2(16, inv_y - 6), "ВЫ", 40, 14, C_HEAD)
-	_text(origin + Vector2(16 + w + 8, inv_y - 6), "верхний ряд — хотбар (1…0)", 300 - w, 12, C_DIM)
+	var w: float = _text(origin + Vector2(16, inv_y - 6), "ВЫ", 40, UI.FONT["small"], C_HEAD)
+	_text(origin + Vector2(16 + w + 8, inv_y - 6), "верхний ряд — хотбар (1…0)", 300 - w, UI.FONT["small"], C_DIM)
 	# Разделитель хотбар | рюкзак — посередине зазора между рядами.
 	var a: Rect2 = _inv_slot_rect(0)
 	var b: Rect2 = _inv_slot_rect(INV_COLS * 2 - 1)
@@ -503,7 +503,7 @@ func _draw_inventory(origin: Vector2) -> void:
 		_draw_slot(r, _shown(player.inv.slots, NetCodec.Box.INV, i), i < player.inv.hotbar_size)
 		if i < player.inv.hotbar_size:
 			# Клавиша ячейки хотбара — как на HUD: 1…9, 0.
-			_str(r.position + Vector2(3, 11), str((i + 1) % 10), 10, Color(0.75, 0.88, 1.0, 0.55))
+			_str(r.position + Vector2(3, 11), str((i + 1) % 10), UI.FONT["small"], Color(0.75, 0.88, 1.0, 0.55))
 
 
 func _draw_recipes(rx: float, origin: Vector2) -> void:
@@ -511,9 +511,9 @@ func _draw_recipes(rx: float, origin: Vector2) -> void:
 	var station: String = String(STATIONS[station_tab])
 	var head: String = "РЕЦЕПТЫ — руками, сразу в инвентарь" if station == "hand" \
 			else "РЕЦЕПТЫ — %s" % String(STATION_INFO[station]["name"])
-	_text(Vector2(rx, origin.y + 90), head, 424, 14, C_HEAD)
+	_text(Vector2(rx, origin.y + 90), head, 424, UI.FONT["small"], C_HEAD)
 	var st: Array = _station_line(station)
-	_text(Vector2(rx, origin.y + 108), String(st[0]), 424, 12, st[1])
+	_text(Vector2(rx, origin.y + 108), String(st[0]), 424, UI.FONT["small"], st[1])
 
 	var recipes: Array = _recipes(station)
 	var first: int = mini(scroll, _max_scroll())
@@ -524,7 +524,7 @@ func _draw_recipes(rx: float, origin: Vector2) -> void:
 	var y: float = origin.y + 116 + RECIPE_ROWS * RECIPE_H + 6
 	if recipes.size() > RECIPE_ROWS:
 		_text(Vector2(rx, y), "%d–%d из %d · колесо мыши — листать" % [first + 1, last, recipes.size()],
-				424, 12, C_DIM)
+				424, UI.FONT["small"], C_DIM)
 	# Пояснение вкладки: как работает этот вид крафта.
 	var info: String = "Ручной крафт — без станка и сразу, но дороже: слиток руками стоит 2 руды, в плавильне — 1. " \
 			+ "Наведи на рецепт — увидишь, что нужно."
@@ -533,8 +533,8 @@ func _draw_recipes(rx: float, origin: Vector2) -> void:
 		info = "%s работает %s: клик загружает сырьё %s, готовое выпадет рядом со станком или уедет по ленте. Нужно питание (ТЭЦ или солнечная панель рядом)." \
 				% [String(si["Name"]), String(si["self"]), String(si["in"])]
 	var ly: float = y + 18
-	for line in _wrap(info, 424, 12, 2):
-		_text(Vector2(rx, ly), line, 424, 12, Color(C_DIM, 0.85))
+	for line in _wrap(info, 424, UI.FONT["small"], 2):
+		_text(Vector2(rx, ly), line, 424, UI.FONT["small"], Color(C_DIM, 0.85))
 		ly += 16
 
 
@@ -564,17 +564,17 @@ func _draw_goal() -> void:
 		if _have(id) >= int(req[id]):
 			done += 1
 	var right: String = "детали %d/%d" % [done, req.size()]
-	var rw: float = _w(right, 12)
+	var rw: float = _w(right, UI.FONT["small"])
 	# Заголовок — этап цели (#32): «ЦЕЛЬ 3/4: СОБРАТЬ РЕЛЕЙ»; ниже — детали релея.
-	_text(goal.position + Vector2(8, 16), Game.objective_text(), goal.size.x - rw - 24, 13, Color(0.4, 0.9, 1.0),
+	_text(goal.position + Vector2(8, 16), Game.objective_text(), goal.size.x - rw - 24, UI.FONT["small"], Color(0.4, 0.9, 1.0),
 			HORIZONTAL_ALIGNMENT_LEFT, goal)
-	_text(goal.position + Vector2(goal.size.x - rw - 8, 16), right, rw, 12,
+	_text(goal.position + Vector2(goal.size.x - rw - 8, 16), right, rw, UI.FONT["small"],
 			C_OK if done == req.size() else C_DIM, HORIZONTAL_ALIGNMENT_LEFT, goal)
 	for cell in _goal_cells():
 		var r: Rect2 = cell["rect"]
 		var id: int = int(cell["id"])
 		if id == IDs.I.NONE:
-			_text(r.position + Vector2(2, 12), String(cell["more"]), r.size.x - 2, 12, C_DIM,
+			_text(r.position + Vector2(2, 12), String(cell["more"]), r.size.x - 2, UI.FONT["small"], C_DIM,
 					HORIZONTAL_ALIGNMENT_LEFT, goal)
 			continue
 		var need: int = int(req[id])
@@ -584,13 +584,13 @@ func _draw_goal() -> void:
 			draw_rect(r, Color(1, 1, 1, 0.06))
 		_icon(id, Rect2(r.position + Vector2(0, 1), Vector2(14, 14)))
 		var cnt: String = "%d/%d" % [mini(have, need), need]   ## прогресс цели: сверх нужного не считаем
-		var cw: float = _w(cnt, 12)
-		_text(Vector2(r.end.x - cw - 2, r.position.y + 12), cnt, cw, 12, col, HORIZONTAL_ALIGNMENT_LEFT, goal)
+		var cw: float = _w(cnt, UI.FONT["small"])
+		_text(Vector2(r.end.x - cw - 2, r.position.y + 12), cnt, cw, UI.FONT["small"], col, HORIZONTAL_ALIGNMENT_LEFT, goal)
 		if bool(cell["named"]):
 			# Длинное название сначала мельчает на кегль, и только потом — «…».
 			var nm: String = DB.item_name(id)
 			var nw: float = r.size.x - 18 - cw - 6
-			var fs: int = 12 if _w(nm, 12) <= nw else 11
+			var fs: int = UI.FONT["small"]
 			_text(r.position + Vector2(18, 12), nm, nw, fs,
 					Color(col, 0.9).lerp(C_TEXT, 0.35), HORIZONTAL_ALIGNMENT_LEFT, goal)
 
@@ -632,7 +632,7 @@ func _goal_cells_build(goal: Rect2, req: Dictionary) -> Array:
 	if named:
 		# Название должно остаться читаемым: хотя бы 70 px после счётчика.
 		for id in ids:
-			var cw: float = _w("%d/%d" % [int(req[id]), int(req[id])], 12)
+			var cw: float = _w("%d/%d" % [int(req[id]), int(req[id])], UI.FONT["small"])
 			if cell_w - 18.0 - cw - 4.0 < 70.0:
 				named = false
 				break
@@ -657,7 +657,7 @@ func _draw_bottom(origin: Vector2) -> void:
 	var now: int = Time.get_ticks_msec()
 	if now < _toast_until and last_feedback != "":
 		var a: float = 1.0
-		_text(origin + Vector2(16, 513), last_feedback, PANEL.x - 32, 13, Color(_toast_col, a))
+		_text(origin + Vector2(16, 513), last_feedback, PANEL.x - 32, UI.FONT["small"], Color(_toast_col, a))
 	var parts: Array = []
 	if not held.is_empty():
 		parts = ["В руке: %s ×%d" % [DB.item_name(held.id), held.count], "ЛКМ по ячейке — положить",
@@ -670,9 +670,9 @@ func _draw_bottom(origin: Vector2) -> void:
 	var line: String = ""
 	for p in parts:
 		var cand: String = String(p) if line == "" else line + "  ·  " + String(p)
-		if _w(cand, 12) <= PANEL.x - 32:
+		if _w(cand, UI.FONT["small"]) <= PANEL.x - 32:
 			line = cand
-	_text(origin + Vector2(16, 532), line, PANEL.x - 32, 12,
+	_text(origin + Vector2(16, 532), line, PANEL.x - 32, UI.FONT["small"],
 			Color(0.95, 0.9, 0.6, 0.95) if not held.is_empty() else Color(0.72, 0.77, 0.87, 0.95))
 
 
@@ -686,10 +686,10 @@ func _draw_held() -> void:
 	draw_rect(r, Color(1.0, 0.9, 0.5, 0.9), false, 1.0)
 	_icon(held.id, r.grow(-4))
 	var s: String = str(held.count)
-	var w: float = _w(s, 13)
+	var w: float = _w(s, UI.FONT["small"])
 	var p: Vector2 = Vector2(r.end.x - w - 1, r.end.y - 2)
-	draw_string_outline(_font, p, s, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, 3, Color(0, 0, 0, 0.9))
-	_str(p, s, 13, Color(1, 1, 1))
+	draw_string_outline(_font, p, s, HORIZONTAL_ALIGNMENT_LEFT, -1, UI.FONT["small"], 3, Color(0, 0, 0, 0.9))
+	_str(p, s, UI.FONT["small"], Color(1, 1, 1))
 
 
 func _near_machine(kind: String) -> MachineBase:
@@ -745,9 +745,9 @@ func _draw_slot(r: Rect2, stack: ItemStack, hotbar: bool) -> void:
 	_icon(stack.id, Rect2((r.position + (r.size - isz) * 0.5).floor(), isz))
 	if stack.count > 1:
 		var s: String = str(stack.count)
-		var w: float = _w(s, 12)
+		var w: float = _w(s, UI.FONT["small"])
 		var p: Vector2 = Vector2(r.end.x - w - 2, r.end.y - 3)
-		_str(p, s, 12, Color(1, 1, 1, 0.95))
+		_str(p, s, UI.FONT["small"], Color(1, 1, 1, 0.95))
 
 
 func _draw_recipe(r: Rect2, rec: Dictionary) -> void:
@@ -783,15 +783,15 @@ func _draw_recipe(r: Rect2, rec: Dictionary) -> void:
 		"far", "none":
 			tag = "станок далеко" if code == "far" else "нет станка"
 			tag_col = C_WARN
-	var tw: float = minf(_w(tag, 12), 170.0)
-	_text(Vector2(r.end.x - tw - 8, r.position.y + 17), tag, tw, 12, tag_col, HORIZONTAL_ALIGNMENT_LEFT, r)
+	var tw: float = minf(_w(tag, UI.FONT["small"]), 170.0)
+	_text(Vector2(r.end.x - tw - 8, r.position.y + 17), tag, tw, UI.FONT["small"], tag_col, HORIZONTAL_ALIGNMENT_LEFT, r)
 	var name_col: Color = Color(0.95, 0.97, 1.0) if can else Color(0.72, 0.75, 0.82)
 	if locked:
 		name_col = Color(0.48, 0.50, 0.55)
 	var title: String = String(rec["name"])
 	if int(rec["amount"]) > 1:
 		title += " ×%d" % int(rec["amount"])
-	_text(r.position + Vector2(42, 17), title, r.size.x - 42 - tw - 18, 14, name_col, HORIZONTAL_ALIGNMENT_LEFT, r)
+	_text(r.position + Vector2(42, 17), title, r.size.x - 42 - tw - 18, UI.FONT["small"], name_col, HORIZONTAL_ALIGNMENT_LEFT, r)
 	# Входы: «иконка Название есть/нужно»; не влезают — «иконка есть/нужно».
 	var ins: Array = rec["in"].keys()
 	var avail: float = r.size.x - 42 - 8
@@ -799,7 +799,7 @@ func _draw_recipe(r: Rect2, rec: Dictionary) -> void:
 	if not _row_named.has(rkey):
 		var total: float = 0.0
 		for id in ins:
-			total += 14 + 4 + _w("%s %d/%d" % [DB.item_name(id), 999, int(rec["in"][id])], 12) + 14
+			total += 14 + 4 + _w("%s %d/%d" % [DB.item_name(id), 999, int(rec["in"][id])], UI.FONT["small"]) + 14
 		_row_named[rkey] = total <= avail
 	var named: bool = bool(_row_named[rkey])
 	var gx: float = r.position.x + 42
@@ -814,7 +814,7 @@ func _draw_recipe(r: Rect2, rec: Dictionary) -> void:
 		var label: String = "%d/%d" % [mini(have, 999), need]
 		if named:
 			label = "%s %s" % [DB.item_name(id), label]
-		gx += _text(Vector2(gx, r.position.y + 34), label, r.end.x - gx - 6, 12, col, HORIZONTAL_ALIGNMENT_LEFT, r) + 14
+		gx += _text(Vector2(gx, r.position.y + 34), label, r.end.x - gx - 6, UI.FONT["small"], col, HORIZONTAL_ALIGNMENT_LEFT, r) + 14
 
 
 # ---------------------------------------------------------------- ПОДСКАЗКИ
@@ -947,7 +947,7 @@ func _draw_tooltip() -> void:
 	if lines.is_empty():
 		return
 	_tag = "tip"
-	const FS: int = 13
+	var fs_tip: int = UI.FONT["small"]
 	const LH: float = 18.0
 	# Раскладываем строки по ширине, считаем размер рамки.
 	var rows: Array = []    ## [текст, цвет, иконка (только у первой части строки)]
@@ -955,10 +955,10 @@ func _draw_tooltip() -> void:
 	for l in lines:
 		var icon: int = int(l["icon"])
 		var indent: float = 18.0 if icon != IDs.I.NONE else 0.0
-		var parts: PackedStringArray = _wrap(String(l["t"]), TIP_W - 16.0 - indent, FS)
+		var parts: PackedStringArray = _wrap(String(l["t"]), TIP_W - 16.0 - indent, fs_tip)
 		for k in parts.size():
 			rows.append([parts[k], l["c"], icon if k == 0 else IDs.I.NONE, indent])
-			max_w = maxf(max_w, _w(parts[k], FS) + indent)
+			max_w = maxf(max_w, _w(parts[k], fs_tip) + indent)
 	var box_size: Vector2 = Vector2(minf(max_w + 16.0, TIP_W), rows.size() * LH + 10.0)
 	var pos: Vector2 = mouse_pos + Vector2(18, 18)
 	pos.x = clampf(pos.x, 4.0, size.x - box_size.x - 4.0)
@@ -973,7 +973,7 @@ func _draw_tooltip() -> void:
 		var x: float = pos.x + 8.0
 		if int(row[2]) != IDs.I.NONE:
 			_icon(int(row[2]), Rect2(Vector2(x, y - 12.0), Vector2(14, 14)))
-		_text(Vector2(x + float(row[3]), y), String(row[0]), box.size.x - 16.0 - float(row[3]), FS,
+		_text(Vector2(x + float(row[3]), y), String(row[0]), box.size.x - 16.0 - float(row[3]), fs_tip,
 				row[1], HORIZONTAL_ALIGNMENT_LEFT, box)
 		y += LH
 	if text_audit != null:
@@ -1074,14 +1074,14 @@ func _source_of(id: int) -> String:
 func _draw_research(rx: float, origin: Vector2, _f: Font) -> void:
 	_tag = "research"
 	var data: String = "Данные: %d" % Game.research
-	var dw: float = _w(data, 14)
-	_text(Vector2(rx, origin.y + 92), "ИССЛЕДОВАНИЯ", 424 - dw - 12, 14, C_HEAD)
-	_text(Vector2(rx + 424 - dw, origin.y + 92), data, dw, 14, Color(0.45, 0.95, 1.0))
+	var dw: float = _w(data, UI.FONT["small"])
+	_text(Vector2(rx, origin.y + 92), "ИССЛЕДОВАНИЯ", 424 - dw - 12, UI.FONT["small"], C_HEAD)
+	_text(Vector2(rx + 424 - dw, origin.y + 92), data, dw, UI.FONT["small"], Color(0.45, 0.95, 1.0))
 	for i in CARD_NODES.size():
 		_draw_card(i)
 	var ly: float = _card_rect(CARD_NODES.size() - 1).end.y + 18
-	for line in _wrap("Данные дают задания на терминалах (E у запитанного терминала) и анализатор. Узлы открываются по порядку.", 424, 12, 2):
-		_text(Vector2(rx, ly), line, 424, 12, Color(C_DIM, 0.85))
+	for line in _wrap("Данные дают задания на терминалах (E у запитанного терминала) и анализатор. Узлы открываются по порядку.", 424, UI.FONT["small"], 2):
+		_text(Vector2(rx, ly), line, 424, UI.FONT["small"], Color(C_DIM, 0.85))
 		ly += 16
 
 
@@ -1105,10 +1105,10 @@ func _draw_card(i: int) -> void:
 		title_col = Color(0.95, 0.97, 1.0)
 	var b: Rect2 = _card_button_rect(i)
 	var text_w: float = b.position.x - r.position.x - 16
-	_text(r.position + Vector2(8, 18), Tech.title(node), text_w, 14, title_col, HORIZONTAL_ALIGNMENT_LEFT, r)
+	_text(r.position + Vector2(8, 18), Tech.title(node), text_w, UI.FONT["small"], title_col, HORIZONTAL_ALIGNMENT_LEFT, r)
 	var y: float = r.position.y + 35
-	for line in _wrap(_desc(node), text_w, 12, 2):
-		_text(Vector2(r.position.x + 8, y), line, text_w, 12, C_DIM, HORIZONTAL_ALIGNMENT_LEFT, r)
+	for line in _wrap(_desc(node), text_w, UI.FONT["small"], 2):
+		_text(Vector2(r.position.x + 8, y), line, text_w, UI.FONT["small"], C_DIM, HORIZONTAL_ALIGNMENT_LEFT, r)
 		y += 15
 	# Кнопка
 	var label: String = "Открыть (%d данных)" % Tech.cost(node)
@@ -1125,7 +1125,7 @@ func _draw_card(i: int) -> void:
 		label = "Сначала %s" % Tech.prerequisite(node)
 	draw_rect(b, b_bg)
 	draw_rect(b, Color(b_fg, 0.5), false, 1.0)
-	_text(b.position + Vector2(4, 19), label, b.size.x - 8, 12, b_fg, HORIZONTAL_ALIGNMENT_CENTER, b)
+	_text(b.position + Vector2(4, 19), label, b.size.x - 8, UI.FONT["small"], b_fg, HORIZONTAL_ALIGNMENT_CENTER, b)
 
 
 func _card_rect(i: int) -> Rect2:

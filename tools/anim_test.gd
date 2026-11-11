@@ -191,6 +191,11 @@ class Runner extends Node:
 		# headless-цикл успевает пробить мягкий тайл за доли секунды.
 		if step == ST_MINE_CHECK and player:
 			_mine_max_prog = maxf(_mine_max_prog, float(player.mining_progress))
+		# Тайл под курсором сломан — отпускаем ЛКМ: иначе луч пойдёт в следующую
+		# твёрдую клетку, и прогресс копки уже не ноль.
+		if step == ST_MINE_DONE and _mine_cell.x >= 0 and world != null \
+				and world.get_tile_v(_mine_cell) == IDs.T.AIR:
+			_set_mouse_button(MOUSE_BUTTON_LEFT, false)
 		if step == ST_RUN_START and player:
 			_noise_peak = maxf(_noise_peak, float(player.noise))
 		if step == ST_RUN_CHECK and player:
@@ -505,8 +510,10 @@ class Runner extends Node:
 		for p in get_tree().get_nodes_in_group("phantom"):
 			p.queue_free()
 		# Копаем по-настоящему: мышь над тайлом + зажатая ЛКМ.
+		# Точка стояния — та, с которой луч до центра клетки свободен: фиксированный
+		# сдвиг на уступе смотрит в клетку сквозь соседа.
 		_pin = true
-		_pin_pos = world.cell_to_world(_mine_cell) + Vector2(26.0, -22.0)
+		_pin_pos = _mine_stand(_mine_cell)
 		player.global_position = _pin_pos
 		player.vel = Vector2.ZERO
 		player.mining_cell = Vector2i(-1, -1)
@@ -1015,6 +1022,19 @@ class Runner extends Node:
 					continue
 				_mine_cell = c
 				return
+
+
+	## Где встать, чтобы луч от центра клетки героя доходил до центра тайла.
+	func _mine_stand(cell: Vector2i) -> Vector2:
+		var mouse: Vector2 = world.cell_to_world(cell)
+		var shifts: Array = [Vector2(26.0, -22.0), Vector2(-26.0, -22.0), Vector2(0.0, -24.0), Vector2(20.0, -8.0)]
+		for s in shifts:
+			var pos: Vector2 = mouse + s
+			var origin: Vector2 = world.cell_to_world(world.world_to_cell(pos))
+			var hit: Vector2i = world.first_solid_on_ray(origin, mouse)
+			if hit.x < 0 or hit == cell:
+				return pos
+		return mouse + shifts[0]
 
 
 	## Стоит ли в столбце x какая-нибудь постройка.

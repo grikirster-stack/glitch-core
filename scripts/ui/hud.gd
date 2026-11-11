@@ -60,9 +60,9 @@ const POWER_SCAN_ROWS: int = 3
 ## Генератор под курсором выбирается, если он в досягаемости игрока (Player.REACH;
 ## сам класс Player здесь не трогаем — цикл зависимостей).
 const CURSOR_GEN_REACH: float = 5.6 * 16.0
-## Прямоугольник миникарты относительно правого верхнего угла.
+## Прямоугольник миникарты: слева от правого края и сверху (логические px слоя UI).
 const MAP_SIZE: Vector2i = Vector2i(186, 52)
-const MAP_OFFSET: Vector2 = Vector2(200, 60)
+const MAP_OFFSET: Vector2 = Vector2(194, 46)
 ## Длина ключа состояния (см. _fill_key). [46..61] — команда в сети (MP-J).
 const KEY_LEN: int = 64
 
@@ -184,6 +184,7 @@ var _mark_progress: float = -1.0
 
 # ------------------------------------------------------------ ВНУТРЕННЕЕ
 var _cross: Control = null
+var _tc: Node = null   ## TouchControls (без типа — цикл зависимостей)
 var _map: Control = null
 var _mark: Control = null
 ## Объект, с которым можно взаимодействовать (мировые px; пустой — нет).
@@ -335,6 +336,8 @@ func _fill_key() -> void:
 	_key[37] = Game.phase_name().hash()
 	_key[38] = _state_hash
 	night_countdown = _night_countdown()
+	_ensure_layout()   # #159: раскладка сменилась (размер, тач-кнопки, строки) — перерисовать
+	_key[62] = _lay_sig
 	_key[39] = night_countdown
 	_key[40] = 1 if Game.brownout else 0
 	var g = power_gen
@@ -805,8 +808,8 @@ func _draw_map_layer() -> void:
 		var pp: Vector2 = r.position + Vector2(_map_dot)
 		c.draw_rect(Rect2(pp - Vector2(3, 3), Vector2(6, 6)), C_LINE)
 		c.draw_rect(Rect2(pp - Vector2(2, 2), Vector2(4, 4)), C_HP)
-	c.draw_string(ThemeDB.fallback_font, r.position + Vector2(4, 12), "КАРТА",
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(C_LINE, 0.6))
+	c.draw_string(ThemeDB.fallback_font, r.position + Vector2(4, 15), "КАРТА",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, UI.FONT["small"], Color(C_LINE, 0.6))
 	var dt: int = Time.get_ticks_usec() - t0
 	stat_us += dt
 	stat_map_us += dt
@@ -915,7 +918,8 @@ func _draw_mark_layer() -> void:
 	if mark_rect.size == Vector2i.ZERO:
 		stat_us += Time.get_ticks_usec() - t0
 		return
-	var r: Rect2 = Rect2(mark_rect).grow(MARK_GROW)
+	var inv_s: float = 1.0 / UI.ui_scale   # рамка считается в px холста, слой рисует в логических
+	var r: Rect2 = Rect2(Vector2(mark_rect.position) * inv_s, Vector2(mark_rect.size) * inv_s).grow(MARK_GROW)
 	var w: float = MARK_W
 	# Рамка — четыре полосы (не draw_rect с обводкой: углы остаются квадратными).
 	_mark.draw_rect(Rect2(r.position, Vector2(r.size.x, w)), C_INTERACT)
@@ -923,11 +927,11 @@ func _draw_mark_layer() -> void:
 	_mark.draw_rect(Rect2(r.position, Vector2(w, r.size.y)), C_INTERACT)
 	_mark.draw_rect(Rect2(r.end.x - w, r.position.y, w, r.size.y), C_INTERACT)
 	# Клавиша «E»: сливовая плашка с жёлтой кромкой над объектом.
-	var k: Rect2 = Rect2(roundf(r.get_center().x - 9.0), r.position.y - 24.0, 18.0, 18.0)
+	var k: Rect2 = Rect2(roundf(r.get_center().x - 11.0), r.position.y - 28.0, 22.0, 22.0)
 	_mark.draw_rect(k, C_PLATE)
 	_mark.draw_rect(Rect2(k.position, Vector2(k.size.x, 2.0)), C_INTERACT)
-	_mark.draw_string(ThemeDB.fallback_font, k.position + Vector2(0, 14), "E",
-			HORIZONTAL_ALIGNMENT_CENTER, k.size.x, 13, C_INTERACT)
+	_mark.draw_string(ThemeDB.fallback_font, k.position + Vector2(0, 18), "E",
+			HORIZONTAL_ALIGNMENT_CENTER, k.size.x, UI.FONT["body"], C_INTERACT)
 	# Удержание E (разбор постройки): плашка наполняется бирюзовой полосой.
 	var pr: float = _interact_progress()
 	if pr > 0.0:
@@ -962,23 +966,355 @@ static func _cell_screen_rect(xf: Transform2D, c: Vector2i) -> Rect2i:
 
 func _draw_cross_layer() -> void:
 	stat_cross_redraws += 1
+	# Курсор и рамки — в px холста; слой рисует в логических, размер прицела не растёт с коэффициентом.
+	var k: float = 1.0 / UI.ui_scale
 	if _dig_rect.size != Vector2i.ZERO:
-		var r: Rect2 = Rect2(_dig_rect).grow(-1.0)
-		var w: float = 2.0
+		var r: Rect2 = Rect2(Vector2(_dig_rect.position) * k, Vector2(_dig_rect.size) * k).grow(-1.0 * k)
+		var w: float = 2.0 * k
 		_cross.draw_rect(Rect2(r.position, Vector2(r.size.x, w)), C_HAZARD)
 		_cross.draw_rect(Rect2(r.position.x, r.end.y - w, r.size.x, w), C_HAZARD)
 		_cross.draw_rect(Rect2(r.position, Vector2(w, r.size.y)), C_HAZARD)
 		_cross.draw_rect(Rect2(r.end.x - w, r.position.y, w, r.size.y), C_HAZARD)
 	if _deny_rect.size != Vector2i.ZERO:
-		var q: Rect2 = Rect2(_deny_rect).grow(-3.0)
-		_cross.draw_line(q.position, q.end, C_DANGER, 3.0)
-		_cross.draw_line(Vector2(q.end.x, q.position.y), Vector2(q.position.x, q.end.y), C_DANGER, 3.0)
-	var mp: Vector2 = _mouse
+		var q: Rect2 = Rect2(Vector2(_deny_rect.position) * k, Vector2(_deny_rect.size) * k).grow(-3.0 * k)
+		_cross.draw_line(q.position, q.end, C_DANGER, 3.0 * k)
+		_cross.draw_line(Vector2(q.end.x, q.position.y), Vector2(q.position.x, q.end.y), C_DANGER, 3.0 * k)
+	var mp: Vector2 = _mouse * k
 	var cross: Color = Color(C_LINE, 0.75)
-	_cross.draw_line(mp - Vector2(7, 0), mp - Vector2(3, 0), cross, 1.5)
-	_cross.draw_line(mp + Vector2(3, 0), mp + Vector2(7, 0), cross, 1.5)
-	_cross.draw_line(mp - Vector2(0, 7), mp - Vector2(0, 3), cross, 1.5)
-	_cross.draw_line(mp + Vector2(0, 3), mp + Vector2(0, 7), cross, 1.5)
+	_cross.draw_line(mp - Vector2(7, 0) * k, mp - Vector2(3, 0) * k, cross, 1.5 * k)
+	_cross.draw_line(mp + Vector2(3, 0) * k, mp + Vector2(7, 0) * k, cross, 1.5 * k)
+	_cross.draw_line(mp - Vector2(0, 7) * k, mp - Vector2(0, 3) * k, cross, 1.5 * k)
+	_cross.draw_line(mp + Vector2(0, 3) * k, mp + Vector2(0, 7) * k, cross, 1.5 * k)
+
+
+# ------------------------------------------------------------ РАСКЛАДКА (#159)
+## Всё на экране считается в логических px слоя UI (size = холст / UI.ui_scale) одной
+## функцией _compute_layout(): её же читают _draw и тест (layout_rects). Блоки сверху вниз:
+## слева — здоровье, импульс, статус (трекер, обучение); справа — сутки, миникарта, команда;
+## снизу по центру — хотбар, над ним подсказка и уведомления. Всё, что не помещается
+## (низкие экраны при больших коэффициентах), отбрасывается строками по приоритету, а не
+## налезает на соседей. На телефоне блоки обходят кнопки TouchControls.
+
+## Поля экрана и шаг строк текста (FONT.body + плашка), px.
+const PAD: float = 8.0
+const ROW_H: float = 24.0
+## Ширина полос здоровья и импульса, высота здоровья и импульса.
+const HP_W: float = 160.0
+const HP_H: float = 24.0
+const EMP_H: float = 16.0
+## Ширина полосы суток.
+const STRIP_W: float = 112.0
+## Ячейка хотбара по умолчанию (шаг, px) и число ячеек.
+const SLOT_MAX: float = 46.0
+const SLOT_COUNT: int = 10
+## Низ хотбара над краем холста, px.
+const HOTBAR_BOTTOM: float = 32.0
+
+var _lay: Dictionary = {}
+var _lay_sig: int = -1
+
+## Прямоугольники блоков HUD в логических px — для теста «ничего не наезжает»: здоровье, импульс,
+## строки статуса (каждая — своя плашка), сутки, отсчёт до ночи, миникарта, команда, хотбар,
+## подсказка, уведомления. Нет блока на экране — нет и его прямоугольника.
+func layout_rects() -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	out.assign(layout_named().values())
+	return out
+
+
+## То же с именами блоков: «status0», «status1»… — строки статуса.
+func layout_named() -> Dictionary:
+	_ensure_layout()
+	var out: Dictionary = {}
+	for k in LAYOUT_RECTS:
+		if k == "status":
+			var rows: Array = _lay["rows"]
+			for i in rows.size():
+				out["status%d" % i] = Rect2(PAD, float(rows[i]["y"]), float(rows[i]["w"]) + 20.0, ROW_H)
+		elif _lay.has(k):
+			out[k] = _lay[k]
+	return out
+
+
+## Раскладка по имени блока (для сценариев): Rect2 или пустой Rect2.
+func layout_rect(key: String) -> Rect2:
+	_ensure_layout()
+	return _lay.get(key, Rect2())
+
+
+const LAYOUT_RECTS: Array = ["hp", "emp", "status", "day", "countdown", "map", "team", "hotbar",
+		"hint", "notes"]
+
+
+func _ensure_layout() -> void:
+	var sig: int = _layout_sig()
+	if sig != _lay_sig or _lay.is_empty():
+		_lay_sig = sig
+		_lay = _compute_layout()
+
+
+## Подпись входов раскладки: размер, коэффициент, строки, число уведомлений, состав команды,
+## положение кнопок тач-управления.
+func _layout_sig() -> int:
+	var tc: Node = _touch()
+	var tsig: int = 0
+	if tc != null:
+		tsig = hash([tc.btn_center, tc.stick_center, tc.stick_radius])
+	return hash([size, UI.ui_scale, _state_hash, _hint_hash, _note_serial, notes.size(),
+			team_mates.size(), night_countdown, Game.day_number, Game.phase_name(), tsig,
+			player != null])
+
+
+## Узел TouchControls, если сенсорное управление включено (иначе null).
+func _touch() -> Node:
+	if not UI.touch_on:
+		return null
+	if _tc == null or not is_instance_valid(_tc):
+		_tc = get_tree().get_first_node_in_group("touch_controls")
+	return _tc
+
+
+## Кнопки и джойстик TouchControls в логических px: id -> Rect2 (пусто — без тач-управления).
+func _touch_rects() -> Dictionary:
+	var out: Dictionary = {}
+	var tc: Node = _touch()
+	if tc == null:
+		return out
+	var k: float = 1.0 / UI.ui_scale
+	for id in tc.btn_center:
+		var c: Vector2 = tc.btn_center[id]
+		var r: float = float(tc.btn_radius[id])
+		out[id] = Rect2((c - Vector2(r, r)) * k, Vector2(r, r) * 2.0 * k)
+	var sr: float = float(tc.stick_radius)
+	out["stick"] = Rect2((tc.stick_center - Vector2(sr, sr)) * k, Vector2(sr, sr) * 2.0 * k)
+	return out
+
+
+## Ширина строки шрифтом fs (в логических px).
+func _tw(text: String, fs: int) -> float:
+	return ThemeDB.fallback_font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+
+
+## Строка, обрезанная с «…» до ширины max_w.
+func _fit_text(text: String, fs: int, max_w: float) -> String:
+	if _tw(text, fs) <= max_w:
+		return text
+	var lo: int = 0
+	var hi: int = text.length()
+	while lo < hi:
+		var mid: int = (lo + hi + 1) / 2
+		if _tw(text.left(mid).strip_edges(false, true) + "…", fs) <= max_w:
+			lo = mid
+		else:
+			hi = mid - 1
+	return text.left(lo).strip_edges(false, true) + "…"
+
+
+func day_label() -> String:
+	return "Смена %d — %s" % [Game.day_number, Game.phase_name()]
+
+
+## Правый столбец (миникарта, плашка команды) кончается на этой высоте при ширине w и n
+## товарищах: под ним тач-раскладка ставит кнопки (TouchControls._layout).
+static func right_column_bottom(w: float, n: int) -> float:
+	if n > 0:
+		return team_plate_rect(w, n).end.y
+	return MAP_OFFSET.y + MAP_SIZE.y
+
+
+func _compute_layout() -> Dictionary:
+	var L: Dictionary = {}
+	var w: float = size.x
+	var h: float = size.y
+	var fb: int = UI.FONT["body"]
+	var fs: int = UI.FONT["small"]
+	var tb: Dictionary = _touch_rects()
+	# ---- Верх: здоровье, импульс (слева), сутки (справа), отсчёт до ночи (по центру).
+	if player:
+		L["hp"] = Rect2(PAD, 8.0, HP_W, HP_H)
+		L["emp"] = Rect2(PAD, 8.0 + HP_H + 4.0, HP_W, EMP_H)
+	var dw: float = maxf(_tw(day_label(), fs), STRIP_W)
+	L["day"] = Rect2(w - PAD - dw, 6.0, dw, 34.0)
+	if night_countdown >= 0:
+		var cw: float = _tw("НОЧЬ ЧЕРЕЗ %d с" % night_countdown, fb) + 24.0
+		L["countdown"] = Rect2((w - cw) * 0.5, 8.0, cw, 26.0)
+	# ---- Правый столбец: миникарта, команда.
+	L["map"] = Rect2(w - MAP_OFFSET.x, MAP_OFFSET.y, MAP_SIZE.x, MAP_SIZE.y)
+	var n_team: int = team_mates.size()
+	if n_team > 0:
+		L["team"] = team_plate_rect(w, n_team)
+	var right_bottom: float = right_column_bottom(w, n_team)
+	# ---- Низ: хотбар по центру свободной полосы между джойстиком и кнопками справа.
+	var lo: float = 0.0
+	var hi: float = w
+	if tb.has("stick") and tb.has("e"):
+		lo = (tb["stick"] as Rect2).end.x + PAD
+		hi = (tb["e"] as Rect2).position.x - PAD
+	var slot: float = clampf(floorf((hi - lo) / float(SLOT_COUNT)), 16.0, SLOT_MAX)
+	var hb_w: float = slot * float(SLOT_COUNT) - 4.0
+	var hx: float = clampf(w * 0.5 - hb_w * 0.5, lo, maxf(lo, hi - hb_w))
+	var hy: float = h - HOTBAR_BOTTOM - (slot - 4.0)
+	L["slot"] = slot
+	L["hotbar"] = Rect2(hx, hy, hb_w, slot - 4.0)
+	var stack_top: float = hy
+	if hint_text != "":
+		var ht: String = _fit_text(hint_text, fb, minf(minf(w - 2.0 * PAD, 600.0), hi - lo) - 16.0)
+		L["hint_text"] = ht
+		var hw: float = _tw(ht, fb) + 16.0
+		var h_lo: float = maxf(PAD, lo)
+		var hcx: float = clampf(hx + hb_w * 0.5 - hw * 0.5, h_lo, maxf(h_lo, minf(w - PAD, hi) - hw))
+		L["hint"] = Rect2(hcx, hy - 4.0 - ROW_H, hw, ROW_H)
+		stack_top = hy - 4.0 - ROW_H
+	# ---- Слева: статус. Не ниже подсказки и кнопки «копать» (над джойстиком). Есть
+	# уведомление — статус оставляет ему строку: на низких экранах уступает он, а не оно.
+	var s_limit: float = stack_top - 4.0
+	if not notes.is_empty():
+		s_limit -= ROW_H
+	if tb.has("build"):
+		s_limit = minf(s_limit, (tb["build"] as Rect2).position.y - 4.0)
+	var blockers: Array = [L["map"]]
+	if L.has("team"):
+		blockers.append(L["team"])
+	blockers.append_array(tb.values())
+	var rows: Array = _status_rows()
+	var y0: float = 8.0 + HP_H + 4.0 + EMP_H + 6.0 if player else 8.0
+	var s_bottom: float = _status_place(rows, y0, s_limit, blockers)
+	L["rows"] = rows
+	if not rows.is_empty():
+		var sw: float = 0.0
+		for r in rows:
+			sw = maxf(sw, float(r["w"]))
+		L["status"] = Rect2(PAD, y0, sw + 20.0, s_bottom - y0)
+	# ---- Уведомления: над подсказкой и нижним рядом кнопок, под статусом и правым столбцом.
+	# Два варианта: у правого края (под миникартой и колонкой кнопок) и левее колонки кнопок
+	# (на низких экранах) — берём тот, куда влезает больше строк. Джойстик и «копать» обходятся.
+	var n_bottom: float = stack_top - 4.0
+	var rows_end: float = s_bottom if not rows.is_empty() else 0.0
+	for id in tb:
+		if id == "e" or id == "run" or id == "jump":
+			n_bottom = minf(n_bottom, (tb[id] as Rect2).position.y - 4.0)
+	var top_a: float = maxf(right_bottom, rows_end) + 4.0
+	var top_b: float = rows_end + 4.0
+	var x_b: float = w - PAD
+	for id in tb:
+		var b: Rect2 = tb[id]
+		if id == "e" or id == "run" or id == "jump" or id == "stick" or id == "build":
+			continue
+		if b.position.y < n_bottom:
+			if b.end.x > w - PAD - 240.0:
+				top_a = maxf(top_a, b.end.y + 4.0)
+			if b.end.y > top_b:
+				x_b = minf(x_b, b.position.x - PAD)
+	if x_b > (L["map"] as Rect2).position.x - PAD:
+		top_b = maxf(top_b, right_bottom + 4.0)
+	var n_right: float = w - PAD
+	var n_top: float = top_a
+	var n_left: float = PAD
+	var best_fit: int = -1
+	for opt in [[w - PAD, top_a], [x_b, top_b]]:
+		var xr: float = opt[0]
+		var tp: float = opt[1]
+		var xl: float = PAD
+		for id in ["stick", "build"]:
+			if tb.has(id):
+				var lb: Rect2 = tb[id]
+				if lb.end.y > tp and lb.position.y < n_bottom:
+					xl = maxf(xl, lb.end.x + PAD)
+		var ft: int = int(floorf((n_bottom - tp) / ROW_H)) if xr - xl >= 120.0 else 0
+		if ft > best_fit:
+			best_fit = ft
+			n_right = xr
+			n_top = tp
+			n_left = xl
+	var cnt: int = clampi(mini(notes.size(), maxi(best_fit, 0)), 0, notes.size())
+	var nw: float = 0.0
+	var lines: Array = []
+	for i in cnt:
+		var nt: Dictionary = notes[notes.size() - 1 - i]   # свежие внизу
+		var txt: String = _fit_text(String(nt["text"]), fb, minf(n_right - n_left, 620.0))
+		lines.append(txt)
+		nw = maxf(nw, _tw(txt, fb))
+	if cnt > 0:
+		L["notes"] = Rect2(n_right - nw, n_bottom - float(cnt) * ROW_H, nw, float(cnt) * ROW_H)
+		L["note_lines"] = lines
+	return L
+
+
+## Строки блока под здоровьем: {text, kind, prio, color, w}. prio — порядок отбрасывания при
+## нехватке места (больше — раньше). Трекер и подсказка шага обучения — главное.
+func _status_rows() -> Array:
+	var fb: int = UI.FONT["body"]
+	var rows: Array = []
+	if tracker_title != "":
+		rows.append({"text": tracker_title, "kind": "title", "prio": 0,
+				"color": C_BIO.lerp(C_LINE, 0.3)})
+	if tracker_detail != "":
+		rows.append({"text": tracker_detail, "kind": "detail", "prio": 0, "color": Color(C_LINE, 0.95)})
+	if tutorial_text != "":
+		rows.append({"text": ("» " if Game.in_mission() else "ОБУЧЕНИЕ ") + tutorial_text,
+				"kind": "tutorial", "prio": 1, "color": C_HAZARD.lerp(C_LINE, 0.35)})
+	var g = power_gen
+	if g != null and is_instance_valid(g):
+		var out: float = g.current_output()
+		var ld: float = float(g.power_load)
+		var state: String = ""
+		if not g.enabled:
+			state = " · ВЫКЛ"
+		elif _gen_no_fuel(g):
+			state = " · нет угля"
+		elif g.overloaded():
+			state = " · ПЕРЕГРУЗ"
+		var warn: bool = g.overloaded() or not g.enabled
+		rows.append({"text": "%s: нагрузка %.1f / выход %.1f%s" % [power_text, ld, out, state],
+				"kind": "power", "prio": 2, "gen": g, "load": ld, "out": out,
+				"color": C_WARN.lerp(C_LINE, 0.25) if warn else Color(C_HAZARD.lerp(C_LINE, 0.55), 0.95)})
+	elif Game.brownout:
+		rows.append({"text": "ПЕРЕГРУЗ СЕТИ — станки замедлены", "kind": "brownout", "prio": 2,
+				"color": C_WARN.lerp(C_LINE, 0.25)})
+	for line in mission_lines:
+		rows.append({"text": line, "kind": "mission", "prio": 3, "color": Color(C_LINE, 0.95)})
+	for r in rows:
+		r["full"] = r["text"]   # полный текст: обрезается заново под свободную ширину (_status_place)
+	return rows
+
+
+## Ширина полосы нагрузки в строке мощности (с зазором), px.
+const STATUS_BAR_W: float = 128.0
+
+
+## Расставить строки от y0 вниз. Строка обрезается «…» до свободной ширины между левым краем
+## и ближайшим блоком справа на её высоте (blockers: миникарта, плашка команды, тач-кнопки);
+## места нет — строка отбрасывается. Не влезает до limit — отбрасываются самые «дальние»
+## по prio. Возвращает низ блока.
+func _status_place(rows: Array, y0: float, limit: float, blockers: Array) -> float:
+	var fb: int = UI.FONT["body"]
+	var y: float = y0
+	while true:
+		y = y0
+		var kept: Array = []
+		for r in rows:
+			var bar: float = STATUS_BAR_W if r["kind"] == "power" else 0.0
+			var avail: float = size.x - 2.0 * PAD - 20.0
+			for b in blockers:
+				var br: Rect2 = b
+				if br.position.x > PAD + 40.0 and br.position.y < y + ROW_H and br.end.y > y:
+					avail = minf(avail, br.position.x - 2.0 * PAD - 20.0)
+			if avail - bar < 96.0:
+				continue   # справа кнопка вплотную: строка не поместится
+			r["text"] = _fit_text(String(r["full"]), fb, avail - bar)
+			r["w"] = _tw(String(r["text"]), fb) + bar
+			r["y"] = y
+			y += ROW_H
+			kept.append(r)
+		rows.assign(kept)
+		if rows.is_empty() or y <= limit:
+			break
+		var worst: int = 0
+		for i in rows.size():
+			if int(rows[i]["prio"]) >= int(rows[worst]["prio"]):
+				worst = i
+		rows.remove_at(worst)
+	return y
 
 
 # ------------------------------------------------------------ ОСНОВНОЙ СЛОЙ
@@ -986,16 +1322,19 @@ func _draw_cross_layer() -> void:
 func _draw() -> void:
 	var t0: int = Time.get_ticks_usec()
 	stat_redraws += 1
+	_ensure_layout()
 	var w: float = size.x
 	var h: float = size.y
 	var font: Font = ThemeDB.fallback_font
+	var fb: int = UI.FONT["body"]
+	var fs: int = UI.FONT["small"]
 
 	if damage_flash > 0.0:
 		draw_rect(Rect2(0, 0, w, h), Color(C_DANGER, damage_flash * 0.25))
 
 	# ---- Здоровье ------------------------------------------------------------
 	if player:
-		var hp_rect: Rect2 = Rect2(14, 12, 210, 20)
+		var hp_rect: Rect2 = _lay["hp"]
 		draw_rect(hp_rect, C_PLATE)
 		var frac: float = clampf(player.hp / 100.0, 0.0, 1.0)
 		# Здоровье — цвет скафандра; мало здоровья — цвет угрозы.
@@ -1004,17 +1343,15 @@ func _draw() -> void:
 		draw_rect(hp_fill, hp_col)
 		draw_rect(Rect2(hp_fill.position, Vector2(hp_fill.size.x, 2)), hp_col.lightened(0.3))
 		draw_rect(hp_rect, Color(C_LINE, 0.35), false, 1.0)
-		draw_string(font, hp_rect.position + Vector2(8, 15), "%d" % int(player.hp),
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(C_LINE, 0.95))
+		_text_outlined(font, hp_rect.position + Vector2(8, 19), "%d" % int(player.hp), fb, Color(C_LINE, 0.95))
 
-		# Индикатор заряда импульса
-		var emp_rect: Rect2 = Rect2(14, 38, 150, 8)
+		# Индикатор заряда импульса: подпись — на самой полосе.
+		var emp_rect: Rect2 = _lay["emp"]
 		draw_rect(emp_rect, C_PLATE)
 		var ef: float = 1.0 - player.emp_cd / player.emp_max
 		draw_rect(Rect2(emp_rect.position + Vector2(1, 1), Vector2((emp_rect.size.x - 2) * ef, emp_rect.size.y - 2)),
-				C_BIO)
-		draw_string(font, emp_rect.position + Vector2(156, 8), "ИМПУЛЬС [Q]",
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(C_BIO, 0.85))
+				Color(C_BIO, 0.55))
+		_text_outlined(font, emp_rect.position + Vector2(6, 13), "ИМПУЛЬС [Q]", fs, Color(C_LINE, 0.95))
 
 		# Трекер цели, мощность, обучение (#34)
 		_draw_status_block(font)
@@ -1023,7 +1360,8 @@ func _draw() -> void:
 	# Полоса суток с квадратной меткой (ADR-003): днём метка жёлтая, ночью —
 	# цвет угрозы. Метку ставим по квантованному времени — ровно тому, что в
 	# ключе перерисовки.
-	var strip: Rect2 = Rect2(w - 176, 36, 112, 4)
+	var day: Rect2 = _lay["day"]
+	var strip: Rect2 = Rect2(day.end.x - STRIP_W, 30.0, STRIP_W, 4)
 	draw_rect(strip.grow(1.0), C_PLATE)
 	draw_rect(strip, C_PLATE_HI)
 	var tq: float = float(int(Game.time_of_day * float(CLOCK_STEPS))) / float(CLOCK_STEPS)
@@ -1031,55 +1369,58 @@ func _draw() -> void:
 	var night: bool = Game.is_night()
 	var dl: float = Game.daylight()
 	var sun: Color = C_DANGER if night else C_PLATE_HI.lerp(C_HAZARD, 0.35 + 0.65 * dl)
-	draw_rect(Rect2(mx - 4, 32, 8, 12), C_PLATE)
-	draw_rect(Rect2(mx - 3, 33, 6, 10), sun)
-	draw_string(font, Vector2(w - 176, 26), "Смена %d — %s" % [Game.day_number, Game.phase_name()],
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, C_DANGER.lerp(C_LINE, 0.35) if night else C_LINE)
+	draw_rect(Rect2(mx - 4, 26, 8, 12), C_PLATE)
+	draw_rect(Rect2(mx - 3, 27, 6, 10), sun)
+	_text_outlined(font, Vector2(day.end.x - _tw(day_label(), fs), 21.0), day_label(), fs,
+			C_DANGER.lerp(C_LINE, 0.35) if night else C_LINE)
 
 	# ---- Отсчёт до ночи (сумерки, § 4.1) -----------------------------------
-	if night_countdown >= 0:
-		var cd: String = "НОЧЬ ЧЕРЕЗ %d с" % night_countdown
-		var cw: float = 240.0
-		var cr: Rect2 = Rect2(w * 0.5 - cw * 0.5, 12, cw, 28)
+	if _lay.has("countdown"):
+		var cr: Rect2 = _lay["countdown"]
 		draw_rect(cr, C_PLATE)
 		draw_rect(cr, Color(C_DANGER, 0.7), false, 1.0)
 		# Последние 5 с — ярче, мигает раз в секунду (ключ — целые секунды).
 		var hot: bool = night_countdown <= 5 and night_countdown % 2 == 1
-		draw_string(font, cr.position + Vector2(0, 20), cd, HORIZONTAL_ALIGNMENT_CENTER, cw, 16,
+		draw_string(font, cr.position + Vector2(0, 19), "НОЧЬ ЧЕРЕЗ %d с" % night_countdown,
+				HORIZONTAL_ALIGNMENT_CENTER, cr.size.x, fb,
 				C_DANGER.lerp(C_LINE, 0.6) if hot else C_DANGER.lerp(C_LINE, 0.25))
 
 	# ---- Команда в сети: товарищи и перекличка (MP-J) ---------------------
 	_draw_team(font, w)
 
 	# ---- Уведомления --------------------------------------------------------
-	var y: float = h - 150
-	for i in range(notes.size() - 1, -1, -1):
-		var n: Dictionary = notes[i]
-		var a: float = clampf(float(n["ttl"]) / 1.5, 0.0, 1.0)
-		# Длинные сообщения не режем — сдвигаем их влево, чтобы текст целиком влезал.
-		var txt: String = String(n["text"])
-		var tw: float = font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
-		var nx: float = minf(w - 430.0, w - tw - 24.0)
-		draw_string(font, Vector2(nx, y), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
-				Color(n["color"].r, n["color"].g, n["color"].b, a))
-		y -= 20
+	if _lay.has("notes"):
+		var nr: Rect2 = _lay["notes"]
+		var lines: Array = _lay["note_lines"]
+		var y: float = nr.end.y - 6.0
+		for i in lines.size():
+			var n: Dictionary = notes[notes.size() - 1 - i]
+			var a: float = clampf(float(n["ttl"]) / 1.5, 0.0, 1.0)
+			var tw: float = _tw(String(lines[i]), fb)
+			_text_outlined(font, Vector2(nr.end.x - tw, y), String(lines[i]), fb,
+					Color(n["color"].r, n["color"].g, n["color"].b, a))
+			y -= ROW_H
 
 	# ---- Хотбар --------------------------------------------------------------
 	if player:
 		_draw_hotbar(font)
 
 	# ---- Подсказки -----------------------------------------------------------
-	if hint_text != "":
-		draw_string(font, Vector2(size.x * 0.5 - 300, size.y - 116), hint_text,
-				HORIZONTAL_ALIGNMENT_CENTER, 600, 15, Color(C_INTERACT, 0.95))
+	if _lay.has("hint"):
+		var hr: Rect2 = _lay["hint"]
+		draw_rect(hr, C_PLATE)
+		draw_string(font, hr.position + Vector2(8, 18), String(_lay["hint_text"]),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, fb, Color(C_INTERACT, 0.95))
 
 	# ---- Подсказка управления (затухает) ------------------------------------
 	if Game.game_time < 22.0:
 		var ta: float = clampf((22.0 - Game.game_time) / 6.0, 0.0, 1.0)
 		var lines: Array = CONTROLS_TOUCH if UI.touch_on else CONTROLS_KEYS
+		var cw: float = minf(w - 2.0 * PAD, 640.0)
+		var cy: float = size.y * 0.30
 		for i in lines.size():
-			draw_string(font, Vector2(size.x * 0.5 - 260, size.y * 0.30 + i * 20), String(lines[i]),
-					HORIZONTAL_ALIGNMENT_CENTER, 520, 14, Color(C_LINE, ta))
+			var cl: String = _fit_text(String(lines[i]), fs, cw)
+			_text_outlined(font, Vector2((w - _tw(cl, fs)) * 0.5, cy + i * 20), cl, fs, Color(C_LINE, ta))
 
 	# ---- Ночь: уголки-скобки опасности по краям (ADR-003 § 3.2) ------------
 	# Опасность кодируется не только цветом: скобки видны и при дальтонизме.
@@ -1088,52 +1429,37 @@ func _draw() -> void:
 	stat_us += Time.get_ticks_usec() - t0
 
 
-## Блок под здоровьем: трекер цели, мощность генератора, шаг обучения.
+## Блок под здоровьем: трекер цели, мощность генератора, шаг обучения (строки — из
+## раскладки: что не влезло, уже отброшено).
 ## Всё, что здесь рисуется, — в ключе: _state_hash (строки), [39..44] (числа).
 func _draw_status_block(font: Font) -> void:
-	var x: float = 14.0
-	var y: float = 54.0
-	# Трекер цели
-	draw_rect(Rect2(x, y, 4, 34), C_BIO)
-	_text_on_plate(font, Vector2(x + 10, y + 13), tracker_title, 13, C_BIO.lerp(C_LINE, 0.3))
-	_text_on_plate(font, Vector2(x + 10, y + 30), tracker_detail, 12, Color(C_LINE, 0.95))
-	y += 44.0
-	if not mission_lines.is_empty():   # ADR-004: остальные задачи этапа
-		draw_rect(Rect2(x, y - 10, 4, 16.0 * mission_lines.size()), C_BIO)
-		for line in mission_lines:
-			_text_on_plate(font, Vector2(x + 10, y + 2), line, 12, Color(C_LINE, 0.95))
-			y += 16.0
-		y += 4.0
-	# Мощность: выбранный/ближайший генератор (§ 4.3)
-	var g = power_gen
-	if g != null and is_instance_valid(g):
-		var out: float = g.current_output()
-		var ld: float = float(g.power_load)
-		var bar: Rect2 = Rect2(x, y + 8, 120, 7)
-		draw_rect(bar, C_PLATE)
-		var cap: float = maxf(out, 0.001)
-		var frac: float = clampf(ld / cap, 0.0, 1.0) if out > 0.0 else (1.0 if ld > 0.0 else 0.0)
-		var over: bool = g.overloaded()
-		var col: Color = C_WARN if over else C_HAZARD
-		draw_rect(Rect2(bar.position + Vector2(1, 1), Vector2((bar.size.x - 2) * frac, bar.size.y - 2)), col)
-		draw_rect(bar, Color(C_LINE, 0.3), false, 1.0)
-		var state: String = ""
-		if not g.enabled:
-			state = " · ВЫКЛ"
-		elif _gen_no_fuel(g):
-			state = " · нет угля"
-		elif over:
-			state = " · ПЕРЕГРУЗ"
-		_text_on_plate(font, Vector2(x + 128, y + 15), "%s: нагрузка %.1f / выход %.1f%s" % [power_text, ld, out, state],
-				12, C_WARN.lerp(C_LINE, 0.25) if (over or not g.enabled) else Color(C_HAZARD.lerp(C_LINE, 0.55), 0.95))
-		y += 22.0
-	elif Game.brownout:
-		_text_on_plate(font, Vector2(x, y + 15), "ПЕРЕГРУЗ СЕТИ — станки замедлены", 12, C_WARN.lerp(C_LINE, 0.25))
-		y += 22.0
-	# Обучение: копай → крафт → ТЭЦ → питание → терминал
-	if tutorial_text != "":
-		_text_on_plate(font, Vector2(x, y + 14), ("» " if Game.in_mission() else "ОБУЧЕНИЕ ") + tutorial_text,
-				13, C_HAZARD.lerp(C_LINE, 0.35))
+	var rows: Array = _lay["rows"]
+	var fb: int = UI.FONT["body"]
+	var x: float = PAD
+	var bar_y0: float = -1.0
+	var bar_y1: float = 0.0
+	for r in rows:
+		var y: float = float(r["y"])
+		var kind: String = String(r["kind"])
+		if kind == "title" or kind == "detail":
+			if bar_y0 < 0.0:
+				bar_y0 = y
+			bar_y1 = y + ROW_H
+		var tx: float = x + 10.0
+		if kind == "power":
+			var g = r["gen"]
+			var out: float = float(r["out"])
+			var ld: float = float(r["load"])
+			var bar: Rect2 = Rect2(tx, y + 9.0, 112.0, 7.0)
+			draw_rect(bar, C_PLATE)
+			var frac: float = clampf(ld / maxf(out, 0.001), 0.0, 1.0) if out > 0.0 else (1.0 if ld > 0.0 else 0.0)
+			var col: Color = C_WARN if (is_instance_valid(g) and g.overloaded()) else C_HAZARD
+			draw_rect(Rect2(bar.position + Vector2(1, 1), Vector2((bar.size.x - 2) * frac, bar.size.y - 2)), col)
+			draw_rect(bar, Color(C_LINE, 0.3), false, 1.0)
+			tx += STATUS_BAR_W
+		_text_on_plate(font, Vector2(tx, y + 19.0), String(r["text"]), fb, r["color"])
+	if bar_y0 >= 0.0:
+		draw_rect(Rect2(x, bar_y0, 4, bar_y1 - bar_y0), C_BIO)
 
 
 ## Тёмная подложка строк блока под здоровьем: днём жёлтый и белый текст терялся на
@@ -1150,17 +1476,32 @@ func _text_on_plate(font: Font, pos: Vector2, text: String, fsize: int, col: Col
 	draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, col)
 
 
-## Ячейка хотбара i (0…9) на экране. Ею же попадает тап по хотбару (TouchControls, #81).
+## Текст без плашки, с тёмным контуром (на светлом небе и тёмной шахте одинаково читается).
+func _text_outlined(font: Font, pos: Vector2, text: String, fsize: int, col: Color) -> void:
+	draw_string_outline(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, 3,
+			Color(0.0, 0.0, 0.0, 0.85 * col.a))
+	draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, col)
+
+
+## Ячейка хотбара i (0…9) в логических px слоя UI (то, что рисует HUD).
+func hotbar_slot_logical(i: int) -> Rect2:
+	_ensure_layout()
+	var hb: Rect2 = _lay["hotbar"]
+	var slot: float = float(_lay["slot"])
+	return Rect2(hb.position.x + float(i) * slot, hb.position.y, slot - 4.0, slot - 4.0)
+
+
+## Ячейка хотбара i (0…9) на экране, px холста. Ею же попадает тап по хотбару
+## (TouchControls, #81): касания приходят в px холста, а не слоя UI.
 func hotbar_slot_rect(i: int) -> Rect2:
-	var slot: float = 46.0
-	var x0: float = size.x * 0.5 - slot * 10.0 * 0.5
-	return Rect2(x0 + i * slot, size.y - 74, slot - 4, slot - 4)
+	var r: Rect2 = hotbar_slot_logical(i)
+	return Rect2(r.position * UI.ui_scale, r.size * UI.ui_scale)
 
 
 func _draw_hotbar(font: Font) -> void:
-	var count: int = 10
-	for i in count:
-		var r: Rect2 = hotbar_slot_rect(i)
+	var fs: int = UI.FONT["small"]
+	for i in SLOT_COUNT:
+		var r: Rect2 = hotbar_slot_logical(i)
 		var sel: bool = (player.inv.selected == i)
 		draw_rect(r, C_PLATE)
 		draw_rect(r.grow(-2.0), Color(C_PLATE_HI, 0.6))
@@ -1173,12 +1514,15 @@ func _draw_hotbar(font: Font) -> void:
 		if not st.is_empty():
 			var tex: ImageTexture = DB.item_texture(st.id)
 			if tex:
-				draw_texture_rect(tex, Rect2(r.position + Vector2(7, 7), Vector2(28, 28)), false)
+				var isz: float = roundf(r.size.x * 0.66)
+				draw_texture_rect(tex, Rect2(r.position + (r.size - Vector2(isz, isz)) * 0.5,
+						Vector2(isz, isz)), false)
 			if st.count > 1:
-				draw_string(font, r.position + Vector2(2, r.size.y - 4), str(st.count),
-						HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 6, 12, Color(C_LINE, 0.95))
-		draw_string(font, r.position + Vector2(3, 12), str((i + 1) % 10),
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(C_INTERACT, 0.8) if sel else Color(C_LINE, 0.45))
+				_text_outlined(font, Vector2(r.end.x - _tw(str(st.count), fs) - 3.0, r.end.y - 4.0), str(st.count), fs,
+						Color(C_LINE, 0.95))
+		if r.size.x >= 36.0:   # в узкой ячейке номер налез бы на значок
+			draw_string(font, r.position + Vector2(3, 13), str((i + 1) % 10),
+					HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(C_INTERACT, 0.8) if sel else Color(C_LINE, 0.45))
 
 
 ## Уголки-скобки опасности в четырёх углах экрана (ночь). Квадратные L-плечи.
@@ -1207,8 +1551,8 @@ func _draw_brackets(w: float, h: float) -> void:
 ## игра) раздел не работает, ключ [46..61] — нули.
 
 const TEAM_MAX: int = 3            ## товарищей на HUD (4 игрока — хост и 3 клиента)
-const TEAM_ROW_H: float = 16.0
-const TEAM_HEAD_H: float = 14.0
+const TEAM_ROW_H: float = 20.0
+const TEAM_HEAD_H: float = 20.0
 
 ## Товарищи на HUD и чьи маячки сейчас на миникарте (Player без типа). Читают сценарии.
 var team_mates: Array = []
@@ -1306,8 +1650,9 @@ func _draw_team(font: Font, w: float) -> void:
 	var y: float = plate.position.y
 	var win: int = _key[48]
 	draw_rect(plate, C_PLATE)
-	var head: String = "КОМАНДА" if win <= 0 else "ПЕРЕКЛИЧКА %d с · [G] — ответить" % win
-	draw_string(font, Vector2(x + 4, y + 11), head, HORIZONTAL_ALIGNMENT_LEFT, -1, 10,
+	var fs: int = UI.FONT["small"]
+	var head: String = _fit_text("КОМАНДА" if win <= 0 else "ПЕРЕКЛИЧКА %d с · [G] — ответить" % win, fs, plate.size.x - 8.0)
+	draw_string(font, Vector2(x + 4, y + 15), head, HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
 			C_BIO if win > 0 else Color(C_LINE, 0.6))
 	y += TEAM_HEAD_H
 	for i in n:
@@ -1316,19 +1661,19 @@ func _draw_team(font: Font, w: float) -> void:
 			continue
 		var ry: float = y + float(i) * TEAM_ROW_H
 		var col: Color = Avatar.suit_color(int(m.look))
-		draw_rect(Rect2(x + 4, ry + 3, 8, 8), C_LINE)
-		draw_rect(Rect2(x + 5, ry + 4, 6, 6), col)
-		draw_string(font, Vector2(x + 16, ry + 11), String(m.nick), HORIZONTAL_ALIGNMENT_LEFT, 90, 11,
+		draw_rect(Rect2(x + 4, ry + 5, 10, 10), C_LINE)
+		draw_rect(Rect2(x + 5, ry + 6, 8, 8), col)
+		draw_string(font, Vector2(x + 18, ry + 15), _fit_text(String(m.nick), fs, 76.0), HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
 				col.lightened(0.55))
 		if m.dead:
-			draw_string(font, Vector2(x + 110, ry + 11), "погиб", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, C_DANGER)
+			draw_string(font, Vector2(x + 98, ry + 15), "погиб", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, C_DANGER)
 		else:
-			var bar: Rect2 = Rect2(x + 110, ry + 5, 52, 4)
+			var bar: Rect2 = Rect2(x + 98, ry + 8, 60, 5)
 			var f: float = clampf(float(m.hp) / 100.0, 0.0, 1.0)
 			draw_rect(bar, C_PLATE_HI)
 			draw_rect(Rect2(bar.position, Vector2(bar.size.x * f, bar.size.y)), C_HP if f > 0.35 else C_DANGER)
 		# Огонёк переклички: зелёный — ответил, красный — идёт перекличка без ответа.
 		if not m.dead and float(m.rollcall_t) > 0.0:
-			draw_rect(Rect2(x + 170, ry + 4, 6, 6), Avatar.ROLLCALL_GREEN)
+			draw_rect(Rect2(x + 168, ry + 6, 8, 8), Avatar.ROLLCALL_GREEN)
 		elif not m.dead and win > 0:
-			draw_rect(Rect2(x + 170, ry + 4, 6, 6), Avatar.ROLLCALL_RED)
+			draw_rect(Rect2(x + 168, ry + 6, 8, 8), Avatar.ROLLCALL_RED)

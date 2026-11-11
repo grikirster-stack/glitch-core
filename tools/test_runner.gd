@@ -8,6 +8,7 @@ extends Node
 ## секция «== Тайники руин ==» — сундуки и таблички руин (issue #35),
 ## секция «== Сохранение ==» — общий код из tools/save_test.gd (issue #37),
 ## секция «== Небесный тайник ==» — обломок «Кербер-9» в небе (issue #60),
+## секция «== Размер интерфейса ==» — tools/ui_scale_test.gd (#159),
 ## секция «== Меню и профиль ==» — общий код из tools/menu_test.gd (ADR-002, MP-B, #87).
 ## Запускается из main.gd флагом `--test`.
 ##
@@ -27,6 +28,8 @@ const SfxTestScript = preload("res://tools/sfx_test.gd")
 const SaveTestScript = preload("res://tools/save_test.gd")
 ## Общий код проверок профиля и меню: tools/menu_test.gd (ADR-002, MP-B, #87).
 const MenuTestScript = preload("res://tools/menu_test.gd")
+## Размер интерфейса: tools/ui_scale_test.gd (#159).
+const UiScaleTestScript = preload("res://tools/ui_scale_test.gd")
 
 var scene: Node = null
 var step: int = 0
@@ -39,6 +42,7 @@ var lore: Node = null
 var sfx_t: Node = null
 var save_t: Node = null
 var menu_t: Node = null   ## меню и профиль (MP-B, #87)
+var ui_scale_t: Node = null   ## размер интерфейса (#159)
 
 var _wait_until_ms: int = 0
 
@@ -117,6 +121,8 @@ func _process(_delta: float) -> void:
 		27: _t_menu_start()   # меню и профиль (MP-B, #87)
 		28: _t_menu_wait()
 		29: _t_finish()
+		30: _t_ui_scale_start()   # размер интерфейса (#159)
+		31: _t_ui_scale_wait()
 
 
 func _ok(label: String, cond: bool, extra: String = "") -> void:
@@ -783,13 +789,32 @@ func _t_save_start() -> void:
 
 func _t_save_wait() -> void:
 	if save_t == null:
-		_next(27)
+		_next(30)
 		return
 	if save_t.done:
 		checks += save_t.checks
 		fails += save_t.fails
 		save_t.queue_free()
 		save_t = null
+		_next(30, 0.1)
+
+
+# --- Размер интерфейса (#159) --------------------------------------------------
+func _t_ui_scale_start() -> void:
+	# Секция «== Размер интерфейса ==»: tools/ui_scale_test.gd. Идёт до меню: меню меняет сцену.
+	ui_scale_t = UiScaleTestScript.new()
+	add_child(ui_scale_t)
+	ui_scale_t.start(scene)
+	_next(31, 0.1)
+
+
+func _t_ui_scale_wait() -> void:
+	if ui_scale_t == null or ui_scale_t.done:
+		if ui_scale_t != null:
+			checks += ui_scale_t.checks
+			fails += ui_scale_t.fails
+			ui_scale_t.queue_free()
+			ui_scale_t = null
 		_next(27, 0.1)
 
 

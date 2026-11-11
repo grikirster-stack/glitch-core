@@ -18,7 +18,6 @@ const PERIOD: float = Balance.INSERTER_PERIOD
 ## Без паузы 100 простаивающих манипуляторов опрашивали бы соседей каждый кадр.
 const IDLE_RETRY: float = 0.1
 
-var dir: int = 0
 ## Переносить только этот предмет (IDs.I.NONE — любой).
 var filter: int = IDs.I.NONE
 ## Предмет в захвате (IDs.I.NONE — пусто).
@@ -35,12 +34,8 @@ var _interact_frame: int = -10
 func _init() -> void:
 	kind = "Inserter"
 	z_index = 3
+	can_turn = true
 	_accepts_cb = _front_accepts
-
-
-func turn() -> void:
-	dir = (dir + 1) % 4
-	queue_redraw()
 
 
 ## Клетка, откуда манипулятор берёт (сзади).

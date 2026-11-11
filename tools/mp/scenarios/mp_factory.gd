@@ -153,6 +153,10 @@ func run_host() -> void:
 		(World.machines[_cell(6)] as CoalGen).add_fuel(4)
 	var tur = World.machines.get(_cell(7))
 	await barrier("turret_ready", -1, 20.0)
+	# Выстрел — только когда клиенты УЖЕ знают турель (счётчик выстрелов 0).
+	# Клиент проигрывает дугу по изменению счётчика в net_state: если он узнает о
+	# турели уже после выстрела, счётчик сразу 1 и дуга не проиграется никогда.
+	await barrier("turret_known", -1, 20.0)
 	var ph = spawn_phantom_at(World.cell_to_world(_cell(11)) + Vector2(0.0, -4.0), "echo")
 	ok("хост: фантом у турели", ph != null)
 	var shot: bool = await wait_until(func() -> bool: return tur != null and tur.shots > 0, 10.0)
@@ -532,6 +536,7 @@ func run_client(i: int) -> void:
 	await barrier("turret_ready")
 	var t_ok: bool = await wait_until(func() -> bool: return World.machines.get(_cell(7)) is Turret, 3.0)
 	ok("c%d: турель хоста появилась" % i, t_ok)
+	await barrier("turret_known")
 	await barrier("shot")
 	var arc: bool = await wait_until(func() -> bool: return arcs[0] > 0, 3.0)
 	ok("c%d: выстрел турели виден (дуг %d)" % [i, arcs[0]], arc)

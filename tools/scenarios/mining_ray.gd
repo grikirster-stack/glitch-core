@@ -61,12 +61,17 @@ func _check_ray_function() -> void:
 	ok("жидкость — пусто", World.first_solid_on_ray(from, World.cell_to_world(_c(6))) == NONE)
 	World.set_tile(_hx + 4, _hy, IDs.T.AIR)
 	# Диагональ строго через угол: оба соседа по стороне твёрдые — луч не просачивается.
+	# Касание только угла — не попадание, поэтому камень на самой диагонали не преграда.
 	World.set_tile(_hx + 1, _hy, IDs.T.STONE)
 	World.set_tile(_hx, _hy - 1, IDs.T.STONE)
 	ok("через угол между двумя твёрдыми луч не проходит",
 			World.first_solid_on_ray(from, World.cell_to_world(_c(3, -3))) != NONE)
 	World.set_tile(_hx + 1, _hy, IDs.T.AIR)
 	World.set_tile(_hx, _hy - 1, IDs.T.AIR)
+	World.set_tile(_hx + 1, _hy - 1, IDs.T.STONE)
+	ok("камень только на диагональном углу луч не задевает",
+			World.first_solid_on_ray(from, World.cell_to_world(_c(3, -3))) == NONE)
+	World.set_tile(_hx + 1, _hy - 1, IDs.T.AIR)
 	# Машины — твёрдые (клетка в World.machines), для видимости фантомов — нет.
 	var fake: Node2D = Node2D.new()
 	World.machines[_c(3)] = fake
