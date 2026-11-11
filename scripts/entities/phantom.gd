@@ -799,8 +799,30 @@ func take_damage(amount: float, from: Vector2) -> void:
 		Sfx.play("craft", -6.0, 0.8)
 		if Net.is_host():   # СЕТЬ: «рассеян» — всей команде
 			_net_killed()
+		_drop_loot()
 		_drop_black_box()
 		queue_free()
+
+
+## Топливо с фантома (ADR-005 § 6.4, #174): тень отдаёт уголь, мотылёк роя — медь.
+## Горелки ещё нет (#164): уголь — то же топливо, которое уже ест ТЭЦ. Уведомления нет —
+## предмет сам летит к герою. Чёрный ящик — отдельно, как в D2.
+func _drop_loot() -> void:
+	var id: int = IDs.I.NONE
+	var n: int = 0
+	if kind == "shade":
+		id = IDs.I.COAL
+		n = Balance.SHADE_DROP_COAL
+	elif kind == "swarm":
+		id = IDs.I.COPPER_ORE
+		n = Balance.SWARM_DROP_COPPER
+	if n <= 0 or id == IDs.I.NONE:
+		return
+	var e: ItemEntity = ItemEntity.new()
+	e.item_id = id
+	e.count = n
+	e.global_position = global_position
+	World.add_world_node(e)
 
 
 ## Чёрный ящик: шанс BLACK_BOX_CHANCE, у двойника — всегда. Стая роя делит

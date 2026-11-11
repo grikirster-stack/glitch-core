@@ -82,7 +82,7 @@ func _start() -> void:
 		get_tree().quit(0)
 		return
 	# Перепись руды для баланса (ADR-005): жилы и столбцы бура.
-	# godot --headless --path . -- --ore-census --seed=31337
+	# godot --headless --path . -- --ore-census --seed=31337 [--days=10]
 	if _args.has("--ore-census"):
 		load("res://tools/ore_census.gd").dump(_args)
 		get_tree().quit(0)
@@ -97,6 +97,7 @@ func _start() -> void:
 	end_layer.add_child(end_screen)
 	end_screen.restart_requested.connect(_restart)
 	end_screen.next_requested.connect(_next_chapter)
+	end_screen.stay_requested.connect(_stay_on_planet)
 	Game.state_changed.connect(_on_state_changed)
 	_setup_respawn()
 	add_child(TouchControls.new())   # сенсорное управление (#81): сенсорный экран или --touch
@@ -246,6 +247,16 @@ func _on_state_changed(s: int) -> void:
 		end_screen.show_end("ТЕБЯ НАШЛИ", Lore.epitaph(), Color(0.92, 0.28, 0.34), _stats())
 	elif s == Game.State.WON:
 		end_screen.show_victory(Lore.epilogue(Game.epilogue_stats()), _stats())
+		# Хардкор — без изменений: смерть и победа завершают забег, остаться нельзя.
+		end_screen.can_stay = not hardcore
+
+
+## «Остаться на планете» (ADR-005 § 6.4, #174): мир тот же, ядро на месте, новой цели нет.
+func _stay_on_planet() -> void:
+	if Game.state != Game.State.WON or hardcore or Game.in_mission():
+		return
+	Game.continue_run()
+	end_screen.hide_end()
 
 
 func _stats() -> Array:
