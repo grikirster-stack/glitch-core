@@ -1,7 +1,8 @@
 extends ScenarioBase
 ## Ремонт (ADR-001 § 4.4, #29): E с хламом в хотбаре по повреждённой машине —
 ## +Balance.REPAIR_PER_SCRAP HP за единицу хлама. Целую машину хлам не чинит
-## (и не тратится), а E с хламом по повреждённой ТЭЦ не дёргает рубильник.
+## (и не тратится). ТЭЦ снята (#170): рубильник остался у горелки, но только
+## с пустой руки. Хлам в руке у целой горелки, маяка и сундука ничего не делает.
 
 
 func run() -> void:
@@ -15,6 +16,7 @@ func run() -> void:
 	if gen == null:
 		finish()
 		return
+	aim(gen.global_position)
 	var d: float = gen.global_position.distance_to(player.global_position)
 	ok("герой у горелки", d < 40.0, "%.0f px" % d)
 	gen.take_damage(50.0)
@@ -40,11 +42,33 @@ func run() -> void:
 	ok("хлама ушло ровно на ремонт", player.inv.count_of(IDs.I.SCRAP) == 2,
 			"хлама %d (было 5, нужно 3)" % player.inv.count_of(IDs.I.SCRAP))
 
-	# Целая машина: E с хламом — обычное действие (здесь рубильник), хлам цел.
+	# Целая горелка: хлам в руке не рубильник и не топка.
 	await _tap(KEY_E)
-	ok("целую машину хлам не чинит", player.inv.count_of(IDs.I.SCRAP) == 2)
-	ok("у целой ТЭЦ E — снова рубильник", not gen.enabled)
+	ok("целую горелку хлам не чинит", player.inv.count_of(IDs.I.SCRAP) == 2)
+	ok("у целой горелки хлам не дёргает рубильник", gen.enabled
+			and gen.fuel_units() == 0, "топлива %d" % gen.fuel_units())
+
+	# Маяк и сундук рубильника не имеют. Целые — хлам цел, E их не ломает.
+	await _intact("маяк", "Pharos", Vector2i(pc.x + 4, floor_y - 1))
+	await _intact("сундук", "Chest", Vector2i(pc.x - 2, floor_y - 1))
 	finish()
+
+
+## Целая машина: E с хламом не тратит хлам и не снимает постройку.
+func _intact(title: String, kind: String, cell: Vector2i) -> void:
+	if World.get_tile_v(cell) != IDs.T.AIR:
+		World.set_tile(cell.x, cell.y, IDs.T.AIR)
+	ok("%s поставлен" % title, MachineBase.place_machine(kind, cell), str(cell))
+	var m = World.machines.get(cell)
+	if m == null:
+		return
+	aim(m.global_position)
+	await wait(0.2)
+	var scrap: int = player.inv.count_of(IDs.I.SCRAP)
+	await _tap(KEY_E)
+	ok("целый %s хлам не чинит" % title, player.inv.count_of(IDs.I.SCRAP) == scrap,
+			"хлама %d" % player.inv.count_of(IDs.I.SCRAP))
+	ok("%s на месте" % title, World.machines.get(cell) == m)
 
 
 ## Нажать и отпустить клавишу (как человек: несколько кадров зажата).
