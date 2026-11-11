@@ -2070,6 +2070,13 @@ func move_body(pos: Vector2, motion: Vector2, size: Vector2, phantom: bool = fal
 signal turret_fired(from: Vector2, to: Vector2)
 ## Выстрел маяка под красным: дуга цвета луча. Турель этот сигнал не шлёт.
 signal pharos_fired(from: Vector2, to: Vector2, color: Color)
+## Маяки под синим, голубым и пурпурным. Список ведёт сам Pharos (#168).
+## Клиент собирает свой из реплицированного цвета — explored по сети не едет.
+var pharos_blue: Array = []
+var pharos_dome: Array = []
+var pharos_lure: Array = []
+## Последний замер slow_factor_at, мкс (сценарий pharos_blue).
+var slow_factor_us: int = 0
 ## Решётку сломали — вентиляция снова открыта.
 signal grate_broken(cell: Vector2i)
 
@@ -2831,6 +2838,94 @@ func reveal_around(c: Vector2i, r: int) -> int:
 	explore_us += us
 	explore_us_max = maxi(explore_us_max, us)
 	return opened
+
+
+## Открывает готовый список клеток (белый маяк, #168). Не круг: только те,
+## что передал маяк. Возвращает число новых. Сигнал и explore_new — как у круга,
+## чтобы туман и миникарта пересчитали только открытый прямоугольник.
+func reveal_cells(list: Array) -> int:
+	if explored.is_empty() or list.is_empty():
+		return 0
+	var t0: int = Time.get_ticks_usec()
+	explore_new.clear()
+	var x_lo: int = W
+	var x_hi: int = -1
+	var y_lo: int = H
+	var y_hi: int = -1
+	for c in list:
+		if not (c is Vector2i):
+			continue
+		var cell: Vector2i = c
+		if cell.x < 0 or cell.y < 0 or cell.x >= W or cell.y >= H:
+			continue
+		var idx: int = cell.y * W + cell.x
+		if explored[idx] != 0:
+			continue
+		explored[idx] = 1
+		explore_new.append(idx)
+		x_lo = mini(x_lo, cell.x)
+		x_hi = maxi(x_hi, cell.x)
+		y_lo = mini(y_lo, cell.y)
+		y_hi = maxi(y_hi, cell.y)
+	var opened: int = explore_new.size()
+	explore_calls += 1
+	if opened > 0:
+		explore_cells += opened
+		explored_changed.emit(Rect2i(x_lo, y_lo, x_hi - x_lo + 1, y_hi - y_lo + 1))
+	var us: int = Time.get_ticks_usec() - t0
+	explore_us += us
+	explore_us_max = maxi(explore_us_max, us)
+	return opened
+
+
+## Множитель скорости фантома в точке. 1 — мороза нет. Синий маяк в
+## PHAROS_BLUE_RADIUS клетках (Чебышёв) даёт PHAROS_BLUE_SLOW. Несколько
+## маяков не складываются: холоднее 0.5 не бывает.
+func slow_factor_at(pos: Vector2) -> float:
+	var t0: int = Time.get_ticks_usec()
+	var factor: float = 1.0
+	if not pharos_blue.is_empty():
+		var c: Vector2i = world_to_cell(pos)
+		var r: int = Balance.PHAROS_BLUE_RADIUS
+		for m in pharos_blue:
+			if not is_instance_valid(m):
+				continue
+			var mc: Vector2i = m.cell
+			if maxi(absi(c.x - mc.x), absi(c.y - mc.y)) <= r:
+				factor = Balance.PHAROS_BLUE_SLOW
+				break
+	slow_factor_us = Time.get_ticks_usec() - t0
+	return factor
+
+
+## Купол, который накрывает клетку постройки, или null. Голубой маяк в
+## PHAROS_DOME_RADIUS клетках (манхэттен), и только пока купол не погашен.
+func dome_at(cell: Vector2i):
+	var r: int = Balance.PHAROS_DOME_RADIUS
+	for m in pharos_dome:
+		if not is_instance_valid(m):
+			continue
+		if not bool(m.get("dome_up")):
+			continue
+		var mc: Vector2i = m.cell
+		if absi(cell.x - mc.x) + absi(cell.y - mc.y) <= r:
+			return m
+	return null
+
+
+## Ближайший пурпурный маяк в радиусе, или null. Рой и тень идут к нему,
+## а не к горелкам (ADR-005 § 5).
+func lure_at(pos: Vector2, radius: float):
+	var best = null
+	var best_d: float = radius
+	for m in pharos_lure:
+		if not is_instance_valid(m):
+			continue
+		var d: float = pos.distance_to(m.global_position)
+		if d < best_d:
+			best_d = d
+			best = m
+	return best
 
 
 ## Каждый кадр — одно сравнение клетки героя; круг открываем только при смене клетки.

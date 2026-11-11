@@ -163,6 +163,9 @@ func _process(delta: float) -> void:
 	if World.beams != null and World.beams.changed != _beam_rev:
 		_beam_rev = World.beams.changed
 		_dirty = true
+	# Купол маяка пульсирует, пока жив: без этого квадрат встанет колом.
+	if not World.pharos_dome.is_empty():
+		_dirty = true
 	if animating:
 		_dirty = true
 	else:
@@ -449,6 +452,7 @@ func _draw() -> void:
 
 	# --- Лучи света (#164): постоянный список сегментов, не вспышка дуги ------
 	_draw_beams(view)
+	_draw_domes(view)
 
 	# --- Дуги турели ----------------------------------------------------------
 	for a in arcs:
@@ -499,6 +503,28 @@ func _draw_beams(view: Rect2) -> void:
 		draw_line(a, mid, Color(col.r, col.g, col.b, head), 4.0)
 		draw_line(mid, b, Color(col.r, col.g, col.b, tail), 4.0)
 	beam_draw_us = Time.get_ticks_usec() - t0
+
+
+## Голубой купол (#168): полупрозрачный квадрат 7×7 клеток вокруг маяка.
+## Погашенный купол не рисуем — ребёнок видит, что защита кончилась.
+func _draw_domes(view: Rect2) -> void:
+	if World.pharos_dome.is_empty():
+		return
+	var tile: float = float(World.TILE)
+	var span: float = float(Balance.PHAROS_DOME_RADIUS * 2 + 1) * tile
+	var pulse: float = 0.16 + 0.06 * sin(_pulse_clock * 4.0)
+	var fill: Color = Beams.COLOR[Beams.C]
+	fill.a = pulse
+	var edge: Color = Color(fill.r, fill.g, fill.b, 0.55)
+	for m in World.pharos_dome:
+		if not is_instance_valid(m) or not bool(m.get("dome_up")):
+			continue
+		var origin: Vector2 = m.global_position - Vector2(span, span) * 0.5
+		var box: Rect2 = Rect2(origin, Vector2(span, span))
+		if view.size != Vector2.ZERO and not view.grow(tile).intersects(box):
+			continue
+		draw_rect(box, fill)
+		draw_rect(box, edge, false, 1.0)
 
 
 ## Материал слоя ореолов (Emission, ADR-003 V3).

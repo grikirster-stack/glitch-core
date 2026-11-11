@@ -283,6 +283,13 @@ func take_damage(amount: float) -> void:
 		return
 	if _destroyed or amount <= 0.0:
 		return
+	# Голубой купол (#168): удар по постройке в радиусе маяка идёт в dome_hp.
+	var dome = World.dome_at(cell)
+	if dome != null and dome.has_method("absorb_dome"):
+		dome.absorb_dome(amount)
+		anim = 1.0
+		queue_redraw()
+		return
 	hp = maxf(0.0, hp - amount)
 	anim = 1.0
 	queue_redraw()
