@@ -37,6 +37,10 @@ const BEAM_BLOCK_COST: int = 2
 const BEAM_LIGHT: float = 1.0
 const BEAM_LIGHT_WHITE: float = 1.5
 const FUEL: Dictionary = {IDs.I.COAL: 45.0, IDs.I.COPPER_ORE: 30.0, IDs.I.CRYSTAL: 60.0}
+## Накопитель хранит столько секунд луча одного цвета (ADR-005 § 4, #166).
+const ACCUMULATOR_CAP: float = 120.0
+## Коллектор молчит ниже того же порога, что и солнечная панель.
+const COLLECTOR_MIN_DAYLIGHT: float = SOLAR_MIN_DAYLIGHT
 
 # ------------------------------------------------------- Маяк (ADR-005 § 5, #167)
 ## Красный жжёт как турель: 20 урона раз в 0.8 с, дальность 7 клеток, прямая

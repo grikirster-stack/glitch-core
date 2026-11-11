@@ -109,6 +109,7 @@ const HINT_GEN_COAL: String = "[E] — загрузить уголь в ТЭЦ"
 const HINT_GEN_SWITCH: String = "[E] — рубильник ТЭЦ (вкл/выкл) · уголь в руке + [E] — топка"
 const HINT_BURNER_FUEL: String = "[E] — загрузить топливо в горелку"
 const HINT_BURNER_SWITCH: String = "[E] — рубильник горелки (вкл/выкл) · топливо в руке + [E] — топка"
+const HINT_ACCUMULATOR: String = "[E] — накопитель: копить / отдавать"
 const HINT_SOLAR_SWITCH: String = "[E] — рубильник генератора (вкл/выкл)"
 ## Подсказка управления в начале забега: клавиатура и мышь / телефон (#149).
 const CONTROLS_KEYS: Array = [
@@ -454,6 +455,8 @@ func _compute_hint(_pos: Vector2) -> String:
 		return generator_hint(tg["node"])
 	if kind == player.ET_BURNER:
 		return burner_hint(tg["node"])
+	if kind == player.ET_ACCUMULATOR:
+		return HINT_ACCUMULATOR + _dismantle_tail(tg["node"])
 	if kind == player.ET_SIREN:
 		return HINT_SIREN
 	if kind == player.ET_LENS:

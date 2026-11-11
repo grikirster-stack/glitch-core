@@ -468,6 +468,8 @@ func _check_data() -> void:
 	_ok("сирена без чертежа закрыта", not DB.recipe_unlocked({"out": IDs.I.SIREN}))
 	_ok("линза без чертежа закрыта", not DB.recipe_unlocked({"out": IDs.I.LENS}))
 	_ok("смеситель без чертежа закрыт", not DB.recipe_unlocked({"out": IDs.I.MIXER}))
+	_ok("накопитель без чертежа закрыт", not DB.recipe_unlocked({"out": IDs.I.ACCUMULATOR}))
+	_ok("коллектор без чертежа закрыт", not DB.recipe_unlocked({"out": IDs.I.COLLECTOR}))
 	var first: int = Game.give_next_blueprint()
 	# BLUEPRINT_ORDER: первый доступный — смеситель (#165), маяк — следующий.
 	_ok("первый чертёж — смеситель, маяк и стена закрыты", first == IDs.I.MIXER

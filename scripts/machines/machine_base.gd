@@ -111,6 +111,11 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 			m = Mixer.new()
 		"Prism":
 			m = Prism.new()
+		# --- Коллектор и накопитель (ADR-005 § 4, #166) ---
+		"Collector":
+			m = Collector.new()
+		"Accumulator":
+			m = Accumulator.new()
 		# --- Сирена (ADR-005 § 7.2, #172). Второй маяк не заводим. ---
 		"Siren":
 			m = Siren.new()

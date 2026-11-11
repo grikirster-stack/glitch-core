@@ -158,6 +158,12 @@ func generate(p_seed: int) -> void:
 		_build_defense_tables()
 	for m in machines.values():
 		if is_instance_valid(m):
+			# Снять с дерева сразу: queue_free оставляет _process до конца кадра,
+			# и сундук прошлого сценария тикает в клетке нового накопителя
+			# (сид 4242, шард 2/3). free() нельзя — свет ещё держит ссылку.
+			var parent: Node = m.get_parent()
+			if parent != null:
+				parent.remove_child(m)
 			m.queue_free()
 	machines.clear()
 	belts.clear()
@@ -1870,8 +1876,18 @@ func set_tile(x: int, y: int, id: int) -> void:
 	_defense_on_set_tile(Vector2i(x, y), id)
 	if beams != null and old != id:
 		beams.mark_dirty()
+	# Коллектор кэширует «пусто до неба» раз в 0,5 с. Столбец изменился — сразу.
+	if old != id:
+		_note_collector_column(x)
 	if _net_track:   # СЕТЬ (ADR-002): клетка — в батч хоста
 		_net_mark_tile(idx)
+
+
+## Столбец x изменился: коллекторы в нём пересчитывают небо, не ждут 0,5 с.
+func _note_collector_column(x: int) -> void:
+	for m in machines.values():
+		if is_instance_valid(m) and m.cell.x == x and m.has_method("note_column"):
+			m.note_column(x)
 
 
 func is_solid_cell(c: Vector2i) -> bool:

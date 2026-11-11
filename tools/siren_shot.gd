@@ -80,20 +80,21 @@ func _run() -> void:
 	var siren = world.machines[sc]
 	siren.charge = 60.0
 	siren.charging = true
-	# Рой справа, уже в гоне: силуэт уходит от рупора, не стоит на нём.
+	# Рой и тень уже справа от рупора и смотрят прочь: ребёнок видит, куда гонит.
+	# Под сиреной тень стояла бы на месте — у пешего гона нет горизонтали вверх.
 	var pack: Array = []
 	for i in 5:
 		var moth = ph_script.create("swarm")
 		moth.player = current_scene.get("player")
 		current_scene.add_child(moth)
-		moth.global_position = world.cell_to_world(sc + Vector2i(3 + i % 3, -1 + int(i / 3)))
+		moth.global_position = world.cell_to_world(sc + Vector2i(5 + i % 3, -2 + int(i / 3)))
 		moth.force_flee(10.0, siren.global_position)
 		moth.facing = 1
 		pack.append(moth)
 	var shade = ph_script.create("shade")
 	shade.player = current_scene.get("player")
 	current_scene.add_child(shade)
-	shade.global_position = world.cell_to_world(sc + Vector2i(2, 2))
+	shade.global_position = world.cell_to_world(sc + Vector2i(6, 2))
 	shade.force_flee(10.0, siren.global_position)
 	shade.facing = 1
 	var fx = current_scene.get("world_fx")
