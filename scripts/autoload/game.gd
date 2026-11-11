@@ -8,6 +8,9 @@ signal state_changed(state: int)
 signal day_started(day: int)
 ## Этап цели сменился (ADR-001, § 4.7; этапы ведёт #32).
 signal objective_changed(stage: int)
+## Выдан следующий чертёж (имя предмета из BLUEPRINT_ORDER). Панель крафта
+## сбрасывает кэш списка рецептов.
+signal blueprint_changed(name: String)
 
 enum State { PLAYING, DEAD, WON }
 
@@ -19,7 +22,10 @@ var time_of_day: float = Balance.START_TIME ## доля цикла: 0.04 — р�
 var day_number: int = 1
 var tasks_total: int = 0
 var tasks_done: int = 0
-var research: int = 0
+## Чертежи команды (ADR-005 § 7.1, #169): имена предметов из BLUEPRINT_ORDER
+## в порядке выдачи. Не предмет — запись. В сети пока локально: маска в global
+## ждёт очереди PROTO (эпик #182).
+var blueprints: PackedStringArray = PackedStringArray()
 var wave: int = 0
 var phantoms_alive: int = 0
 var game_time: float = 0.0
@@ -34,8 +40,8 @@ var stats_deaths: int = 0              ## Смертей за забег (рес
 ## Сценарии сами создают фантомов: директор угрозы (Threat, #27) при этом
 ## флаге волны не ведёт. Ставит main.gd.
 var scenario_mode: bool = false
-## Этап цели по ADR-001 § 4.7: 0 — не начато, 1 — запитать станцию,
-## 2 — собрать данные, 3 — собрать релей, 4 — удержать сигнал. Ведёт #32.
+## Этап цели свободной игры (временно, #169; F1 перепишет окончательно):
+## 0 — не начато, 1 — запитать станцию, 2 — собрать релей, 3 — удержать сигнал.
 var objective_stage: int = 0
 ## Глава кампании (Mission, scripts/campaign/) или null — свободная игра. Без типа —
 ## как player: цикл autoload → class_name. Цель главы заменяет четыре этапа релея:
@@ -116,7 +122,7 @@ func reset_run() -> void:
 	time_of_day = Balance.START_TIME
 	day_number = 1
 	tasks_done = 0
-	research = 0
+	blueprints = PackedStringArray()
 	wave = 0
 	game_time = 0.0
 	relay_active = false
@@ -139,8 +145,9 @@ func reset_run() -> void:
 	signal_sent = false             # бесконечная игра (#174)
 	signal_sends = 0
 	_power_index_size = -1          ## мир мог смениться — индекс пересоберётся
-	# --- Исследования (#28): дерево и журнал живут один забег.
+	# --- Журнал и чертежи (#169): живут один забег.
 	Tech.reset()
+	_apply_blueprint_flag()
 	_power_timer = 0.0
 	power_output_total = 0.0
 	power_load_total = 0.0
@@ -206,10 +213,118 @@ func notify(text: String, color: Color = Color(0.85, 0.9, 1.0)) -> void:
 
 func complete_task() -> void:
 	tasks_done += 1
-	research += Balance.TERMINAL_DATA
 	task_completed.emit(tasks_total, tasks_done)
-	notify("Задание выполнено! (%d/%d)  +%d данных" % [tasks_done, tasks_total, Balance.TERMINAL_DATA],
-			Color(0.4, 0.95, 0.6))
+	notify("Задание выполнено! (%d/%d)" % [tasks_done, tasks_total], Color(0.4, 0.95, 0.6))
+
+
+# ---------------------------------------------------------- ЧЕРТЕЖИ (#169)
+## Имена из Balance.BLUEPRINT_ORDER, которые уже есть в IDs.I. Отсутствующие
+## (их заводят C*, E2, F1) пропускаются с предупреждением — после слияния список
+## заработает целиком без правок здесь. Кэш на состав IDs: за забег он не меняется.
+var _bp_order: PackedStringArray = PackedStringArray()
+var _bp_ids: PackedInt32Array = PackedInt32Array()
+var _bp_ready: bool = false
+
+
+func _ensure_blueprint_order() -> void:
+	if _bp_ready:
+		return
+	_bp_ready = true
+	_bp_order = PackedStringArray()
+	_bp_ids = PackedInt32Array()
+	var known: Dictionary = IDs.I
+	for name in Balance.BLUEPRINT_ORDER:
+		var key: String = String(name)
+		if not known.has(key):
+			push_warning("чертёж «%s» пропущен: предмета ещё нет в IDs.I" % key)
+			continue
+		_bp_order.append(key)
+		_bp_ids.append(int(known[key]))
+
+
+## Имена чертежей, которые игра уже умеет выдавать (подмножество BLUEPRINT_ORDER).
+func blueprint_order() -> PackedStringArray:
+	_ensure_blueprint_order()
+	return _bp_order
+
+
+## Сколько чертежей игра умеет выдать сейчас (знаменатель строки «N из M»).
+func blueprint_total() -> int:
+	return blueprint_order().size()
+
+
+## Есть ли чертёж на предмет (по id или по имени из BLUEPRINT_ORDER).
+func has_blueprint(item_id) -> bool:
+	_ensure_blueprint_order()
+	var name: String = ""
+	if item_id is String:
+		name = String(item_id)
+	else:
+		var i: int = _bp_ids.find(int(item_id))
+		if i < 0:
+			return false
+		name = String(_bp_order[i])
+	return blueprints.has(name)
+
+
+## id предмета i-го доступного чертежа (−1 — нет такого).
+func blueprint_item_id(i: int) -> int:
+	_ensure_blueprint_order()
+	if i < 0 or i >= _bp_ids.size():
+		return -1
+	return int(_bp_ids[i])
+
+
+## Имя предмета по id чертежа (пусто — предмета нет или это не чертёж).
+func blueprint_name(item_id: int) -> String:
+	_ensure_blueprint_order()
+	var i: int = _bp_ids.find(item_id)
+	if i < 0:
+		return ""
+	return String(_bp_order[i])
+
+
+## Подпись предмета чертежа: имя из DB, если предмет уже есть, иначе имя из списка.
+func blueprint_label(name: String) -> String:
+	_ensure_blueprint_order()
+	var i: int = _bp_order.find(name)
+	if i < 0:
+		return name
+	return DB.item_name(int(_bp_ids[i]))
+
+
+## Следующий ещё не выданный чертёж: имя или "" , если всё выдано.
+func next_blueprint_name() -> String:
+	for name in blueprint_order():
+		if not blueprints.has(name):
+			return String(name)
+	return ""
+
+
+## id следующего чертежа (−1 — всё выдано или список пуст).
+func next_blueprint_id() -> int:
+	var name: String = next_blueprint_name()
+	if name == "":
+		return -1
+	return blueprint_item_id(blueprint_order().find(name))
+
+
+## Выдать следующий чертёж из списка. id предмета или −1, если всё выдано.
+## Уведомление и кольцо — у вызывающего (терминал знает место).
+func give_next_blueprint() -> int:
+	var name: String = next_blueprint_name()
+	if name == "":
+		return -1
+	blueprints.append(name)
+	blueprint_changed.emit(name)
+	return blueprint_item_id(blueprints.size() - 1)
+
+
+## --blueprints=all: все доступные чертежи сразу (сценарии, как раньше unlock_to).
+func _apply_blueprint_flag() -> void:
+	if not OS.get_cmdline_user_args().has("--blueprints=all"):
+		return
+	blueprints = blueprint_order().duplicate()
 
 
 func set_state(s: int) -> void:
@@ -481,23 +596,24 @@ func _set_brownout(on: bool) -> void:
 
 
 # ------------------------------------------------- ЦЕЛЬ И РЕЛЕЙ (ADR-001 § 4.7, #32)
-## Четыре этапа цели. Этап выводится из состояния забега раз в
+## Три этапа цели (временно, #169: «собрать данные» снят вместе с деревом;
+## F1 перепишет этапы окончательно). Этап выводится из состояния забега раз в
 ## OBJECTIVE_CHECK_INTERVAL и только растёт:
 ##   1. Запитать станцию — оба терминала базы прочитаны (читаются они только
-##      под питанием); +10 данных и главы 1–2 дают сами терминалы, релей отзывается.
-##   2. Собрать данные — открыт узел T5: антенна релея в рецептах сборщика.
-##   3. Собрать релей — E у ядра (держать 3 с) сдаёт из инвентаря героя то, чего
+##      под питанием); главы 1–2 дают сами терминалы, релей отзывается.
+##   2. Собрать релей — E у ядра (держать 3 с) сдаёт из инвентаря героя то, чего
 ##      ядру ещё не хватает (relay_have, ADR-002 § 4.7, MP-I #94 — во всех режимах);
 ##      набрано всё — отсчёт пошёл. С полным набором — как раньше, одним удержанием.
-##   4. Удержать сигнал — Balance.RELAY_TIME с; директор угрозы в режиме релея
+##   3. Удержать сигнал — Balance.RELAY_TIME с; директор угрозы в режиме релея
 ##      (cap RELAY_HOLD_CAP, двойник — сразу после разведчика). Победа → эпилог Lore.
-## Этап можно перескочить (данные с анализаторов, детали из тайников): сигнал
-## objective_changed тогда уходит один раз — сразу с новым номером.
+## Этап можно перескочить (детали из тайников): сигнал objective_changed тогда
+## уходит один раз — сразу с новым номером.
+## Старое сохранение с этапом 4 («удержать») при загрузке сжимается в 3.
 
-const OBJECTIVE_STAGES: int = 4
+const OBJECTIVE_STAGES: int = 3
 const OBJECTIVE_CHECK_INTERVAL: float = 0.25
 ## Названия этапов для HUD и инвентаря (индекс — номер этапа).
-const OBJECTIVE_TITLES: Array = ["", "ЗАПИТАТЬ СТАНЦИЮ", "СОБРАТЬ ДАННЫЕ", "СОБРАТЬ РЕЛЕЙ", "УДЕРЖАТЬ СИГНАЛ"]
+const OBJECTIVE_TITLES: Array = ["", "ЗАПИТАТЬ СТАНЦИЮ", "СОБРАТЬ РЕЛЕЙ", "УДЕРЖАТЬ СИГНАЛ"]
 ## Отметки отсчёта (секунд до конца), на которых игроку напоминают, сколько держаться.
 const RELAY_REMINDERS: Array = [150, 120, 90, 60, 30, 10]
 const RELAY_COLOR: Color = Color(0.4, 1.0, 0.8)
@@ -541,15 +657,13 @@ func in_mission() -> bool:
 	return mission != null and is_instance_valid(mission)
 
 
-## Этап, до которого игрок дошёл: первый невыполненный, релей запущен — четвёртый.
+## Этап, до которого игрок дошёл: первый невыполненный, релей запущен — третий.
 func objective_target() -> int:
 	if relay_active or state == State.WON:
-		return 4
+		return 3
 	if not base_terminals_done():
 		return 1
-	if not Tech.is_unlocked("T5"):
-		return 2
-	return 3
+	return 2
 
 
 ## Оба терминала базы отработали (главы 1–2 у Lore — терминалы базы).
@@ -565,7 +679,7 @@ func base_terminals_done() -> bool:
 	return n > 0
 
 
-## Строка этапа для HUD/инвентаря: «ЦЕЛЬ 3/4: СОБРАТЬ РЕЛЕЙ», на удержании — с отсчётом.
+## Строка этапа для HUD/инвентаря: «ЦЕЛЬ 2/3: СОБРАТЬ РЕЛЕЙ», на удержании — с отсчётом.
 func objective_text() -> String:
 	var s: int = clampi(objective_stage, 1, OBJECTIVE_STAGES)
 	var head: String = "ЦЕЛЬ %d/%d: %s" % [s, OBJECTIVE_STAGES, OBJECTIVE_TITLES[s]]
@@ -579,16 +693,14 @@ func _enter_stage(s: int) -> void:
 	var bp: Vector2 = World.cell_to_world(World.beacon_cell)
 	match s:
 		1:
-			notify("Цель 1/4: запитать станцию — оба терминала базы под питанием.", Color(0.5, 0.95, 0.8))
+			notify("Цель 1/3: запитать станцию — оба терминала базы под питанием.", Color(0.5, 0.95, 0.8))
 		2:
-			notify("Станция ожила: релей отзывается. Цель 2/4: открыть узел T5 «Релей».", RELAY_COLOR)
+			notify("Станция ожила: релей отзывается. Цель 2/3: собрать релей-ядро.", RELAY_COLOR)
 			UI.flash_ring(bp, RELAY_COLOR)
 			Sfx.play("power", -8.0)
 		3:
-			notify("Цель 3/4: собрать релей-ядро — антенна релея в рецептах сборщика.", RELAY_COLOR)
+			notify("Цель 3/3: удержать сигнал %d с. Они идут." % int(RELAY_TIME), RELAY_COLOR)
 			UI.flash_ring(bp, RELAY_COLOR)
-		4:
-			notify("Цель 4/4: удержать сигнал %d с. Они идут." % int(RELAY_TIME), RELAY_COLOR)
 
 
 func _tick_relay(dt: float) -> void:
@@ -656,7 +768,7 @@ func try_finish(hero = null) -> bool:
 	relay_timer = RELAY_TIME
 	notify("РЕЛЕЙ ЗАПУЩЕН! Держитесь %d секунд." % int(RELAY_TIME), RELAY_COLOR)
 	Sfx.play("power", -2.0)
-	update_objective()          # этап 4 — сразу, а не через 0.25 с
+	update_objective()          # этап 3 — сразу, а не через 0.25 с
 	return true
 
 
@@ -700,12 +812,13 @@ func _relay_say(hero, text: String, color: Color, team: bool) -> void:
 ## забега — допишите его имя сюда. Питание и браун-аут не пишутся: их пересчитывает
 ## первая же раскладка после загрузки.
 const SAVE_FIELDS: Array[String] = [
-	"time_of_day", "day_number", "tasks_total", "tasks_done", "research", "wave",
+	"time_of_day", "day_number", "tasks_total", "tasks_done", "wave",
 	"game_time", "relay_active", "relay_timer", "stats_mined", "stats_crafted",
 	"stats_kills", "stats_deaths", "objective_stage",
 	"relay_speed",                       # цель и релей (#32)
 	"relay_have",                        # вклад деталей в релей (MP-I, #94)
 	"signal_sent", "signal_sends",       # бесконечная игра (#174)
+	"blueprints",                        # чертежи команды (ADR-005 § 7.1, #169)
 ]
 
 
@@ -714,6 +827,7 @@ func save_state() -> Dictionary:
 	for f in SAVE_FIELDS:
 		d[f] = get(f)
 	d["relay_have"] = relay_have.duplicate()   # снимок, а не ссылка на живой словарь
+	d["blueprints"] = blueprints.duplicate()
 	return d
 
 
@@ -725,6 +839,15 @@ func load_state(d: Dictionary) -> void:
 	if not d.has("relay_have"):     # файл до MP-I (#94): вклада ещё не было
 		relay_have = {}
 	relay_have = relay_have.duplicate()
+	# Поле "research" старых сохранений игнорируется: счётчик данных снят (#169).
+	if d.has("blueprints"):
+		blueprints = PackedStringArray(d["blueprints"])
+	else:
+		blueprints = PackedStringArray()
+	# Старый этап 4 («удержать сигнал») — теперь третий. Этап 2 «собрать данные»
+	# снят: после запитанной станции сразу сборка релея, если он ещё не запущен.
+	if objective_stage > OBJECTIVE_STAGES or (objective_stage == 2 and relay_active):
+		objective_stage = OBJECTIVE_STAGES
 	# Требование от N (#139): клиент берёт хостово из снимка входа, хост и одиночная
 	# считают сами (не ниже загруженного вклада).
 	if Net.is_client():
@@ -735,6 +858,7 @@ func load_state(d: Dictionary) -> void:
 	set_state(State.PLAYING)
 	_power_index_size = -1          ## машины поставлены заново — индекс пересоберётся
 	_power_timer = 0.0
+	_apply_blueprint_flag()         # --blueprints=all важнее файла: сценарии так и ждут
 
 
 # ------------------------------------------------- СЕТЬ (ADR-002)
@@ -788,8 +912,10 @@ func _net_client_process(delta: float) -> void:
 
 
 ## Хост: глобальное состояние для NetCodec.encode_global (hash кладёт NetWorld).
+## Поле research в пакете — заглушка 0: длина global не меняется без бампа PROTO.
+## Чертежи в пакет не кладём — битовая маска ждёт очереди PROTO (эпик #182).
 func net_global() -> Dictionary:
-	return {"time": time_of_day, "day": day_number, "state": state, "research": research,
+	return {"time": time_of_day, "day": day_number, "state": state, "research": 0,
 			"stage": objective_stage, "relay_active": relay_active, "relay_timer": relay_timer,
 			"tasks_done": tasks_done, "tasks_total": tasks_total,
 			# бит 1 — сигнал уже отправлен (#174): отдельного поля в пакете нет, PROTO не растёт
@@ -812,7 +938,7 @@ func net_apply_global(d: Dictionary) -> void:
 	if new_day:
 		day_started.emit(day)
 		notify("Смена %d. Фантомы голоднее." % day, Color(0.9, 0.9, 0.7))
-	research = int(d["research"])
+	# d["research"] — заглушка старого пакета (счётчик данных снят, #169): не читаем.
 	tasks_total = int(d["tasks_total"])
 	if int(d["tasks_done"]) != tasks_done:
 		tasks_done = int(d["tasks_done"])

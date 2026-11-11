@@ -1,8 +1,8 @@
 class_name Analyzer
 extends MachineBase
-## Анализатор (ADR-001 § 4.2, #30): разбирает кристалл глитча на «данные» для
-## исследований. Один кристалл → Balance.ANALYZER_DATA данных за
-## Balance.ANALYZER_PERIOD секунд полезной работы (с учётом efficiency).
+## Анализатор (ADR-001 § 4.2, #30): принимает кристалл глитча и за
+## Balance.ANALYZER_PERIOD секунд полезной работы сжигает его (с учётом efficiency).
+## «Данные» сняты (#169, D1 уберёт машину): кристалл тратится, счётчик не растёт.
 ## Кристаллы — руками (E с кристаллом в хотбаре), с конвейера или манипулятора.
 
 const PERIOD: float = Balance.ANALYZER_PERIOD
@@ -14,7 +14,7 @@ const C_CRYSTAL_D: Color = _PAL["crystal_d"]
 const C_BIO_CORE: Color = _PAL["bio_core"]
 
 var crystals: int = 0
-## Сколько данных выдал анализатор за всё время (для сценариев и HUD).
+## Сколько кристаллов сожжено за всё время (для сценариев и HUD).
 var produced: int = 0
 
 var _busy: bool = false
@@ -67,14 +67,14 @@ func _process(delta: float) -> void:
 		_timer = 0.0
 	_timer += work(delta)
 	progress = clampf(_timer / PERIOD, 0.0, 1.0)
-	if _timer >= PERIOD:
+	if _timer >= PERIOD or progress >= 1.0:
 		_busy = false
 		_timer = 0.0
 		progress = 0.0
-		produced += Balance.ANALYZER_DATA
-		Game.research += Balance.ANALYZER_DATA
+		produced += 1
 		Sfx.play("craft", -14.0, 1.5)
-		Game.notify("Анализатор: +%d данных" % Balance.ANALYZER_DATA, Color(0.5, 0.95, 0.9))
+		Game.notify("Анализатор сжёг кристалл. Данных больше нет — нужны чертежи с терминалов.",
+				Color(0.5, 0.95, 0.9))
 		queue_redraw()
 
 

@@ -612,7 +612,8 @@ static func presses_bump(presses: int, i: int) -> int:
 
 
 # ------------------------------------------------------------------ ГЛОБАЛЬНОЕ (1 Гц)
-## time f32 · смена u16 · состояние u8 · данные u16 · этап u8 · релей u8 + f32 ·
+## time f32 · смена u16 · состояние u8 · данные u16 (заглушка 0, #169: счётчик снят,
+## длина не меняется без бампа PROTO) · этап u8 · релей u8 + f32 ·
 ## задания 2×u8 · угроза u8 + f32 · браун-аут u8 · hash мира u32 · game_time f32. 31 Б.
 
 const GLOBAL_BYTES: int = 31
@@ -1200,8 +1201,9 @@ static func decode_chest(b: PackedByteArray) -> Dictionary:
 	return {"cell": int(b.decode_u32(0)), "flags": b.decode_u8(4), "slots": slots}
 
 
-## TECH: вид u8 (TechEv) · данные u16 (Game.research после события) · дальше по виду:
-## UNLOCK — узел u8 (индекс Tech.ORDER), CHAPTER — глава u8, FRAGMENT — u8 длина + UTF-8.
+## TECH: вид u8 (TechEv) · данные u16 (заглушка 0, #169: счётчик снят) · дальше по виду:
+## UNLOCK — узел u8 (больше не применяется), CHAPTER — глава u8, FRAGMENT — u8 длина + UTF-8.
+## Битовая маска чертежей в global — после очереди PROTO (эпик #182), не здесь.
 static func encode_tech(kind: int, research: int, arg: int, text: String = "") -> PackedByteArray:
 	var s: StreamPeerBuffer = StreamPeerBuffer.new()
 	s.put_u8(kind & 0xFF)

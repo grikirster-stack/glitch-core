@@ -729,6 +729,44 @@ func _clear_ruin_caches() -> void:
 	ruin_cache_ms = 0.0
 
 
+## Подарок терминала главы chapter: [[предмет, число], ...], 2–3 вида из
+## Balance.TERMINAL_GIFT_POOL. Роль места (капитан, инженер, … — как у тайника
+## руины) выбирает, какие виды; на базе роли нет — берётся «капитан» и «инженер».
+## Зависит только от сида мира и номера главы: тот же терминал — тот же подарок.
+func terminal_gift(chapter: int) -> Array:
+	var role: String = _terminal_gift_role(chapter)
+	var pool: Array = Balance.TERMINAL_GIFT_POOL.duplicate()
+	var r: RandomNumberGenerator = RandomNumberGenerator.new()
+	r.seed = int(world_seed) ^ 0x47494654 ^ (chapter * 7919) ^ (role.hash() & 0xFFFF)
+	var n: int = mini(r.randi_range(Balance.TERMINAL_GIFT_MIN, Balance.TERMINAL_GIFT_MAX), pool.size())
+	# Роль сдвигает пул: у каждой — свой «любимый» первый предмет, дальше по кругу.
+	var shift: int = posmod(role.hash(), pool.size())
+	var rotated: Array = []
+	for k in pool.size():
+		rotated.append(pool[(k + shift) % pool.size()])
+	# Фишер — Йейтс на своём ГСЧ, но первые два места роли трогаем реже: мешаем хвост.
+	for k in range(rotated.size() - 1, 1, -1):
+		var j: int = r.randi_range(1, k)
+		var tmp = rotated[k]
+		rotated[k] = rotated[j]
+		rotated[j] = tmp
+	var out: Array = []
+	for k in n:
+		var e: Array = rotated[k]
+		out.append([int(e[0]), r.randi_range(int(e[1]), int(e[2]))])
+	return out
+
+
+## Роль места терминала главы: руина — роль хозяина, база — по номеру главы.
+func _terminal_gift_role(chapter: int) -> String:
+	if chapter >= Lore.BASE_TERMINALS:
+		var owner: Dictionary = Lore.ruin_owner(chapter - Lore.BASE_TERMINALS)
+		var role: String = String(owner.get("role", ""))
+		if role != "":
+			return role
+	return "капитан" if posmod(chapter, 2) == 0 else "инженер"
+
+
 ## Содержимое тайника i-й руины: [[предмет, число], ...], 3–6 разных предметов
 ## из пула роли хозяина. Зависит только от сида мира, номера руины и роли.
 func ruin_cache_loot(i: int, role: String) -> Array:

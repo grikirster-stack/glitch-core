@@ -1,12 +1,11 @@
 extends ScenarioBase
-## Плавильня и замок технологий (#57).
+## Плавильня и чертёж (#57, #169).
 ##
 ## 1. Без питания горнило не светится: цвет горнила (Smelter.furnace_color) —
 ##    ровный тёмный в любой момент времени; под питанием — пульсирует.
-## 2. Вход запертого рецепта станок не принимает: медный слиток нужен плавильне
-##    только для проката меди (T1), детали сборщика — только рецептам T1+.
-##    До T1 слиток не берут ни receive_item, ни манипулятор (#30), ни E игрока;
-##    после открытия T1 — берут все три пути.
+## 2. Рецепт без чертежа станок не принимает. Прокат меди открыт сразу;
+##    стальная стена — только с чертежом. До чертежа стальную пластину не берут
+##    ни receive_item, ни манипулятор, ни E; после выдачи чертежа — берут.
 ##
 ## Линия: сундук → манипулятор → плавильня, ТЭЦ через три клетки. Игрок встаёт
 ## справа от плавильни — дальше 40 px от сундука и ТЭЦ, чтобы E шла в станок.
@@ -27,7 +26,8 @@ func run() -> void:
 	for x in range(dark_cell.x - 1, c0.x + 9):
 		for y in range(c0.y - 2, c0.y + 2):
 			World.set_tile(x, y, IDs.T.AIR)
-	ok("новый забег: T1 закрыт", not Tech.is_unlocked("T1"), str(Tech.unlocked))
+	ok("новый забег: чертежа стальной стены нет", not Game.has_blueprint(IDs.I.STEEL_WALL),
+			str(Game.blueprints))
 
 	# ---- Горнило без питания -------------------------------------------------
 	ok("тёмная плавильня и сборщик поставлены", MachineBase.place_machine("Smelter", dark_cell)
@@ -66,55 +66,51 @@ func run() -> void:
 	ok("под питанием горнило пульсирует", sm.furnace_color(T_LOW) != sm.furnace_color(T_PEAK)
 			and sm.furnace_color(T_LOW) != Smelter.FURNACE_COLD and sm.has_time_animation())
 
-	# ---- Запертый вход: не принимается ------------------------------------------
-	ok("медный слиток до T1 не принимается", not sm.input_accepts(IDs.I.COPPER_INGOT))
-	ok("receive_item вернул всё", sm.receive_item(IDs.I.COPPER_INGOT, 2) == 2 and sm.stock.is_empty(),
-			str(sm.stock))
-	ok("стальная пластина до T2 не принимается", not sm.input_accepts(IDs.I.STEEL_PLATE))
-	ok("железный слиток принимается (сталь — T0)", sm.input_accepts(IDs.I.IRON_INGOT))
-	ok("руда принимается (T0)", sm.input_accepts(IDs.I.COPPER_ORE))
-	ok("сборщик до T1 не берёт пластину и кристалл",
-			not asm.input_accepts(IDs.I.COPPER_PLATE) and not asm.input_accepts(IDs.I.CRYSTAL)
-			and asm.receive_item(IDs.I.COPPER_PLATE, 1) == 1)
+	# ---- Прокат открыт сразу; стена — только с чертежом -------------------------
+	ok("медный слиток принимается сразу (прокат открыт)", sm.input_accepts(IDs.I.COPPER_INGOT))
+	ok("стальная пластина без чертежа не принимается", not sm.input_accepts(IDs.I.STEEL_PLATE))
+	ok("receive_item вернул стальную пластину", sm.receive_item(IDs.I.STEEL_PLATE, 2) == 2
+			and sm.stock.is_empty(), str(sm.stock))
+	ok("железный слиток принимается (сталь открыта)", sm.input_accepts(IDs.I.IRON_INGOT))
+	ok("руда принимается", sm.input_accepts(IDs.I.COPPER_ORE))
+	ok("сборщик сразу берёт пластину и кристалл", asm.input_accepts(IDs.I.COPPER_PLATE)
+			and asm.input_accepts(IDs.I.CRYSTAL) and asm.receive_item(IDs.I.COPPER_PLATE, 1) == 0)
 
-	src.receive_item(IDs.I.COPPER_INGOT, INGOTS)
+	src.receive_item(IDs.I.STEEL_PLATE, INGOTS)
 	await wait(1.5)
-	ok("манипулятор не тащит запертый вход", _count(src, IDs.I.COPPER_INGOT) == INGOTS
+	ok("манипулятор не тащит вход без чертежа", _count(src, IDs.I.STEEL_PLATE) == INGOTS
 			and sm.stock.is_empty() and ins.held == IDs.I.NONE,
-			"в сундуке %d, в станке %s" % [_count(src, IDs.I.COPPER_INGOT), str(sm.stock)])
+			"в сундуке %d, в станке %s" % [_count(src, IDs.I.STEEL_PLATE), str(sm.stock)])
 
-	# E игрока с медным слитком в руке — не загружается.
-	player.inv.add(IDs.I.COPPER_INGOT, 2)
-	player.inv.selected = _slot_of(IDs.I.COPPER_INGOT)
+	player.inv.add(IDs.I.STEEL_PLATE, 2)
+	player.inv.selected = _slot_of(IDs.I.STEEL_PLATE)
 	player.global_position = World.cell_to_world(c0 + Vector2i(3, 0))
 	aim(World.cell_to_world(c0 + Vector2i(3, -2)))
 	hold(KEY_E)
 	await wait(0.4)
 	release(KEY_E)
 	await wait(0.1)
-	ok("E не загрузил запертый вход", player.inv.count_of(IDs.I.COPPER_INGOT) == 2 and sm.stock.is_empty(),
-			"в руке %d, в станке %s" % [player.inv.count_of(IDs.I.COPPER_INGOT), str(sm.stock)])
+	ok("E не загрузил вход без чертежа", player.inv.count_of(IDs.I.STEEL_PLATE) == 2 and sm.stock.is_empty(),
+			"в руке %d, в станке %s" % [player.inv.count_of(IDs.I.STEEL_PLATE), str(sm.stock)])
 
-	# ---- Открываем T1: вход принимается -----------------------------------------
-	Game.research += Tech.cost("T1")
-	ok("T1 открыт", Tech.unlock("T1") and Tech.is_unlocked("T1"))
-	ok("после T1 медный слиток принимается", sm.input_accepts(IDs.I.COPPER_INGOT))
-	ok("после T1 сборщик берёт пластину", asm.input_accepts(IDs.I.COPPER_PLATE)
-			and asm.receive_item(IDs.I.COPPER_PLATE, 1) == 0)
-	ok("стальная пластина до T2 всё ещё не принимается", not sm.input_accepts(IDs.I.STEEL_PLATE))
+	while Game.next_blueprint_name() != "" and Game.next_blueprint_name() != "STEEL_WALL":
+		Game.give_next_blueprint()
+	ok("чертёж стальной стены выдан", Game.give_next_blueprint() == IDs.I.STEEL_WALL
+			and Game.has_blueprint(IDs.I.STEEL_WALL))
+	ok("после чертежа стальная пластина принимается", sm.input_accepts(IDs.I.STEEL_PLATE))
 
 	player.global_position = World.cell_to_world(c0 + Vector2i(3, 0))
 	hold(KEY_E)
-	await wait_until(func() -> bool: return player.inv.count_of(IDs.I.COPPER_INGOT) == 0, 2.0)
+	await wait_until(func() -> bool: return player.inv.count_of(IDs.I.STEEL_PLATE) == 0, 2.0)
 	release(KEY_E)
 	clear_input()
-	ok("E загрузил слитки после T1", player.inv.count_of(IDs.I.COPPER_INGOT) == 0,
-			"в руке %d" % player.inv.count_of(IDs.I.COPPER_INGOT))
+	ok("E загрузил пластины после чертежа", player.inv.count_of(IDs.I.STEEL_PLATE) == 0,
+			"в руке %d" % player.inv.count_of(IDs.I.STEEL_PLATE))
 
-	var moved: bool = await wait_until(func() -> bool: return _count(src, IDs.I.COPPER_INGOT) == 0, 10.0)
-	ok("манипулятор перенёс слитки после T1", moved, "в сундуке %d" % _count(src, IDs.I.COPPER_INGOT))
-	var rolled: bool = await wait_until(func() -> bool: return _ground_count(IDs.I.COPPER_PLATE) > 0, 10.0)
-	ok("плавильня катает медную пластину", rolled)
+	var moved: bool = await wait_until(func() -> bool: return _count(src, IDs.I.STEEL_PLATE) == 0, 10.0)
+	ok("манипулятор перенёс пластины после чертежа", moved, "в сундуке %d" % _count(src, IDs.I.STEEL_PLATE))
+	var rolled: bool = await wait_until(func() -> bool: return _ground_count(IDs.I.STEEL_WALL) > 0, 12.0)
+	ok("плавильня льёт стальную стену", rolled)
 	finish()
 
 

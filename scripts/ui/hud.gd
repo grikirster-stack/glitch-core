@@ -328,7 +328,7 @@ func _fill_key() -> void:
 	_key[4] = _hint_hash
 	_key[5] = Game.tasks_done
 	_key[6] = Game.tasks_total
-	_key[7] = Game.research
+	_key[7] = Game.blueprints.size()
 	_key[8] = Game.day_number
 	_key[9] = int(Game.time_of_day * float(CLOCK_STEPS))
 	_key[10] = int(Game.daylight() * 32.0)
@@ -596,23 +596,8 @@ func _compute_tracker() -> void:
 				tot += 1
 				if not World.terminals.has(c) or _terminal_powered(c):
 					okc += 1
-			tracker_detail = "терминалы базы под питанием %d/%d · данные %d" % [okc, tot, Game.research]
+			tracker_detail = "терминалы базы под питанием %d/%d" % [okc, tot]
 		2:
-			var opened: int = 0
-			var next: String = ""
-			for n in Tech.ORDER:
-				if n == "T0":
-					continue
-				if Tech.is_unlocked(n):
-					opened += 1
-				elif next == "":
-					next = n
-			if next == "":
-				tracker_detail = "данные %d · все узлы открыты" % Game.research
-			else:
-				tracker_detail = "данные %d/%d · узлы %d/5 · следующий %s" % [
-					Game.research, Tech.cost(next), opened, next]
-		3:
 			var have_all: int = 0
 			var miss: String = ""
 			for id in Game.relay_req:

@@ -36,7 +36,7 @@ func run() -> void:
 	ok("релей запущен", started)
 	ok("удержание — %d с" % int(Balance.RELAY_TIME), Balance.RELAY_TIME == 180.0
 			and absf(Game.relay_timer - Balance.RELAY_TIME) < 2.0, "%.1f с" % Game.relay_timer)
-	ok("этап цели 4 — удержать сигнал", Game.objective_stage == 4, Game.objective_text())
+	ok("этап цели 3 — удержать сигнал", Game.objective_stage == 3, Game.objective_text())
 
 	# Ускоряем отсчёт: 180 с проходят за RELAY_TIME / SPEED реальных секунд.
 	Game.relay_speed = SPEED

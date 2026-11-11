@@ -84,10 +84,7 @@ func _setup() -> void:
 	panel.open(scene.get("player"))
 	tabs = [0]
 	var tab_names: Array = panel.get("TABS")
-	# Вкладка «Исследования» есть только после #28.
-	for t in tab_names.size():
-		if String(tab_names[t]) == "Исследования":
-			tabs.append(t)
+	# Вкладки станков (после #169 вкладки исследований нет).
 	panel.set("station_tab", int(tabs[0]))
 
 

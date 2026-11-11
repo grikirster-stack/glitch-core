@@ -8,7 +8,8 @@ extends CanvasLayer
 ##  * релей ловит сигнал — блоки «артефактов сжатия» у излучателя: квадрат
 ##    2×2 макропикселя (по BLOCK_PX px мира), часть блоков — мозаика со сдвигом,
 ##    часть подкрашена цветом опасности или свечением спор;
-##      этап 2 «релей отзывается», этап 4 «релей запущен» (Game.objective_changed),
+##      этап 2 «релей отзывается», этап 3 при запущенном релее «релей запущен»
+##      (Game.objective_changed + Game.relay_active, #169: этапов временно три),
 ##      отметки отсчёта удержания (Game.RELAY_REMINDERS) — «приём сигнала»;
 ##  * двойник раскрыт (первый раз замер под взглядом) или ударил героя — разрыв
 ##    строк: полосы ROW_PX px мира сдвигаются вбок, с расслоением каналов;
@@ -154,7 +155,9 @@ func active_name() -> String:
 
 func _on_objective(stage: int) -> void:
 	var bp: Vector2 = World.cell_to_world(World.beacon_cell)
-	if stage == 4:
+	# Этап 3 — и сборка релея, и удержание (#169). «Релей запущен» — только когда
+	# отсчёт уже идёт; иначе этап 3 перебивает слабый телеграф вентиляции.
+	if stage == Game.OBJECTIVE_STAGES and Game.relay_active:
 		fire(Kind.RELAY_START, bp)
 	elif stage == 2:
 		fire(Kind.RELAY_SIGNAL, bp)

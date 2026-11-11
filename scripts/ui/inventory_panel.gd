@@ -1,10 +1,10 @@
 class_name InventoryPanel
 extends Control
-## Экран инвентаря: сетка предметов, крафт (ручной / плавильня / сборщик), сундуки
-## и вкладка «Исследования» — дерево технологий (ADR-001, § 4.6; issue #28).
+## Экран инвентаря: сетка предметов, крафт (ручной / плавильня / сборщик) и сундуки.
 ##
-## Запертые деревом рецепты видны в списке серыми, с подписью узла; клик по ним
-## не крафтит, а подсказывает, какой узел открыть.
+## Рецепт, чей выход в списке чертежей, без чертежа не рисуется вовсе (#169).
+## Под списком — одна строка «Чертежи: N из M». Имя следующего чертежа
+## в строку не пишется: длинное имя резалось в «…».
 ##
 ## Понятность для новичка (#69):
 ##  * сундук и инвентарь: ЛКМ — взять/положить, ПКМ — половина/по одному,
@@ -15,9 +15,10 @@ extends Control
 ##  * рецепт: по наведению — подсказка с названиями входов, «есть N / нужно M»,
 ##    станцией, временем и причиной недоступности словами; после клика —
 ##    вспышка строки и строка обратной связи внизу панели (уведомления HUD
-##    панель закрывает);
-##  * цель «Релей-ядро» — сетка «иконка + название + есть/нужно» в границах
-##    блока; не влезает — компактный режим (иконка + счёт, имя — в подсказке).
+##    панель закрывает).
+## Счётчик деталей релея (микросхема, энергоячейка, антенна) с панели снят
+## (#169): дерево данных и этот список — не язык чертежей. Прогресс сдачи
+## остаётся в трекере HUD и в тексте у ядра.
 ## Все подписи идут через _text(): она обрезает строку с «…» по ширине шрифта
 ## и, если включён text_audit, записывает прямоугольник строки — сценарий
 ## inventory_text_fit проверяет, что ничего не вылезает за свои рамки.
@@ -34,11 +35,6 @@ const CHEST_COLS: int = 8
 const RECIPE_H: int = 46
 ## Сколько строк рецептов влезает в панель (дальше — колесо мыши).
 const RECIPE_ROWS: int = 7
-## Карточка узла во вкладке «Исследования».
-const CARD_H: int = 64
-const CARD_GAP: int = 4
-## Узлы, у которых есть карточки (T0 открыт с начала, карточки нет).
-const CARD_NODES: Array = ["T1", "T2", "T3", "T4", "T5"]
 ## Ближе этого (px) к станку клик по рецепту станка загружает в него сырьё.
 const STATION_REACH: float = 90.0
 ## Сколько горит вспышка строки рецепта и держится строка обратной связи, мс.
@@ -47,9 +43,8 @@ const TOAST_MS: int = 4500
 ## Ширина всплывающей подсказки.
 const TIP_W: float = 360.0
 
-const TABS: Array = ["Ручной крафт", "Плавильня", "Сборщик", "Исследования"]
-const STATIONS: Array = ["hand", "smelter", "assembler", ""]
-const RESEARCH_TAB: int = 3
+const TABS: Array = ["Ручной крафт", "Плавильня", "Сборщик"]
+const STATIONS: Array = ["hand", "smelter", "assembler"]
 ## Вид машины станции и падежи её названия для фраз подсказок.
 const STATION_INFO: Dictionary = {
 	"hand": {"kind": "", "name": "руками"},
@@ -58,7 +53,7 @@ const STATION_INFO: Dictionary = {
 			"made": "Плавильни нет: сделай её в «Ручном крафте» и поставь (ПКМ)."},
 	"assembler": {"kind": "Assembler", "name": "сборщик", "Name": "Сборщик", "to": "к сборщику",
 			"in": "в сборщик", "need": "Нужен сборщик рядом", "it": "Он", "self": "сам",
-			"made": "Сборщика нет: сделай его в «Ручном крафте» (T1) и поставь (ПКМ)."},
+			"made": "Сборщика нет: сделай его в «Ручном крафте» и поставь (ПКМ)."},
 }
 
 const C_TITLE: Color = Color(0.85, 0.93, 1.0)
@@ -81,7 +76,7 @@ var held: ItemStack:
 		return _hand[0]
 	set(v):
 		_hand[0] = v
-var station_tab: int = 0            ## 0 — ручной, 1 — плавильня, 2 — сборщик, 3 — исследования
+var station_tab: int = 0            ## 0 — ручной, 1 — плавильня, 2 — сборщик
 var scroll: int = 0
 ## Последняя позиция мыши в координатах панели (из _gui_input).
 var mouse_pos: Vector2 = Vector2(-1, -1)
@@ -95,7 +90,6 @@ var text_audit = null
 ## не меняется, а панель перерисовывается на каждое движение мыши. Ключ сверки —
 ## размер DB.recipes (вдруг кто-то допишет рецепт на ходу).
 var _recipes_cache: Dictionary = {}     ## station -> Array
-var _node_desc: Dictionary = {}         ## node -> "Сборщик, Манипулятор, …"
 var _source: Dictionary = {}            ## id предмета -> «где взять»
 var _cache_size: int = -1
 
@@ -113,8 +107,6 @@ var _tag: String = ""                   ## раздел для аудита по
 ## Станки рядом и вообще в мире (обновляет _scan_stations): station -> MachineBase / bool.
 var _near: Dictionary = {}
 var _counts: Dictionary = {}            ## id -> сколько в инвентаре (на кадр)
-var _cells: Array = []                  ## ячейки цели этого кадра
-var _cells_key: int = -1
 var _row_named: Dictionary = {}         ## имя рецепта -> входы с названиями влезают
 var _built: Dictionary = {}
 ## Сенсорный тап по списку рецептов (#81): где нажали (x < 0 — нет) и сколько
@@ -130,6 +122,7 @@ func _ready() -> void:
 	visible = false
 	set_process(false)
 	_font = ThemeDB.fallback_font
+	Game.blueprint_changed.connect(func(_n: String) -> void: _cache_size = -1)
 
 
 func open(p: Player) -> void:
@@ -216,7 +209,7 @@ func _gui_input(event: InputEvent) -> void:
 		queue_redraw()
 
 
-## Список рецептов и карточек исследований: тут палец листает (#81).
+## Список рецептов: тут палец листает (#81).
 func _list_rect() -> Rect2:
 	return Rect2(_panel_pos() + Vector2(380, 104), Vector2(424, RECIPE_ROWS * RECIPE_H + 12))
 
@@ -284,10 +277,6 @@ func _inv_slot_rect(i: int) -> Rect2:
 		col = k % Inventory.HOTBAR_MAX
 	var y: float = _inv_y() + 6 + row * INV_SLOT + (HOTBAR_GAP if row > 0 else 0)
 	return Rect2(_panel_pos() + Vector2(16 + col * INV_SLOT, y), Vector2(INV_SLOT - 4, INV_SLOT - 4))
-
-
-func _goal_rect() -> Rect2:
-	return Rect2(_panel_pos() + Vector2(16, 418), Vector2(356, 76))
 
 
 ## Строка рецепта row (0…RECIPE_ROWS-1) на экране.
@@ -437,25 +426,18 @@ func _draw() -> void:
 		_text(r.position + Vector2(10, 20), String(TABS[i]), r.size.x - 30, UI.FONT["small"],
 				Color(1, 1, 1) if active else Color(0.7, 0.75, 0.85), HORIZONTAL_ALIGNMENT_LEFT, r)
 		var dot: Vector2 = r.position + Vector2(r.size.x - 12, r.size.y * 0.5)
-		# Есть что открыть — огонёк на вкладке «Исследования».
-		if i == RESEARCH_TAB and _any_unlockable():
-			draw_circle(dot, 4.0, Color(0.4, 0.95, 1.0))
 		# Станок рядом — зелёный огонёк на его вкладке.
-		elif i == 1 or i == 2:
+		if i == 1 or i == 2:
 			if _near.get(String(STATIONS[i])) != null:
 				draw_circle(dot, 4.0, C_OK)
 
 	_draw_chest(origin)
 	_draw_inventory(origin)
 
-	# ---- Рецепты или исследования ------------------------------------------
+	# ---- Рецепты -------------------------------------------------------------
 	var rx: float = origin.x + 380
-	if station_tab == RESEARCH_TAB:
-		_draw_research(rx, origin, _font)
-	else:
-		_draw_recipes(rx, origin)
+	_draw_recipes(rx, origin)
 
-	_draw_goal()
 	_draw_bottom(origin)
 	_draw_held()
 	_draw_tooltip()
@@ -538,7 +520,10 @@ func _draw_recipes(rx: float, origin: Vector2) -> void:
 		_draw_recipe(_recipe_row_rect(i - first), recipes[i])
 	_tag = "recipes"
 	var y: float = origin.y + 116 + RECIPE_ROWS * RECIPE_H + 6
+	# Иконку следующего чертежа не рисуем: она была чужим предметом рядом со строкой.
+	_text(Vector2(rx, y), _blueprint_line(), 424, UI.FONT["small"], Color(0.45, 0.95, 1.0))
 	if recipes.size() > RECIPE_ROWS:
+		y += 16
 		_text(Vector2(rx, y), "%d–%d из %d · колесо мыши — листать" % [first + 1, last, recipes.size()],
 				424, UI.FONT["small"], C_DIM)
 	# Пояснение вкладки: как работает этот вид крафта.
@@ -567,105 +552,6 @@ func _station_line(station: String) -> Array:
 	if bool(_built.get(station, false)):
 		return ["Подойди %s ближе (≤ 5 клеток) — иначе клик не сработает." % String(si["to"]), C_WARN]
 	return [String(si["made"]), C_WARN]
-
-
-func _draw_goal() -> void:
-	_tag = "goal"
-	var goal: Rect2 = _goal_rect()
-	var req: Dictionary = _goal_req()
-	draw_rect(goal, Color(0.08, 0.14, 0.18, 0.9))
-	draw_rect(goal, Color(0.3, 0.8, 0.95, 0.5), false, 1.0)
-	var done: int = 0
-	for id in req.keys():
-		if _have(id) >= int(req[id]):
-			done += 1
-	var right: String = "детали %d/%d" % [done, req.size()]
-	var rw: float = _w(right, UI.FONT["small"])
-	# Заголовок — этап цели (#32): «ЦЕЛЬ 3/4: СОБРАТЬ РЕЛЕЙ»; ниже — детали релея.
-	_text(goal.position + Vector2(8, 16), Game.objective_text(), goal.size.x - rw - 24, UI.FONT["small"], Color(0.4, 0.9, 1.0),
-			HORIZONTAL_ALIGNMENT_LEFT, goal)
-	_text(goal.position + Vector2(goal.size.x - rw - 8, 16), right, rw, UI.FONT["small"],
-			C_OK if done == req.size() else C_DIM, HORIZONTAL_ALIGNMENT_LEFT, goal)
-	for cell in _goal_cells():
-		var r: Rect2 = cell["rect"]
-		var id: int = int(cell["id"])
-		if id == IDs.I.NONE:
-			_text(r.position + Vector2(2, 12), String(cell["more"]), r.size.x - 2, UI.FONT["small"], C_DIM,
-					HORIZONTAL_ALIGNMENT_LEFT, goal)
-			continue
-		var need: int = int(req[id])
-		var have: int = _have(id)
-		var col: Color = C_OK if have >= need else Color(1.0, 0.6, 0.45)
-		if r.has_point(mouse_pos):
-			draw_rect(r, Color(1, 1, 1, 0.06))
-		_icon(id, Rect2(r.position + Vector2(0, 1), Vector2(14, 14)))
-		var cnt: String = "%d/%d" % [mini(have, need), need]   ## прогресс цели: сверх нужного не считаем
-		var cw: float = _w(cnt, UI.FONT["small"])
-		_text(Vector2(r.end.x - cw - 2, r.position.y + 12), cnt, cw, UI.FONT["small"], col, HORIZONTAL_ALIGNMENT_LEFT, goal)
-		if bool(cell["named"]):
-			# Длинное название сначала мельчает на кегль, и только потом — «…».
-			var nm: String = DB.item_name(id)
-			var nw: float = r.size.x - 18 - cw - 6
-			var fs: int = UI.FONT["small"]
-			_text(r.position + Vector2(18, 12), nm, nw, fs,
-					Color(col, 0.9).lerp(C_TEXT, 0.35), HORIZONTAL_ALIGNMENT_LEFT, goal)
-
-
-## Требования цели — тот же источник, что у запуска релея (Game.try_finish):
-## Game.relay_req из DB/Balance. Этапы релея (#32) поменяют словарь — сетка
-## подстроится сама.
-func _goal_req() -> Dictionary:
-	return Game.relay_req
-
-
-## Ячейки цели: [{id, rect, named, more}]. Сначала пробуем две колонки
-## «иконка + название + есть/нужно»; не влезает по высоте или названия
-## обрезались бы до огрызка — компактная сетка «иконка + счёт» (название —
-## в подсказке по наведению). Совсем много — последняя ячейка «+N».
-func _goal_cells() -> Array:
-	var goal: Rect2 = _goal_rect()
-	var req: Dictionary = _goal_req()
-	var key: int = hash([req, goal.position])
-	if key == _cells_key:
-		return _cells
-	_cells = _goal_cells_build(goal, req)
-	_cells_key = key
-	return _cells
-
-
-func _goal_cells_build(goal: Rect2, req: Dictionary) -> Array:
-	var ids: Array = req.keys()
-	var n: int = ids.size()
-	var area: Rect2 = Rect2(goal.position + Vector2(6, 22), Vector2(goal.size.x - 12, goal.size.y - 26))
-	var row_h: float = 16.0
-	var max_rows: int = maxi(1, int(area.size.y / row_h))
-	var out: Array = []
-	if n == 0:
-		return out
-	var cols: int = 2
-	var cell_w: float = (area.size.x - 6.0) / 2.0
-	var named: bool = ceili(float(n) / 2.0) <= max_rows
-	if named:
-		# Название должно остаться читаемым: хотя бы 70 px после счётчика.
-		for id in ids:
-			var cw: float = _w("%d/%d" % [int(req[id]), int(req[id])], UI.FONT["small"])
-			if cell_w - 18.0 - cw - 4.0 < 70.0:
-				named = false
-				break
-	if not named:
-		cell_w = 66.0
-		cols = maxi(1, int((area.size.x + 6.0) / (cell_w + 6.0)))
-	var cap: int = cols * max_rows
-	for k in n:
-		var col: int = k % cols
-		var row: int = int(k / cols)
-		var r: Rect2 = Rect2(area.position + Vector2(col * (cell_w + 6.0), row * row_h),
-				Vector2(cell_w, row_h - 1.0))
-		if n > cap and k == cap - 1:
-			out.append({"id": IDs.I.NONE, "rect": r, "named": false, "more": "+%d" % (n - cap + 1)})
-			break
-		out.append({"id": int(ids[k]), "rect": r, "named": named, "more": ""})
-	return out
 
 
 func _draw_bottom(origin: Vector2) -> void:
@@ -770,9 +656,8 @@ func _draw_recipe(r: Rect2, rec: Dictionary) -> void:
 	_tag = "recipe"
 	var out_id: int = int(rec["out"])
 	var code: String = _recipe_code(rec)
-	var locked: bool = code == "locked"
 	var can: bool = code == "ok"
-	draw_rect(r, Color(0.07, 0.08, 0.10, 0.9) if locked else Color(0.09, 0.11, 0.14, 0.9))
+	draw_rect(r, Color(0.09, 0.11, 0.14, 0.9))
 	if r.has_point(mouse_pos) and held.is_empty():
 		draw_rect(r, Color(1, 1, 1, 0.05))
 	draw_rect(r, Color(0.4, 0.9, 0.5, 0.7) if can else Color(1, 1, 1, 0.15), false, 1.0)
@@ -783,16 +668,12 @@ func _draw_recipe(r: Rect2, rec: Dictionary) -> void:
 		var fc: Color = C_OK if _flash_ok else C_BAD
 		draw_rect(r, Color(fc, 0.30 * a))
 		draw_rect(r, Color(fc, 0.9 * a), false, 2.0)
-	# Запертый рецепт — весь серый: иконки притушены, справа — узел, который его открывает.
-	var dim: Color = Color(1, 1, 1, 0.35) if locked else Color(1, 1, 1, 1)
+	var dim: Color = Color(1, 1, 1, 1)
 	_icon(out_id, Rect2(r.position + Vector2(6, 6), Vector2(28, 28)), dim)
 	# Ярлык состояния справа.
 	var tag: String = "клик — сделать" if String(rec["station"]) == "hand" else "клик — загрузить"
 	var tag_col: Color = C_OK
 	match code:
-		"locked":
-			tag = "нужен " + String(rec.get("tech", "T0"))
-			tag_col = Color(C_WARN, 0.85)
 		"missing":
 			tag = "не хватает"
 			tag_col = C_BAD
@@ -802,8 +683,6 @@ func _draw_recipe(r: Rect2, rec: Dictionary) -> void:
 	var tw: float = minf(_w(tag, UI.FONT["small"]), 170.0)
 	_text(Vector2(r.end.x - tw - 8, r.position.y + 17), tag, tw, UI.FONT["small"], tag_col, HORIZONTAL_ALIGNMENT_LEFT, r)
 	var name_col: Color = Color(0.95, 0.97, 1.0) if can else Color(0.72, 0.75, 0.82)
-	if locked:
-		name_col = Color(0.48, 0.50, 0.55)
 	var title: String = String(rec["name"])
 	if int(rec["amount"]) > 1:
 		title += " ×%d" % int(rec["amount"])
@@ -823,8 +702,6 @@ func _draw_recipe(r: Rect2, rec: Dictionary) -> void:
 		var need: int = int(rec["in"][id])
 		var have: int = _have(id)
 		var col: Color = C_OK if have >= need else C_BAD
-		if locked:
-			col = Color(0.5, 0.52, 0.56)
 		_icon(id, Rect2(Vector2(gx, r.position.y + 23), Vector2(14, 14)), dim)
 		gx += 18
 		var label: String = "%d/%d" % [mini(have, 999), need]
@@ -854,17 +731,11 @@ func _hover_target() -> Dictionary:
 	for i in TABS.size():
 		if _tab_rect(i).has_point(p):
 			return {"kind": "tab", "i": i}
-	if station_tab != RESEARCH_TAB:
-		var recipes: Array = _recipes(String(STATIONS[station_tab]))
-		var first: int = mini(scroll, _max_scroll())
-		for i in range(first, mini(recipes.size(), first + RECIPE_ROWS)):
-			if _recipe_row_rect(i - first).has_point(p):
-				return {"kind": "recipe", "rec": recipes[i]}
-	for cell in _goal_cells():
-		if (cell["rect"] as Rect2).has_point(p) and int(cell["id"]) != IDs.I.NONE:
-			return {"kind": "goal", "id": int(cell["id"])}
-	if _goal_rect().has_point(p):
-		return {"kind": "goal_box"}
+	var recipes: Array = _recipes(String(STATIONS[station_tab]))
+	var first: int = mini(scroll, _max_scroll())
+	for i in range(first, mini(recipes.size(), first + RECIPE_ROWS)):
+		if _recipe_row_rect(i - first).has_point(p):
+			return {"kind": "recipe", "rec": recipes[i]}
 	return {}
 
 
@@ -901,21 +772,10 @@ func _tooltip_for(t: Dictionary) -> Array:
 				"Крафт руками: без станка, сразу в инвентарь.",
 				"Плавильня: встань рядом с построенной плавильней — клик загружает в неё сырьё, плавит она сама.",
 				"Сборщик: встань рядом с построенным сборщиком — клик загружает в него детали, собирает он сам.",
-				"Исследования: открывай узлы за данные — появятся новые рецепты и постройки.",
 			]
 			out.append(_line(String(tips[int(t["i"])]), C_TEXT))
 		"recipe":
 			out = _recipe_tooltip(t["rec"])
-		"goal":
-			var id: int = int(t["id"])
-			var need: int = int(_goal_req()[id])
-			var have: int = _have(id)
-			out.append(_line(DB.item_name(id), C_TEXT, id))
-			out.append(_line("есть %d / нужно %d" % [have, need], C_OK if have >= need else C_BAD))
-			out.append(_line("Где взять: " + _source_of(id), C_DIM))
-		"goal_box":
-			out.append(_line(Game.objective_text(), Color(0.4, 0.9, 1.0)))
-			out.append(_line("Ниже — детали релея: собери их в инвентаре, подойди к релей-ядру в центре базы и удерживай E 3 с.", C_TEXT))
 	return out
 
 
@@ -936,13 +796,11 @@ func _recipe_tooltip(rec: Dictionary) -> Array:
 		out.append(_line("Станция: руками · сразу", C_DIM))
 	else:
 		out.append(_line("Станция: %s · ≈ %.1f с в станке" % [String(STATION_INFO[station]["name"]), float(rec["time"])], C_DIM))
-	var locked: bool = not DB.recipe_unlocked(rec)
 	for id in rec["in"].keys():
 		var need: int = int(rec["in"][id])
 		var have: int = _have(id)
 		var col: Color = C_OK if have >= need else C_BAD
-		out.append(_line("%s — есть %d / нужно %d" % [DB.item_name(id), have, need],
-				Color(0.6, 0.62, 0.66) if locked else col, int(id)))
+		out.append(_line("%s — есть %d / нужно %d" % [DB.item_name(id), have, need], col, int(id)))
 	# Все причины, а не только первая: игрок сразу видит, что чинить.
 	var reasons: Array = _recipe_problems(rec)
 	for r in reasons:
@@ -999,14 +857,11 @@ func _draw_tooltip() -> void:
 # ---------------------------------------------------------------- СОСТОЯНИЕ РЕЦЕПТА
 
 ## Можно ли сделать рецепт прямо сейчас: {code, short, reason}.
-## code: ok | locked | far | none | missing. reason — первая причина словами.
+## code: ok | far | none | missing. Рецепт без чертежа в список не попадает (#169).
 func _recipe_status(rec: Dictionary) -> Dictionary:
 	var code: String = _recipe_code(rec)
 	var station: String = String(rec["station"])
 	match code:
-		"locked":
-			var node: String = String(rec.get("tech", "T0"))
-			return {"code": code, "short": "нужен %s" % node, "reason": _lock_text(node)}
 		"far", "none":
 			return {"code": code, "short": "станок далеко" if code == "far" else "нет станка",
 					"reason": _station_text(station)}
@@ -1018,8 +873,6 @@ func _recipe_status(rec: Dictionary) -> Dictionary:
 ## Только код состояния — без строк (строка рецепта зовёт его каждый кадр).
 func _recipe_code(rec: Dictionary) -> String:
 	var station: String = String(rec["station"])
-	if not DB.recipe_unlocked(rec):
-		return "locked"
 	if station != "hand" and _near.get(station) == null:
 		return "far" if bool(_built.get(station, false)) else "none"
 	for id in rec["in"].keys():
@@ -1032,8 +885,6 @@ func _recipe_code(rec: Dictionary) -> String:
 func _recipe_problems(rec: Dictionary) -> Array:
 	var out: Array = []
 	var station: String = String(rec["station"])
-	if not DB.recipe_unlocked(rec):
-		out.append(_lock_text(String(rec.get("tech", "T0"))))
 	if station != "hand" and _near.get(station) == null:
 		out.append(_station_text(station))
 	var miss: Array = _missing(rec)
@@ -1042,17 +893,13 @@ func _recipe_problems(rec: Dictionary) -> Array:
 	return out
 
 
-func _lock_text(node: String) -> String:
-	return "Заперто: нужен узел %s — вкладка «Исследования»." % Tech.title(node)
-
-
 func _station_text(station: String) -> String:
 	var si: Dictionary = STATION_INFO[station]
 	if bool(_built.get(station, false)):
 		return "Подойди %s ближе (≤ 5 клеток)." % String(si["to"])
 	if station == "smelter":
 		return "%s (≤ 5 клеток): сделай её во вкладке «Ручной крафт» и поставь (ПКМ)." % String(si["need"])
-	return "%s (≤ 5 клеток): сделай его во вкладке «Ручной крафт» (узел T1) и поставь (ПКМ)." % String(si["need"])
+	return "%s (≤ 5 клеток): сделай его во вкладке «Ручной крафт» и поставь (ПКМ)." % String(si["need"])
 
 
 ## Чего не хватает: ["Медная руда (ещё 1)", …].
@@ -1074,109 +921,16 @@ func _source_of(id: int) -> String:
 			if int(r["out"]) != id:
 				continue
 			var p: String = String(STATION_INFO[String(r["station"])]["name"])
-			var node: String = String(r.get("tech", "T0"))
-			if node != "T0":
-				p += " (%s)" % node
 			if not parts.has(p):
 				parts.append(p)
 		_source[id] = ", ".join(parts) if not parts.is_empty() else "добыча и тайники руин"
 	return String(_source[id])
 
 
-# ---------------------------------------------------------------- ИССЛЕДОВАНИЯ
-
-## Вкладка «Исследования»: пять карточек T1…T5, у каждой — что открывает узел
-## и кнопка «Открыть (N данных)».
-func _draw_research(rx: float, origin: Vector2, _f: Font) -> void:
-	_tag = "research"
-	var data: String = "Данные: %d" % Game.research
-	var dw: float = _w(data, UI.FONT["small"])
-	_text(Vector2(rx, origin.y + 92), "ИССЛЕДОВАНИЯ", 424 - dw - 12, UI.FONT["small"], C_HEAD)
-	_text(Vector2(rx + 424 - dw, origin.y + 92), data, dw, UI.FONT["small"], Color(0.45, 0.95, 1.0))
-	for i in CARD_NODES.size():
-		_draw_card(i)
-	var ly: float = _card_rect(CARD_NODES.size() - 1).end.y + 18
-	for line in _wrap("Данные дают задания на терминалах (E у запитанного терминала) и анализатор. Узлы открываются по порядку.", 424, UI.FONT["small"], 2):
-		_text(Vector2(rx, ly), line, 424, UI.FONT["small"], Color(C_DIM, 0.85))
-		ly += 16
-
-
-func _draw_card(i: int) -> void:
-	_tag = "card"
-	var node: String = String(CARD_NODES[i])
-	var r: Rect2 = _card_rect(i)
-	var open: bool = Tech.is_unlocked(node)
-	var can: bool = Tech.can_unlock(node)
-	draw_rect(r, Color(0.07, 0.15, 0.12, 0.92) if open else Color(0.09, 0.11, 0.14, 0.9))
-	var edge: Color = Color(1, 1, 1, 0.15)
-	if open:
-		edge = Color(0.4, 0.9, 0.5, 0.55)
-	elif can:
-		edge = Color(0.4, 0.85, 1.0, 0.85)
-	draw_rect(r, edge, false, 1.0)
-	var title_col: Color = Color(0.7, 0.73, 0.8)
-	if open:
-		title_col = Color(0.55, 0.95, 0.65)
-	elif can:
-		title_col = Color(0.95, 0.97, 1.0)
-	var b: Rect2 = _card_button_rect(i)
-	var text_w: float = b.position.x - r.position.x - 16
-	_text(r.position + Vector2(8, 18), Tech.title(node), text_w, UI.FONT["small"], title_col, HORIZONTAL_ALIGNMENT_LEFT, r)
-	var y: float = r.position.y + 35
-	for line in _wrap(_desc(node), text_w, UI.FONT["small"], 2):
-		_text(Vector2(r.position.x + 8, y), line, text_w, UI.FONT["small"], C_DIM, HORIZONTAL_ALIGNMENT_LEFT, r)
-		y += 15
-	# Кнопка
-	var label: String = "Открыть (%d данных)" % Tech.cost(node)
-	var b_bg: Color = Color(0.11, 0.13, 0.17)
-	var b_fg: Color = Color(0.5, 0.53, 0.6)
-	if open:
-		label = "Открыто"
-		b_bg = Color(0.08, 0.2, 0.13)
-		b_fg = Color(0.55, 0.95, 0.65)
-	elif can:
-		b_bg = Color(0.12, 0.3, 0.4)
-		b_fg = Color(0.9, 0.98, 1.0)
-	elif not Tech.is_unlocked(Tech.prerequisite(node)):
-		label = "Сначала %s" % Tech.prerequisite(node)
-	draw_rect(b, b_bg)
-	draw_rect(b, Color(b_fg, 0.5), false, 1.0)
-	_text(b.position + Vector2(4, 19), label, b.size.x - 8, UI.FONT["small"], b_fg, HORIZONTAL_ALIGNMENT_CENTER, b)
-
-
-func _card_rect(i: int) -> Rect2:
-	var o: Vector2 = _panel_pos()
-	return Rect2(Vector2(o.x + 380, o.y + 104 + i * (CARD_H + CARD_GAP)), Vector2(424, CARD_H))
-
-
-## Кнопка «Открыть» карточки i: рисование и клик берут её отсюда.
-func _card_button_rect(i: int) -> Rect2:
-	var r: Rect2 = _card_rect(i)
-	return Rect2(Vector2(r.end.x - 152, r.position.y + 30), Vector2(144, 28))
-
-
-## Есть ли узел, который можно открыть прямо сейчас (огонёк на вкладке).
-func _any_unlockable() -> bool:
-	for n in CARD_NODES:
-		if Tech.can_unlock(String(n)):
-			return true
-	return false
-
-
-## Нажата кнопка карточки: открыть узел или сказать, почему нельзя.
-func _unlock_card(i: int) -> void:
-	var node: String = String(CARD_NODES[i])
-	if Tech.is_unlocked(node):
-		return
-	if Net.is_client() and Tech.can_unlock(node):   # СЕТЬ (ADR-002): узел открывает хост, всем — TECH
-		InvOps.unlock(node, _on_net_unlock.bind(node))
-		return
-	if Tech.unlock(node):
-		Sfx.play("craft", -4.0, 0.8)
-		_feedback("Открыто: %s — новые рецепты в крафте." % Tech.title(node), Color(0.45, 0.9, 1.0), {}, true, false)
-	else:
-		Game.notify(Tech.lock_reason(node) + ".", Color(1.0, 0.6, 0.4))
-		_feedback(Tech.lock_reason(node) + ".", Color(1.0, 0.6, 0.4), {}, false, false)
+## Одна строка про чертежи (#169): сколько уже есть. Имя следующего
+## сюда не входит — длинное («Решётка вентиляции») резалось в «…».
+func _blueprint_line() -> String:
+	return "Чертежи: %d из %d" % [Game.blueprints.size(), Game.blueprint_total()]
 
 
 # ---------------------------------------------------------------- КЭШ РЕЦЕПТОВ
@@ -1186,7 +940,6 @@ func _check_cache() -> void:
 		return
 	_cache_size = DB.recipes.size()
 	_recipes_cache = {}
-	_node_desc = {}
 	_source = {}
 
 
@@ -1194,24 +947,15 @@ func _check_cache() -> void:
 func _recipes(station: String) -> Array:
 	_check_cache()
 	if not _recipes_cache.has(station):
-		_recipes_cache[station] = DB.recipes_for(station)
+		var shown: Array = []
+		for r in DB.recipes_for(station):
+			if DB.recipe_unlocked(r):
+				shown.append(r)
+		_recipes_cache[station] = shown
 	return _recipes_cache[station]
 
 
-## Что открывает узел: названия его рецептов через запятую.
-func _desc(node: String) -> String:
-	_check_cache()
-	if not _node_desc.has(node):
-		var names: PackedStringArray = PackedStringArray()
-		for r in Tech.recipes_of(node):
-			names.append(String(r["name"]))
-		_node_desc[node] = ", ".join(names) if not names.is_empty() else "—"
-	return String(_node_desc[node])
-
-
 func _max_scroll() -> int:
-	if station_tab == RESEARCH_TAB:
-		return 0
 	return maxi(0, _recipes(String(STATIONS[station_tab])).size() - RECIPE_ROWS)
 
 
@@ -1247,22 +991,14 @@ func _click(pos: Vector2, right: bool, shift: bool = false) -> void:
 				_click_inv(i, right)
 			queue_redraw()
 			return
-	if station_tab == RESEARCH_TAB:
-		# Карточки исследований
-		for i in CARD_NODES.size():
-			if _card_button_rect(i).has_point(pos):
-				_unlock_card(i)
-				queue_redraw()
-				return
-	else:
-		# Рецепты: те же строки, что нарисованы (не больше RECIPE_ROWS).
-		var recipes: Array = _recipes(String(STATIONS[station_tab]))
-		var first: int = mini(scroll, _max_scroll())
-		for i in range(first, mini(recipes.size(), first + RECIPE_ROWS)):
-			if _recipe_row_rect(i - first).has_point(pos):
-				_craft(recipes[i])
-				queue_redraw()
-				return
+	# Рецепты: те же строки, что нарисованы (не больше RECIPE_ROWS).
+	var recipes: Array = _recipes(String(STATIONS[station_tab]))
+	var first: int = mini(scroll, _max_scroll())
+	for i in range(first, mini(recipes.size(), first + RECIPE_ROWS)):
+		if _recipe_row_rect(i - first).has_point(pos):
+			_craft(recipes[i])
+			queue_redraw()
+			return
 	# Вкладки
 	for i in TABS.size():
 		if _tab_rect(i).has_point(pos):
@@ -1392,8 +1128,7 @@ func _craft(rec: Dictionary) -> void:
 	_count_inventory()
 	var st: Dictionary = _recipe_status(rec)
 	if String(st["code"]) != "ok":
-		_feedback(String(st["reason"]), C_WARN if String(st["code"]) == "locked" else Color(1.0, 0.6, 0.4),
-				rec, false, true)
+		_feedback(String(st["reason"]), Color(1.0, 0.6, 0.4), rec, false, true)
 		return
 	var station: String = String(rec["station"])
 	if Net.is_client():   # СЕТЬ (ADR-002): крафт выполняет хост у прокси, итог — ответом
@@ -1534,10 +1269,4 @@ func _on_net_craft(ok: bool, text: String, rec: Dictionary) -> void:
 		Sfx.play("craft", -6.0)
 
 
-func _on_net_unlock(ok: bool, text: String, node: String) -> void:
-	if ok:
-		Sfx.play("craft", -4.0, 0.8)
-		_feedback("Открыто: %s — новые рецепты в крафте." % Tech.title(node), Color(0.45, 0.9, 1.0), {}, true, false)
-	elif text != "":
-		Game.notify(text, Color(1.0, 0.6, 0.4))
-		_feedback(text, Color(1.0, 0.6, 0.4), {}, false, false)
+

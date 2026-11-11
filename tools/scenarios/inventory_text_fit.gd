@@ -3,15 +3,14 @@ extends ScenarioBase
 ##
 ## Панель рисует каждую подпись через _text(): при включённом text_audit туда
 ## пишется прямоугольник «чернил» строки (ширина — Font.get_string_size) и рамка,
-## в которую строка обязана влезть (строка рецепта, блок цели, кнопка, вкладка,
-## подсказка). Проверяем на 1280×720 и 960×540 (размер панели задаётся явно),
+## в которую строка обязана влезть (строка рецепта, кнопка, вкладка, подсказка).
+## Проверяем на 1280×720 и 960×540 (размер панели задаётся явно),
 ## на всех вкладках, с сундуком тайника с самым длинным именем, с наведением
-## на рецепты, ячейки и цель:
+## на рецепты и ячейки:
 ##  * каждая подпись внутри своей рамки и внутри панели;
 ##  * никакие две подписи не налезают друг на друга (кроме подсказки поверх);
-##  * подсказка целиком на экране;
-##  * цель «Релей-ядро» — с названиями (не компактная) и в границах блока;
-##    10 требований — компактная сетка, тоже в границах и без наложений.
+##  * подсказка целиком на экране.
+## Счётчик деталей релея с панели снят (#169) — его рамки больше нет.
 
 const SIZES: Array = [Vector2(1280, 720), Vector2(960, 540)]
 
@@ -39,16 +38,16 @@ func run() -> void:
 	for e in [[IDs.I.IRON_PLATE, 99], [IDs.I.STEEL_PLATE, 7], [IDs.I.COPPER_ORE, 99], [IDs.I.CRYSTAL, 3],
 			[IDs.I.IRON_INGOT, 1]]:
 		player.inv.add(int(e[0]), int(e[1]))
-	Game.research = 7
+	Game.give_next_blueprint()
 	UI.open_chest(best)
 	await wait(0.2)
 	ok("панель открыта у тайника", panel.visible and panel.chest == best)
-	ok("цель показана с названиями (не компактно)", not panel._goal_cells().is_empty()
-			and bool(panel._goal_cells()[0]["named"]))
+	ok("счётчик деталей релея с панели снят", not panel.has_method("_goal_cells")
+			and not panel.has_method("_draw_goal"))
 
 	for sz in SIZES:
 		panel.size = sz
-		for tab in 4:
+		for tab in InventoryPanel.TABS.size():
 			panel.station_tab = tab
 			panel.scroll = 0
 			for hover in _hovers():
@@ -58,45 +57,18 @@ func run() -> void:
 	# Обрезка — запасной вариант; что обрезалось, печатаем для глаз.
 	print("  обрезано с «…» (разных строк %d): %s" % [cut_texts.size(), " | ".join(cut_texts)])
 
-	# Цель с 10 требованиями (этапы релея #32 могут их добавить): компактно, в рамке.
-	var saved: Dictionary = Game.relay_req
-	var big: Dictionary = {}
-	for id in [IDs.I.IRON_PLATE, IDs.I.STEEL_PLATE, IDs.I.CIRCUIT, IDs.I.POWER_CELL, IDs.I.RELAY_ANTENNA,
-			IDs.I.COPPER_PLATE, IDs.I.GLASS, IDs.I.CRYSTAL_BLOCK, IDs.I.IRON_BLOCK, IDs.I.COPPER_BLOCK]:
-		big[id] = 120
-	Game.relay_req = big
-	fails.clear()
-	panel.size = SIZES[0]
-	await _audit("цель из 10 требований", Vector2(-1, -1))
-	var cells: Array = panel._goal_cells()
-	var goal: Rect2 = panel._goal_rect()
-	var inside: bool = true
-	for c in cells:
-		if not goal.encloses(c["rect"]):
-			inside = false
-	ok("10 требований: компактная сетка в границах блока", not cells.is_empty() and not bool(cells[0]["named"])
-			and inside and cells.size() == big.size(), "ячеек %d" % cells.size())
-	ok("10 требований: подписи не вылезают и не налезают", fails.is_empty(), "; ".join(fails.slice(0, 4)))
-	Game.relay_req = saved
-
 	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	panel.close()
 	await wait(0.1)
 	finish()
 
 
-## Куда навести мышь: никуда, первая и последняя строка рецепта (или кнопка
-## карточки), ячейка цели, ячейка сундука, правый нижний угол инвентаря.
+## Куда навести мышь: никуда, первая и последняя строка рецепта,
+## ячейка сундука, правый нижний угол инвентаря.
 func _hovers() -> Array:
 	var out: Array = [Vector2(-1, -1)]
-	if panel.station_tab == InventoryPanel.RESEARCH_TAB:
-		out.append(panel._card_button_rect(4).get_center())
-	else:
-		out.append(panel._recipe_row_rect(0).position + Vector2(60, 12))
-		out.append(panel._recipe_row_rect(InventoryPanel.RECIPE_ROWS - 1).end - Vector2(20, 8))
-	var cells: Array = panel._goal_cells()
-	if not cells.is_empty():
-		out.append((cells[cells.size() - 1]["rect"] as Rect2).get_center())
+	out.append(panel._recipe_row_rect(0).position + Vector2(60, 12))
+	out.append(panel._recipe_row_rect(InventoryPanel.RECIPE_ROWS - 1).end - Vector2(20, 8))
 	out.append(panel._chest_slot_rect(0).get_center())
 	out.append(panel._inv_slot_rect(player.inv.size - 1).get_center())
 	return out

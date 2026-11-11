@@ -52,18 +52,23 @@ func run() -> void:
 			"%d → %d (макс %d)" % [n0, get_tree().get_node_count(), n_max])
 
 	var bp: Vector2 = World.cell_to_world(World.beacon_cell)
-	# --- 2. Старт релея (этап 4) — блоки у излучателя.
+	# --- 2. Старт релея (этап 3 + отсчёт) — блоки у излучателя.
+	# Этап 3 без relay_active — ещё «собрать релей» (#169), глитча запуска нет.
 	await _shot_before()
-	Game.objective_changed.emit(4)
+	Game.objective_changed.emit(3)
+	ok("этап 3 без отсчёта — не «релей запущен»", not fx.glitch_active())
+	Game.relay_active = true
+	Game.objective_changed.emit(3)
 	ok("релей запущен → блоки у релея", fx.glitch_active() and fx.active_name() == "relay_start",
 			fx.active_name())
+	Game.relay_active = false
 	await _shot_after("glitch_relay", bp)
 	await _expect_off("relay_start")
 
-	# Отметка отсчёта удержания — «приём сигнала». Этап 4 ставим заранее: иначе
+	# Отметка отсчёта удержания — «приём сигнала». Этап 3 ставим заранее: иначе
 	# Game сам перейдёт на него (relay_active) и «релей запущен» перебьёт сигнал.
 	var stage0: int = Game.objective_stage
-	Game.objective_stage = 4
+	Game.objective_stage = 3
 	Game.relay_active = true
 	Game.relay_timer = 30.5
 	fx._wake()
@@ -93,7 +98,9 @@ func run() -> void:
 	Threat.vent_warning.emit(near)
 	ok("вентиляция рядом → блоки у решётки", fx.active_name() == "vent")
 	# Слабое событие поверх сильного не перебивает его; сильное перебивает слабое.
-	Game.objective_changed.emit(4)
+	Game.relay_active = true
+	Game.objective_changed.emit(3)
+	Game.relay_active = false
 	ok("сильное событие перебивает слабое", fx.active_name() == "relay_start")
 	Threat.vent_warning.emit(near)
 	ok("слабое событие не перебивает сильное", fx.active_name() == "relay_start")
@@ -156,7 +163,9 @@ func run() -> void:
 	var fired0: int = fx.stat_fired
 	var calm0n: int = fx.stat_calm
 	await _shot_before()
-	Game.objective_changed.emit(4)
+	Game.relay_active = true
+	Game.objective_changed.emit(3)
+	Game.relay_active = false
 	ok("меньше глитча: релей — без шейдера, спокойная вспышка", not fx.glitch_active()
 			and fx.active() and fx.stat_calm == calm0n + 1 and fx.stat_fired == fired0
 			and fx.get_child(0).material == null)

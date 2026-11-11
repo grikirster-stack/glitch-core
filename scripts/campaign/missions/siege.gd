@@ -33,8 +33,6 @@ func _init() -> void:
 
 func build() -> void:
 	b = CampaignBase.build(CampaignBase.Tier.DEFENSE)
-	CampaignBase.unlock_to("T4")
-	Game.research = 6
 	_vent = _base_vent()
 	(b["parts"] as Chest).receive_item(IDs.I.SCRAP, 30)
 	(b["parts"] as Chest).receive_item(IDs.I.COAL, 20)
