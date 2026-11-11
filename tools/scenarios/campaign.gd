@@ -74,8 +74,13 @@ func _dark_station() -> void:
 # Главы 2–5 удалены вместе с файлами миссий (#170). Ниже — меню и сеть.
 
 func _menu_and_net() -> void:
-	ok("единственная глава пройдена — открыта", Campaign.unlocked("dark_station",
-			Profile.load_or_create().campaign_done))
+	# «Зеркало» и «Цвета» (#178) идут в CHAPTERS после станции, но этот сценарий
+	# их не проходит. Без отметки цепочка «предыдущая пройдена» их не открывает.
+	for id in ["mirror", "colors"]:
+		if Campaign.has(id):
+			Campaign.mark_done(id)
+	ok("главы списка открыты", Campaign.CHAPTERS.all(func(id: String) -> bool:
+		return Campaign.unlocked(id, Profile.load_or_create().campaign_done)))
 	ok("неизвестная глава закрыта", not Campaign.unlocked("siege", PackedStringArray(["dark_station"])))
 	ok("сессия главы — сид кампании", int(MainMenu.campaign_session("dark_station")["seed"]) == Campaign.SEED
 			and String(MainMenu.campaign_session("dark_station")["mission"]) == "dark_station")

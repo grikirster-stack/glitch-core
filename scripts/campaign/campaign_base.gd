@@ -62,6 +62,7 @@ static func put(kind: String, c: Vector2i, opts: Dictionary = {}) -> MachineBase
 	m.permanent = true   # постройка базы: разобрать её нельзя
 	if opts.has("dir") and "dir" in m:
 		m.set("dir", int(opts["dir"]))
+		m.queue_redraw()
 	if opts.has("fuel") and m.kind == "Burner" and m.has_method("add_fuel"):
 		m.add_fuel(IDs.I.COAL, int(opts["fuel"]))
 	for e in opts.get("items", []):
