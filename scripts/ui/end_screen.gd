@@ -129,8 +129,8 @@ func _draw() -> void:
 	if net_death:   # СЕТЬ (ADR-002 § 4.7): мир виден — глазами товарища
 		_draw_net_death(a)
 		return
-	# Победа с выбором «остаться» — мир чуть просвечивает: это не конец, а пауза.
-	var veil: float = 0.62 if can_stay else 0.86
+	# Победа с выбором «остаться» — мир просвечивает: туман и база видны, это не конец.
+	var veil: float = 0.38 if can_stay else 0.86
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.02, 0.05, veil * a))
 	var font: Font = ThemeDB.fallback_font
 	if epilogue != "":
