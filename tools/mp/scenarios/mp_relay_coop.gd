@@ -74,6 +74,17 @@ func run_host() -> void:
 	ok("Борис вернулся — отсчёт идёт", not Game.relay_unattended and c - Game.relay_timer > 0.5,
 			"%.2f → %.2f" % [c, Game.relay_timer])
 	await barrier("back")
+	# Кот (#176): клиент видит марионетку, не фантома. Выход — из ядра.
+	Game.time_of_day = Balance.NIGHT_START + 0.01
+	var cat: RainbowCat = Game.cat_hatch_at(player.global_position + Vector2(48.0, -24.0))
+	ok("хост выпустил кота", cat != null)
+	var np = player.get_node_or_null("/root/NetPlayers") if false else null
+	# Несколько тактов: SPAWN по каналу 0 и строка CAT должны дойти до барьера.
+	await wait(0.4)
+	await barrier("cat")
+	await wait(0.3)
+	if cat != null and is_instance_valid(cat):
+		cat.queue_free()
 	Game.relay_active = false
 	finish()
 
@@ -102,6 +113,22 @@ func run_client(i: int) -> void:
 	await barrier("back")
 	ok("c%d: Борис у ядра — отсчёт идёт" % i, await wait_until(func() -> bool:
 		return not Game.relay_unattended, WAIT))
+	await barrier("cat")
+	var puppet: Node = null
+	var found_now: Array = get_tree().get_nodes_in_group("rainbow_cat")
+	if not found_now.is_empty():
+		puppet = found_now[0]
+	var seen: bool = puppet != null or await wait_until(func() -> bool:
+		var found: Array = get_tree().get_nodes_in_group("rainbow_cat")
+		if found.is_empty():
+			return false
+		puppet = found[0]
+		return true
+	, WAIT)
+	var script_ok: bool = puppet != null and puppet.get_script() != null \
+			and str(puppet.get_script().resource_path).ends_with("rainbow_cat.gd")
+	ok("c%d: клиент видит кота" % i, seen and script_ok and not puppet.is_in_group("phantom"),
+			"узел %s" % (puppet.name if puppet != null else "нет"))
 	finish()
 
 

@@ -73,6 +73,7 @@ enum {
 	ST_PULSE_START,
 	ST_PULSE_CHECK,
 	ST_LIGHT_API,
+	ST_CAT,
 	ST_GENERAL,
 }
 
@@ -110,6 +111,8 @@ class Runner extends Node:
 	var _dark_cell: Vector2i = Vector2i(-1, -1)
 	var _terminal_cell: Vector2i = Vector2i(-1, -1)
 	var _phantom: Node = null
+	var _cat: Node2D = null
+	var _cat_colors: Dictionary = {}
 	var _hp0: float = 0.0
 	var _jitter0: float = 0.0
 	var _task0: float = 0.0
@@ -184,6 +187,8 @@ class Runner extends Node:
 			var pulse: float = _relay_pulse()
 			_pulse_min = minf(_pulse_min, pulse)
 			_pulse_max = maxf(_pulse_max, pulse)
+		if step == ST_CAT and _cat != null and is_instance_valid(_cat):
+			_cat_colors[_cat.tail_color()] = true
 		if step == ST_MAC_PROGRESS and _smelter != null and is_instance_valid(_smelter):
 			_progress_max = maxf(_progress_max, float(_smelter.progress))
 		# Прогресс копки запоминаем максимумом: тайл может пробиться раньше
@@ -238,6 +243,7 @@ class Runner extends Node:
 			ST_PULSE_START: _s_pulse_start()
 			ST_PULSE_CHECK: _s_pulse_check()
 			ST_LIGHT_API: _s_light_api()
+			ST_CAT: _s_cat()
 			ST_GENERAL: _s_general()
 			_: _finish()
 
@@ -843,7 +849,25 @@ class Runner extends Node:
 				"рядом %d из %d" % [near.size(), world.lights.size()])
 		_ok("дальние источники отсекаются", near.size() < world.lights.size(),
 				"рядом %d из %d" % [near.size(), world.lights.size()])
-		_next(ST_GENERAL, 0.1)
+		var script: GDScript = load("res://scripts/entities/rainbow_cat.gd")
+		_cat = script.create(player.global_position + Vector2(40.0, -20.0))
+		_cat.net_puppet = true
+		_cat_colors.clear()
+		scene.add_child(_cat)
+		_next(ST_CAT, 0.45)
+
+
+	# ------------------------------------------------------------------ кот
+
+	func _s_cat() -> void:
+		var n: int = _cat_colors.size()
+		_ok("кот рисуется", _cat != null and is_instance_valid(_cat) and _cat.is_inside_tree(),
+				"фаза %.2f" % (float(_cat.tail_phase) if _cat != null else -1.0))
+		_ok("хвост меняет цвет", n >= 2, "цветов %d" % n)
+		if _cat != null and is_instance_valid(_cat):
+			_cat.queue_free()
+		_cat = null
+		_next(ST_GENERAL, 0.05)
 
 
 	# ------------------------------------------------------------------ общее
