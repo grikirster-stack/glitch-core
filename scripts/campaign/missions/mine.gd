@@ -36,28 +36,40 @@ func stages() -> Array:
 		{"title": "Спуск", "hint": "Ствол — слева от базы, за вентиляцией · вниз — по центру · наверх — с разбега к центру и прыжок",
 			"say": ["Ствол шахты — у западного края базы. Сорок клеток вниз, на дне — штольня.",
 					"Вниз — просто по центру, внизу мягко. Наверх — по уступам: сходите с уступа к центру и сразу прыгайте."],
-			"goals": [["Спуститься в штольню", func() -> Vector2i: return flag(_deepest() >= CampaignBase.mine_row() - 2)]]},
+			"goals": [["Спуститься в штольню", func() -> Vector2i: return flag(_deepest() >= CampaignBase.mine_row() - 2),
+				-1, func() -> Vector2: return World.cell_to_world(Vector2i(World.beacon_cell.x, CampaignBase.mine_row()))]]},
 		{"title": "Перегруз", "hint": "Сундук снабжения в штольне: ТЭЦ и уголь · ПКМ — поставить, E с углём — топка · P — радиусы",
 			"say": ["Слышите, как буры захлёбываются? Два глубинных бура тянут 8, ТЭЦ даёт 6. Сеть в перегрузе — всё медленнее.",
 					"В сундуке снабжения в штольне — вторая ТЭЦ. Поставьте её у буров."],
-			"goals": [["Перегруза нет, буры на полной мощности", func() -> Vector2i: return flag(_drills_full())]]},
+			"goals": [["Перегруза нет, буры на полной мощности", func() -> Vector2i: return flag(_drills_full()),
+				IDs.I.COAL_GEN, func() -> Vector2: return _chest_at("mine_supply")]]},
 		{"title": "Добыча", "hint": "Буры кладут руду в сундук между ними",
 			"say": ["Теперь глубинные буры работают в полную силу: сорок клеток вглубь, железо и медь."],
 			"goals": [["Руды в сундуке добычи", func() -> Vector2i:
-				return Vector2i(chest_has(b["mine_chest"], IDs.I.IRON_ORE) + chest_has(b["mine_chest"], IDs.I.COPPER_ORE), ORE)]]},
+				return Vector2i(chest_has(b["mine_chest"], IDs.I.IRON_ORE) + chest_has(b["mine_chest"], IDs.I.COPPER_ORE), ORE),
+				IDs.I.IRON_ORE, func() -> Vector2: return _chest_at("mine_chest")]]},
 		{"title": "Кристаллы", "hint": "Светящиеся ниши в стенах ствола · ЛКМ — копать (кристалл твёрдый, держите дольше)",
 			"say": ["В стенах ствола — ниши с кристаллами глитча, они светятся."],
-			"goals": [["Кристаллов с собой", func() -> Vector2i: return Vector2i(heroes_have(IDs.I.CRYSTAL), CRYSTALS)]]},
+			"goals": [["Кристаллов с собой", func() -> Vector2i: return Vector2i(heroes_have(IDs.I.CRYSTAL), CRYSTALS),
+				IDs.I.CRYSTAL, func() -> Vector2: return World.cell_to_world(Vector2i(World.beacon_cell.x, CampaignBase.mine_row()))]]},
 		{"title": "Анализатор", "hint": "Анализатор — справа от релей-ядра · E с кристаллами в руке — загрузить",
 			"say": ["Наверх, к релею. Справа от ядра — анализатор: кристалл в нём сгорает. Чертежи теперь дают терминалы."],
 			"enter": func() -> void: _burned0 = int(b["analyzer"].produced),
-			"goals": [["Кристалл сожжён анализатором", func() -> Vector2i: return Vector2i(int(b["analyzer"].produced) - _burned0, 1)]]},
+			"goals": [["Кристалл сожжён анализатором", func() -> Vector2i: return Vector2i(int(b["analyzer"].produced) - _burned0, 1),
+				IDs.I.CRYSTAL, func() -> Vector2: return _chest_at("analyzer")]]},
 	]
 
 
 func outro() -> String:
 	return "Шахта дышит: буры гудят на дне, анализатор щёлкает у релея.\n" \
 			+ "ПЁС: «Чем громче база, тем лучше её слышно. Фантомы считают генераторы и свет. Сегодня ночью они придут все.»"
+
+
+func _chest_at(key: String) -> Vector2:
+	var m = b.get(key)
+	if m != null and is_instance_valid(m) and "cell" in m:
+		return World.cell_to_world(m.cell)
+	return World.cell_to_world(World.beacon_cell)
 
 
 ## Самый глубокий ряд, где стоит живой герой.

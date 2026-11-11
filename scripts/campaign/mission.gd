@@ -8,7 +8,8 @@ extends Node
 ##   build()       — достроить базу поверх мира сида (CampaignBase.build + своё);
 ##   kit()         — стартовый набор героя [[id предмета, число], …];
 ##   stages()      — этапы по порядку: {title, hint, say: [строки ПСА], enter: Callable,
-##                   goals: [[текст, Callable → Vector2i(есть, нужно)], …]};
+##                   goals: [[текст, Callable → Vector2i(есть, нужно), icon?, at?], …]};
+##                   icon — IDs.I или −1; at — Callable → Vector2 (нет — Vector2.INF).
 ##   fail_reason() — непустая строка — глава провалена (почему);
 ##   on_tick(dt)   — своё поведение каждый кадр (держать сумерки, ускорить релей…);
 ##   outro()       — текст экрана победы.
@@ -56,7 +57,8 @@ var hold_time: float = -1.0
 # --- состояние (state() / apply_state())
 var stage: int = 0
 var stage_title: String = ""
-## Задачи текущего этапа для показа: [{text, have, need}].
+## Задачи текущего этапа для показа: [{text, have, need, icon, at}].
+## icon — IDs.I или −1; at — мировая точка или Vector2.INF.
 var goals: Array = []
 var hint: String = ""
 var result: int = Result.RUNNING
@@ -157,7 +159,8 @@ func evaluate() -> void:
 		if v.x >= need:
 			_latched[i] = true
 		var done: bool = _latched.has(i)
-		shown.append({"text": String(g[0]), "have": need if done else clampi(v.x, 0, need), "need": need})
+		shown.append({"text": String(g[0]), "have": need if done else clampi(v.x, 0, need),
+				"need": need, "icon": _goal_icon(g), "at": _goal_at(g)})
 		if not done:
 			all_done = false
 	goals = shown
@@ -311,13 +314,29 @@ static func flag(cond: bool) -> Vector2i:
 	return Vector2i(1 if cond else 0, 1)
 
 
+## Картинка цели: третий элемент — IDs.I, иначе −1. Старая цель из двух элементов
+## остаётся без картинки.
+static func _goal_icon(g: Array) -> int:
+	if g.size() < 3:
+		return -1
+	return int(g[2])
+
+
+## Место цели: четвёртый элемент — Callable → Vector2. Нет его — Vector2.INF.
+static func _goal_at(g: Array) -> Vector2:
+	if g.size() < 4 or not (g[3] is Callable) or not (g[3] as Callable).is_valid():
+		return Vector2.INF
+	return (g[3] as Callable).call()
+
+
 # ------------------------------------------------------------------ СЕТЬ
 
 ## Состояние для показа (только простые типы — уходит в var_to_bytes).
 func state() -> Dictionary:
 	var g: Array = []
 	for e in goals:
-		g.append([String(e["text"]), int(e["have"]), int(e["need"])])
+		g.append([String(e["text"]), int(e["have"]), int(e["need"]), int(e.get("icon", -1)),
+				e.get("at", Vector2.INF)])
 	return {"id": id, "stage": stage, "stages": _stages.size(), "title": stage_title, "goals": g,
 			"hint": hint, "result": result, "rt": result_title, "rx": result_text}
 
@@ -328,8 +347,11 @@ func apply_state(d: Dictionary) -> void:
 	hint = String(d.get("hint", hint))
 	var g: Array = []
 	for e in d.get("goals", []):
-		if e is Array and (e as Array).size() == 3:
-			g.append({"text": String(e[0]), "have": int(e[1]), "need": int(e[2])})
+		if e is Array and (e as Array).size() >= 3:
+			var row: Array = e
+			g.append({"text": String(row[0]), "have": int(row[1]), "need": int(row[2]),
+					"icon": int(row[3]) if row.size() >= 4 else -1,
+					"at": row[4] if row.size() >= 5 and row[4] is Vector2 else Vector2.INF})
 	goals = g
 	_stages_total = int(d.get("stages", _stages_total))
 	var r: int = int(d.get("result", result))

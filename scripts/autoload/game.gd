@@ -679,6 +679,53 @@ func base_terminals_done() -> bool:
 	return n > 0
 
 
+## Картинка этапа для карточки «Сейчас»: IDs.I или −1 (тогда HUD рисует пиктограмму).
+## В главе картинку даёт цель главы. Этап 3 — антенна релея; этапы 1–2 без предмета.
+func objective_icon() -> int:
+	if in_mission():
+		return -1
+	var s: int = clampi(objective_stage, 1, OBJECTIVE_STAGES)
+	if relay_active:
+		s = OBJECTIVE_STAGES
+	if s == 3:
+		return IDs.I.RELAY_ANTENNA
+	return -1
+
+
+## Куда вести маркер карточки. Этап 3 и удержание — релей-ядро; этап 1 — ближайший
+## непрочитанный терминал базы. Нет точки — Vector2.INF. В главе точку даёт цель.
+func objective_at() -> Vector2:
+	if in_mission():
+		return Vector2.INF
+	var s: int = clampi(objective_stage, 1, OBJECTIVE_STAGES)
+	if relay_active:
+		s = OBJECTIVE_STAGES
+	# Этап 2 — собрать релей у ядра; этап 3 — удержать сигнал там же.
+	if s == 2 or s == 3:
+		return World.cell_to_world(World.beacon_cell)
+	if s == 1:
+		return _nearest_unread_terminal()
+	return Vector2.INF
+
+
+## Ближайший к герою терминал базы, который ещё не прочитан (главы 1–2).
+func _nearest_unread_terminal() -> Vector2:
+	var best: Vector2 = Vector2.INF
+	var best_d: float = INF
+	var origin: Vector2 = player.global_position if player != null else World.cell_to_world(World.beacon_cell)
+	for c in World.terminal_chapters.keys():
+		if int(World.terminal_chapters[c]) >= Lore.BASE_TERMINALS:
+			continue
+		if not World.terminals.has(c):
+			continue
+		var p: Vector2 = World.cell_to_world(c)
+		var d: float = origin.distance_squared_to(p)
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
+
+
 ## Строка этапа для HUD/инвентаря: «ЦЕЛЬ 2/3: СОБРАТЬ РЕЛЕЙ», на удержании — с отсчётом.
 func objective_text() -> String:
 	var s: int = clampi(objective_stage, 1, OBJECTIVE_STAGES)
