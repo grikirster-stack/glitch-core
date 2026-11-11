@@ -219,7 +219,13 @@ const REGISTRY: Dictionary = {
 	"threat_budget": {
 		"file": "threat_budget.gd",
 		"title": "бюджет ночи",
-		"desc": "формулы § 4.5; ночь 1 ≤ 3 фантома, ночь 4 ≥ 6",
+		"desc": "формулы ADR-005 § 6.2; тихая ночь ≤ 1 живого, пустая смена 4 — бюджет 7",
+	},
+	"night_autopilot": {
+		"file": "night_autopilot.gd",
+		"title": "ночь на автопилоте",
+		"timeout_ms": 180000,
+		"desc": "три уровня базы × 90 с: пусто / горелка+маяк / семь цветов; секунды до первой ночи",
 	},
 	"vent_spawn": {
 		"file": "vent_spawn.gd",
