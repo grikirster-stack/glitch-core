@@ -98,13 +98,9 @@ func run_host() -> void:
 			"%d" % p0.inv.count_of(drop))
 	await barrier("placed")
 
-	# --- Терминал: E у клиента → задание у хоста. ТЭЦ с углём рядом — питание.
+	# --- Терминал: E у клиента → задание у хоста. Питание не нужно (#170).
 	var spot: Vector2 = World.cell_to_world(term)
-	var gen: CoalGen = _place_gen_near(term)
-	ok("ТЭЦ у терминала", gen != null)
-	if gen != null:
-		gen.add_fuel(4)
-	ok("терминал под питанием", await wait_until(func() -> bool: return Game.is_powered(spot), 3.0))
+	ok("терминал читается без ТЭЦ", Game.is_powered(spot))
 	var stand: Vector2 = _stand_near(spot)
 	ok("клиент 0 переставлен к терминалу", await teleport_proxy(p0, stand))
 	await wait(0.5)
@@ -164,19 +160,6 @@ func _stand_near(spot: Vector2) -> Vector2:
 		if not World.rect_solid(Rect2(p - Player.SIZE * 0.5, Player.SIZE)):
 			return p
 	return spot + Vector2(0, -24)
-
-
-## Как в terminal_powered: ТЭЦ на свободной клетке с полом рядом с терминалом.
-func _place_gen_near(t: Vector2i) -> CoalGen:
-	for r in range(2, 7):
-		for dy in range(-3, 2):
-			for dx in [-r, r]:
-				var c: Vector2i = t + Vector2i(int(dx), dy)
-				if World.get_tile_v(c) != IDs.T.AIR or not World.is_solid_cell(c + Vector2i(0, 1)):
-					continue
-				if MachineBase.place_machine("CoalGen", c):
-					return World.machines.get(c) as CoalGen
-	return null
 
 
 # ------------------------------------------------------------------ КЛИЕНТЫ

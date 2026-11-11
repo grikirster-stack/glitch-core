@@ -57,10 +57,7 @@ jobs:
         timeout-minutes: 5
         run: godot --headless --path . --script res://tools/anim_test.gd -- --seed=31337
 
-      # Регрессии индекса питания (issue #11) — отдельным запуском.
-      - name: Автотест индекса питания (отдельный запуск)
-        timeout-minutes: 5
-        run: godot --headless --path . --script res://tools/power_test.gd -- --seed=31337
+      # Индекс питания снят вместе с ТЭЦ (#170).
 
       # Генеративный лор (issue #26) — отдельным запуском: проверяет те же 100 сидов,
       # что и секция «== Лор ==» общего прогона, и ловит расхождение точек входа.

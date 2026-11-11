@@ -7,12 +7,11 @@ extends ScenarioBase
 ##    в тот же кадр-два и перерисовка; текст каждой цели каждой главы ≤ 6 слов;
 ##  * отсчёт: в сумерках — целые секунды до ночи, днём и ночью — нет; HUD
 ##    перерисовывается раз в секунду, а не каждый кадр;
-##  * мощность: ближайшая ТЭЦ — нагрузка/выход; перегруз; рубильник; генератор
-##    под курсором важнее ближайшего;
+##  * питания нет (#170): индикатор мощности молчит, ТЭЦ не ставится;
 ##  * миникарта: вентиляции только под открытым туманом;
 ##  * миникарта: решётка (#31) рисуется решёткой, сломанная — сразу снова вентиляцией;
 ##  * FX: Threat.vent_warning → пар и потом пусто; spawn_arc и World.turret_fired →
-##    дуга, ни одного нового узла; настоящая турель: дуг ровно столько, сколько выстрелов.
+##    дуга, ни одного нового узла. Турель снята (#170): живой выстрел не проверяем.
 
 const FRAMES_SETTLE: int = 3
 
@@ -134,48 +133,14 @@ func _countdown(hud: HUD) -> void:
 
 # ------------------------------------------------------------ МОЩНОСТЬ
 
+## Питание снято (#170): ТЭЦ не ставится, индикатор мощности остаётся нулём.
 func _power(hud: HUD, base: int) -> void:
 	var bx: int = World.beacon_cell.x
 	var gcell: Vector2i = Vector2i(bx + 9, base - 1)
-	ok("ТЭЦ поставлена", MachineBase.place_machine("CoalGen", gcell))
-	var gen = World.machines.get(gcell)
-	if gen == null:
-		return
-	gen.add_fuel(3)
-	await wait(0.6)            # раскладка мощности — раз в 0.25 с
-	await _frames(hud, 2)
-	ok("индикатор: ближайшая ТЭЦ", hud.power_gen == gen and hud.power_text == "ТЭЦ",
-			"«%s»" % hud.power_text)
-	ok("индикатор: выход 6.0, нагрузка 0", hud.power_out_x10 == int(Balance.POWER_OUT["CoalGen"] * 10.0)
-			and hud.power_load_x10 == 0 and (hud.power_flags & HUD.POWER_ON) != 0,
-			"выход %d, нагрузка %d, флаги %d" % [hud.power_out_x10, hud.power_load_x10, hud.power_flags])
-	# Перегруз: четыре сборщика по 2.0 на ТЭЦ 6.0.
-	var placed: int = 0
-	for dx in [11, 12, 13, 14]:
-		if MachineBase.place_machine("Assembler", Vector2i(bx + int(dx), base - 1)):
-			placed += 1
-	await wait(0.6)
-	await _frames(hud, 2)
-	ok("сборщики поставлены", placed == 4, "%d" % placed)
-	ok("индикатор: нагрузка 8.0 — перегруз", hud.power_load_x10 == 80
-			and (hud.power_flags & HUD.POWER_OVER) != 0 and Game.brownout,
-			"нагрузка %d, флаги %d, brownout %s" % [hud.power_load_x10, hud.power_flags, Game.brownout])
-	gen.set_enabled(false)
-	await wait(0.4)
-	await _frames(hud, 2)
-	ok("рубильник: индикатор ВЫКЛ, выход 0", (hud.power_flags & HUD.POWER_ON) == 0 and hud.power_out_x10 == 0,
-			"флаги %d, выход %d" % [hud.power_flags, hud.power_out_x10])
-	gen.set_enabled(true)
-	# Под курсором — другой генератор: он важнее ближайшего.
-	var scell: Vector2i = Vector2i(bx + 4, base - 1)
-	ok("солнечная панель поставлена", MachineBase.place_machine("Solar", scell))
-	var solar = World.machines.get(scell)
-	if solar != null:
-		aim(solar.global_position)
-		await _frames(hud, 3)
-		ok("генератор под курсором важнее ближайшего", hud.power_gen == solar
-				and hud.power_text == "Солнечная панель", "«%s»" % hud.power_text)
-		clear_input()
+	ok("ТЭЦ больше не ставится", not MachineBase.place_machine("CoalGen", gcell))
+	ok("индикатор мощности молчит", hud.power_out_x10 == 0 and hud.power_load_x10 == 0
+			and hud.power_text == "", "«%s» выход %d" % [hud.power_text, hud.power_out_x10])
+	ok("терминал читается без генератора", Game.is_powered(World.cell_to_world(Vector2i(bx, base))))
 
 
 # ------------------------------------------------------------ МИНИКАРТА
@@ -274,33 +239,5 @@ func _fx(fx: WorldFX) -> void:
 	ok("дуги гаснут", fx.arcs.is_empty(), "дуг %d" % fx.arcs.size())
 	ok("FX не создаёт узлов", get_tree().get_node_count() == nodes0,
 			"%d → %d" % [nodes0, get_tree().get_node_count()])
-	await _turret_arcs(fx)
-
-
-## Настоящая турель (#31) бьёт эхо: она шлёт и Turret.fired, и World.turret_fired —
-## дуг ровно столько, сколько выстрелов (двойной дуги нет).
-func _turret_arcs(fx: WorldFX) -> void:
-	var tk: GDScript = load("res://tools/scenarios/turret_kills_echo.gd")
-	player.invuln = 1.0e9
-	var o: Vector2i = tk.find_box_spot(self, 12, 6)
-	ok("место под турель найдено", o.x >= 0, str(o))
-	if o.x < 0:
-		return
-	var turret: Turret = tk.build_turret_box(self, o, 12, 6)
-	ok("турель поставлена", turret != null)
-	if turret == null:
-		return
-	await wait_until(func(): return turret.powered and turret.efficiency >= 0.999, 2.0)
-	var a0: int = fx.stat_arcs
-	var s0: int = turret.shots
-	var echo: Node = spawn_phantom_at(Vector2(float((o.x + 8) * World.TILE) + 8.0,
-			float((o.y + 4) * World.TILE) - 12.0), "echo")
-	ok("эхо появилось", echo != null)
-	await wait_until(func(): return turret.shots - s0 >= 2, 4.0)
-	var shots: int = turret.shots - s0
-	ok("турель стреляет", shots >= 2, "выстрелов %d" % shots)
-	ok("одна дуга на выстрел (без двойной)", fx.stat_arcs - a0 == shots,
-			"дуг %d, выстрелов %d" % [fx.stat_arcs - a0, shots])
-	if echo != null and is_instance_valid(echo):
-		echo.get_parent().remove_child(echo)
-		echo.queue_free()
+	ok("турель больше не ставится", not MachineBase.place_machine("Turret",
+			World.world_to_cell(player.global_position) + Vector2i(2, 0)))

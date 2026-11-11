@@ -1,8 +1,8 @@
 extends "res://tools/mp/scenarios/mp_threat_base.gd"
 ## mp_perf (ADR-002 § 4.3, § 4.10; MP-F, #92): кадр хоста в худшую ночь.
 ##
-## Хост + 3 клиента (4 игрока) стоят рядом, база из 130 машин (60 лент с предметами,
-## 70 станков, ТЭЦ, панелей, сундуков, манипуляторов), 16 фантомов гонятся за героями.
+## Хост + 3 клиента (4 игрока) стоят рядом, база из 130 машин (сундуки, горелки,
+## зеркала, маяки, коллекторы), 16 фантомов гонятся за героями. Ленты сняты (#170).
 ## Хост считает ИИ всех фантомов, прокси трёх клиентов, машины, воду, шлюзы и шлёт
 ## каждому клиенту свой пакет состояния 20 Гц. Проверки: p95 интервала кадра хоста
 ## ≤ 16 мс; все 16 фантомов в зоне интереса каждого клиента и видны у него.
@@ -11,9 +11,8 @@ extends "res://tools/mp/scenarios/mp_threat_base.gd"
 
 const PERF_SEC: float = 6.0
 const FRAME_P95_MAX: float = 16.0
-const BELTS: int = 60
-const OTHERS: int = 70
-const OTHER_KINDS: Array = ["Smelter", "Drill", "Chest", "Inserter", "Assembler", "CoalGen", "Solar"]
+const CAMP: int = 130
+const CAMP_KINDS: Array = ["Chest", "Burner", "Mirror", "Pharos", "Collector", "Accumulator", "Prism"]
 
 var _rec: bool = false
 var _us: PackedInt64Array = PackedInt64Array()
@@ -46,7 +45,7 @@ func run_host() -> void:
 	ok("герои рядом (в 8–16 клетках)", placed == clients)
 	invulnerable_all()
 	var m: int = _build_base(sx)
-	ok("база из %d машин" % (BELTS + OTHERS), m == BELTS + OTHERS, "%d" % m)
+	ok("база из %d машин" % CAMP, m == CAMP, "%d" % m)
 	Game.time_of_day = Balance.NIGHT_START + 0.02
 	var all: Array = [player]
 	all.append_array(hs)
@@ -92,26 +91,21 @@ func run_host() -> void:
 	finish()
 
 
-## 60 лент с предметами и 70 станков под поверхностью у базы. Сколько поставлено.
+## 130 построек света под поверхностью у базы. Сколько поставлено.
 func _build_base(sx: int) -> int:
 	var x0: int = sx + 30
 	var y0: int = int(World.surface[clampi(x0, 0, World.W - 1)]) + 6
 	var n: int = 0
-	for k in BELTS + OTHERS:
+	for k in CAMP:
 		var c: Vector2i = Vector2i(x0 + k % 20, y0 + k / 20)
 		World.set_tile(c.x, c.y, IDs.T.AIR)
-		var kind: String = "Belt" if k < BELTS else String(OTHER_KINDS[(k - BELTS) % OTHER_KINDS.size()])
+		var kind: String = String(CAMP_KINDS[k % CAMP_KINDS.size()])
 		if MachineBase.place_machine(kind, c):
 			n += 1
-		if kind == "Belt":
-			var b: Node = World.belts.get(c)
-			if b != null:
-				b.set("dir", 0)
-				b.call("add_item", IDs.I.COAL, 1)
-		elif kind == "CoalGen":
+		if kind == "Burner":
 			var g: Node = World.machines.get(c)
 			if g != null and g.has_method("add_fuel"):
-				g.call("add_fuel", 4)
+				g.call("add_fuel", IDs.I.COAL, 2)
 	return n
 
 

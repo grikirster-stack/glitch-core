@@ -13,19 +13,7 @@ const DUSK_START: float = 0.60         ## сумерки: телеграф но�
 const START_TIME: float = 0.04         ## старт забега на рассвете (ADR-005 § 6.1): до ночи полный день
 
 # -------------------------------------------------------------- § 4.3 Питание
-## Условные единицы мощности. Генератор даёт POWER_OUT, потребитель тянет
-## POWER_DRAW; при перегрузе машины в радиусе замедляются пропорционально (#25).
-## Плавильня 0.5 (было 1.0, калибровка #33): стартовая линия § 4.2 — бур, две
-## плавильни (слитки и пластины), два манипулятора, сборщик — ровно 6 = одна ТЭЦ.
-const POWER_OUT: Dictionary = {"CoalGen": 6.0, "Solar": 2.0}
-const POWER_DRAW: Dictionary = {
-	"Drill": 2.0, "Smelter": 0.5, "Assembler": 2.0, "Inserter": 0.5,
-	"Analyzer": 2.0, "Turret": 2.0, "Floodlight": 1.0, "DeepDrill": 4.0,
-}
-const SOLAR_MIN_DAYLIGHT: float = 0.35 ## солнце работает, пока daylight() выше
-const FLOODLIGHT_MIN_EFF: float = 0.5  ## прожектор гаснет при просадке ниже
-const COAL_BURN: float = 45.0          ## секунд горения одной единицы угля
-const POWER_CHECK_INTERVAL: float = 0.25
+## Бюджет мощности снят (#170, ADR-005 § 7). Порог света дня остался у коллектора.
 
 # --------------------------------------------------------- Луч (ADR-005 § 4–5)
 ## Горелка бьёт на BEAM_LEN клеток; белый (коллектор или смесь W) — длиннее.
@@ -37,10 +25,12 @@ const BEAM_BLOCK_COST: int = 2
 const BEAM_LIGHT: float = 1.0
 const BEAM_LIGHT_WHITE: float = 1.5
 const FUEL: Dictionary = {IDs.I.COAL: 45.0, IDs.I.COPPER_ORE: 30.0, IDs.I.CRYSTAL: 60.0}
+## Запасная длительность угля, если предмет не в FUEL (шкала горелки, тень).
+const COAL_BURN: float = 45.0
 ## Накопитель хранит столько секунд луча одного цвета (ADR-005 § 4, #166).
 const ACCUMULATOR_CAP: float = 120.0
-## Коллектор молчит ниже того же порога, что и солнечная панель.
-const COLLECTOR_MIN_DAYLIGHT: float = SOLAR_MIN_DAYLIGHT
+## Коллектор молчит, пока daylight() не выше этого (бывший порог солнечной панели).
+const COLLECTOR_MIN_DAYLIGHT: float = 0.35
 
 # ---------------------------------------------------- Радужный кот (ADR-005 § 7, #176)
 ## Страж на 90 с: скорость полёта, след-свет, перезарядка от любого луча в ядро.
@@ -98,39 +88,20 @@ const SIREN_RADIUS_TILES: float = 10.0
 const SIREN_TIME: float = 10.0
 const SIREN_RECHARGE: float = 60.0
 
-# ------------------------------------------------------- § 4.2 Автоматизация
-const DRILL_CYCLE: float = 2.0         ## с на единицу руды
-const DRILL_REACH: int = 16            ## клеток вниз
-const DEEP_DRILL_CYCLE: float = 1.2
-const DEEP_DRILL_REACH: int = 40
-const INSERTER_PERIOD: float = 1.2     ## с на перенос одного предмета
-const ANALYZER_PERIOD: float = 20.0    ## с на один кристалл в лотке (#169: «данные» сняты, кристалл сгорает)
-
 # -------------------------------------------------------------- § 4.4 Оборона
-## Было 60 (калибровка #33): каждая особь роя бьёт сразу, как долетела, — две
-## стаи (до 12 особей) первым же укусом снимали 60+ hp с одного бура, раньше
-## чем турели успевали выстрелить. 100 — бур переживает налёт под турелями.
+## Прочность построек. Фабрика и турель сняты (#170): маяк держит свой PHAROS_HP.
 const MACHINE_HP: float = 100.0
-const TURRET_HP: float = 120.0
-const TURRET_RANGE_TILES: float = 7.0
-const TURRET_DAMAGE: float = 20.0
-const TURRET_PERIOD: float = 0.8
-const FLOODLIGHT_POWER: float = 2.0    ## сила света прожектора (светокристалл — 1.0)
 const STEEL_WALL_HARD: float = 4.0
 const GRATE_HP: float = 40.0
 const REPAIR_PER_SCRAP: float = 20.0   ## HP машины за единицу хлама
 const BURROWER_DIG_MAX_HARD: float = 1.5 ## копатель роет тайлы не твёрже этого
-const AIRLOCK_OPEN_DIST_TILES: float = 1.5 ## игрок ближе — шлюз открывается
-const AIRLOCK_SAFE_DIST_TILES: float = 3.0 ## фантом ближе — шлюз не открывается
 # --- Оборона: поведение построек (#31) ---
-const AIRLOCK_CHECK_PERIOD: float = 0.1  ## как часто World пересчитывает шлюзы, с
+## Шлюз снят (#170): тайлы старого мира становятся камнем при загрузке.
 const GRATE_BREAK_TIME: float = 8.0      ## копатель ломает решётку (GRATE_HP) за столько секунд
 const GRATE_REACH_PX: float = 24.0       ## копатель ближе — грызёт решётку
-## Приоритет целей турели: раньше в списке — важнее (§ 4.4).
-## Рой поднят перед копателем, двойником и эхо (калибровка #33): эхо под светом
-## базы кружит рядом и забирало все выстрелы, пока стая грызла бур под турелями.
+## Приоритет целей красного маяка: раньше в списке — важнее.
 const TURRET_PRIORITY: Array[String] = ["shade", "swarm", "burrower", "doppel", "echo"]
-const TURRET_SCAN_PERIOD: float = 0.1    ## турель без цели ищет её не чаще, с
+const TURRET_SCAN_PERIOD: float = 0.1    ## маяк без цели ищет её не чаще, с
 const VENTS_RANDOM: int = 14             ## случайных вентиляций в пещерах (§ 1.1)
 const VENT_MIN_GAP: int = 16             ## клеток между соседними вентиляциями
 
@@ -178,10 +149,10 @@ const SHADE_DROP_COAL: int = 2
 const SWARM_DROP_COPPER: int = 1
 
 # ------------------------------------------ § 4.5 Враги: поведение типов (#27)
-const SWARM_SEEK_PX: float = 300.0     ## рой видит работающий бур/сборщик в этом радиусе
+const SWARM_SEEK_PX: float = 300.0     ## рой видит горящую горелку в этом радиусе
 const SWARM_PACK_SPREAD: int = 1       ## стая = pack ± это число (4–6)
-const SHADE_SEEK_PX: float = 640.0     ## тень чует генератор в этом радиусе
-const SHADE_DRAIN_PERIOD: float = 3.0  ## тень у ТЭЦ сжигает 1 уголь за столько секунд
+const SHADE_SEEK_PX: float = 640.0     ## тень чует горящую горелку в этом радиусе
+const SHADE_DRAIN_PERIOD: float = 3.0  ## тень у горелки сжигает одну единицу топлива за столько секунд
 const BURROWER_DIG_PERIOD: float = 0.6 ## копатель роет 1 клетку за столько секунд
 const BURROWER_HUNT_PX: float = 600.0  ## копатель чует игрока сквозь породу
 const DOPPEL_GAZE_PX: float = 200.0    ## двойник замирает под взглядом ближе этого
@@ -218,8 +189,8 @@ const TERMINAL_GIFT_MIN: int = 2
 const TERMINAL_GIFT_MAX: int = 3
 
 # ---------------------------------------------------------------- § 4.7 Релей
-## Вдвое против § 4.7 (калибровка #33, риск «ручной путь жизнеспособен», § 6):
-## руками было ≈ 15 мин копки при цели ≥ 25, две линии буров — ≈ 4 мин при ≤ 12.
+## Релей до F1 (#175). Пластины и антенна — legacy: при загрузке станут слитками.
+## Числа не меняем здесь — требование переписывает F1.
 const RELAY_REQ: Dictionary = {
 	IDs.I.IRON_PLATE: 48,
 	IDs.I.STEEL_PLATE: 24,
@@ -266,15 +237,16 @@ const SKY_CACHE_MAX: int = 6
 const SKY_REVEAL_TILES: float = 6.0    ## ближе — обломок проступает из силуэта
 const SKY_HAZE_ALPHA: float = 0.82     ## насколько тёмен силуэт издалека
 ## Груз обломка: предмет → [мин, макс]. Позиций не меньше SKY_CACHE_MAX.
+## Снятые предметы (пластины, панели, буры) в новый тайник не кладём (#170).
 const SKY_LOOT: Dictionary = {
-	IDs.I.POWER_CELL: [1, 2],
-	IDs.I.CIRCUIT: [3, 6],
-	IDs.I.STEEL_PLATE: [3, 6],
+	IDs.I.IRON_INGOT: [2, 4],
+	IDs.I.COPPER_INGOT: [2, 4],
+	IDs.I.GLASS: [2, 4],
 	IDs.I.CRYSTAL: [3, 6],
-	IDs.I.SOLAR: [1, 1],
-	IDs.I.DEEP_DRILL: [1, 1],
-	IDs.I.ANALYZER: [1, 1],
-	IDs.I.FLOODLIGHT: [1, 1],
+	IDs.I.COAL: [4, 8],
+	IDs.I.COLLECTOR: [1, 1],
+	IDs.I.PHAROS: [1, 1],
+	IDs.I.BURNER: [1, 1],
 }
 
 # ---------------------------------------- ADR-002 Сеть и кооператив (docs/adr/0002-multiplayer.md)

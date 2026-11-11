@@ -7,7 +7,8 @@ extends "res://tools/mp/scenarios/mp_coop_base.gd"
 ##    (светокристаллы), сохранение закрыто, HUD — карточка «Накопай 5 угля»;
 ##  * хост кладёт уголь — у клиента этап «Свет»; лампа у входа — победа у обоих,
 ##    экран итога главы у клиента и отметка в его профиле.
-##
+## Фабрики нет (#170): турели и бура в снимке не появляются.
+
 const MISSION: String = "dig"
 const WAIT: float = 8.0
 
@@ -33,6 +34,10 @@ func run_host() -> void:
 	var p0: Player = hero_of(0)
 	ok("хост: прокси клиента получил набор главы", await wait_until(func() -> bool:
 		return p0 != null and p0.inv.count_of(IDs.I.LAMP) >= 3, WAIT))
+	ok("хост: турели и бура нет", Mission.machines_of("Turret") == 0
+			and Mission.machines_of("Drill") == 0 and Mission.machines_of("DeepDrill") == 0
+			and Mission.machines_of("Belt") == 0 and Mission.machines_of("Smelter") == 0
+			and Mission.machines_of("CoalGen") == 0)
 	await barrier("in")
 	await barrier("seen")
 	# Уголь в инвентаре хоста — у клиента этап «Свет».
@@ -64,8 +69,12 @@ func run_client(_i: int) -> void:
 		if World.get_tile(vein.x, vein.y - 2 + dy) == IDs.T.COAL_ORE:
 			coal += 1
 	ok("клиент: жила угля из снимка", coal == CampaignBase.COAL_N, "клеток %d" % coal)
-	ok("клиент: набор главы — светокристаллы", await wait_until(func() -> bool:
-		return player.inv.count_of(IDs.I.LAMP) >= 3, WAIT))
+	ok("клиент: база без фабрики", Mission.machines_of("Turret") == 0
+			and Mission.machines_of("Drill") == 0 and Mission.machines_of("DeepDrill") == 0
+			and Mission.machines_of("Belt") == 0 and Mission.machines_of("Smelter") == 0
+			and Mission.machines_of("CoalGen") == 0)
+	ok("клиент: набор главы — светокристаллы, без турели", await wait_until(func() -> bool:
+		return player.inv.count_of(IDs.I.LAMP) >= 3 and player.inv.count_of(IDs.I.TURRET) == 0, WAIT))
 	ok("клиент: сохранение закрыто", Save.save_blocker() != "")
 	var hud: HUD = UI.hud
 	if hud != null:
