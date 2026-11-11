@@ -948,27 +948,147 @@ func _check_ruin_caches() -> void:
 
 
 ## Терминалы и главы журнала (#29): в каждой руине — терминал с главой
-## BASE_TERMINALS + i, на базе — два терминала с главами 0–1. Раньше стены руины
-## занимали весь нижний ряд, и терминал руины не ставился ни на одном сиде.
+## BASE_TERMINALS + i, на базе — два терминала с главами 0–1. Руина погребена:
+## терминал ниже поверхности, в комнате с воздухом, над ним порода, не лестница
+## от травы. Раньше стены занимали весь нижний ряд, и терминал не ставился.
 func _check_ruin_terminals() -> void:
 	var no_term: Array = []
+	var shallow: Array = []
+	var open_sky: Array = []
+	var no_air: Array = []
+	var shaft: Array = []
+	var depths: Array = []
+	var ys: Array = []
+	var buried: int = 0
 	for c in World.ruin_caches:
 		var i: int = int(c["index"])
-		var found: bool = false
+		var term: Vector2i = Vector2i(-1, -1)
 		for t in World.terminals:
 			if int(World.terminal_chapters.get(t, -1)) == Lore.BASE_TERMINALS + i \
 					and World.get_tile_v(t) == IDs.T.TERMINAL and absi(t.x - int(c["cell"].x)) <= 8:
-				found = true
-		if not found:
+				term = t
+				break
+		if term.x < 0:
 			no_term.append(i)
+			continue
+		var top: int = int(World.surface[clampi(term.x, 0, World.W - 1)])
+		var depth: int = term.y - top
+		depths.append(depth)
+		ys.append(term.y)
+		if depth < 6:
+			shallow.append("%d:%s d=%d" % [i, str(term), depth])
+		else:
+			buried += 1
+		# Над комнатой — порода, не воздух до травы.
+		var rock: int = 0
+		for y in range(top + 1, term.y - 3):
+			if DB.tile_solid(World.get_tile(term.x, y)):
+				rock += 1
+		if rock < 3:
+			open_sky.append("%d:%s rock=%d" % [i, str(term), rock])
+		# Герой встаёт в комнате: воздух над полом рядом с сундуком. Сундук твёрдый
+		# для тел, поэтому rect_solid здесь не годится — смотрим тайлы.
+		var stand: Vector2i = Vector2i(-1, -1)
+		var chest_c: Vector2i = c["cell"]
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(2, 0), Vector2i(-2, 0)]:
+			var s: Vector2i = chest_c + d
+			if World.get_tile_v(s) != IDs.T.AIR:
+				continue
+			if not DB.tile_solid(World.get_tile(s.x, s.y + 1)):
+				continue
+			if World.get_tile(s.x, s.y - 1) != IDs.T.AIR:
+				continue
+			stand = s
+			break
+		if stand.x < 0:
+			no_air.append(i)
+		# Прямой колодец от поверхности до двери — плюшка снова бесплатная.
+		if _ruin_surface_shaft(int(c.get("cx", term.x)), int(c.get("half", 6)), int(c.get("floor", term.y + 1))):
+			shaft.append(i)
 	_ok("в каждой руине есть терминал", not World.ruin_caches.is_empty() and no_term.is_empty(),
 			"без терминала: %s" % str(no_term))
+	_ok("руины под землёй, не на траве", shallow.is_empty() and buried >= 5,
+			"мелко: %s; глубины %s" % [str(shallow), str(depths)])
+	_ok("над станцией порода, не небо", open_sky.is_empty(), str(open_sky))
+	_ok("в комнате есть воздух, герой встаёт", no_air.is_empty(), str(no_air))
+	_ok("к двери нет колодца от травы", shaft.is_empty(), str(shaft))
+	var same_row: bool = ys.size() >= 2
+	for y in ys:
+		if y != ys[0]:
+			same_row = false
+	_ok("руины не на одной глубине", not same_row, str(ys))
 	var chapters: Array = []
 	for t in World.terminals:
 		chapters.append(int(World.terminal_chapters.get(t, -1)))
 	chapters.sort()
 	_ok("у каждого терминала своя глава журнала", chapters == range(Lore.chapter_count()),
 			"терминалов %d, главы %s" % [World.terminals.size(), str(chapters)])
+	# База остаётся на поверхности: два терминала глав 0–1 над грунтом площадки.
+	var base_ok: int = 0
+	for t in World.terminals:
+		var ch: int = int(World.terminal_chapters.get(t, -1))
+		if ch < 0 or ch >= Lore.BASE_TERMINALS:
+			continue
+		if t.y == int(World.surface[clampi(t.x, 0, World.W - 1)]) - 1:
+			base_ok += 1
+	_ok("терминалы базы на поверхности", base_ok == Lore.BASE_TERMINALS, "на грунте %d" % base_ok)
+	_check_ruin_minimap()
+
+
+## Неоткрытая руина не рисуется точкой на миникарте. Открыли клетку — точка есть.
+func _check_ruin_minimap() -> void:
+	var hud: HUD = UI.hud
+	if hud == null or World.ruin_caches.is_empty():
+		_ok("миникарта прячет терминал руины под туманом", false, "нет HUD или руин")
+		return
+	var term: Vector2i = Vector2i(-1, -1)
+	for t in World.terminals:
+		if int(World.terminal_chapters.get(t, -1)) >= Lore.BASE_TERMINALS:
+			term = t
+			break
+	if term.x < 0:
+		_ok("миникарта прячет терминал руины под туманом", false, "нет терминала руины")
+		return
+	# Пиксель миникарты смотрит в центр своей клетки мира — гасим всю колонку,
+	# иначе соседняя открытая клетка (старт, база) оставляет точку видимой.
+	var saved_col: PackedByteArray = PackedByteArray()
+	for y in World.H:
+		saved_col.append(World.explored[y * World.W + term.x])
+		World.explored[y * World.W + term.x] = 0
+	hud._on_explored_reset()
+	hud._draw_map_layer()
+	var hidden: int = hud.stat_map_terminals
+	var hidden_at: bool = hud.map_explored_at(term)
+	World.reveal_around(term, 4)
+	hud._on_explored_reset()
+	hud._draw_map_layer()
+	var shown: int = hud.stat_map_terminals
+	_ok("миникарта прячет терминал руины под туманом",
+			not hidden_at and hidden == 0 and shown >= 1 and hud.map_explored_at(term),
+			"в тумане %d (открыт пиксель %s), после %d" % [hidden, str(hidden_at), shown])
+	for y in World.H:
+		World.explored[y * World.W + term.x] = saved_col[y]
+
+
+## Колодец от травы до двери: в колонках комнаты воздух почти до поверхности.
+func _ruin_surface_shaft(cx: int, half: int, floor_y: int) -> bool:
+	# Только колонки двери и кармана сразу за ней. Дальше — пещеры мира,
+	# их воздух до поверхности колодцем руины не считается.
+	for x in range(cx - half - 1, cx + half + 2):
+		if x < 1 or x >= World.W - 1:
+			continue
+		var top: int = int(World.surface[x])
+		var air: int = 0
+		# Непрерывный воздух от травы до двери — лестница. Пещера ниже породы не считается.
+		var run: int = 0
+		for y in range(top + 1, floor_y - 1):
+			if World.get_tile(x, y) == IDs.T.AIR:
+				run += 1
+			else:
+				break
+		if run >= 6:
+			return true
+	return false
 
 
 # ------------------------------------------------------- небесный тайник (#60)
