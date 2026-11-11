@@ -14,10 +14,18 @@ extends "res://tools/mp/scenarios/mp_coop_base.gd"
 const SLOT: String = "mp_test_rejoin"
 const WAIT: float = 8.0
 const MARKS: Array = [IDs.I.SCRAP, IDs.I.SAND, IDs.I.LOG]
+## Стартовый набор (#171) уже кладёт 4 хлама. Метка Ани — тот же предмет,
+## поэтому в сейве 4 + 7, а не 7. Снятие метки после сейва оставляет эти 4.
+const STARTER_SCRAP: int = 4
 
 
 func _mark(i: int) -> int:
 	return int(MARKS[i])
+
+
+## Сколько метки должно лежать: своя прибавка плюс хлам стартового набора у Ани.
+func _want(i: int) -> int:
+	return 7 + i + (STARTER_SCRAP if _mark(i) == IDs.I.SCRAP else 0)
 
 
 # ------------------------------------------------------------------ ХОСТ
@@ -56,7 +64,7 @@ func run_host() -> void:
 			"версия %d, игроки %s" % [int(d.get("version", 0)), str(players.keys())])
 	var e0: Dictionary = players.get(client_uid(0), {})
 	ok("запись Ани: ник, метка в инвентаре", String(e0.get("nick", "")) == "Аня"
-			and _count_in(e0.get("state", {}), _mark(0)) == 7, str(e0.get("nick", "")))
+			and _count_in(e0.get("state", {}), _mark(0)) == STARTER_SCRAP + 7, str(e0.get("nick", "")))
 	ok("F9 в сети выключена (хост)", not UI.quick_load() and Save.last_error == Save.NET_LOAD_IN_MENU)
 	await barrier("saved")
 	await barrier("tried")
@@ -71,7 +79,7 @@ func run_host() -> void:
 	ok("герои вышедших — в Net.parked по uid", Net.parked.size() == clients
 			and Net.parked.has(client_uid(0)), str(Net.parked.keys()))
 	ok("в парковке Аня — какой вышла (без метки)",
-			_count_in((Net.parked.get(client_uid(0), {}) as Dictionary).get("state", {}), _mark(0)) == 0)
+			_count_in((Net.parked.get(client_uid(0), {}) as Dictionary).get("state", {}), _mark(0)) == STARTER_SCRAP)
 
 	# --- Загрузка сетевого сохранения.
 	var loaded: bool = Save.load_net(SLOT)
@@ -79,7 +87,7 @@ func run_host() -> void:
 	print("  ЗАМЕР загрузка сохранения с %d игроками в сети: %.1f мс" % [1 + clients, Save.last_load_ms])
 	ok("после загрузки — в парковке все трое из файла, у Ани метка",
 			Net.parked.size() == clients and _count_in((Net.parked.get(client_uid(0), {}) as Dictionary)
-			.get("state", {}), _mark(0)) == 7, str(Net.parked.keys()))
+			.get("state", {}), _mark(0)) == STARTER_SCRAP + 7, str(Net.parked.keys()))
 
 	# --- Аня возвращается.
 	relaunch(0)
@@ -87,7 +95,7 @@ func run_host() -> void:
 	await wait_until(func() -> bool: return hero_of(0) != null, 10.0)
 	var back: Player = hero_of(0)   # лямбда захватывает копию переменной — присваиваем снаружи
 	var restored: bool = back != null and await wait_until(func() -> bool:
-		return back.inv.count_of(_mark(0)) == 7 and back.global_position.distance_to(spots[0]) < 24.0, WAIT)
+		return back.inv.count_of(_mark(0)) == STARTER_SCRAP + 7 and back.global_position.distance_to(spots[0]) < 24.0, WAIT)
 	ok("Аня (тот же uid) — из сохранения: место и метка", restored,
 			"%s, метка %d" % [str(back.global_position) if back != null else "—",
 			back.inv.count_of(_mark(0)) if back != null else -1])
@@ -136,7 +144,7 @@ func _rejoin(i: int) -> void:
 		return player.global_position.distance_to(spot) < 24.0, WAIT),
 			"%s / %s" % [str(player.global_position), str(spot)])
 	ok("c%d: инвентарь из сохранения (метка)" % i, await wait_until(func() -> bool:
-		return player.inv.count_of(_mark(i)) == 7 + i, WAIT), "%d" % player.inv.count_of(_mark(i)))
+		return player.inv.count_of(_mark(i)) == _want(i), WAIT), "%d" % player.inv.count_of(_mark(i)))
 	ok("c%d: HP из сохранения" % i, await wait_until(func() -> bool:
 		return absf(player.hp - (70.0 - 10.0 * float(i))) < 1.0, WAIT), "%.1f" % player.hp)
 	await barrier("rejoined")

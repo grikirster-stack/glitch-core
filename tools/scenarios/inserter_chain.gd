@@ -53,6 +53,7 @@ func run() -> void:
 	ins.dir = 0
 
 	# Фильтр: E с рудой в руке — только руда; песок в сундуке остаётся.
+	player.inv.add(IDs.I.COPPER_ORE, 1)
 	player.inv.selected = _slot_of(IDs.I.COPPER_ORE)
 	hold(KEY_E)
 	await wait_until(func() -> bool: return ins.filter != IDs.I.NONE, 2.0)

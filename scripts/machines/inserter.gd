@@ -66,10 +66,10 @@ func interact(p) -> void:
 	var sel: ItemStack = p.inv.selected_stack()
 	if sel.is_empty():
 		set_filter(IDs.I.NONE)
-		Game.notify("Манипулятор: фильтр снят", Color(0.8, 0.85, 0.9))
+		Game.notify("Фильтр снят", Color(0.8, 0.85, 0.9))
 	else:
 		set_filter(sel.id)
-		Game.notify("Манипулятор: только %s" % DB.item_name(sel.id), Color(0.7, 0.9, 1.0))
+		Game.notify("Только %s" % DB.item_name(sel.id), Color(0.7, 0.9, 1.0))
 	Sfx.play("place", -14.0, 1.2)
 
 

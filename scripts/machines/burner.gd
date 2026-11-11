@@ -31,6 +31,8 @@ func _init() -> void:
 	kind = "Burner"
 	z_index = 3
 	can_turn = true
+	# Восемь положений: четыре стороны и четыре диагонали. Не мышь «куда угодно».
+	turn_steps = 8
 
 
 func _process(delta: float) -> void:
@@ -240,13 +242,21 @@ func _draw() -> void:
 
 func _draw_nozzle() -> void:
 	var tip: Rect2 = Rect2(6.0, -2.0, 3.0, 4.0)
-	match dir:
+	match dir & 7:
 		1:
 			tip = Rect2(-2.0, 6.0, 4.0, 3.0)
 		2:
 			tip = Rect2(-9.0, -2.0, 3.0, 4.0)
 		3:
 			tip = Rect2(-2.0, -9.0, 4.0, 3.0)
+		4:
+			tip = Rect2(5.0, 5.0, 3.0, 3.0)    ## вправо-вниз
+		5:
+			tip = Rect2(-8.0, 5.0, 3.0, 3.0)   ## влево-вниз
+		6:
+			tip = Rect2(-8.0, -8.0, 3.0, 3.0)  ## влево-вверх
+		7:
+			tip = Rect2(5.0, -8.0, 3.0, 3.0)   ## вправо-вверх
 	draw_rect(tip, C_METAL_D)
 	draw_rect(tip.grow(-1.0), C_FRAME)
 
@@ -312,6 +322,10 @@ func net_state() -> PackedByteArray:
 		flame |= 8
 	if not enabled:
 		flame |= 16
+	# dir 0..7 не влезает в два бита базы (биты 2–3 — рубильник генератора).
+	# Три старших бита байта пламени были свободны: длина пакета та же,
+	# старый пакет с нулями там читается как dir 0..3 из флагов базы.
+	flame |= (dir & 7) << 5
 	b.append(flame)
 	b.append(mini(255, fuel_units()))
 	return b
@@ -332,7 +346,14 @@ func apply_net_state(b: PackedByteArray) -> int:
 	if stock > 0:
 		fuel.append([_burning_item(), stock])
 	burn_left = 1.0 if lit else 0.0
-	if burning() != was or color != prev:
+	# Старшие биты байта пламени — dir 0..7. В старом пакете их нет (нули):
+	# тогда направление — два бита базы, 0..3. База их для turn_steps = 8 не пишет.
+	var packed_dir: int = (int(b[o]) >> 5) & 7
+	var d: int = packed_dir if packed_dir != 0 else ((int(b[1]) >> NF_DIR_SHIFT) & 3)
+	var turned: bool = d != dir
+	if turned:
+		dir = d
+	if burning() != was or color != prev or turned:
 		_mark_beam()
 	queue_redraw()
 	return o + 2

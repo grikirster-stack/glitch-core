@@ -354,7 +354,8 @@ func _send_inv(id: int) -> void:
 	var slots: Array = []
 	for s in p.inv.slots:
 		slots.append([s.id, s.count])
-	var sum: int = hash(slots)
+	var seen: Array = p.inv.seen_items.keys()
+	var sum: int = hash([slots, seen])
 	var t: int = int(st.get("inv_t", 0)) + 1
 	# Без изменений — повтор раз в INV_REPEAT тактов (клиент мог ещё строить мир).
 	if sum == int(st["inv_sum"]) and t < INV_REPEAT:
@@ -362,7 +363,7 @@ func _send_inv(id: int) -> void:
 		return
 	st["inv_t"] = 0
 	st["inv_sum"] = sum
-	Net.send(NetCodec.Msg.INV, NetCodec.encode_inv(slots, p.inv.selected), id)
+	Net.send(NetCodec.Msg.INV, NetCodec.encode_inv(slots, p.inv.selected, seen), id)
 
 
 func _slot_of(id: int) -> int:
@@ -531,6 +532,10 @@ func _on_inv(sender: int, payload: PackedByteArray) -> void:
 	for i in mini(slots.size(), own.inv.size):
 		var e: Array = slots[i]
 		own.inv.slots[i] = ItemStack.new(int(e[0]), int(e[1])) if int(e[1]) > 0 else ItemStack.new()
+	# Хвост seen (#171): потраченное тоже открывает рецепт. Слоты не помечаем
+	# сами — иначе пустой подбор на клиенте открыл бы строку без сигнала хоста.
+	for id in d.get("seen", []):
+		own.inv.mark_seen(int(id))
 	own.inv.changed.emit()
 	own.stats_changed.emit()
 
@@ -545,9 +550,9 @@ static func send_sound(pos: Vector2, id: String, volume_db: float, pitch: float)
 		Net.send(NetCodec.Msg.EVENT, NetCodec.encode_sound(pos, sid, volume_db, pitch))
 
 
-## Личное уведомление — только владельцу (канал 2).
-static func send_notify(peer: int, pos: Vector2, text: String, color: Color) -> void:
-	Net.send_on(2, NetCodec.Msg.EVENT, NetCodec.encode_notify(pos, text, color), peer)
+## Личное уведомление — только владельцу (канал 2). icon — предмет в кадре (#171).
+static func send_notify(peer: int, pos: Vector2, text: String, color: Color, icon: int = 0) -> void:
+	Net.send_on(2, NetCodec.Msg.EVENT, NetCodec.encode_notify(pos, text, color, icon), peer)
 
 
 ## Эффект в мире — всем клиентам (канал 0).

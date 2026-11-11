@@ -482,7 +482,7 @@ func _draw_beams(view: Rect2) -> void:
 		var b: Vector2 = World.cell_to_world(s["to"])
 		# Конец сегмента — центр последней воздушной клетки. Если дальше стоит
 		# постройка, линия должна дойти до её грани: иначе луч «не входит» в башню.
-		var dir: int = int(s["dir"])
+		var dir: int = int(s["dir"]) & 7
 		var step: Vector2i = Beams.DIR[dir]
 		var hit: Vector2i = s["to"] + step
 		if World.machines.has(hit):

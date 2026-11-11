@@ -299,7 +299,7 @@ func toggle_pause() -> void:
 
 
 func _on_notification(text: String, color: Color) -> void:
-	hud.notify(text, color)
+	hud.notify(text, color, Game.last_note_icon)
 
 
 func flash_damage() -> void:
@@ -343,7 +343,8 @@ func net_event(_sender: int, payload: PackedByteArray) -> void:
 				Sfx.play_at(id, e["pos"], float(e["volume_db"]), float(e["pitch"]))
 		NetCodec.Ev.NOTIFY:
 			rec["text"] = String(e["text"])
-			Game.notify(String(e["text"]), e["color"])
+			rec["icon"] = int(e.get("icon", 0))
+			Game.notify(String(e["text"]), e["color"], int(e.get("icon", 0)))
 		NetCodec.Ev.FX:
 			rec["kind"] = int(e["kind"])
 			NetPlayers.play_fx(int(e["kind"]), e["pos"], int(e["arg"]))
