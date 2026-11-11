@@ -1008,9 +1008,18 @@ func net_apply_relay(have: Dictionary, req: Dictionary) -> void:
 
 
 ## Хост: дуги или клетка ядра изменились — кадр CORE (#175).
+## Вход не шлёт этот кадр сам: дуги уже в снимке, но кадр до снимка клиент
+## отбрасывает. Повтор после входа закрывает окно (#180).
 func _net_core_changed() -> void:
 	if Net.is_host():
 		Net.send_on(0, NetCodec.Msg.COOP, NetCodec.encode_coop_core(core_arcs, core_cell))
+
+
+## Хост: вошедшему — текущие дуги. Снимок уже их несёт; повтор не врёт.
+func net_core_to(peer: int) -> void:
+	if not Net.is_host() or peer == 1:
+		return
+	Net.send(NetCodec.Msg.COOP, NetCodec.encode_coop_core(core_arcs, core_cell), peer)
 
 
 ## Клиент: дуги и клетка активного ядра с хоста.

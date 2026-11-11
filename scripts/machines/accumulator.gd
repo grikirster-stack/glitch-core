@@ -96,10 +96,13 @@ var _seen: int = 0
 ## Beams зовёт перед проходом. Признак входа прошлого прохода остаётся на кадр.
 ## Отдачу решаем здесь, не в _process: World перестраивает луч раньше машин,
 ## и рубильник «отдавать» иначе светит только со следующего кадра.
+## Клиент отдачу не решает: бит «луч наружу» пишет хост в net_state (#180).
 func beam_reset_inputs() -> void:
 	_fed_pass = _fed
 	_fed = false
 	_seen = 0
+	if not Net.is_authority():
+		return
 	var on: bool = _should_emit()
 	if on != _emitting:
 		_emitting = on
@@ -116,7 +119,9 @@ func beam_pass(in_dir: int, in_color: int) -> Array:
 	# Чужой цвет при живом запасе не принимаем: не смешиваем и не сбрасываем.
 	if stored > 0.0 and color != 0 and c != color:
 		return []
-	if color == 0:
+	# Цвет запаса считает хост. Клиент, принявший луч раньше пакета, зажёг бы
+	# шкалу своим цветом и разошёлся с лучом хоста (#180).
+	if Net.is_authority() and color == 0:
 		color = c
 	_seen = c
 	_fed = true

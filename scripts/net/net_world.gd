@@ -370,6 +370,9 @@ func send_snapshot(peer: int) -> void:
 	synced[peer] = true
 	snapshots_sent += 1
 	_global_dirty = true
+	# Дуги уже в снимке. Повтор CORE — после него: кадр до снимка клиент
+	# отбрасывает, а между снимком и следующим CORE окно пустое (#180).
+	Game.net_core_to(peer)
 	print("СЕТЬ: снимок пиру %d: %d Б (сырые %d Б), сборка %.1f мс" % [peer, bytes.size(),
 			Save.last_raw_size, last_gather_ms])
 

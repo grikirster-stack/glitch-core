@@ -69,6 +69,9 @@ func apply_net_state(b: PackedByteArray) -> int:
 	if d != dir:
 		dir = d
 		queue_redraw()
+		# Поворот едет net_state, не пакетом луча. Без пометки клиент не перестроит (#180).
+		if World.beams != null:
+			World.beams.mark_dirty()
 	return o + 1
 
 

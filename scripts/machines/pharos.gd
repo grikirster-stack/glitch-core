@@ -59,11 +59,9 @@ func _init() -> void:
 
 func _process(delta: float) -> void:
 	super(delta)
-	# Клиент не считает урон и стан, но белый открывает руду у себя:
-	# explored по сети не едет, цвет маяка — едет.
+	# Клиент не считает урон, стан и туман: explored уже в снимке входа,
+	# а дельт тумана нет — свой reveal_cells разошёлся бы с хостом (#180).
 	if not Net.is_authority():
-		if active and color == Beams.W:
-			_tick_white(delta)
 		return
 	if not active:
 		return
@@ -88,7 +86,11 @@ func beam_pass(_in_dir: int, _color: int) -> Array:
 
 
 ## Цвет, который упёрся в маяк (OR всех входов). 0 — луча нет.
+## Клиент цвет не решает: его трассировка ещё не видит пламени хоста и затёрла бы
+## стекло, пришедшее net_state (#180).
 func beam_receive(mask: int) -> void:
+	if not Net.is_authority():
+		return
 	var next: int = mask & 7
 	if next == color:
 		return

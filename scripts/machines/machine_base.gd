@@ -471,6 +471,9 @@ func apply_net_state(b: PackedByteArray) -> int:
 		if d != dir:
 			dir = d
 			queue_redraw()
+			# Смеситель и призма: без этого клиентский луч остаётся в старую сторону (#180).
+			if World.beams != null:
+				World.beams.mark_dirty()
 	progress = float(b[3]) / 255.0
 	return NET_BASE_BYTES
 
