@@ -389,6 +389,13 @@ const REGISTRY: Dictionary = {
 	# --- Свет: горелка и луч (ADR-005, #164) ---
 	"beam_burner": {"file": "beam_burner.gd", "title": "горелка и луч", "timeout_ms": 90000,
 		"desc": "уголь даёт красный луч на 24 клетки, стена обрывает, 45 с гаснет, сундук кормит, поворот уводит луч; замер rebuild"},
+	# --- Свет: маяк, часть 1 (ADR-005 § 5, #167) ---
+	"pharos_red": {"file": "pharos_red.gd", "title": "маяк под красным", "timeout_ms": 60000,
+		"desc": "уголь → маяк жжёт эхо в 5 клетках за ≤ 5 с, за стеной молчит; урон/с и мкс кадра"},
+	"pharos_yellow": {"file": "pharos_yellow.gd", "title": "маяк под жёлтым", "timeout_ms": 30000,
+		"desc": "жёлтый луч на входе: свет ≥ 2.0 в 4 клетках, эхо рядом уходит в FLEE за 2 с"},
+	"pharos_green": {"file": "pharos_green.gd", "title": "маяк под зелёным", "timeout_ms": 30000,
+		"desc": "медь → маяк чинит соседа 40 → 100 за ≤ 9 с и сам не теряет HP"},
 }
 
 var scene: Node = null

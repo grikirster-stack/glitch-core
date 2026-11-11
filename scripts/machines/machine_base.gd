@@ -97,6 +97,9 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 		# --- Свет (ADR-005, #164) ---
 		"Burner":
 			m = Burner.new()
+		# --- Маяк (ADR-005 § 5, #167) ---
+		"Pharos":
+			m = Pharos.new()
 		_:
 			return false
 	m.cell = c

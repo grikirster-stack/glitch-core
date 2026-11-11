@@ -147,6 +147,7 @@ func _ready() -> void:
 	_stats_on = OS.get_cmdline_user_args().has(STATS_FLAG)
 	Threat.vent_warning.connect(spawn_vent_steam)
 	World.turret_fired.connect(_on_turret_fired)
+	World.pharos_fired.connect(_on_pharos_fired)
 
 
 func _process(delta: float) -> void:
@@ -398,6 +399,11 @@ func _on_turret_fired(from: Vector2, to: Vector2) -> void:
 	spawn_arc(from, to)
 
 
+## Выстрел маяка (World.pharos_fired, #167): та же дуга, цвет луча.
+func _on_pharos_fired(from: Vector2, to: Vector2, color: Color) -> void:
+	spawn_arc(from, to, color)
+
+
 # ------------------------------------------------------------ ОТРИСОВКА
 
 func _draw() -> void:
@@ -470,7 +476,14 @@ func _draw_beams(view: Rect2) -> void:
 	for s in World.beams.segments:
 		var a: Vector2 = World.cell_to_world(s["from"])
 		var b: Vector2 = World.cell_to_world(s["to"])
-		if view.size != Vector2.ZERO and not view.grow(tile).intersects(Rect2(a, b - a).abs()):
+		# Конец сегмента — центр последней воздушной клетки. Если дальше стоит
+		# постройка, линия должна дойти до её грани: иначе луч «не входит» в башню.
+		var dir: int = int(s["dir"])
+		var step: Vector2i = Beams.DIR[dir]
+		var hit: Vector2i = s["to"] + step
+		if World.machines.has(hit):
+			b += Vector2(step) * tile * 0.5
+		if view.size != Vector2.ZERO and not view.grow(tile * 4.0).intersects(Rect2(a, b - a).abs()):
 			continue
 		var mask: int = int(s["color"])
 		if mask <= 0 or mask >= Beams.COLOR.size():
@@ -478,7 +491,9 @@ func _draw_beams(view: Rect2) -> void:
 		var col: Color = Beams.COLOR[mask]
 		# Доля длины у начала сегмента: 1 у горелки, меньше после построек.
 		var head: float = clampf(float(s["strength"]), 0.0, 1.0)
-		var tail: float = lerpf(0.35, head, 0.35)
+		# Короткий кусок (луч упёрся в башню рядом) не должен гаснуть до чёрного:
+		# ребёнок иначе не видит, что луч вошёл.
+		var tail: float = lerpf(0.72, head, 0.45)
 		var mid: Vector2 = (a + b) * 0.5
 		# Одна линия 4 px: у источника альфа 1, к концу 0,35.
 		draw_line(a, mid, Color(col.r, col.g, col.b, head), 4.0)

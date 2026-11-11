@@ -464,9 +464,13 @@ func _check_data() -> void:
 			bad.append(String(r["name"]) + ":tech")
 	_ok("рецепты ссылаются на существующие предметы", bad.is_empty(), str(bad))
 	_ok("стальная стена без чертежа закрыта", not DB.recipe_unlocked({"out": IDs.I.STEEL_WALL}))
-	Game.give_next_blueprint()
-	_ok("после чертежа стена открыта", Game.has_blueprint(IDs.I.STEEL_WALL)
-			and DB.recipe_unlocked({"out": IDs.I.STEEL_WALL}))
+	_ok("маяк без чертежа закрыт", not DB.recipe_unlocked({"out": IDs.I.PHAROS}))
+	var first: int = Game.give_next_blueprint()
+	# Порядок BLUEPRINT_ORDER: смесителя ещё нет (#165), первый доступный — маяк.
+	_ok("первый чертёж — маяк, стена всё ещё закрыта", first == IDs.I.PHAROS
+			and Game.has_blueprint(IDs.I.PHAROS) and DB.recipe_unlocked({"out": IDs.I.PHAROS})
+			and not DB.recipe_unlocked({"out": IDs.I.STEEL_WALL}),
+			"выдан %s" % DB.item_name(first))
 	_ok("рецептов достаточно", DB.recipes.size() >= 30, "n=%d" % DB.recipes.size())
 	# Релей: только существующие предметы, количества положительные.
 	var bad_relay: bool = false
