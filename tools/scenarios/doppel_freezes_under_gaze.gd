@@ -55,8 +55,9 @@ func run() -> void:
 			"%.0f → %.0f px" % [d0, ph.global_position.distance_to(player.global_position)])
 	ok("двойник — один на сцене", _doppels() == 1)
 
-	# Двойник всегда роняет чёрный ящик; подобранный — вскрывается: +данные.
-	var data0: int = Game.research
+	# Двойник всегда роняет чёрный ящик; подобранный — 2 кристалла и обрывок.
+	var crystals0: int = player.inv.count_of(IDs.I.CRYSTAL)
+	var frag0: int = Tech.fragments.size()
 	ph.take_damage(1000.0, player.global_position)
 	ok("двойник рассеян", not ph.alive)
 	var box: Node = null
@@ -67,11 +68,12 @@ func run() -> void:
 	# Идём к ящику, пока его не притянет к игроку.
 	if box != null:
 		hold(KEY_D if box.global_position.x > player.global_position.x else KEY_A)
-	var opened: bool = await wait_until(func(): return Game.research > data0, 3.0)
+	var opened: bool = await wait_until(func(): return Tech.fragments.size() > frag0, 3.0)
 	release_all()
-	ok("чёрный ящик подобран и вскрыт: +данные", opened
-			and player.inv.count_of(IDs.I.BLACK_BOX) == 0,
-			"данных %d → %d" % [data0, Game.research])
+	ok("чёрный ящик вскрыт: +%d кристалла и обрывок" % Balance.BLACK_BOX_CRYSTALS, opened
+			and player.inv.count_of(IDs.I.BLACK_BOX) == 0
+			and player.inv.count_of(IDs.I.CRYSTAL) >= crystals0 + Balance.BLACK_BOX_CRYSTALS,
+			"кристаллов %d → %d, обрывков %d" % [crystals0, player.inv.count_of(IDs.I.CRYSTAL), Tech.fragments.size()])
 	finish()
 
 

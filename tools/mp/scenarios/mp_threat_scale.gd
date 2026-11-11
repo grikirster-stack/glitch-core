@@ -148,16 +148,21 @@ func _spawn_side() -> void:
 	clear_phantoms()
 
 
-## Чёрный ящик, подобранный товарищем, вскрывает хост: данные команде.
+## Чёрный ящик, подобранный товарищем, вскрывает хост: 2 кристалла в инвентарь
+## хоста (клиентский ящик хост видит через инвентарь прокси) и обрывок журнала.
 func _black_box() -> void:
 	var p1: Player = hero_of(1)
 	if p1 == null:
 		return
-	var r0: int = Game.research
+	var c0: int = player.inv.count_of(IDs.I.CRYSTAL)
+	var f0: int = Tech.fragments.size()
 	p1.inv.add(IDs.I.BLACK_BOX, 1)
 	await wait(0.2)
-	ok("чёрный ящик в инвентаре клиента 1 вскрыт хостом", Game.research == r0 + Balance.BLACK_BOX_DATA
-			and p1.inv.count_of(IDs.I.BLACK_BOX) == 0, "данные %d → %d" % [r0, Game.research])
+	ok("чёрный ящик клиента 1 вскрыт хостом: +%d кристалла" % Balance.BLACK_BOX_CRYSTALS,
+			p1.inv.count_of(IDs.I.BLACK_BOX) == 0
+			and player.inv.count_of(IDs.I.CRYSTAL) >= c0 + Balance.BLACK_BOX_CRYSTALS
+			and Tech.fragments.size() == f0 + 1,
+			"кристаллов %d → %d" % [c0, player.inv.count_of(IDs.I.CRYSTAL)])
 
 
 ## Шлюз открывается товарищу (свой герой хоста далеко), уходит — закрывается.

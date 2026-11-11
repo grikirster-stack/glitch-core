@@ -96,16 +96,13 @@ func _conveyor() -> void:
 	ok("линия сама довезла первый слиток до склада", ingot)
 	ok("→ этап «Склад»", await wait_stage(1, 2.0), str(mission.stage))
 	(b["store"] as Chest).receive_item(IDs.I.IRON_INGOT, 8)
-	ok("8 слитков → этап «Исследования»", await wait_stage(2, 2.0), str(mission.stage))
-	ok("данных хватает на T1", Game.research >= Tech.cost("T1"), str(Game.research))
-	ok("T1 открыт", Tech.unlock("T1"))
-	ok("→ этап «Сборщик»", await wait_stage(3, 2.0), str(mission.stage))
+	ok("8 слитков → этап «Сборщик»", await wait_stage(2, 2.0), str(mission.stage))
 	var asm: Assembler = b["assembler"]
 	ok("сборщик под питанием (солнце стоит)", asm.powered, "время %.2f" % Game.time_of_day)
 	var parts: Chest = b["parts"]
 	asm.receive_item(IDs.I.COPPER_PLATE, Mission.chest_has(parts, IDs.I.COPPER_PLATE))
 	asm.receive_item(IDs.I.CRYSTAL, Mission.chest_has(parts, IDs.I.CRYSTAL))
-	ok("сборщик собрал 2 микросхемы из запчастей → этап «Манипулятор»", await wait_stage(4, 15.0),
+	ok("сборщик собрал 2 микросхемы из запчастей → этап «Манипулятор»", await wait_stage(3, 15.0),
 			"%d в сундуке" % Mission.chest_has(b["asm_out"], IDs.I.CIRCUIT))
 	var st: Vector2i = (b["store"] as MachineBase).cell
 	build_at("Inserter", st + Vector2i(1, 0), {"dir": 0})
@@ -144,7 +141,10 @@ func _mine() -> void:
 	player.inv.add(IDs.I.CRYSTAL, 6)
 	ok("6 кристаллов → этап «Анализатор»", await wait_stage(4, 2.0), str(mission.stage))
 	ok("анализатор у релея под питанием", b["analyzer"].powered)
-	Game.research += 1
+	var an = b["analyzer"]
+	an.receive_item(IDs.I.CRYSTAL, 1)
+	an._busy = true
+	an._timer = Balance.ANALYZER_PERIOD
 	await _won("mine")
 
 
@@ -221,7 +221,7 @@ func _signal() -> void:
 	if not _started("signal"):
 		return
 	var b: Dictionary = mission.get("b")
-	ok("T5 открыт — антенна в рецептах", Tech.is_unlocked("T5"))
+	ok("антенна в рецептах сборщика", not DB.recipes_for("assembler").is_empty())
 	var core: Chest = b["core_parts"]
 	var full: bool = true
 	for id_item in Game.relay_req:

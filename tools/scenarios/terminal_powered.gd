@@ -1,7 +1,8 @@
 extends "res://tools/scenarios/terminal.gd"
-## Терминал под питанием (ADR-001 § 4.6, #29): ТЭЦ с углём рядом с терминалом
-## базы → удерживать E → +5 данных, глава 1 журнала, терминал отработал.
-## Затем то же у терминала руины: он есть (баг генерации руин) и выдаёт свою главу.
+## Терминал под питанием (ADR-001 § 4.6, #29; чертежи #169): ТЭЦ с углём рядом
+## с терминалом базы → удерживать E → глава журнала, следующий чертёж и подарок
+## на пол. Порядок чертежей не зависит от того, какой терминал прочитан первым:
+## база, потом руина — те же два чертежа, что и наоборот.
 
 
 func run() -> void:
@@ -35,7 +36,11 @@ func _read_powered(t: Vector2i, chapter: int) -> void:
 	if not await stand_at_terminal(t):
 		return
 	var done_before: int = Game.tasks_done
-	var data_before: int = Game.research
+	var bp_before: int = Game.blueprints.size()
+	var want: String = Game.next_blueprint_name()
+	var inv_before: Dictionary = {}
+	for e in World.terminal_gift(chapter):
+		inv_before[int(e[0])] = player.inv.count_of(int(e[0]))
 	hold(KEY_E)
 	await wait(0.6)
 	ok("прогресс задания растёт", player.task_progress > 0.05, "%.2f" % player.task_progress)
@@ -45,12 +50,31 @@ func _read_powered(t: Vector2i, chapter: int) -> void:
 	await wait(0.1)
 	ok("зажатая E после терминала не открыла сундук", not UI.blocking())
 	ok("задание засчитано", done, "%d → %d" % [done_before, Game.tasks_done])
-	ok("+%d данных" % Balance.TERMINAL_DATA, Game.research - data_before == Balance.TERMINAL_DATA,
-			"%d → %d" % [data_before, Game.research])
+	ok("выдан следующий чертёж «%s»" % want, want != "" and Game.blueprints.size() == bp_before + 1
+			and String(Game.blueprints[bp_before]) == want, str(Game.blueprints))
+	# Герой стоит в 19 px от точки падения: магнит забирает подарок, пока E ещё
+	# зажата. Считаем и пол, и то, что уже в инвентаре.
+	ok("подарок терминала выдан", _gift_received(World.terminal_gift(chapter), spot, inv_before))
 	ok("глава %d «%s» прочитана" % [chapter + 1, Lore.chapter_title(chapter)], Tech.is_chapter_read(chapter),
 			str(Tech.read_chapters))
 	ok("терминал отработал", World.get_tile_v(t) == IDs.T.PANEL and not World.terminals.has(t),
 			str(World.get_tile_v(t)))
+
+
+## Подарок этой главы дошёл до героя: на полу у терминала или уже в инвентаре
+## (магнит подбирает, пока E ещё зажата). Прошлый подарок той же главы не считается.
+func _gift_received(gift: Array, at: Vector2, inv_before: Dictionary) -> bool:
+	if gift.is_empty():
+		return false
+	for e in gift:
+		var id: int = int(e[0])
+		var n: int = player.inv.count_of(id) - int(inv_before.get(id, 0))
+		for c in scene.get_children():
+			if c is ItemEntity and c.item_id == id and c.global_position.distance_to(at) < 80.0:
+				n += c.count
+		if n < int(e[1]):
+			return false
+	return true
 
 
 ## Свободная клетка на твёрдом полу в радиусе питания ТЭЦ от терминала.

@@ -194,7 +194,7 @@ class Runner extends Node:
 		_ok("решётка запечатала вентиляцию с прежним HP", _grate.x < 0 or (world.is_vent_sealed(_grate)
 				and float(world.vents_sealed[_grate]) < float(Balance.GRATE_HP)),
 				"HP %s" % str(world.vents_sealed.get(_grate)))
-		_ok("этап релея вернулся", int(game.objective_stage) == 4 and bool(game.relay_active)
+		_ok("этап релея вернулся", int(game.objective_stage) == 3 and bool(game.relay_active)
 				and is_equal_approx(float(game.relay_timer), float(_snap["game"]["relay_timer"])))
 		var wreck = world.sky_cache.get("wreck")
 		_ok("небесный тайник: открыт, ссылка на сундук", wreck == null or (bool(wreck.opened)
@@ -329,17 +329,16 @@ class Runner extends Node:
 			p.hide_cd = 4.25
 			p.hp = 73.0
 		# Game и Tech с прогрессом, терминал прочитан.
-		game.research = 23
+		game.blueprints = PackedStringArray(["STEEL_WALL"])
 		game.day_number = 3
 		game.time_of_day = 0.31
 		game.stats_mined = 41
 		game.tasks_done = 1
-		game.objective_stage = 4
+		game.objective_stage = 3
 		game.relay_active = true          # этап релея (#32): сигнал держится
 		game.relay_timer = 151.5
 		if not world.terminals.is_empty():
 			world.terminals.remove_at(0)
-		tech.unlocked = ["T0", "T1"]
 		tech.read_chapters = [0, 3]
 		tech.fragments = ["обрывок для теста"]
 		# Предмет на земле и мешок с хотбаром.
@@ -385,11 +384,10 @@ class Runner extends Node:
 			p.inv.selected = 0
 			p.hp = 12.0
 			p.global_position += Vector2(160.0, 0.0)
-		game.research += 50
+		game.blueprints = PackedStringArray(["STEEL_WALL", "VENT_GRATE"])
 		game.day_number += 4
 		game.time_of_day = 0.8
 		game.objective_stage = 0
-		tech.unlocked.append("T2")
 		tech.read_chapters.append(5)
 		var threat = scene.get_node("/root/Threat")
 		threat.roster.append("echo")
@@ -448,6 +446,27 @@ class Runner extends Node:
 				and p.global_position.distance_to(pos0) < 0.5 and scene.get_node("/root/Net").parked.is_empty(), save_s.last_error)
 		save_s.remove(SLOT + "_v1")
 		save_s.remove(SLOT + "_v2")
+		_legacy_research_case()
+
+
+	## Сохранение с main: поля research и tech.unlocked игнорируются, журнал
+	## (read_chapters) восстанавливается, чертежей в старом файле нет (#169).
+	func _legacy_research_case() -> void:
+		var d: Dictionary = save_s.gather()
+		(d["game"] as Dictionary)["research"] = 23
+		(d["game"] as Dictionary).erase("blueprints")
+		(d["game"] as Dictionary)["objective_stage"] = 4
+		(d["tech"] as Dictionary)["unlocked"] = ["T0", "T1", "T2"]
+		(d["tech"] as Dictionary)["read_chapters"] = [0, 2]
+		_write(SLOT + "_legacy", save_s.encode(d))
+		game.blueprints = PackedStringArray(["STEEL_WALL"])
+		tech.read_chapters = []
+		var ok_l: bool = save_s.load_game(SLOT + "_legacy")
+		_ok("старый файл с research/tech грузится", ok_l, save_s.last_error)
+		_ok("research проигнорирован, чертежей нет", ok_l and game.blueprints.is_empty(), str(game.blueprints))
+		_ok("журнал из старого файла восстановлен", ok_l and tech.read_chapters == [0, 2], str(tech.read_chapters))
+		_ok("старый этап 4 сжат в 3", ok_l and game.objective_stage == 3, str(game.objective_stage))
+		save_s.remove(SLOT + "_legacy")
 
 
 	func _write(s: String, bytes: PackedByteArray) -> void:

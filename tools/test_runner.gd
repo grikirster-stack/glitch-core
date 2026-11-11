@@ -387,10 +387,6 @@ func _t_production() -> void:
 	_ok("сундук цеха поставлен", MachineBase.place_machine("Chest", prod_chest_cell))
 	_ok("сборщик поставлен", MachineBase.place_machine("Assembler", assembler_cell))
 	_ok("сундук сборщика поставлен", MachineBase.place_machine("Chest", prod_chest2_cell))
-	# --- Исследования (#28): микросхема — рецепт T1, станции запертые рецепты
-	# не берут. Открываем T1 честно — за данные, как игрок.
-	Game.research += Tech.cost("T1")
-	_ok("T1 открыт для цеха", Tech.unlock("T1") and Tech.is_unlocked("T1"))
 	var sm: Smelter = World.machines.get(smelter_cell)
 	var asm: Assembler = World.machines.get(assembler_cell)
 	if sm:
@@ -455,9 +451,8 @@ func _check_data() -> void:
 			missing.append(int(v))
 	_ok("все IDs.I описаны в DB", missing.is_empty() and DB.item_defs.size() == IDs.I.size(),
 			"нет %s, в DB %d, в IDs %d" % [str(missing), DB.item_defs.size(), IDs.I.size()])
-	# Рецепты: выход и входы существуют, узел технологий известен Balance.
-	var techs: Array = Balance.TECH_COST.keys()
-	techs.append("T0")
+	# Рецепты: выход и входы существуют. Поле tech снято (#169): выход из
+	# BLUEPRINT_ORDER без чертежа скрыт, остальные открыты.
 	var bad: Array = []
 	for r in DB.recipes:
 		if not DB.item_defs.has(int(r["out"])):
@@ -465,9 +460,13 @@ func _check_data() -> void:
 		for k in r["in"].keys():
 			if not DB.item_defs.has(int(k)):
 				bad.append(String(r["name"]) + ":in")
-		if not techs.has(String(r.get("tech", ""))):
+		if r.has("tech"):
 			bad.append(String(r["name"]) + ":tech")
-	_ok("рецепты ссылаются на существующие предметы и технологии", bad.is_empty(), str(bad))
+	_ok("рецепты ссылаются на существующие предметы", bad.is_empty(), str(bad))
+	_ok("стальная стена без чертежа закрыта", not DB.recipe_unlocked({"out": IDs.I.STEEL_WALL}))
+	Game.give_next_blueprint()
+	_ok("после чертежа стена открыта", Game.has_blueprint(IDs.I.STEEL_WALL)
+			and DB.recipe_unlocked({"out": IDs.I.STEEL_WALL}))
 	_ok("рецептов достаточно", DB.recipes.size() >= 30, "n=%d" % DB.recipes.size())
 	# Релей: только существующие предметы, количества положительные.
 	var bad_relay: bool = false
@@ -562,9 +561,14 @@ func _collect_nonpositive(v, path: String, out: Array) -> void:
 	if v is Dictionary:
 		for k in v.keys():
 			_collect_nonpositive(v[k], "%s.%s" % [path, str(k)], out)
+	elif v is Array:
+		for i in v.size():
+			_collect_nonpositive(v[i], "%s[%d]" % [path, i], out)
 	elif v is int or v is float:
 		if not (float(v) > 0.0):
 			out.append(path)
+	elif v is String:
+		pass
 
 
 # ------------------------------------------------------------- сутки (ADR-001, #24)

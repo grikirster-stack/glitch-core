@@ -60,6 +60,10 @@ func run() -> void:
 	ok("у прочитанной главы название", journal.chapter_label(0).contains(Lore.chapter_title(0))
 			and not journal.chapter_label(0).contains(JournalPanel.LOCKED), journal.chapter_label(0))
 	ok("остальные главы закрыты", journal.chapter_label(1).contains(JournalPanel.LOCKED))
+	ok("чертежей ещё нет — полоска пустая", journal.blueprint_caption(0) == "")
+	Game.give_next_blueprint()
+	ok("чертёж в журнале — короткое имя", journal.blueprint_caption(0) == "Стальная стена"
+			and not journal.blueprint_caption(0).contains("…"), "«%s»" % journal.blueprint_caption(0))
 
 	# ---- Окно одно за раз: I поверх журнала, J поверх инвентаря --------------
 	_press_key(KEY_I)

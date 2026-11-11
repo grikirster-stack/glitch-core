@@ -18,7 +18,7 @@ extends Node
 ## В сценариях (--scenario, флаг scenario_mode) директор молчит; сценарий
 ## может вести его вручную через tick(). В --test волны идут, как и раньше.
 ##
-## Чёрный ящик, подобранный игроком, вскрывается здесь же: +данные и обрывок
+## Чёрный ящик, подобранный игроком, вскрывается здесь же: 2 кристалла и обрывок
 ## журнала (Tech.add_fragment, #28).
 ##
 ## Сеть (ADR-002 § 4.7, D9; MP-F, #92) — только на хосте, N — герои на связи:
@@ -498,15 +498,22 @@ func _on_inventory_changed() -> void:
 		open_black_box()
 
 
-## Вскрыть чёрный ящик: данные и обрывок журнала.
+## Вскрыть чёрный ящик (#169): 2 кристалла в инвентарь (не влезло — на пол) и обрывок.
 func open_black_box() -> void:
-	Game.research += Balance.BLACK_BOX_DATA
+	var hero = Game.player
+	var n: int = Balance.BLACK_BOX_CRYSTALS
+	var left: int = n
+	if hero != null and is_instance_valid(hero):
+		left = hero.inv.add(IDs.I.CRYSTAL, n)
+		if left > 0:
+			hero.spawn_item(IDs.I.CRYSTAL, left, hero.global_position)
 	var text: String = Lore.fragment(_rng)
 	Tech.add_fragment(text)
-	Game.notify("Чёрный ящик: +%d данных. «%s»" % [Balance.BLACK_BOX_DATA, text], Color(0.95, 0.6, 0.35))
-	if Net.is_host():   # СЕТЬ (ADR-002 § 4.2.5): данные и обрывок — команде, уведомление всем
-		Net.send(NetCodec.Msg.EVENT, NetCodec.encode_notify(Vector2.ZERO, "Чёрный ящик: +%d данных. «%s»" % [
-				Balance.BLACK_BOX_DATA, text], Color(0.95, 0.6, 0.35)))
+	var where: String = "на пол" if left == n else ("в инвентарь" if left == 0 else "часть на пол")
+	Game.notify("Чёрный ящик: +%d кристалла (%s). «%s»" % [n, where, text], Color(0.95, 0.6, 0.35))
+	if Net.is_host():   # СЕТЬ (ADR-002 § 4.2.5): обрывок — команде, уведомление всем
+		Net.send(NetCodec.Msg.EVENT, NetCodec.encode_notify(Vector2.ZERO,
+				"Чёрный ящик: +%d кристалла. «%s»" % [n, text], Color(0.95, 0.6, 0.35)))
 
 
 # ------------------------------------------------------------------ СЛУЖЕБНОЕ

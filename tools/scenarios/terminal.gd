@@ -21,7 +21,7 @@ func run() -> void:
 
 	Game.notification.connect(_on_hint)
 	var done_before: int = Game.tasks_done
-	var data_before: int = Game.research
+	var bp_before: int = Game.blueprints.size()
 	hold(KEY_E)
 	await wait(3.0)
 	ok("прогресс задания не растёт", player.task_progress <= 0.0, "%.2f" % player.task_progress)
@@ -34,7 +34,7 @@ func run() -> void:
 	ok("подсказка «нет питания»", no_power > 0, str(_hints))
 	ok("подсказка одна на нажатие", no_power == 1, "показана %d раз" % no_power)
 	ok("задание не засчитано", Game.tasks_done == done_before, "%d → %d" % [done_before, Game.tasks_done])
-	ok("данных не прибавилось", Game.research == data_before, "%d → %d" % [data_before, Game.research])
+	ok("чертёж не выдан", Game.blueprints.size() == bp_before, str(Game.blueprints))
 	ok("глава не прочитана", not Tech.is_chapter_read(0))
 	ok("терминал на месте", World.get_tile_v(t) == IDs.T.TERMINAL and World.terminals.has(t))
 	finish()

@@ -1,8 +1,8 @@
 extends ScenarioBase
-## Анализатор (ADR-001 § 4.2, #30): один кристалл → +1 «данные» за 20 ± 1 с
-## игрового времени. Кристалл закладывает игрок — E с кристаллом в хотбаре,
-## через шов ввода. Второго «данного» без второго кристалла нет; без питания
-## анализатор стоит.
+## Анализатор (ADR-001 § 4.2, #30; #169): один кристалл сгорает за 20 ± 1 с
+## игрового времени (счётчик данных снят, produced растёт на 1). Кристалл
+## закладывает игрок — E с кристаллом в хотбаре. Без второго кристалла
+## produced не растёт; без питания анализатор стоит.
 
 const TOLERANCE: float = 1.0
 
@@ -24,11 +24,11 @@ func run() -> void:
 	ok("анализатор принимает кристалл", an.input_accepts(IDs.I.CRYSTAL))
 	ok("анализатор не берёт руду", an.receive_item(IDs.I.IRON_ORE, 1) == 1)
 
-	# Без питания кристалл лежит, данных нет.
+	# Без питания кристалл лежит, produced не растёт.
 	an.receive_item(IDs.I.CRYSTAL, 1)
 	await wait(1.0)
-	ok("без питания анализатор стоит", an.crystals == 1 and Game.research == 0,
-			"кристаллов %d, данных %d" % [an.crystals, Game.research])
+	ok("без питания анализатор стоит", an.crystals == 1 and an.produced == 0,
+			"кристаллов %d, сожжено %d" % [an.crystals, an.produced])
 	an.crystals = 0
 
 	ok("ТЭЦ поставлена", MachineBase.place_machine("CoalGen", gen_cell))
@@ -46,7 +46,7 @@ func run() -> void:
 	player.inv.selected = _slot_of(IDs.I.CRYSTAL)
 	player.global_position = World.cell_to_world(an_cell + Vector2i(-1, 0))
 	aim(World.cell_to_world(an_cell + Vector2i(-2, -2)))
-	var r0: int = Game.research
+	var r0: int = an.produced
 	hold(KEY_E)
 	await wait_until(func() -> bool: return an.crystals > 0 or an.progress > 0.0, 2.0)
 	var t0: float = Game.game_time
@@ -54,13 +54,12 @@ func run() -> void:
 	clear_input()
 	ok("кристалл заложен клавишей E", an.crystals > 0 or an.progress > 0.0)
 	ok("кристалл ушёл из инвентаря", player.inv.count_of(IDs.I.CRYSTAL) == 0)
-	var got: bool = await wait_until(func() -> bool: return Game.research > r0, 30.0)
+	var got: bool = await wait_until(func() -> bool: return an.produced > r0, 30.0)
 	var took: float = Game.game_time - t0
-	ok("+1 данные", got and Game.research == r0 + Balance.ANALYZER_DATA,
-			"данных %d → %d" % [r0, Game.research])
+	ok("кристалл сожжён", got and an.produced == r0 + 1, "сожжено %d → %d" % [r0, an.produced])
 	ok("за 20 ± 1 с", got and absf(took - Balance.ANALYZER_PERIOD) <= TOLERANCE, "%.2f с" % took)
 	await wait(1.5)
-	ok("без второго кристалла данных больше нет", Game.research == r0 + Balance.ANALYZER_DATA)
+	ok("без второго кристалла produced не растёт", an.produced == r0 + 1)
 	finish()
 
 

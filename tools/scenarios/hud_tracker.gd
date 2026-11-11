@@ -2,7 +2,7 @@ extends ScenarioBase
 ## HUD: трекер цели, отсчёт ночи, индикатор мощности, вентиляции на миникарте
 ## и FX угрозы (ADR-001 § 4.1, § 4.3, § 4.7; #34). Всё проверяется по
 ## состоянию HUD/WorldFX, а не по скриншоту:
-##  * трекер: этап 0 показывается как 1/4; смена этапа (Game.set_objective_stage,
+##  * трекер: этап 0 показывается как 1/3; смена этапа (Game.set_objective_stage,
 ##    сигнал objective_changed) — новая строка в тот же кадр-два и перерисовка;
 ##  * отсчёт: в сумерках — целые секунды до ночи, днём и ночью — нет; HUD
 ##    перерисовывается раз в секунду, а не каждый кадр;
@@ -43,36 +43,29 @@ func _frames(hud: HUD, n: int) -> void:
 # ------------------------------------------------------------ ТРЕКЕР
 
 func _tracker(hud: HUD) -> void:
-	ok("этап 0 показан как 1/4", hud.tracker_stage == 1 and hud.tracker_title.contains("1/4")
+	ok("этап 0 показан как 1/3", hud.tracker_stage == 1 and hud.tracker_title.contains("1/3")
 			and hud.tracker_title.contains("ЗАПИТАТЬ СТАНЦИЮ"), "«%s»" % hud.tracker_title)
 	ok("этап 1: терминалы базы без питания 0/2", hud.tracker_detail.contains("0/2"),
 			"«%s»" % hud.tracker_detail)
 	var r0: int = hud.stat_redraws
 	Game.set_objective_stage(2)
 	await _frames(hud, 2)
-	ok("смена этапа → трекер «СОБРАТЬ ДАННЫЕ» сразу", hud.tracker_stage == 2
-			and hud.tracker_title.contains("СОБРАТЬ ДАННЫЕ"), "«%s»" % hud.tracker_title)
+	ok("смена этапа → трекер «СОБРАТЬ РЕЛЕЙ» сразу", hud.tracker_stage == 2
+			and hud.tracker_title.contains("СОБРАТЬ РЕЛЕЙ"), "«%s»" % hud.tracker_title)
 	ok("смена этапа → HUD перерисован", hud.stat_redraws > r0, "%d → %d" % [r0, hud.stat_redraws])
-	var data0: int = Game.research
-	Game.research = data0 + 7
-	await wait_until(func() -> bool: return hud.tracker_detail.contains("данные %d/" % (data0 + 7)), 1.0)
-	ok("счётчик данных в трекере", hud.tracker_detail.contains("данные %d/%d" % [data0 + 7, Tech.cost("T1")]),
+	ok("этап 2: детали релея", hud.tracker_detail.contains("детали 0/%d" % Game.relay_req.size()),
 			"«%s»" % hud.tracker_detail)
+	Game.relay_timer = 125.0
+	Game.relay_active = true
 	Game.set_objective_stage(3)
 	await _frames(hud, 2)
-	ok("этап 3: детали релея", hud.tracker_title.contains("СОБРАТЬ РЕЛЕЙ")
-			and hud.tracker_detail.contains("детали 0/%d" % Game.relay_req.size()), "«%s» «%s»" % [
-			hud.tracker_title, hud.tracker_detail])
-	Game.relay_timer = 125.0
-	Game.set_objective_stage(4)
-	await _frames(hud, 2)
-	ok("этап 4: отсчёт сигнала м:сс", hud.tracker_title.contains("УДЕРЖАТЬ СИГНАЛ")
-			and hud.tracker_detail.contains("2:05"), "«%s»" % hud.tracker_detail)
+	ok("этап 3: отсчёт сигнала м:сс", hud.tracker_title.contains("УДЕРЖАТЬ СИГНАЛ")
+			and hud.tracker_detail.contains("2:05"), "«%s» «%s»" % [hud.tracker_title, hud.tracker_detail])
 	Game.relay_timer = 0.0
-	Game.research = data0
+	Game.relay_active = false
 	Game.set_objective_stage(0)
 	await _frames(hud, 2)
-	ok("этап сброшен → снова 1/4", hud.tracker_stage == 1, "«%s»" % hud.tracker_title)
+	ok("этап сброшен → снова 1/3", hud.tracker_stage == 1, "«%s»" % hud.tracker_title)
 
 
 # ------------------------------------------------------------ ОТСЧЁТ ДО НОЧИ
@@ -87,7 +80,7 @@ func _countdown(hud: HUD) -> void:
 			"HUD %d, ожидали %d" % [hud.night_countdown, want])
 	# Отсчёт идёт и HUD перерисовывается по секундам, а не каждый кадр.
 	# Покадровые анимации HUD убираем из окна замера: затухание подсказки
-	# управления (game_time 16–22 с), уведомлений (Game шлёт «Цель 1/4» после
+	# управления (game_time 16–22 с), уведомлений (Game шлёт «Цель 1/3» после
 	# сброса этапа) и вспышки урона.
 	Game.game_time = maxf(Game.game_time, 30.0)
 	hud.notes.clear()

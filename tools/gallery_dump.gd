@@ -271,8 +271,8 @@ func _print_md() -> void:
 			var parts: PackedStringArray = PackedStringArray()
 			for k in r["in"].keys():
 				parts.append("%d %s" % [int(r["in"][k]), db.item_name(int(k))])
-			src.append("%s: %s → %d за %.1f с [%s]" % [STATION_NAMES.get(String(r["station"]), r["station"]),
-					" + ".join(parts), int(r["amount"]), float(r["time"]), String(r.get("tech", "T0"))])
+			src.append("%s: %s → %d за %.1f с" % [STATION_NAMES.get(String(r["station"]), r["station"]),
+					" + ".join(parts), int(r["amount"]), float(r["time"])])
 		if roles.has(int(id)):
 			src.append("тайники: " + ", ".join(PackedStringArray(roles[int(id)])))
 		print("MD|%d | items/%s.png | %s | %d | %s | %s" % [int(id), _item_slug(int(id)), db.item_name(int(id)),
@@ -610,11 +610,6 @@ func _dump_shots() -> void:
 	ui.toggle_inventory()
 	await _frames(4)
 	await _grab("shots/inventory.png", false)
-	game.set("research", 7)                ## хватает на T1 — кнопка «Открыть» активна
-	ui.get("panel").set("station_tab", 3)   ## вкладка «Исследования»
-	ui.get("panel").queue_redraw()
-	await _frames(3)
-	await _grab("shots/research.png", false)
 	ui.get("panel").close()
 
 	# 5. Журнал J: две прочитанные главы и обрывок.
@@ -780,9 +775,9 @@ func _dump_readme_shots() -> void:
 		if is_instance_valid(ph):
 			ph.queue_free()
 
-	# Удержание сигнала: релей запущен, в HUD — «ЦЕЛЬ 4/4» и отсчёт до эвакуации.
+	# Удержание сигнала: релей запущен, в HUD — «ЦЕЛЬ 3/3» и отсчёт до эвакуации.
 	game.set("time_of_day", 0.45)
-	game.set("objective_stage", 4)
+	game.set("objective_stage", 3)
 	game.set("relay_active", true)
 	game.set("relay_timer", 97.0)
 	ui.get("hud").set("notes", [])

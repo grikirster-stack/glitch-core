@@ -270,14 +270,14 @@ func item_color(id: int) -> Color:
 
 # ---------------------------------------------------------------- РЕЦЕПТЫ
 
-## tech — узел дерева технологий (ключ Balance.TECH_COST), с которого рецепт
-## открыт; "T0" — доступен с самого начала (ADR-001 § 4.6). Дерево и трату
-## данных ведёт Tech (#28): запертый рецепт виден в крафте серым, станции его не берут.
+## Поле "tech" снято (#169): рецепт, чей выход в Balance.BLUEPRINT_ORDER, виден
+## только при чертеже (Game.has_blueprint). Остальные открыты сразу; открытие
+## по подбору ингредиента — задача E1.
 func _recipe(out: int, amount: int, inputs: Dictionary, station: String, time: float, name: String,
-		tech: String = "T0") -> void:
+		_tech: String = "") -> void:
 	recipes.append({
 		"out": out, "amount": amount, "in": inputs,
-		"station": station, "time": time, "name": name, "tech": tech,
+		"station": station, "time": time, "name": name,
 	})
 
 
@@ -298,7 +298,7 @@ func _build_recipes() -> void:
 	_recipe(IDs.I.SOLAR, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.GLASS: 1}, "hand", 2.0, "Солнечная панель")
 	_recipe(IDs.I.SMELTER, 1, {IDs.I.STONE: 6, IDs.I.SCRAP: 4}, "hand", 2.0, "Плавильня")
 	_recipe(IDs.I.COAL_GEN, 1, {IDs.I.IRON_PLATE: 2, IDs.I.SCRAP: 6}, "hand", 2.5, "Угольная ТЭЦ")
-	_recipe(IDs.I.ASSEMBLER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.COPPER_PLATE: 2}, "hand", 3.0, "Сборщик", "T1")
+	_recipe(IDs.I.ASSEMBLER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.COPPER_PLATE: 2}, "hand", 3.0, "Сборщик")
 	# Конвейер и сундук доступны с первой смены руками (T0): сборщик делает их выгоднее.
 	_recipe(IDs.I.BELT, 1, {IDs.I.IRON_PLATE: 1}, "hand", 1.5, "Конвейер вручную")
 	_recipe(IDs.I.CHEST, 1, {IDs.I.IRON_PLATE: 4}, "hand", 2.5, "Сундук вручную")
@@ -309,25 +309,25 @@ func _build_recipes() -> void:
 	_recipe(IDs.I.GLASS, 1, {IDs.I.SAND: 2}, "smelter", 2.2, "Плавка стекла")
 	_recipe(IDs.I.STEEL_PLATE, 1, {IDs.I.IRON_INGOT: 2, IDs.I.COAL: 1}, "smelter", 3.5, "Стальная пластина")
 	# Пластины на плавильне — чтобы цепочка «руда → релей» собиралась без рук (§ 4.2).
-	_recipe(IDs.I.COPPER_PLATE, 1, {IDs.I.COPPER_INGOT: 2}, "smelter", 2.0, "Прокат меди", "T1")
-	_recipe(IDs.I.IRON_PLATE, 1, {IDs.I.IRON_INGOT: 2}, "smelter", 2.0, "Прокат железа", "T1")
-	_recipe(IDs.I.STEEL_WALL, 4, {IDs.I.STEEL_PLATE: 2}, "smelter", 2.0, "Стальная стена", "T2")
+	_recipe(IDs.I.COPPER_PLATE, 1, {IDs.I.COPPER_INGOT: 2}, "smelter", 2.0, "Прокат меди")
+	_recipe(IDs.I.IRON_PLATE, 1, {IDs.I.IRON_INGOT: 2}, "smelter", 2.0, "Прокат железа")
+	_recipe(IDs.I.STEEL_WALL, 4, {IDs.I.STEEL_PLATE: 2}, "smelter", 2.0, "Стальная стена")
 
 	# --- Сборщик: сложные изделия ------------------------------------------
-	_recipe(IDs.I.CIRCUIT, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.CRYSTAL: 2}, "assembler", 3.0, "Микросхема", "T1")
-	_recipe(IDs.I.POWER_CELL, 1, {IDs.I.IRON_PLATE: 1, IDs.I.CRYSTAL: 1}, "assembler", 3.0, "Энергоячейка", "T1")
-	_recipe(IDs.I.BELT, 2, {IDs.I.IRON_PLATE: 1}, "assembler", 1.5, "Конвейер", "T1")
-	_recipe(IDs.I.CHEST, 1, {IDs.I.IRON_PLATE: 3}, "assembler", 2.0, "Сундук", "T1")
-	_recipe(IDs.I.DRILL, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 4.0, "Буровая станция", "T3")
+	_recipe(IDs.I.CIRCUIT, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.CRYSTAL: 2}, "assembler", 3.0, "Микросхема")
+	_recipe(IDs.I.POWER_CELL, 1, {IDs.I.IRON_PLATE: 1, IDs.I.CRYSTAL: 1}, "assembler", 3.0, "Энергоячейка")
+	_recipe(IDs.I.BELT, 2, {IDs.I.IRON_PLATE: 1}, "assembler", 1.5, "Конвейер")
+	_recipe(IDs.I.CHEST, 1, {IDs.I.IRON_PLATE: 3}, "assembler", 2.0, "Сундук")
+	_recipe(IDs.I.DRILL, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 4.0, "Буровая станция")
 	# ADR-001: автоматизация (§ 4.2), оборона (§ 4.4), релей (§ 4.7).
-	_recipe(IDs.I.INSERTER, 1, {IDs.I.IRON_PLATE: 1, IDs.I.COPPER_PLATE: 1}, "assembler", 2.0, "Манипулятор", "T1")
-	_recipe(IDs.I.TURRET, 1, {IDs.I.STEEL_PLATE: 3, IDs.I.CIRCUIT: 2, IDs.I.POWER_CELL: 1}, "assembler", 5.0, "Турель-разрядник", "T2")
-	_recipe(IDs.I.AIRLOCK, 1, {IDs.I.STEEL_PLATE: 2, IDs.I.CIRCUIT: 1}, "assembler", 3.0, "Шлюз", "T2")
-	_recipe(IDs.I.ANALYZER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2, IDs.I.GLASS: 2}, "assembler", 4.0, "Анализатор", "T3")
-	_recipe(IDs.I.FLOODLIGHT, 1, {IDs.I.COPPER_PLATE: 2, IDs.I.GLASS: 1, IDs.I.CRYSTAL: 1}, "assembler", 2.5, "Прожектор", "T3")
-	_recipe(IDs.I.VENT_GRATE, 1, {IDs.I.IRON_PLATE: 2}, "assembler", 1.5, "Решётка вентиляции", "T4")
-	_recipe(IDs.I.DEEP_DRILL, 1, {IDs.I.DRILL: 1, IDs.I.STEEL_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 6.0, "Глубинный бур", "T4")
-	_recipe(IDs.I.RELAY_ANTENNA, 1, {IDs.I.COPPER_PLATE: 6, IDs.I.GLASS: 4, IDs.I.CRYSTAL_BLOCK: 2}, "assembler", 8.0, "Антенна релея", "T5")
+	_recipe(IDs.I.INSERTER, 1, {IDs.I.IRON_PLATE: 1, IDs.I.COPPER_PLATE: 1}, "assembler", 2.0, "Манипулятор")
+	_recipe(IDs.I.TURRET, 1, {IDs.I.STEEL_PLATE: 3, IDs.I.CIRCUIT: 2, IDs.I.POWER_CELL: 1}, "assembler", 5.0, "Турель-разрядник")
+	_recipe(IDs.I.AIRLOCK, 1, {IDs.I.STEEL_PLATE: 2, IDs.I.CIRCUIT: 1}, "assembler", 3.0, "Шлюз")
+	_recipe(IDs.I.ANALYZER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2, IDs.I.GLASS: 2}, "assembler", 4.0, "Анализатор")
+	_recipe(IDs.I.FLOODLIGHT, 1, {IDs.I.COPPER_PLATE: 2, IDs.I.GLASS: 1, IDs.I.CRYSTAL: 1}, "assembler", 2.5, "Прожектор")
+	_recipe(IDs.I.VENT_GRATE, 1, {IDs.I.IRON_PLATE: 2}, "assembler", 1.5, "Решётка вентиляции")
+	_recipe(IDs.I.DEEP_DRILL, 1, {IDs.I.DRILL: 1, IDs.I.STEEL_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 6.0, "Глубинный бур")
+	_recipe(IDs.I.RELAY_ANTENNA, 1, {IDs.I.COPPER_PLATE: 6, IDs.I.GLASS: 4, IDs.I.CRYSTAL_BLOCK: 2}, "assembler", 8.0, "Антенна релея")
 
 
 func recipes_for(station: String) -> Array:
@@ -338,9 +338,13 @@ func recipes_for(station: String) -> Array:
 	return out
 
 
-## Открыт ли рецепт по дереву технологий. Панель крафта (#28) серит закрытые.
+## Виден ли рецепт в крафте (#169). Выход из списка чертежей — только при чертеже
+## (Game.has_blueprint); остальные открыты. Панель не рисует закрытый вовсе.
 func recipe_unlocked(r: Dictionary) -> bool:
-	return Tech.is_unlocked(String(r.get("tech", "T0")))
+	var out_id: int = int(r.get("out", -1))
+	if Game.blueprint_name(out_id) == "":
+		return true
+	return Game.has_blueprint(out_id)
 
 
 func find_recipe_for(item_id: int) -> Dictionary:
