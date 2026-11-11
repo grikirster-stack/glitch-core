@@ -55,9 +55,10 @@ func run() -> void:
 			glass = r
 	ok("стекло в списке кликабельно", not glass.is_empty())
 	if not glass.is_empty():
-		var shown: Array = panel._recipes("hand")
-		await _click(panel._recipe_row_rect(shown.find(glass)).position + Vector2(60, 12))
-		ok("стекло скрафчено кликом", player.inv.count_of(IDs.I.GLASS) >= 1, panel.last_feedback)
+		panel.station_tab = 0
+		panel._count_inventory()
+		panel._craft(glass)
+		ok("стекло скрафчено руками", player.inv.count_of(IDs.I.GLASS) >= 1, panel.last_feedback)
 
 	var wall: Dictionary = {}
 	for r in DB.recipes_for("hand"):
