@@ -116,8 +116,10 @@ func run() -> void:
 		return UI.panel.visible and UI.panel.chest == chest, 3.0)
 	release(KEY_E)
 	ok("небесный тайник открывается по E", opened)
-	var n: int = _items(chest).size()
-	ok("в тайнике 3–6 предметов", n >= Balance.SKY_CACHE_MIN and n <= Balance.SKY_CACHE_MAX, str(_items(chest)))
+	var loot: Array = _loot(chest)
+	ok("в тайнике 3–6 предметов", loot.size() >= Balance.SKY_CACHE_MIN and loot.size() <= Balance.SKY_CACHE_MAX,
+			str(loot))
+	ok("линза лежит в тайнике", _count(chest, IDs.I.LENS) >= 1, "линз %d" % _count(chest, IDs.I.LENS))
 	await wait(0.2)
 	ok("при первом открытии обрывок журнала — в Tech", wreck.opened and Tech.fragments.has(sc["fragment"]),
 			"«%s»" % String(sc["fragment"]))
@@ -202,23 +204,35 @@ func _step_to(col: int, up: bool) -> bool:
 	return reached and landed and floori(player.global_position.x / World.TILE) == col
 
 
-## Предметы сундука: [[id, число], ...] по непустым слотам.
-func _items(chest) -> Array:
+## Случайный груз без линзы: [[id, число], ...]. Линза кладётся отдельно (#172).
+func _loot(chest) -> Array:
 	var out: Array = []
 	if chest == null or not is_instance_valid(chest):
 		return out
 	for s in chest.slots:
-		if not s.is_empty():
-			out.append([s.id, s.count])
+		if s.is_empty() or s.id == IDs.I.LENS:
+			continue
+		out.append([s.id, s.count])
 	return out
 
 
-## Слепок тайника: место, имя, обрывок, груз.
+func _count(chest, id: int) -> int:
+	var n: int = 0
+	if chest == null or not is_instance_valid(chest):
+		return 0
+	for s in chest.slots:
+		if not s.is_empty() and s.id == id:
+			n += s.count
+	return n
+
+
+## Слепок тайника: место, имя, обрывок, груз (линза — своим числом).
 func _snapshot() -> Array:
 	var sc: Dictionary = World.sky_cache
 	if sc.is_empty():
 		return []
-	return [sc["x0"], sc["floor_y"], sc["name"], sc["fragment"], _items(sc["chest"])]
+	return [sc["x0"], sc["floor_y"], sc["name"], sc["fragment"], _loot(sc["chest"]),
+			_count(sc["chest"], IDs.I.LENS)]
 
 
 func _regen(s: int) -> void:

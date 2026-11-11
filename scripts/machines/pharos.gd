@@ -11,7 +11,6 @@ extends MachineBase
 ## Красный жжёт, зелёный чинит, жёлтый светит. Синий морозит, голубой держит
 ## купол, пурпурный зовёт рой и тень, белый показывает руду сквозь породу.
 
-const RANGE_PX: float = Balance.PHAROS_RANGE_TILES * 16.0
 ## Линза чуть выше центра корпуса: отсюда бьёт дуга.
 const MUZZLE: Vector2 = Vector2(0.0, -6.0)
 ## Руда, которую белый показывает сквозь породу. Камень и земля — нет.
@@ -22,6 +21,8 @@ const ORES: Array[int] = [
 
 ## Цвет луча, который попал на последнем перестроении. 0 — луча нет.
 var color: int = 0
+## Линза вставлена навсегда (#172). Разбор возвращает её отдельно от маяка.
+var lens: bool = false
 ## Есть луч — маяк работает. Какой эффект — решает match по цвету.
 var active: bool = false
 ## Выстрелов за жизнь — для сценариев.
@@ -192,7 +193,8 @@ func pick_target() -> Node2D:
 	var best: Node2D = null
 	var best_rank: int = 1 << 30
 	var best_d2: float = INF
-	var r2: float = RANGE_PX * RANGE_PX
+	var reach: float = red_range_px()
+	var r2: float = reach * reach
 	var me: Vector2 = global_position
 	for p in get_tree().get_nodes_in_group("phantom"):
 		if not is_instance_valid(p) or not bool(p.get("alive")):
@@ -226,7 +228,7 @@ func _fire(t: Node2D) -> void:
 	shots += 1
 	var to: Vector2 = t.global_position
 	var from: Vector2 = global_position + MUZZLE
-	t.take_damage(Balance.PHAROS_RED_DAMAGE, global_position)
+	t.take_damage(red_damage(), global_position)
 	Sfx.play_at("turret_zap", global_position, -8.0, randf_range(0.92, 1.08))
 	var arc: Color = Beams.COLOR[Beams.R]
 	World.pharos_fired.emit(from, to, arc)
@@ -236,8 +238,9 @@ func _fire(t: Node2D) -> void:
 # ---------------------------------------------------------------- ЖЁЛТЫЙ
 
 ## Радиус света — та же формула, что у прожектора: 46 + 2·60 px.
-static func light_radius() -> float:
-	return World.LIGHT_BASE_RADIUS + Balance.PHAROS_YELLOW_POWER * World.LIGHT_RADIUS_PER_POWER
+## Линза множит силу, радиус растёт вместе с ней.
+func light_radius() -> float:
+	return World.LIGHT_BASE_RADIUS + yellow_power() * World.LIGHT_RADIUS_PER_POWER
 
 
 func _sync_light() -> void:
@@ -246,7 +249,7 @@ func _sync_light() -> void:
 		return
 	_lit = want
 	if want:
-		_light = World.add_light_source(global_position, light_radius(), Balance.PHAROS_YELLOW_POWER)
+		_light = World.add_light_source(global_position, light_radius(), yellow_power())
 	else:
 		World.remove_light_source(_light)
 		_light = {}
@@ -269,7 +272,7 @@ func _tick_blue(delta: float) -> void:
 	if _frost_t > 0.0:
 		return
 	_frost_t = Balance.PHAROS_BLUE_STUN_PERIOD
-	var r: int = Balance.PHAROS_BLUE_RADIUS
+	var r: int = blue_radius()
 	var frost: Color = Beams.COLOR[Beams.B]
 	for p in get_tree().get_nodes_in_group("phantom"):
 		if not is_instance_valid(p) or not bool(p.get("alive")):
@@ -326,7 +329,7 @@ func _tick_white(delta: float) -> void:
 
 func _ore_hidden() -> Array:
 	var out: Array = []
-	var r: int = Balance.PHAROS_WHITE_RADIUS
+	var r: int = white_radius()
 	for dy in range(-r, r + 1):
 		for dx in range(-r, r + 1):
 			if maxi(absi(dx), absi(dy)) > r:
@@ -370,6 +373,11 @@ func _tick_green(delta: float) -> void:
 func _on_destroyed() -> void:
 	_unlist()
 	_drop_light()
+	# Разбор героем гасит флаг сам и кладёт линзу в рюкзак. Разрушение и
+	# сетевой снос — роняют её на землю, чтобы не пропала.
+	if lens:
+		lens = false
+		spawn_item(IDs.I.LENS, 1, global_position + Vector2(0.0, -6.0))
 
 
 func _exit_tree() -> void:
@@ -385,26 +393,30 @@ func _drop_light() -> void:
 
 
 func _draw() -> void:
-	# Корпус-башня: кремовый короб, линза сверху — цвет луча или тёмное стекло.
+	# Корпус-башня: кремовый короб, стекло сверху — цвет луча или тёмное стекло.
 	_draw_body(Rect2(-7.0, -1.0, 14.0, 9.0), active)
 	draw_rect(Rect2(-2.0, -6.0, 4.0, 4.0), C_FRAME)
-	var lens: Color = C_SCREEN
+	var glass: Color = C_SCREEN
 	if color > 0 and color < Beams.COLOR.size() and active:
-		lens = Beams.COLOR[color]
+		glass = Beams.COLOR[color]
 	draw_rect(Rect2(-5.0, -8.0, 10.0, 4.0), C_FRAME)
-	draw_rect(Rect2(-4.0, -7.0, 8.0, 2.0), lens)
+	draw_rect(Rect2(-4.0, -7.0, 8.0, 2.0), glass)
+	if lens:
+		# Вставленная линза: белый ободок и искра. Без неё башня — тёмное стекло.
+		draw_rect(Rect2(-6.0, -9.0, 12.0, 1.0), Color(0.95, 0.97, 1.0))
+		draw_rect(Rect2(-1.0, -10.0, 2.0, 2.0), Color(1.0, 0.98, 0.85))
 	if active and color == Beams.R and _cooldown > Balance.PHAROS_RED_PERIOD - 0.12:
-		# Вспышка линзы в такт выстрелу: ребёнок видит, что башня жжёт.
-		draw_rect(Rect2(-3.0, -10.0, 6.0, 2.0), Color(lens.r, lens.g, lens.b, 1.0))
+		# Вспышка стекла в такт выстрелу: ребёнок видит, что башня жжёт.
+		draw_rect(Rect2(-3.0, -10.0, 6.0, 2.0), Color(glass.r, glass.g, glass.b, 1.0))
 	elif active and color == Beams.Y:
-		draw_rect(Rect2(-8.0, -12.0, 16.0, 6.0), Color(lens.r, lens.g, lens.b, 0.18))
+		draw_rect(Rect2(-8.0, -12.0, 16.0, 6.0), Color(glass.r, glass.g, glass.b, 0.18))
 	elif active and color == Beams.G:
-		draw_rect(Rect2(-3.0, -7.0, 2.0, 1.0), lens.lightened(0.3))
+		draw_rect(Rect2(-3.0, -7.0, 2.0, 1.0), glass.lightened(0.3))
 	elif active and color == Beams.B:
-		draw_rect(Rect2(-6.0, -11.0, 2.0, 2.0), lens)
-		draw_rect(Rect2(4.0, -11.0, 2.0, 2.0), lens)
+		draw_rect(Rect2(-6.0, -11.0, 2.0, 2.0), glass)
+		draw_rect(Rect2(4.0, -11.0, 2.0, 2.0), glass)
 	elif active and color == Beams.W:
-		# Белая искра над линзой: руда рядом уже видна.
+		# Белая искра над стеклом: руда рядом уже видна.
 		draw_rect(Rect2(-1.0, -11.0, 2.0, 2.0), Color.WHITE)
 
 
@@ -412,6 +424,7 @@ func _draw() -> void:
 func save_state() -> Dictionary:
 	var d: Dictionary = super()
 	d["color"] = color
+	d["lens"] = lens
 	d["shots"] = shots
 	d["heals"] = heals
 	d["revealed"] = revealed
@@ -428,6 +441,7 @@ func save_state() -> Dictionary:
 func load_state(d: Dictionary) -> void:
 	super(d)
 	color = int(d.get("color", color)) & 7
+	lens = bool(d.get("lens", lens))
 	active = color != 0
 	shots = int(d.get("shots", shots))
 	heals = int(d.get("heals", heals))
@@ -448,11 +462,15 @@ func load_state(d: Dictionary) -> void:
 
 
 # ------------------------------------------------------------- СЕТЬ (ADR-002)
-## Байт цвета: 3 бита маски. Выстрелы клиенту не нужны — дугу рисует хост,
-## а видимый признак «жжёт» — цвет линзы. Длина net_state базы не меняется.
+## Байт цвета: 3 бита маски, бит 3 — линза вставлена (#172). Выстрелы клиенту
+## не нужны — дугу рисует хост, а видимый признак «жжёт» — цвет стекла.
+## Длина байта та же: старый пакет с нулём в бите 3 читается как маяк без линзы.
 func net_state() -> PackedByteArray:
 	var b: PackedByteArray = super()
-	b.append(color & 7)
+	var bits: int = color & 7
+	if lens:
+		bits |= 8
+	b.append(bits)
 	return b
 
 
@@ -460,9 +478,12 @@ func apply_net_state(b: PackedByteArray) -> int:
 	var o: int = super(b)
 	if o < 0 or b.size() < o + 1:
 		return -1
-	var next: int = int(b[o]) & 7
-	if next != color:
+	var bits: int = int(b[o])
+	var next: int = bits & 7
+	var has_lens: bool = (bits & 8) != 0
+	if next != color or has_lens != lens:
 		color = next
+		lens = has_lens
 		active = color != 0
 		# Клиент собирает свои списки из цвета: купол рисуется здесь,
 		# белый открывает руду без пакета explored.
@@ -470,3 +491,61 @@ func apply_net_state(b: PackedByteArray) -> int:
 		_sync_light()
 		queue_redraw()
 	return o + 1
+
+
+# --------------------------------------------------------------- линза (#172)
+
+## Красный бьёт дальше и больнее, только если линза вставлена.
+func red_range_px() -> float:
+	var tiles: float = Balance.LENS_RANGE_TILES if lens else Balance.PHAROS_RANGE_TILES
+	return tiles * 16.0
+
+
+func red_damage() -> float:
+	var d: float = Balance.PHAROS_RED_DAMAGE
+	return d * Balance.LENS_MUL if lens else d
+
+
+func yellow_power() -> float:
+	var p: float = Balance.PHAROS_YELLOW_POWER
+	return p * Balance.LENS_MUL if lens else p
+
+
+func blue_radius() -> int:
+	return Balance.PHAROS_BLUE_RADIUS + (Balance.LENS_RADIUS_BONUS if lens else 0)
+
+
+func dome_radius() -> int:
+	return Balance.PHAROS_DOME_RADIUS + (Balance.LENS_RADIUS_BONUS if lens else 0)
+
+
+func lure_px() -> float:
+	return Balance.PHAROS_LURE_PX + (Balance.LENS_LURE_BONUS_PX if lens else 0.0)
+
+
+func white_radius() -> int:
+	return Balance.LENS_WHITE_RADIUS if lens else Balance.PHAROS_WHITE_RADIUS
+
+
+## E с линзой в руке. false — линзы нет или она уже стоит.
+func insert_lens(p) -> bool:
+	if lens or p == null:
+		return false
+	var st: ItemStack = p.inv.selected_stack()
+	if st.is_empty() or st.id != IDs.I.LENS:
+		return false
+	p.inv.remove_at(p.inv.selected, 1)
+	lens = true
+	if _lit:
+		relight()
+	queue_redraw()
+	Sfx.play("craft", -8.0, 1.2)
+	Game.notify("Линза вставлена в маяк.", Color(0.85, 0.95, 1.0))
+	return true
+
+
+## Линзу в рюкзак кладёт герой: он читает lens до вызова. Флаг гасим здесь,
+## чтобы _on_destroyed не выронил вторую.
+func dismantle() -> int:
+	lens = false
+	return super()

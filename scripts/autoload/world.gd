@@ -162,6 +162,12 @@ func generate(p_seed: int) -> void:
 		_build_defense_tables()
 	for m in machines.values():
 		if is_instance_valid(m):
+			# Снять с дерева сразу: queue_free оставляет _process до конца кадра,
+			# и сундук прошлого сценария тикает в клетке нового накопителя
+			# (сид 4242, шард 2/3). free() нельзя — свет ещё держит ссылку.
+			var parent: Node = m.get_parent()
+			if parent != null:
+				parent.remove_child(m)
 			m.queue_free()
 	machines.clear()
 	belts.clear()
@@ -1184,6 +1190,23 @@ class SkyWreck extends Node2D:
 				Color(0.8, 0.9, 1.0, lit))
 
 
+## Линза в сундуке тайника. Уже есть — не дублируем. Нет места — вытесняем
+## первый слот: гарантированный предмет важнее случайного груза.
+func _ensure_lens(chest: Chest) -> void:
+	if chest == null:
+		return
+	for s in chest.slots:
+		if not s.is_empty() and s.id == IDs.I.LENS:
+			return
+	for s in chest.slots:
+		if s.is_empty():
+			s.id = IDs.I.LENS
+			s.count = 1
+			return
+	chest.slots[0].id = IDs.I.LENS
+	chest.slots[0].count = 1
+
+
 func _clear_sky_cache() -> void:
 	var wreck = sky_cache.get("wreck")
 	if wreck != null and is_instance_valid(wreck):
@@ -1305,6 +1328,9 @@ func _place_sky_cache() -> void:
 		sky_cells.append(cell)
 		for e in sky_cache_loot():
 			chest.receive_item(int(e[0]), int(e[1]))
+		# Линза всегда в тайнике (#172): лестница в небо без неё не зачем.
+		# Первый слот — её, даже если случайный груз занял сундук целиком.
+		_ensure_lens(chest)
 	var wreck: SkyWreck = SkyWreck.new()
 	var lo: Vector2i = Vector2i(x0, fy - 3)
 	var hi: Vector2i = Vector2i(x0, fy + 2)
@@ -1873,8 +1899,18 @@ func set_tile(x: int, y: int, id: int) -> void:
 	_defense_on_set_tile(Vector2i(x, y), id)
 	if beams != null and old != id:
 		beams.mark_dirty()
+	# Коллектор кэширует «пусто до неба» раз в 0,5 с. Столбец изменился — сразу.
+	if old != id:
+		_note_collector_column(x)
 	if _net_track:   # СЕТЬ (ADR-002): клетка — в батч хоста
 		_net_mark_tile(idx)
+
+
+## Столбец x изменился: коллекторы в нём пересчитывают небо, не ждут 0,5 с.
+func _note_collector_column(x: int) -> void:
+	for m in machines.values():
+		if is_instance_valid(m) and m.cell.x == x and m.has_method("note_column"):
+			m.note_column(x)
 
 
 func is_solid_cell(c: Vector2i) -> bool:
@@ -2893,10 +2929,10 @@ func slow_factor_at(pos: Vector2) -> float:
 	var factor: float = 1.0
 	if not pharos_blue.is_empty():
 		var c: Vector2i = world_to_cell(pos)
-		var r: int = Balance.PHAROS_BLUE_RADIUS
 		for m in pharos_blue:
 			if not is_instance_valid(m):
 				continue
+			var r: int = int(m.blue_radius()) if m.has_method("blue_radius") else Balance.PHAROS_BLUE_RADIUS
 			var mc: Vector2i = m.cell
 			if maxi(absi(c.x - mc.x), absi(c.y - mc.y)) <= r:
 				factor = Balance.PHAROS_BLUE_SLOW
@@ -2908,12 +2944,12 @@ func slow_factor_at(pos: Vector2) -> float:
 ## Купол, который накрывает клетку постройки, или null. Голубой маяк в
 ## PHAROS_DOME_RADIUS клетках (манхэттен), и только пока купол не погашен.
 func dome_at(cell: Vector2i):
-	var r: int = Balance.PHAROS_DOME_RADIUS
 	for m in pharos_dome:
 		if not is_instance_valid(m):
 			continue
 		if not bool(m.get("dome_up")):
 			continue
+		var r: int = int(m.dome_radius()) if m.has_method("dome_radius") else Balance.PHAROS_DOME_RADIUS
 		var mc: Vector2i = m.cell
 		if absi(cell.x - mc.x) + absi(cell.y - mc.y) <= r:
 			return m
@@ -2924,14 +2960,19 @@ func dome_at(cell: Vector2i):
 ## а не к горелкам (ADR-005 § 5).
 func lure_at(pos: Vector2, radius: float):
 	var best = null
-	var best_d: float = radius
+	var best_d: float = INF
 	for m in pharos_lure:
 		if not is_instance_valid(m):
 			continue
+		# Линза зовёт на 2 клетки дальше своего маяка, не чужого.
+		var reach: float = radius
+		if m.has_method("lure_px"):
+			reach = float(m.lure_px())
 		var d: float = pos.distance_to(m.global_position)
-		if d < best_d:
-			best_d = d
-			best = m
+		if d >= reach or d >= best_d:
+			continue
+		best_d = d
+		best = m
 	return best
 
 

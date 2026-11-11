@@ -37,6 +37,10 @@ const BEAM_BLOCK_COST: int = 2
 const BEAM_LIGHT: float = 1.0
 const BEAM_LIGHT_WHITE: float = 1.5
 const FUEL: Dictionary = {IDs.I.COAL: 45.0, IDs.I.COPPER_ORE: 30.0, IDs.I.CRYSTAL: 60.0}
+## Накопитель хранит столько секунд луча одного цвета (ADR-005 § 4, #166).
+const ACCUMULATOR_CAP: float = 120.0
+## Коллектор молчит ниже того же порога, что и солнечная панель.
+const COLLECTOR_MIN_DAYLIGHT: float = SOLAR_MIN_DAYLIGHT
 
 # ------------------------------------------------------- Маяк (ADR-005 § 5, #167)
 ## Красный жжёт как турель: 20 урона раз в 0.8 с, дальность 7 клеток, прямая
@@ -66,6 +70,21 @@ const PHAROS_LURE_HP: float = 200.0
 ## Белый показывает руду в 8 клетках (квадрат Чебышёва), раз в секунду.
 const PHAROS_WHITE_RADIUS: int = 8
 const PHAROS_WHITE_PERIOD: float = 1.0
+## Линза в маяке (#172): красный бьёт на 10 клеток, урон и жёлтый свет × 1.5,
+## синий, купол и приманка + 2 клетки, белый — 12. Зелёный радиус не растёт.
+## Без линзы числа выше не меняются.
+const LENS_RANGE_TILES: float = 10.0
+const LENS_MUL: float = 1.5
+const LENS_RADIUS_BONUS: int = 2
+const LENS_LURE_BONUS_PX: float = 32.0
+const LENS_WHITE_RADIUS: int = 12
+
+# ------------------------------------------------------- Сирена (ADR-005 § 7.2, #172)
+## E при полном заряде гонит всех фантомов в 10 клетках, включая рой и тень.
+## Заряд копится только под лучом: 60 с до готовности, гон длится 10 с.
+const SIREN_RADIUS_TILES: float = 10.0
+const SIREN_TIME: float = 10.0
+const SIREN_RECHARGE: float = 60.0
 
 # ------------------------------------------------------- § 4.2 Автоматизация
 const DRILL_CYCLE: float = 2.0         ## с на единицу руды

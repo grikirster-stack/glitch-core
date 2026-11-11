@@ -240,6 +240,12 @@ func _build_item_defs() -> void:
 	_add_item_def(IDs.I.MIRROR, "Зеркало", Color(0.72, 0.78, 0.86), "mirror", 20, "machine:Mirror")
 	_add_item_def(IDs.I.MIXER, "Смеситель", Color(0.45, 0.55, 0.62), "mixer", 10, "machine:Mixer")
 	_add_item_def(IDs.I.PRISM, "Призма", Color(0.75, 0.88, 0.95), "prism", 20, "machine:Prism")
+	# Солнце и запас (ADR-005 § 4, #166). Солнечная панель остаётся до D1.
+	_add_item_def(IDs.I.COLLECTOR, "Коллектор", Color(0.95, 0.86, 0.42), "collector", 10, "machine:Collector")
+	_add_item_def(IDs.I.ACCUMULATOR, "Накопитель", Color(0.55, 0.62, 0.72), "accumulator", 5, "machine:Accumulator")
+	# Сирена и линза (ADR-005 § 7.2, #172). Сирена — блок, линза — предмет в руке.
+	_add_item_def(IDs.I.SIREN, "Сирена", Color(0.85, 0.45, 0.18), "siren", 5, "machine:Siren")
+	_add_item_def(IDs.I.LENS, "Линза", Color(0.82, 0.92, 1.0), "lens", 5, "")
 	# Радужное ядро (ADR-005 § 6.3, #175): одно в сундуке лагеря, дальше — чертёж.
 	_add_item_def(IDs.I.RAINBOW_CORE, "Радужное ядро", Color(0.22, 0.24, 0.30), "rainbow_core", 5, "machine:RainbowCore")
 
@@ -294,7 +300,6 @@ func _recipe(out: int, amount: int, inputs: Dictionary, station: String, time: f
 func _build_recipes() -> void:
 	# Итоговый список руками — таблица #171 (ADR-005 § 4). Время 0: руками сразу.
 	# Имени в строке нет — панель пишет имя предмета из словаря.
-	# Коллектор, накопитель, сирена, линза, радужное ядро ещё не в IDs.I (C3–C5, E2, F1).
 	# По подбору (ADR § 7.1): слитки, стекло, светокристалл, горелка, сундук,
 	# зеркало и призма. Смеситель — чертёж 1, не подбор.
 	_recipe(IDs.I.COPPER_INGOT, 1, {IDs.I.COPPER_ORE: 2}, "hand", 0.0, "", "seen")
@@ -316,6 +321,12 @@ func _build_recipes() -> void:
 	_recipe(IDs.I.MIRROR, 1, {IDs.I.COPPER_INGOT: 2, IDs.I.GLASS: 1}, "hand", 0.0, "", "seen")
 	_recipe(IDs.I.MIXER, 1, {IDs.I.COPPER_INGOT: 2, IDs.I.GLASS: 2}, "hand", 0.0, "")
 	_recipe(IDs.I.PRISM, 1, {IDs.I.GLASS: 3}, "hand", 0.0, "", "seen")
+	# Коллектор и накопитель (#166) — чертежи COLLECTOR и ACCUMULATOR, не подбор.
+	_recipe(IDs.I.COLLECTOR, 1, {IDs.I.COPPER_INGOT: 1, IDs.I.GLASS: 1}, "hand", 0.0, "")
+	_recipe(IDs.I.ACCUMULATOR, 1, {IDs.I.IRON_INGOT: 2, IDs.I.CRYSTAL: 1}, "hand", 0.0, "")
+	# Сирена — чертёж 7, линза — чертёж 8 (#172). Руками сразу, без станка.
+	_recipe(IDs.I.SIREN, 1, {IDs.I.COPPER_INGOT: 2, IDs.I.CRYSTAL: 1, IDs.I.GLASS: 1}, "hand", 0.0, "")
+	_recipe(IDs.I.LENS, 1, {IDs.I.GLASS: 3, IDs.I.CRYSTAL: 2}, "hand", 0.0, "")
 
 
 	# Станки фабрики. #170 снимет сами машины; до тех пор цепочка «руда → релей»
@@ -1657,6 +1668,38 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 			for y in range(6, 10):
 				_px(img, 12, y, Color(1.0, 1.0, 0.55))
 				_px(img, 13, y, Color(1.0, 0.95, 0.45))
+		"siren":
+			# Короб и рупор сверху: ребёнок отличает сирену от маяка по воронке.
+			for y in range(7, 15):
+				for x in range(4, 12):
+					_px(img, x, y, c.darkened(0.2))
+			for y in range(4, 8):
+				for x in range(5, 11):
+					_px(img, x, y, c)
+			for y in range(2, 5):
+				for x in range(6, 10):
+					_px(img, x, y, Color("#FFD86E"))
+			_px(img, 7, 1, Color("#FFD86E"))
+			_px(img, 8, 1, Color("#FFD86E"))
+			_px(img, 12, 10, Color(0.3, 0.95, 0.55))
+		"lens":
+			# Круглое стекло в ободке: блеск — белая точка, не квадрат маяка.
+			for y in range(3, 13):
+				for x in range(3, 13):
+					var dx: int = x - 8
+					var dy: int = y - 8
+					if dx * dx + dy * dy > 22:
+						continue
+					_px(img, x, y, c.darkened(0.15))
+			for y in range(5, 11):
+				for x in range(5, 11):
+					var dx: int = x - 8
+					var dy: int = y - 8
+					if dx * dx + dy * dy > 10:
+						continue
+					_px(img, x, y, Color(0.75, 0.92, 1.0, 0.85))
+			_px(img, 6, 6, Color(1.0, 1.0, 1.0))
+			_px(img, 7, 6, Color(1.0, 1.0, 1.0))
 		"prism":
 			# Треугольник в корпусе: белый входит, три цвета выходят.
 			for y in range(3, 13):
@@ -1672,6 +1715,26 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 					elif x > 8:
 						stripe = Color(0.45, 0.95, 1.0)
 					_px(img, x, y, stripe)
+		"collector":
+			# Стеклянная крышка и квадратное солнце — днём даёт белый луч.
+			for y in range(6, 13):
+				for x in range(3, 13):
+					_px(img, x, y, c.darkened(0.2))
+			for y in range(4, 7):
+				for x in range(3, 13):
+					_px(img, x, y, Color(0.62, 0.82, 0.92))
+			_px(img, 7, 2, Color("#FFD86E"))
+			_px(img, 8, 2, Color("#FFD86E"))
+			_px(img, 7, 3, Color("#FFD86E"))
+			_px(img, 8, 3, Color("#FFD86E"))
+		"accumulator":
+			# Корпус и шкала цвета: запас луча виден на предмете.
+			for y in range(3, 13):
+				for x in range(3, 13):
+					_px(img, x, y, c.darkened(0.25))
+			for y in range(6, 11):
+				_px(img, 7, y, Color.WHITE)
+				_px(img, 8, y, Color.WHITE)
 		"bag":
 			for y in range(5, 14):
 				var half: int = 5 - int(absf(float(y) - 10.0) * 0.5)

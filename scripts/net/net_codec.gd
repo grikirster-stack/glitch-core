@@ -973,7 +973,8 @@ static func schema_sample() -> PackedByteArray:
 
 ## Звуки EVENT.SOUND: id u8 — индекс здесь. Только дописывать в конец (иначе — PROTO).
 const SOUNDS: Array = ["mine", "break", "place", "pickup", "craft", "place_machine", "hit",
-		"alarm", "power", "step", "vent_hum", "turret_zap", "swarm", "doppel_whisper", "brownout"]
+		"alarm", "power", "step", "vent_hum", "turret_zap", "swarm", "doppel_whisper", "brownout",
+		"siren"]
 
 ## Виды EVENT.FX (аргумент — в скобках). Только дописывать в конец.
 enum Fx {
@@ -1304,7 +1305,7 @@ static func inv_schema_sample() -> PackedByteArray:
 ##   RELAY (хост → всем, канал 0): вклад деталей в релей-ядро и требование релея от N
 ##     (#139) — u8 n · n × (u8 id, u16 сдано, u16 нужно); 0 — нет в словаре.
 ##   CORE (хост → всем, канал 0, #175): дуги ядра u8 · клетка активного ядра u32
-##     (idx, нет ядра — 0xFFFFFFFF). Дописан в конец CoopEv (PROTO 15).
+##     (idx, нет ядра — 0xFFFFFFFF). Дописан в конец CoopEv (PROTO 17).
 ##   STATS (хост → всем, канал 0, при конце забега): итоги команды 4 × u32 (добыто,
 ##     изготовлено, фантомов, смертей) · u8 n · n × (str8 ник, u16 смертей).
 
