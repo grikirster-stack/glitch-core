@@ -42,6 +42,18 @@ const ACCUMULATOR_CAP: float = 120.0
 ## Коллектор молчит ниже того же порога, что и солнечная панель.
 const COLLECTOR_MIN_DAYLIGHT: float = SOLAR_MIN_DAYLIGHT
 
+# ---------------------------------------------------- Радужный кот (ADR-005 § 7, #176)
+## Страж на 90 с: скорость полёта, след-свет, перезарядка от любого луча в ядро.
+## Тишина 10 с без фантомов — кот возвращается, не ждёт конца срока.
+const CAT_TIME: float = 90.0
+const CAT_RECHARGE: float = 60.0
+const CAT_SPEED: float = 320.0
+const CAT_TRAIL_LIGHT: float = 1.5
+const CAT_TRAIL_STEP: float = 0.05
+const CAT_TRAIL_LIFE: float = 1.5
+const CAT_TRAIL_POINTS: int = 30
+const CAT_QUIET: float = 10.0
+
 # ------------------------------------------------------- Маяк (ADR-005 § 5, #167)
 ## Красный жжёт как турель: 20 урона раз в 0.8 с, дальность 7 клеток, прямая
 ## видимость. Жёлтый светит как прожектор (сила 2.0). Зелёный чинит +20 HP

@@ -106,6 +106,7 @@ func _begin() -> void:
 	_link_warned = false
 	Net.on(NetCodec.Msg.INPUT, _on_input)
 	Net.on(NetCodec.Msg.STATE, _on_state)
+	Net.on(NetCodec.Msg.CAT, _on_cat)
 	Net.on(NetCodec.Msg.OWN, _on_own)
 	Net.on(NetCodec.Msg.INV, _on_inv)
 	Net.on(NetCodec.Msg.EVENT, UI.net_event)
@@ -467,6 +468,16 @@ func _on_state(sender: int, payload: PackedByteArray) -> void:
 			b.append({"t": t, "pos": row["pos"], "vel": row["vel"], "row": row})
 			while b.size() > 2 and float(b[0]["t"]) < t - BUF_SEC:
 				b.pop_front()
+
+
+## Кот (#176): тот же такт, что STATE. Пустой кадр — кот сел.
+func _on_cat(sender: int, payload: PackedByteArray) -> void:
+	if sender != 1 or not Net.is_client():
+		return
+	var row: Dictionary = NetCodec.decode_cat(payload)
+	if row.has("bad"):
+		return
+	phantoms.on_cat(float(_ext_tick) / float(Net.TICK_HZ), row)
 
 
 ## Интерполяция марионетки между пакетами; за последним — экстраполяция не дальше

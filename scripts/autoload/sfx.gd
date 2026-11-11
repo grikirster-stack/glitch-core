@@ -33,6 +33,7 @@ const GAP_MS: Dictionary = {
 	"swarm": 120,
 	"doppel_whisper": 1500,
 	"brownout": 800,
+	"cat_meow": 400,
 }
 ## Новые звуки: имя → частота дискретизации. Синтез отложенный (см. выше).
 const LAZY: Dictionary = {
@@ -42,6 +43,7 @@ const LAZY: Dictionary = {
 	"doppel_whisper": RATE,
 	"brownout": RATE,
 	"siren": RATE,
+	"cat_meow": RATE,
 }
 ## Зацикленные звуки (петля по всей длине буфера).
 const LOOPED: Dictionary = {"vent_hum": true}
@@ -233,6 +235,8 @@ func synth(id: String) -> PackedFloat32Array:
 			return _syn_brownout()
 		"siren":
 			return _syn_siren()
+		"cat_meow":
+			return _syn_cat_meow()
 	return PackedFloat32Array()
 
 
@@ -424,6 +428,22 @@ func _syn_siren() -> PackedFloat32Array:
 		phase += TAU * f / float(RATE)
 		var env: float = minf(1.0, t * 12.0) * (1.0 - t * 0.35)
 		data[i] = sin(phase) * 0.42 * env
+	return data
+
+
+## Мяу кота: два коротких глиссандо вверх, без шума. Сид фиксирован.
+func _syn_cat_meow() -> PackedFloat32Array:
+	var n: int = int(0.28 * RATE)
+	var data: PackedFloat32Array = PackedFloat32Array()
+	data.resize(n)
+	var phase: float = 0.0
+	for i in n:
+		var t: float = float(i) / float(n)
+		var syllable: float = fmod(t * 2.0, 1.0)
+		var f: float = lerpf(520.0, 880.0, syllable)
+		phase += TAU * f / float(RATE)
+		var env: float = sin(PI * syllable) * (1.0 - t * 0.35)
+		data[i] = sin(phase) * env * 0.55
 	return data
 
 

@@ -10,6 +10,8 @@ extends MachineBase
 ## Чистые цвета луча: R, G, B, Y, C, M, W — ровно семь. Смесь из нескольких
 ## битов сразу (маска не из этого списка) дугу не зажигает.
 const PURE: Array[int] = [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M, Beams.W]
+## Маска луча, упёршегося в клетку на последнем перестроении. 0 — луча нет.
+var _beam: int = 0
 ## Дуги по верху корпуса, слева направо. Бит — индекс цвета в Game.CORE_ARC_COLOR.
 const ARC_COLORS: Array[int] = [Beams.R, Beams.Y, Beams.G, Beams.C, Beams.B, Beams.M, Beams.W]
 ## Серая дуга, которую ещё не зажгли.
@@ -35,18 +37,19 @@ func beam_pass(_in_dir: int, _color: int) -> Array:
 
 ## Маска луча, упёршегося в клетку. Каждый чистый цвет в маске — своя дуга.
 func beam_receive(mask: int) -> void:
-	if not Net.is_authority():
-		return
 	var m: int = mask & 7
-	if m == 0:
+	_beam = m
+	if not Net.is_authority() or m == 0:
 		return
 	for c in PURE:
 		if (m & int(c)) == int(c):
 			Game.core_feed(int(c))
+	Game.cat_beam(m, get_process_delta_time())
 	queue_redraw()
 
 
-## Кот выходит из ядра в первую ночь удержания (#176). Крючок, не поведение.
+## Кот выходит из ядра в первую ночь удержания (#176).
+## Game зовёт cat_hatch_at сам: прямой вызов отсюда замыкает класс на класс.
 func cat_hatch() -> void:
 	pass
 
