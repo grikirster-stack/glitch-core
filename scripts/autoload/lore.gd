@@ -622,6 +622,8 @@ func epilogue(stats: Dictionary) -> String:
 	var extra: String = _stats_line(stats)
 	if extra != "":
 		lines.append(extra)
+	if int(stats.get("sends", 0)) > 1:
+		lines.append("Вторая передача: сигнал ушёл снова, и снова кто-то наверху его услышал.")
 	return "\n".join(lines)
 
 

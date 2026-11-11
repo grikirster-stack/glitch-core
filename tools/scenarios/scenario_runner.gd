@@ -322,6 +322,12 @@ const REGISTRY: Dictionary = {
 		"desc": "обычная база без обороны теряет ≥ 1 машину за ночь 3",
 		"timeout_ms": 150000,
 	},
+	"endless": {
+		"file": "endless.gd",
+		"title": "бесконечная игра",
+		"desc": "руда отрастает только в тумане; тень отдаёт уголь, рой — медь; «Остаться на планете»",
+		"timeout_ms": 120000,
+	},
 	"night_defended_3": {
 		"file": "night_defended_3.gd",
 		"title": "баланс: ночь 3 с обороной",
