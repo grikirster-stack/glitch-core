@@ -186,9 +186,11 @@ var stat_cross_redraws: int = 0
 ## трекер, обучение, выбор генератора.
 var stat_map_us: int = 0
 var stat_hint_us: int = 0
-## Сколько вентиляций и решёток нарисовано на миникарте в последний раз.
+## Сколько вентиляций, решёток и терминалов руин нарисовано на миникарте в последний раз.
+## Терминал руины рисуется, только если его клетка уже открыта туманом.
 var stat_map_vents: int = 0
 var stat_map_grates: int = 0
+var stat_map_terminals: int = 0
 ## Сколько раз сканировались клетки вокруг игрока в поисках генератора.
 var stat_power_scans: int = 0
 ## Сколько раз перерисован слой рамки интерактива (ADR-003 § 3.2).
@@ -924,6 +926,18 @@ func _draw_map_layer() -> void:
 	c.draw_rect(r, Color(C_LINE, 0.25), false, 1.0)
 	var sx: float = r.size.x / float(World.W)
 	var sy: float = r.size.y / float(World.H)
+	# Терминалы руин — только под открытым туманом. Иначе разрез миникарты
+	# (сталь комнаты под травой) ведёт к плюшке, как точки на карте.
+	var nt: int = 0
+	for t in World.terminals:
+		if int(World.terminal_chapters.get(t, -1)) < Lore.BASE_TERMINALS:
+			continue
+		if not map_explored_at(t):
+			continue
+		nt += 1
+		var tp: Vector2 = (r.position + Vector2((float(t.x) + 0.5) * sx, (float(t.y) + 0.5) * sy)).floor()
+		c.draw_rect(Rect2(tp - Vector2(1, 1), Vector2(3, 3)), C_BIO)
+	stat_map_terminals = nt
 	# Вентиляции и решётки (#31) — только под открытым туманом.
 	var nv: int = 0
 	var ng: int = 0

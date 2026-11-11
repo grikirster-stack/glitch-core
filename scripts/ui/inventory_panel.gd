@@ -92,9 +92,9 @@ var text_audit = null
 var _recipes_cache: Dictionary = {}     ## station -> Array
 var _seen_inv: Inventory = null
 var _source: Dictionary = {}            ## id предмета -> «где взять»
-## Кадр #171 подменяет список строк и карточку цели.
+## Кадр #171 подменяет список строк. Только список: без сундука, сетки и подвала.
 var _shot_rows = null
-var _goal_req_override = null
+var _shot_list_only: bool = false
 var _cache_size: int = -1
 
 var _font: Font = null
@@ -437,14 +437,16 @@ func _draw() -> void:
 			if _near.get(String(STATIONS[i])) != null:
 				draw_circle(dot, 4.0, C_OK)
 
-	_draw_chest(origin)
-	_draw_inventory(origin)
+	if not _shot_list_only:
+		_draw_chest(origin)
+		_draw_inventory(origin)
 
 	# ---- Рецепты -------------------------------------------------------------
 	var rx: float = origin.x + 380
 	_draw_recipes(rx, origin)
 
-	_draw_bottom(origin)
+	if not _shot_list_only:
+		_draw_bottom(origin)
 	_draw_held()
 	_draw_tooltip()
 	_tag = ""
@@ -532,6 +534,8 @@ func _draw_recipes(rx: float, origin: Vector2) -> void:
 		y += 16
 		_text(Vector2(rx, y), "%d–%d из %d · колесо мыши — листать" % [first + 1, last, recipes.size()],
 				424, UI.FONT["small"], C_DIM)
+	if _shot_list_only:
+		return
 	# Пояснение вкладки: как работает этот вид крафта.
 	var info: String = "Руками сразу и без станка. Слиток руками — 2 руды, в плавильне — 1."
 	if station != "hand":

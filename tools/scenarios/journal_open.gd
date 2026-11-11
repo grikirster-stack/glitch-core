@@ -62,8 +62,8 @@ func run() -> void:
 	ok("остальные главы закрыты", journal.chapter_label(1).contains(JournalPanel.LOCKED))
 	ok("чертежей ещё нет — полоска пустая", journal.blueprint_caption(0) == "")
 	Game.give_next_blueprint()
-	# Первый доступный чертёж — маяк (#167): смесителя в IDs ещё нет (#165).
-	ok("чертёж в журнале — короткое имя «Маяк»", journal.blueprint_caption(0) == "Маяк"
+	# Первый доступный чертёж — смеситель (#165).
+	ok("чертёж в журнале — короткое имя «Смеситель»", journal.blueprint_caption(0) == "Смеситель"
 			and not journal.blueprint_caption(0).contains("…"), "«%s»" % journal.blueprint_caption(0))
 
 	# ---- Окно одно за раз: I поверх журнала, J поверх инвентаря --------------

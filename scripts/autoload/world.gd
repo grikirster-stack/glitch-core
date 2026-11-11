@@ -328,6 +328,8 @@ func generate(p_seed: int) -> void:
 			set_tile_raw(x, top - 1, IDs.T.LIGHT_CRYSTAL)
 
 	# --- 8. Руины станции -----------------------------------------------------
+	# Большинство под землёй: прогулка по траве не снимает главы и тайники.
+	# База (шаг 9) и небесный тайник (шаг 11) не трогаются.
 	_clear_ruin_caches()
 	var ruins: int = 7
 	for i in ruins:
@@ -335,7 +337,7 @@ func generate(p_seed: int) -> void:
 		rx = clampi(rx, 12, W - 20)
 		if absi(rx - W / 2) < 34:
 			rx = clampi(rx + 44, 12, W - 20)
-		_place_ruin(rx, rng)
+		_place_ruin(rx, rng, i)
 
 	# --- 9. База (релей) ------------------------------------------------------
 	var bx: int = W / 2
@@ -619,14 +621,30 @@ func _flatten(cx: int, half: int) -> void:
 				set_tile_raw(x, y, IDs.T.STONE)
 
 
-func _place_ruin(cx: int, rng: RandomNumberGenerator) -> void:
+## Погребённые руины. Комната вырезается в породе: пол, стены, потолок, воздух
+## внутри. Глубина — свой ГСЧ от сида и номера руины (поток мира не сдвигается).
+## Первые две — мелко (не шахта на 40 клеток), остальные глубже и не на одной
+## горизонтали. Ход — в соседнюю пещеру или короткий карман от вертикальной
+## трещины, не лестница от травы.
+const RUIN_ROOM_H: int = 5             # воздух внутри: герой (22 px) встаёт, над ним ещё клетка
+const RUIN_SHALLOW: int = 2            # сколько руин оставить в мелкой пещере
+const RUIN_DEPTH_SALT: int = 0x42555259  # «BURY»
+
+
+func _place_ruin(cx: int, rng: RandomNumberGenerator, index: int = 0) -> void:
 	var half: int = rng.randi_range(3, 6)
-	var base: int = surface[clampi(cx, 0, W - 1)]
+	# ГСЧ мира зовётся столько же раз, сколько на поверхностной руине: высота
+	# каждой стены и четыре кучи хлама. Иначе остальной мир съедет.
 	for x in range(cx - half, cx + half + 1):
-		if x < 1 or x >= W - 1:
-			continue
-		if base > 0 and base < H - 1:
-			set_tile_raw(x, base, IDs.T.STEEL)
+		rng.randi_range(1, 3)
+	var scrap_dx: Array[int] = []
+	for i in 4:
+		scrap_dx.append(rng.randi_range(-half, half))
+	var spot: Dictionary = _ruin_bury_spot(cx, half, index)
+	var base: int = int(spot["floor"])
+	var door: int = int(spot["door"])
+	_carve_ruin_room(cx, half, base)
+	_link_ruin(cx, half, base, door, int(spot["link_x"]), int(spot["link_y"]))
 	# Нижний ряд (base - 1): терминал у правого края, лампа в центре, окна.
 	# Их колонки стены обходят: раньше стены заполняли весь ряд, и окна, лампа
 	# и терминал руины не ставились ни на одном сиде (#29).
@@ -638,17 +656,8 @@ func _place_ruin(cx: int, rng: RandomNumberGenerator) -> void:
 		var wx: int = cx - half + 1 + i * 2
 		if wx > cx - half and wx < cx + half and not low.has(wx):
 			low[wx] = IDs.T.GLASS
-	# Стены (ГСЧ зовётся на каждую колонку, как раньше: остальной мир не сдвигается)
-	for x in range(cx - half, cx + half + 1):
-		var hgt: int = rng.randi_range(1, 3)
-		if low.has(x):
-			continue
-		for i in hgt:
-			if get_tile(x, base - 1 - i) == IDs.T.AIR:
-				set_tile_raw(x, base - 1 - i, IDs.T.PANEL)
 	for x in low.keys():
-		if int(low[x]) != IDs.T.TERMINAL and get_tile(int(x), base - 1) == IDs.T.AIR:
-			set_tile_raw(int(x), base - 1, int(low[x]))
+		set_tile_raw(int(x), base - 1, int(low[x]))
 	# Терминал (задание, глава журнала руины) ставится всегда; над ним — проход.
 	set_tile_raw(tx, base - 1, IDs.T.TERMINAL)
 	for y in range(base - 3, base - 1):
@@ -656,14 +665,235 @@ func _place_ruin(cx: int, rng: RandomNumberGenerator) -> void:
 			set_tile_raw(tx, y, IDs.T.AIR)
 	terminals.append(Vector2i(tx, base - 1))
 	terminal_chapters[Vector2i(tx, base - 1)] = Lore.BASE_TERMINALS + ruin_caches.size()
-	# Хлам
+	# Хлам — на полу комнаты, не в породе. Смещения — из ГСЧ мира (см. выше).
 	for i in 4:
-		var sx: int = clampi(cx + rng.randi_range(-half, half), 1, W - 2)
-		var sy: int = base - 1
-		if get_tile(sx, sy) == IDs.T.AIR:
-			set_tile_raw(sx, sy, IDs.T.SCRAP_ORE)
-	# Тайник и табличка (ADR-001 § 4.9, #35)
+		var sx: int = clampi(cx + scrap_dx[i], cx - half + 1, cx + half - 1)
+		if get_tile(sx, base - 1) == IDs.T.AIR and get_tile(sx, base - 1) != IDs.T.TERMINAL:
+			set_tile_raw(sx, base - 1, IDs.T.SCRAP_ORE)
+	# Тайник и табличка (ADR-001 § 4.9, #35) — внутри комнаты.
 	_place_ruin_cache(ruin_caches.size(), cx, base, half)
+
+
+## Пол и дверь комнаты. floor — ряд стали; door — -1 слева, +1 справа.
+## link_x/link_y — воздух естественной полости, куда выходит карман (0 — нет).
+func _ruin_bury_spot(cx: int, half: int, index: int) -> Dictionary:
+	var r: RandomNumberGenerator = RandomNumberGenerator.new()
+	r.seed = (world_seed ^ RUIN_DEPTH_SALT) + index * 7919
+	var top: int = surface[clampi(cx, 0, W - 1)]
+	var shallow: bool = index < RUIN_SHALLOW
+	var lo: int = 8 if shallow else 22
+	var hi: int = 18 if shallow else 62
+	var want: int = top + r.randi_range(lo, hi) + (index % 5) * (2 if shallow else 4)
+	var floor_y: int = clampi(want, top + 7, H - 8)
+	# Не одна горизонталь: соседние руины разводим по глубине.
+	if index > 0 and ruin_caches.size() > 0:
+		var prev: int = int(ruin_caches[ruin_caches.size() - 1].get("floor", floor_y))
+		if absi(floor_y - prev) < 6:
+			floor_y = clampi(floor_y + (8 if floor_y <= prev else -8), top + 7, H - 8)
+	var door: int = -1 if r.randf() < 0.5 else 1
+	var link: Vector2i = _ruin_pick_link(cx, half, floor_y, door)
+	# Мелкая руина, чей ход выходит на траву, опускается, пока полость не
+	# перестанет быть лестницей с луга. Глубже H-8 не лезем.
+	var drop: int = 0
+	while link.x >= 0 and _link_would_reach_sky(cx, half, floor_y, door, link) and drop < 6:
+		drop += 1
+		floor_y = mini(floor_y + 8, H - 8)
+		link = _ruin_pick_link(cx, half, floor_y, door)
+	if link.x < 0 and drop > 0:
+		floor_y = mini(floor_y, H - 8)
+	return {"floor": floor_y, "door": door, "link_x": link.x, "link_y": link.y}
+
+
+func _ruin_pick_link(cx: int, half: int, floor_y: int, door: int) -> Vector2i:
+	var link: Vector2i = _ruin_nearby_air(cx, half, floor_y, door)
+	if link.x >= 0:
+		return link
+	return _ruin_nearby_air(cx, half, floor_y, -door)
+
+
+## Пробный карман (на копии не режем мир): вышел бы он на траву.
+func _link_would_reach_sky(cx: int, half: int, floor_y: int, door: int, link: Vector2i) -> bool:
+	var door_x: int = cx + door * half
+	var door_y: int = floor_y - 2
+	var x: int = door_x
+	var step: int = 1 if link.x >= door_x else -1
+	var span: int = absi(link.x - door_x)
+	for i in span + 1:
+		var y: int = door_y if span == 0 else door_y + (link.y - door_y) * i / span
+		if x < 1 or x >= W - 1:
+			break
+		if y <= surface[x] + 3:
+			return true
+		# Уже открытый воздух рядом с травой — карман в него вольётся.
+		if get_tile(x, y) == IDs.T.AIR and y <= surface[x] + 5:
+			return true
+		x += step
+	return false
+
+
+## Ближайший воздух пещеры или тоннеля сбоку от комнаты, не у поверхности.
+func _ruin_nearby_air(cx: int, half: int, floor_y: int, door: int) -> Vector2i:
+	var edge: int = cx + door * (half + 1)
+	var x0: int = edge + door
+	var x1: int = edge + door * 28
+	var step: int = 1 if door > 0 else -1
+	var best: Vector2i = Vector2i(-1, -1)
+	var best_d: int = 999
+	var x: int = x0
+	while x != x1 + step:
+		if x < 2 or x >= W - 2:
+			x += step
+			continue
+		for dy in range(-8, 9):
+			var y: int = floor_y - 2 + dy
+			if y <= surface[x] + 4 or y >= H - 5:
+				continue
+			if get_tile(x, y) != IDs.T.AIR:
+				continue
+			var d: int = absi(x - edge) + absi(y - (floor_y - 2))
+			if d < best_d:
+				best_d = d
+				best = Vector2i(x, y)
+		x += step
+	return best
+
+
+## Комната в породе: стальной пол, панельные стены и потолок, воздух внутри.
+func _carve_ruin_room(cx: int, half: int, floor_y: int) -> void:
+	var y0: int = floor_y - RUIN_ROOM_H
+	var y1: int = floor_y
+	for x in range(cx - half - 1, cx + half + 2):
+		if x < 1 or x >= W - 1:
+			continue
+		for y in range(y0 - 1, y1 + 2):
+			if y < 1 or y >= H - 2:
+				continue
+			var edge: bool = x == cx - half - 1 or x == cx + half + 1 or y == y0 - 1 or y == y1 + 1
+			var shell: bool = x == cx - half or x == cx + half or y == y0 or y == y1
+			if edge:
+				if get_tile(x, y) == IDs.T.AIR or get_tile(x, y) == IDs.T.WATER or get_tile(x, y) == IDs.T.LAVA:
+					set_tile_raw(x, y, IDs.T.STONE)
+			elif shell:
+				set_tile_raw(x, y, IDs.T.STEEL if y == y1 else IDs.T.PANEL)
+			else:
+				set_tile_raw(x, y, IDs.T.AIR)
+	# Над комнатой — порода, не дыра до травы.
+	for x in range(cx - half, cx + half + 1):
+		if x < 1 or x >= W - 1:
+			continue
+		var cap: int = y0 - 1
+		if cap > surface[x] + 1 and not DB.tile_solid(get_tile(x, cap)):
+			set_tile_raw(x, cap, IDs.T.STONE)
+
+
+## Ход из двери: в найденную полость или короткий тупик от вертикальной трещины.
+## Не колодец от поверхности — сверху остаётся порода. Карман всегда доходит
+## до воздуха снаружи комнаты: иначе станция замурована.
+func _link_ruin(cx: int, half: int, floor_y: int, door: int, link_x: int, link_y: int) -> void:
+	var door_x: int = cx + door * half
+	var door_y: int = floor_y - 2
+	var outside: int = door_x + door * 2
+	var saved: Dictionary = {}
+	if link_x >= 0:
+		saved = _snapshot_rect(mini(door_x, link_x) - 2, mini(door_y, link_y) - 10,
+				maxi(door_x + door, link_x) + 2, maxi(door_y, link_y) + 3)
+	# Дверь и клетка оболочки снаружи неё: иначе карман упирается в панель.
+	set_tile_raw(door_x, door_y, IDs.T.AIR)
+	set_tile_raw(door_x, door_y - 1, IDs.T.AIR)
+	set_tile_raw(door_x + door, door_y, IDs.T.AIR)
+	set_tile_raw(door_x + door, door_y - 1, IDs.T.AIR)
+	set_tile_raw(door_x, floor_y, IDs.T.STEEL)
+	set_tile_raw(door_x + door, floor_y, IDs.T.STEEL)
+	if link_x >= 0:
+		_carve_pocket(outside, door_y, link_x, link_y)
+		if _link_reaches_sky(door_x, door_y):
+			_restore_rect(saved)
+			link_x = -1
+		else:
+			return
+	# Трещина в стороне от двери: 2 клетки шириной, вниз на 10 и вверх,
+	# пока до травы не останется 6 клеток. Игрок находит её в пещере, не на лугу.
+	var shaft_x: int = clampi(door_x + door * 6, 2, W - 3)
+	var y_hi: int = mini(floor_y + 16, H - 6)
+	var y_lo: int = surface[shaft_x] + 6
+	for y in range(y_lo, y_hi + 1):
+		for dx in [0, 1]:
+			var x: int = clampi(shaft_x + dx, 1, W - 2)
+			if y <= surface[x] + 3:
+				continue
+			set_tile_raw(x, y, IDs.T.AIR)
+			if get_tile(x, y + 1) == IDs.T.LAVA:
+				set_tile_raw(x, y + 1, IDs.T.STONE)
+	_carve_pocket(outside, door_y, shaft_x, door_y)
+
+
+## Закрыть сторону двери панелью: карман вёл на траву, станция остаётся в породе.
+func _seal_ruin_side(cx: int, half: int, floor_y: int, door: int) -> void:
+	var x: int = cx + door * half
+	for y in range(floor_y - RUIN_ROOM_H, floor_y):
+		set_tile_raw(x, y, IDs.T.PANEL)
+		set_tile_raw(x + door, y, IDs.T.STONE)
+	set_tile_raw(x, floor_y, IDs.T.STEEL)
+
+
+func _snapshot_rect(x0: int, y0: int, x1: int, y1: int) -> Dictionary:
+	var out: Dictionary = {}
+	for x in range(maxi(0, x0), mini(W - 1, x1) + 1):
+		for y in range(maxi(0, y0), mini(H - 1, y1) + 1):
+			out[Vector2i(x, y)] = get_tile(x, y)
+	return out
+
+
+func _restore_rect(saved: Dictionary) -> void:
+	for c in saved:
+		set_tile_raw(c.x, c.y, int(saved[c]))
+
+
+## Из двери по воздуху можно выйти на траву — карман слишком щедрый.
+func _link_reaches_sky(door_x: int, door_y: int) -> bool:
+	var seen: Dictionary = {}
+	var q: Array[Vector2i] = [Vector2i(door_x, door_y)]
+	var n: int = 0
+	while not q.is_empty() and n < 600:
+		n += 1
+		var c: Vector2i = q.pop_back()
+		if seen.has(c):
+			continue
+		seen[c] = true
+		if c.x < 1 or c.x >= W - 1 or c.y < 1 or c.y >= H - 2:
+			continue
+		if get_tile(c.x, c.y) != IDs.T.AIR and c != Vector2i(door_x, door_y):
+			continue
+		if c.y <= surface[c.x] + 1:
+			return true
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			q.append(c + d)
+	return false
+
+
+## Короткий боковой карман от x0 до x1: воздух высотой 2, пол под ним.
+## Идёт по горизонтали, не вертикалью до травы. Конечная клетка тоже воздух.
+func _carve_pocket(x0: int, y0: int, x1: int, y1: int) -> void:
+	var step: int = 1 if x1 >= x0 else -1
+	var span: int = absi(x1 - x0)
+	var x: int = x0
+	for i in span + 1:
+		if x < 1 or x >= W - 1:
+			break
+		var y: int = y0 if span == 0 else y0 + (y1 - y0) * i / span
+		# Не выше двери и не ближе 4 клеток к траве: иначе карман — колодец.
+		y = clampi(y, surface[x] + 4, y0 + 1)
+		if y <= surface[x] + 3:
+			break
+		set_tile_raw(x, y, IDs.T.AIR)
+		set_tile_raw(x, y - 1, IDs.T.AIR)
+		if get_tile(x, y + 1) == IDs.T.LAVA or get_tile(x, y + 1) == IDs.T.WATER:
+			set_tile_raw(x, y + 1, IDs.T.STONE)
+		elif not DB.tile_solid(get_tile(x, y + 1)) and get_tile(x, y + 1) != IDs.T.AIR:
+			set_tile_raw(x, y + 1, IDs.T.STONE)
+		if x == x1:
+			break
+		x += step
 
 
 # ------------------------------------------------------------ ТАЙНИКИ РУИН
@@ -800,26 +1030,21 @@ func ruin_cache_loot(i: int, role: String) -> Array:
 	return out
 
 
-## Первая пустая клетка над руиной в колонке x, стоящая на твёрдом; (-1, -1) — нет.
-func _ruin_top_cell(x: int, base: int) -> Vector2i:
-	for y in range(base - 1, maxi(base - 7, 0), -1):
-		if get_tile(x, y) == IDs.T.AIR and DB.tile_solid(get_tile(x, y + 1)):
-			return Vector2i(x, y)
-	return Vector2i(-1, -1)
-
-
-## Сундук с добром хозяина — на крыше руины у середины, табличка — у левого края.
+## Сундук хозяина — на полу комнаты у середины, табличка — внутри, у левой стены.
+## Не на крыше: над погребённой руиной порода, и табличка там оказалась бы в камне.
 func _place_ruin_cache(i: int, cx: int, base: int, half: int) -> void:
 	var t0: int = Time.get_ticks_usec()
 	var owner: Dictionary = Lore.ruin_owner(i)
 	var role: String = String(owner.get("role", ""))
+	# Сундук — у середины, но не вплотную к терминалу (правый край комнаты).
+	# Иначе в узкой руине единственная стоянка попадает в радиус E терминала.
 	var cell: Vector2i = Vector2i(-1, -1)
-	for dx in [0, -1, 1, -2, 2]:
-		cell = _ruin_top_cell(cx + int(dx), base)
-		if cell.x >= 0:
+	for dx in [-1, -2, 0, 1, -3, 2, 3]:
+		cell = _ruin_floor_cell(cx + int(dx), base)
+		if cell.x >= 0 and absi(cell.x - (cx + half - 1)) >= 2:
 			break
+		cell = Vector2i(-1, -1)
 	if cell.x < 0:
-		# Над руиной вода или деревья — вырезаем нишу в стене над стальным полом.
 		cell = Vector2i(cx, base - 1)
 		set_tile_raw(cell.x, cell.y, IDs.T.AIR)
 	var chest: Chest = null
@@ -828,7 +1053,9 @@ func _place_ruin_cache(i: int, cx: int, base: int, half: int) -> void:
 		chest.permanent = true   # тайник руины: разобрать нельзя
 		for e in ruin_cache_loot(i, role):
 			chest.receive_item(int(e[0]), int(e[1]))
-	var sign_cell: Vector2i = _ruin_top_cell(cx - half, base)
+	var sign_cell: Vector2i = _ruin_floor_cell(cx - half + 1, base)
+	if sign_cell.x < 0 or sign_cell == cell:
+		sign_cell = _ruin_floor_cell(cx - half + 2, base)
 	if sign_cell.x < 0:
 		sign_cell = cell + Vector2i(-1, 0)
 	var sign: RuinSign = RuinSign.new()
@@ -836,11 +1063,43 @@ func _place_ruin_cache(i: int, cx: int, base: int, half: int) -> void:
 	sign.z_index = 2
 	sign.position = cell_to_world(sign_cell)
 	add_world_node(sign)
+	_clear_ruin_stand(cell, base)
 	ruin_caches.append({
 		"index": i, "cell": cell, "chest": chest, "sign": sign, "sign_cell": sign_cell,
 		"name": sign.title, "role": role, "owner": String(owner.get("full", "")),
+		"floor": base, "cx": cx, "half": half,
 	})
 	ruin_cache_ms += float(Time.get_ticks_usec() - t0) / 1000.0
+
+
+## Клетки у сундука, где герой встаёт: воздух на две клетки вверх, не терминал.
+## В узкой руине (half 3) одна клетка попадает в радиус E терминала, и сундук
+## не открыть. Чистим обе стороны, чтобы встать можно было не у терминала.
+func _clear_ruin_stand(cell: Vector2i, base: int) -> void:
+	var cleared: int = 0
+	for dx in [-1, 1, -2, 2, -3, 3]:
+		var x: int = cell.x + dx
+		if x < 1 or x >= W - 1:
+			continue
+		if get_tile(x, base - 1) == IDs.T.TERMINAL:
+			continue
+		var floor_t: int = get_tile(x, base)
+		if floor_t != IDs.T.STEEL and floor_t != IDs.T.PANEL and floor_t != IDs.T.AIR:
+			continue
+		if floor_t != IDs.T.STEEL:
+			set_tile_raw(x, base, IDs.T.STEEL)
+		set_tile_raw(x, base - 1, IDs.T.AIR)
+		set_tile_raw(x, base - 2, IDs.T.AIR)
+		cleared += 1
+		if cleared >= 2:
+			return
+
+
+## Пол комнаты: воздух прямо над сталью ряда base.
+func _ruin_floor_cell(x: int, base: int) -> Vector2i:
+	if get_tile(x, base - 1) == IDs.T.AIR and DB.tile_solid(get_tile(x, base)):
+		return Vector2i(x, base - 1)
+	return Vector2i(-1, -1)
 
 
 # ------------------------------------------------------------ НЕБЕСНЫЙ ТАЙНИК

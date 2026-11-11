@@ -236,6 +236,10 @@ func _build_item_defs() -> void:
 	_add_item_def(IDs.I.BURNER, "Горелка", Color(0.55, 0.32, 0.22), "burner", 10, "machine:Burner")
 	# Маяк (ADR-005 § 4–5, #167): приёмник луча. Стак 5 — это башня, не расходник.
 	_add_item_def(IDs.I.PHAROS, "Маяк", Color(0.72, 0.55, 0.38), "pharos", 5, "machine:Pharos")
+	# Оптика (ADR-005 § 4, #165). Смеситель открывается чертежом терминала.
+	_add_item_def(IDs.I.MIRROR, "Зеркало", Color(0.72, 0.78, 0.86), "mirror", 20, "machine:Mirror")
+	_add_item_def(IDs.I.MIXER, "Смеситель", Color(0.45, 0.55, 0.62), "mixer", 10, "machine:Mixer")
+	_add_item_def(IDs.I.PRISM, "Призма", Color(0.75, 0.88, 0.95), "prism", 20, "machine:Prism")
 
 	# Требования релей-ядра — из Balance (§ 4.7).
 	relay_req = Balance.RELAY_REQ.duplicate()
@@ -288,9 +292,9 @@ func _recipe(out: int, amount: int, inputs: Dictionary, station: String, time: f
 func _build_recipes() -> void:
 	# Итоговый список руками — таблица #171 (ADR-005 § 4). Время 0: руками сразу.
 	# Имени в строке нет — панель пишет имя предмета из словаря.
-	# Рецепт без предмета в IDs.I не добавляется: зеркало, смеситель, призма,
-	# коллектор, накопитель, сирена, линза, радужное ядро — C2–C5, E2, F1.
-	# По подбору (ADR § 7.1): слитки, стекло, светокристалл, горелка, сундук.
+	# Коллектор, накопитель, сирена, линза, радужное ядро ещё не в IDs.I (C3–C5, E2, F1).
+	# По подбору (ADR § 7.1): слитки, стекло, светокристалл, горелка, сундук,
+	# зеркало и призма. Смеситель — чертёж 1, не подбор.
 	_recipe(IDs.I.COPPER_INGOT, 1, {IDs.I.COPPER_ORE: 2}, "hand", 0.0, "", "seen")
 	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 2}, "hand", 0.0, "", "seen")
 	_recipe(IDs.I.GLASS, 1, {IDs.I.SAND: 2}, "hand", 0.0, "", "seen")
@@ -304,6 +308,11 @@ func _build_recipes() -> void:
 	# в стену, и релей оставался бы без 24 пластин.
 	_recipe(IDs.I.STEEL_WALL, 4, {IDs.I.IRON_INGOT: 2, IDs.I.COAL: 1}, "hand", 0.0, "")
 	_recipe(IDs.I.VENT_GRATE, 1, {IDs.I.IRON_INGOT: 2}, "hand", 0.0, "")
+	# Оптика (#165). Зеркало и призма — по подбору, смеситель — чертёж MIXER.
+	_recipe(IDs.I.MIRROR, 1, {IDs.I.COPPER_INGOT: 2, IDs.I.GLASS: 1}, "hand", 0.0, "", "seen")
+	_recipe(IDs.I.MIXER, 1, {IDs.I.COPPER_INGOT: 2, IDs.I.GLASS: 2}, "hand", 0.0, "")
+	_recipe(IDs.I.PRISM, 1, {IDs.I.GLASS: 3}, "hand", 0.0, "", "seen")
+
 
 	# Станки фабрики. #170 снимет сами машины; до тех пор цепочка «руда → релей»
 	# должна собираться. Пластины в ручной список #171 не входят.
@@ -1607,6 +1616,43 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 					_px(img, x, y, Color("#FFD86E"))
 			_px(img, 7, 2, Color("#FFD86E"))
 			_px(img, 8, 2, Color("#FFD86E"))
+		"mirror":
+			# Корпус и яркая диагональ «/»: ребёнок видит, куда повернёт луч.
+			for y in range(3, 13):
+				for x in range(3, 13):
+					_px(img, x, y, c.darkened(0.25))
+			for i in range(2, 12):
+				_px(img, i, 14 - i, Color(0.92, 0.96, 1.0))
+				_px(img, i + 1, 14 - i, Color(0.75, 0.86, 0.95))
+		"mixer":
+			# Три тёмных входа и яркий выход вправо — цвет смеси.
+			for y in range(3, 13):
+				for x in range(3, 12):
+					_px(img, x, y, c.darkened(0.3))
+			for y in range(4, 7):
+				_px(img, 3, y, Color(0.18, 0.20, 0.24))
+			for x in range(4, 8):
+				_px(img, x, 11, Color(0.18, 0.20, 0.24))
+			for y in range(9, 12):
+				_px(img, 3, y, Color(0.18, 0.20, 0.24))
+			for y in range(6, 10):
+				_px(img, 12, y, Color(1.0, 1.0, 0.55))
+				_px(img, 13, y, Color(1.0, 0.95, 0.45))
+		"prism":
+			# Треугольник в корпусе: белый входит, три цвета выходят.
+			for y in range(3, 13):
+				for x in range(3, 13):
+					_px(img, x, y, c.darkened(0.35))
+			for row in range(8):
+				var y: int = 4 + row
+				var half: int = row / 2
+				for x in range(8 - half, 8 + half + 1):
+					var stripe: Color = Color(1.0, 0.85, 0.45)
+					if x < 7:
+						stripe = Color(0.50, 1.0, 0.82)
+					elif x > 8:
+						stripe = Color(0.45, 0.95, 1.0)
+					_px(img, x, y, stripe)
 		"bag":
 			for y in range(5, 14):
 				var half: int = 5 - int(absf(float(y) - 10.0) * 0.5)

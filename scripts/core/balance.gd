@@ -10,7 +10,7 @@ const DAY_LENGTH: float = 240.0        ## полный цикл день+ноч�
 const NIGHT_START: float = 0.66        ## доля цикла, с которой начинается ночь
 const NIGHT_END: float = 0.04          ## доля цикла, на которой ночь кончается (рассвет)
 const DUSK_START: float = 0.60         ## сумерки: телеграф ночи, вентиляции «гудят»
-const START_TIME: float = 0.30         ## время старта забега (утро первой смены)
+const START_TIME: float = 0.04         ## старт забега на рассвете (ADR-005 § 6.1): до ночи полный день
 
 # -------------------------------------------------------------- § 4.3 Питание
 ## Условные единицы мощности. Генератор даёт POWER_OUT, потребитель тянет
@@ -99,16 +99,21 @@ const PHANTOMS: Dictionary = {
 	"burrower": {"hp": 140.0, "speed": 90.0,  "dmg": 30.0, "light_flee": 0.80, "from_night": 4, "cost": 4.0},
 	"doppel":   {"hp": 120.0, "speed": 168.0, "dmg": 40.0, "light_flee": INF,  "from_night": 6, "cost": 6.0, "max": 1},
 }
-## Было 0.5 (калибровка #33): у базы с 2 ТЭЦ ночь 3 получала B ≈ 11.7 — состав
-## из 6 единиц при cap 5, и единственная стая роя, выпав в очереди последней,
-## всю ночь ждала места за эхо, которые не умирают под светом базы. С 0.25
-## B ≈ 10.7: в составе две стаи (§ 4.5: «3 эхо + стая + тень»), одна выходит всегда.
-const THREAT_PER_GENERATOR: float = 0.25
-const THREAT_PER_LIGHT: float = 0.02
-const THREAT_RELAY: float = 4.0
-const NIGHT_BUDGET_BASE: float = 3.0
+## Угроза по мощности базы (ADR-005 § 6.2, #173). Смена в формуле не выше 3:
+## кто ничего не строит, получает ту же ночь, что и раньше. Старые множители
+## генератора и лампы сняты — их место у горелок, маяков и накопителей.
+const THREAT_DAY_CAP: int = 3
+const THREAT_PER_BURNER: float = 0.5   ## горящая горелка
+const THREAT_PER_PHAROS: float = 1.0   ## маяк под лучом (блока ещё нет — вклад 0)
+const THREAT_PER_ACCUM: float = 0.25   ## накопитель
+const THREAT_RELAY: float = 4.0        ## удержание сигнала, как раньше
+const NIGHT_BUDGET_BASE: float = 1.0
 const NIGHT_BUDGET_PER_T: float = 2.0
-const CAP_BASE: int = 2                ## живых фантомов ночью: CAP_BASE + смена
+## Ночи 1–2 тихие: бюджет не больше 2, живых не больше 1, только эхо.
+const QUIET_NIGHTS: int = 2
+const QUIET_BUDGET_CAP: float = 2.0
+const QUIET_ALIVE_CAP: int = 1
+const CAP_BASE: int = 1                ## живых ночью: CAP_BASE + T, не больше CAP_MAX
 const CAP_MAX: int = 10
 const SPAWN_INTERVAL_MAX: float = 7.0
 const SPAWN_INTERVAL_MIN: float = 2.5

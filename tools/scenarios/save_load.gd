@@ -37,7 +37,7 @@ func run() -> void:
 	gen.add_fuel(CoalGen.FUEL_MAX_UNITS)
 	src.receive_item(IDs.I.COPPER_ORE, 30)
 	# Чертёж в файл: после F9 панель должна показать тот же рецепт.
-	# Первый доступный сейчас — маяк (#167); смесителя ещё нет (#165).
+	# Первый доступный — смеситель (#165).
 	Game.give_next_blueprint()
 	# Оборона (#31): шлюз у фабрики, решётка на вентиляции. Релей (#32): сигнал держится.
 	var lock: Vector2i = c0 + Vector2i(7, 1)
@@ -129,7 +129,7 @@ func run() -> void:
 	got = await wait_until(func() -> bool: return _count(dst, IDs.I.COPPER_INGOT) > ingots0, 20.0)
 	ok("после загрузки фабрика продолжает плавить", got,
 			"слитков %d → %d" % [ingots0, _count(dst, IDs.I.COPPER_INGOT)])
-	ok("чертёж из сохранения на месте", Game.has_blueprint(IDs.I.PHAROS), str(Game.blueprints))
+	ok("чертёж из сохранения на месте", Game.has_blueprint(IDs.I.MIXER), str(Game.blueprints))
 	var panel: InventoryPanel = UI.panel
 	panel.open(player)
 	panel.station_tab = 0
@@ -139,7 +139,7 @@ func run() -> void:
 	panel._check_cache()
 	var shown: bool = false
 	for r in panel._recipes("hand"):
-		if int(r["out"]) == IDs.I.PHAROS:
+		if int(r["out"]) == IDs.I.MIXER:
 			shown = true
 	ok("после загрузки панель показывает рецепт чертежа", shown)
 	panel.close()
