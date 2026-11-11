@@ -18,8 +18,8 @@ extends SceneTree
 
 ## Схема протокола PROTO = SCHEMA_PROTO. Поменяли кодек, порядок IDs или таблицы DB —
 ## поднимите Net.PROTO и впишите сюда новый PROTO и хэш, который напечатает тест.
-const SCHEMA_PROTO: int = 14
-const SCHEMA_HASH: String = "3084ea5124fc0f677dd6b785fc4cc657"
+const SCHEMA_PROTO: int = 15
+const SCHEMA_HASH: String = "077ab327fd3b12a323fc48cdfce29c79"
 
 const PORT_BASE: int = 24900
 const LOOP: String = "127.0.0.1"
@@ -228,7 +228,10 @@ func _codec() -> void:
 			and ev.get("pos") == Vector2(100, 200))
 	var col: Color = Color8(255, 128, 64, 255)
 	var en: Dictionary = NetCodec.decode_event(NetCodec.encode_notify(Vector2(8, 9), "Рядом нет вентиляции", col))
-	ok("EVENT уведомление (UTF-8, цвет)", en.get("text") == "Рядом нет вентиляции" and en.get("color") == col)
+	ok("EVENT уведомление (UTF-8, цвет, без иконки)", en.get("text") == "Рядом нет вентиляции"
+			and en.get("color") == col and int(en.get("icon", -1)) == 0)
+	var eg: Dictionary = NetCodec.decode_event(NetCodec.encode_notify(Vector2(1, 2), "Теперь можно сделать: Стекло", col, 7))
+	ok("EVENT уведомление с иконкой предмета", eg.get("text") == "Теперь можно сделать: Стекло" and int(eg.get("icon", 0)) == 7)
 	ok("EVENT FX", NetCodec.decode_event(NetCodec.encode_fx(Vector2.ZERO, 3, 200)).get("arg") == 200)
 	ok("EVENT битый → {}", NetCodec.decode_event(NetCodec.encode_notify(Vector2.ZERO, "abc", col).slice(0, 9)).is_empty())
 	# MP-D (#89): удар по своему герою, таблица звуков.
@@ -248,8 +251,12 @@ func _codec() -> void:
 		slots.append([i % 40, i * 1000])
 	slots[35] = [255, 65535]
 	var inv: Dictionary = NetCodec.decode_inv(NetCodec.encode_inv(slots, 35))
-	ok("INV 36 слотов — 110 Б, туда-обратно", NetCodec.encode_inv(slots, 35).size() == 110
-			and inv.get("slots") == slots and inv.get("selected") == 35)
+	ok("INV 36 слотов без seen — 111 Б, туда-обратно", NetCodec.encode_inv(slots, 35).size() == 111
+			and inv.get("slots") == slots and inv.get("selected") == 35 and inv.get("seen") == [])
+	var seen: Array = [3, 9, 3, 0]
+	var invs: Dictionary = NetCodec.decode_inv(NetCodec.encode_inv(slots, 2, seen))
+	ok("INV хвост seen: id без нуля и повторов", NetCodec.encode_inv(slots, 2, seen).size() == 113
+			and invs.get("seen") == [3, 9] and invs.get("selected") == 2)
 	ok("INV: count обрезается до u16", NetCodec.decode_inv(NetCodec.encode_inv([[1, 99999]], 0))["slots"][0][1] == 65535)
 
 	# Команды

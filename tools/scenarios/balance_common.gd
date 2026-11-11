@@ -310,11 +310,14 @@ static func is_raw(id: int) -> bool:
 
 
 ## Рецепт предмета: сначала со станции из prefer (по порядку), иначе любой.
-static func recipe_of(id: int, prefer: Array) -> Dictionary:
+## skip — выходы, чей рецепт на этой станции не брать (стена руками не сталь линии).
+static func recipe_of(id: int, prefer: Array, skip: Array = []) -> Dictionary:
 	for st in prefer:
 		for r in DB.recipes_for(String(st)):
-			if int(r["out"]) == id:
+			if int(r["out"]) == id and not skip.has(int(r["out"])):
 				return r
+	if skip.has(id):
+		return {}
 	return DB.find_recipe_for(id)
 
 
@@ -322,13 +325,13 @@ static func recipe_of(id: int, prefer: Array) -> Dictionary:
 ## prefer — порядок станций: ["hand"] — «руками», ["smelter", "assembler"] — «на машинах».
 ## times (необязательно) — накопить секунды работы станций: станция -> с.
 static func expand(id: int, n: int, prefer: Array, acc: Dictionary, stop: Array = [],
-		times: Dictionary = {}) -> void:
+		times: Dictionary = {}, skip: Array = []) -> void:
 	if n <= 0:
 		return
 	if is_raw(id) or stop.has(id):
 		acc[id] = int(acc.get(id, 0)) + n
 		return
-	var r: Dictionary = recipe_of(id, prefer)
+	var r: Dictionary = recipe_of(id, prefer, skip)
 	if r.is_empty():
 		acc[id] = int(acc.get(id, 0)) + n
 		return
@@ -336,7 +339,7 @@ static func expand(id: int, n: int, prefer: Array, acc: Dictionary, stop: Array 
 	var st: String = String(r["station"])
 	times[st] = float(times.get(st, 0.0)) + float(crafts) * float(r["time"])
 	for k in r["in"].keys():
-		expand(int(k), crafts * int(r["in"][k]), prefer, acc, stop, times)
+		expand(int(k), crafts * int(r["in"][k]), prefer, acc, stop, times, skip)
 
 
 ## Подпись предметов словаря «id -> count» для лога.

@@ -56,8 +56,10 @@ func run() -> void:
 	var stop: Array = [IDs.I.IRON_PLATE, IDs.I.COPPER_PLATE, IDs.I.STEEL_PLATE,
 			IDs.I.CRYSTAL, IDs.I.GLASS, IDs.I.CRYSTAL_BLOCK]
 	var metal: Dictionary = {}
+	# Стена (#171) — руками из слитков, не из пластин. Иначе expand берёт её
+	# и требует сталь, которую линия как раз и должна выдать.
 	for id in Balance.RELAY_REQ.keys():
-		expand(int(id), int(Balance.RELAY_REQ[id]), machine, metal, stop)
+		expand(int(id), int(Balance.RELAY_REQ[id]), machine, metal, stop, {}, [IDs.I.STEEL_WALL])
 	var ore: Dictionary = {}
 	for id in Balance.RELAY_REQ.keys():
 		expand(int(id), int(Balance.RELAY_REQ[id]), machine, ore)

@@ -99,7 +99,9 @@ func run_host() -> void:
 	ch.slots[5] = ItemStack.new(IDs.I.LAMP, 2)
 	await barrier("poll")
 
-	# --- Крафт с клиента 0.
+	# --- Крафт с клиента 0. Руды в стартовом наборе нет (#171) — кладём сами.
+	p0.inv.add(IDs.I.COPPER_ORE, 4)
+	p0.inv.mark_seen(IDs.I.COPPER_ORE)
 	var ore0: int = p0.inv.count_of(IDs.I.COPPER_ORE)
 	var ingot0: int = p0.inv.count_of(IDs.I.COPPER_INGOT)
 	var crafted0: int = Game.stats_crafted
@@ -266,9 +268,14 @@ func run_client(i: int) -> void:
 	await barrier("craft")
 	if i == 0:
 		var rec: Dictionary = {}
-		for r in DB.recipes:
-			if String(r["name"]) == "Ручная выплавка меди":
+		for r in DB.recipes_for("hand"):
+			if int(r["out"]) == IDs.I.COPPER_INGOT:
 				rec = r
+				break
+		# Руду кладёт хост в прокси и шлёт INV. Свой add не доезжает до хоста
+		# и после кадра выглядит как несписанная руда.
+		ok("крафт: руда с хоста доехала", await wait_until(func() -> bool:
+			return player.inv.count_of(IDs.I.COPPER_ORE) >= 4, WAIT))
 		var ore0: int = player.inv.count_of(IDs.I.COPPER_ORE)
 		var ingot0: int = player.inv.count_of(IDs.I.COPPER_INGOT)
 		var rtt0: int = (InvOps.stats["rtt_ms"] as PackedFloat32Array).size()

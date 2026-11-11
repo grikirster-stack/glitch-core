@@ -8,6 +8,9 @@ extends "res://tools/mp/scenarios/mp_coop_base.gd"
 
 const WAIT: float = 8.0
 const MARK: int = IDs.I.SCRAP
+## Стартовый набор (#171) уже кладёт 4 хлама. Сценарий добавляет 5 — в парковке 9.
+const STARTER_SCRAP: int = 4
+const MARK_N: int = STARTER_SCRAP + 5
 
 
 # ------------------------------------------------------------------ ХОСТ
@@ -47,7 +50,7 @@ func run_host() -> void:
 			str(Net.parked.keys()))
 	ok("в парковке: место, HP и метка как были", not e.is_empty()
 			and (e["state"]["pos"] as Vector2).distance_to(spot) < 24.0
-			and absf(float(e["state"]["hp"]) - 64.0) < 1.0 and _count_in(e["state"], MARK) == 5)
+			and absf(float(e["state"]["hp"]) - 64.0) < 1.0 and _count_in(e["state"], MARK) == MARK_N)
 	ok("обрыв не наказывается: мешка нет, герой жив", bags().size() == bags0 and not bool(e.get("dead", true)))
 	ok("прокси убран из игроков", Game.players.size() == 1 and hero_of(0) == null)
 	ok("хотбар цел (было %d стопок)" % hotbar, not e.is_empty() and _hotbar_in(e["state"], hb) == hotbar)
@@ -59,7 +62,7 @@ func run_host() -> void:
 	var back: Player = hero_of(0)   # лямбда захватывает копию переменной — присваиваем снаружи
 	ok("возврат: позиция, HP, инвентарь как были", back != null and await wait_until(func() -> bool:
 		return (back.global_position.distance_to(spot) < 24.0 and absf(back.hp - 64.0) < 1.0
-				and back.inv.count_of(MARK) == 5), WAIT),
+				and back.inv.count_of(MARK) == MARK_N), WAIT),
 			"%s hp %.0f метка %d" % [str(back.global_position), back.hp, back.inv.count_of(MARK)] if back != null else "—")
 	ok("парковка Ани освобождена", not Net.parked.has(client_uid(0)))
 	await barrier("back", 1)
@@ -99,6 +102,6 @@ func run_client(_i: int) -> void:
 			"%s / %s" % [str(player.global_position), str(spot)])
 	ok("c0: HP как было (OWN)", await wait_until(func() -> bool: return absf(player.hp - 64.0) < 1.0, WAIT),
 			"%.1f" % player.hp)
-	ok("c0: инвентарь как был (INV)", await wait_until(func() -> bool: return player.inv.count_of(MARK) == 5, WAIT))
+	ok("c0: инвентарь как был (INV)", await wait_until(func() -> bool: return player.inv.count_of(MARK) == MARK_N, WAIT))
 	await barrier("back")
 	finish()

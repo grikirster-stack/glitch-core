@@ -122,7 +122,7 @@ const CONTROLS_TOUCH: Array = [
 	"Тап к стене — копать / бить   блок в хотбаре — строить",
 	"«меню» или «Назад» — пауза и сохранение   I — инвентарь",
 ]
-const HINT_INSERTER: String = "ПКМ — повернуть манипулятор · [E] с предметом — фильтр"
+const HINT_INSERTER: String = "ПКМ — повернуть · [E] с предметом — фильтр"
 const HINT_HIDING: String = "Вы в вентиляции. [V] — вылезть"
 const HINT_REPAIR: String = "[E] — починить хламом (удерживать)"
 const HINT_LOAD: String = "[E] — загрузить в постройку"
@@ -339,8 +339,8 @@ func _process(delta: float) -> void:
 	stat_us += Time.get_ticks_usec() - t0
 
 
-func notify(text: String, color: Color) -> void:
-	notes.append({"text": text, "color": color, "ttl": 5.0})
+func notify(text: String, color: Color, icon: int = 0) -> void:
+	notes.append({"text": text, "color": color, "ttl": 5.0, "icon": icon})
 	while notes.size() > 6:
 		notes.remove_at(0)
 	_note_serial += 1
@@ -1436,7 +1436,8 @@ func _compute_layout() -> Dictionary:
 	var lines: Array = []
 	for i in cnt:
 		var nt: Dictionary = notes[notes.size() - 1 - i]   # свежие внизу
-		var txt: String = _fit_text(String(nt["text"]), fb, minf(n_right - n_left, 620.0))
+		var pad: float = 22.0 if int(nt.get("icon", 0)) > 0 else 0.0
+		var txt: String = _fit_text(String(nt["text"]), fb, minf(n_right - n_left, 620.0) - pad)
 		lines.append(txt)
 		nw = maxf(nw, _tw(txt, fb))
 	if cnt > 0:
@@ -1576,6 +1577,13 @@ func _draw() -> void:
 			var n: Dictionary = notes[notes.size() - 1 - i]
 			var a: float = clampf(float(n["ttl"]) / 1.5, 0.0, 1.0)
 			var tw: float = _tw(String(lines[i]), fb)
+			var icon_id: int = int(n.get("icon", 0))
+			var pad: float = 22.0 if icon_id > 0 else 0.0
+			if icon_id > 0:
+				var tex: ImageTexture = DB.item_texture(icon_id)
+				if tex:
+					draw_texture_rect(tex, Rect2(nr.end.x - tw - 20.0, y - 14.0, 16.0, 16.0), false,
+							Color(1, 1, 1, a))
 			_text_outlined(font, Vector2(nr.end.x - tw, y), String(lines[i]), fb,
 					Color(n["color"].r, n["color"].g, n["color"].b, a))
 			y -= ROW_H

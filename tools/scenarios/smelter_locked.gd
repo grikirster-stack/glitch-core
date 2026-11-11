@@ -3,9 +3,9 @@ extends ScenarioBase
 ##
 ## 1. Без питания горнило не светится: цвет горнила (Smelter.furnace_color) —
 ##    ровный тёмный в любой момент времени; под питанием — пульсирует.
-## 2. Рецепт без чертежа станок не принимает. Прокат меди открыт сразу;
-##    стальная стена — только с чертежом. До чертежа стальную пластину не берут
-##    ни receive_item, ни манипулятор, ни E; после выдачи чертежа — берут.
+## 2. Стена (#171) больше не рецепт плавильни: стальную пластину станок берёт
+##    (сталь открыта). Стена — руками и только с чертежом: до чертежа её нет
+##    в панели, после — клик кладёт 4 стены.
 ##
 ## Линия: сундук → манипулятор → плавильня, ТЭЦ через три клетки. Игрок встаёт
 ## справа от плавильни — дальше 40 px от сундука и ТЭЦ, чтобы E шла в станок.
@@ -66,51 +66,37 @@ func run() -> void:
 	ok("под питанием горнило пульсирует", sm.furnace_color(T_LOW) != sm.furnace_color(T_PEAK)
 			and sm.furnace_color(T_LOW) != Smelter.FURNACE_COLD and sm.has_time_animation())
 
-	# ---- Прокат открыт сразу; стена — только с чертежом -------------------------
+	# ---- Прокат и сталь открыты; стена — руками и только с чертежом ------------
 	ok("медный слиток принимается сразу (прокат открыт)", sm.input_accepts(IDs.I.COPPER_INGOT))
-	ok("стальная пластина без чертежа не принимается", not sm.input_accepts(IDs.I.STEEL_PLATE))
-	ok("receive_item вернул стальную пластину", sm.receive_item(IDs.I.STEEL_PLATE, 2) == 2
-			and sm.stock.is_empty(), str(sm.stock))
+	ok("уголь принимается (сталь открыта)", sm.input_accepts(IDs.I.COAL))
 	ok("железный слиток принимается (сталь открыта)", sm.input_accepts(IDs.I.IRON_INGOT))
 	ok("руда принимается", sm.input_accepts(IDs.I.COPPER_ORE))
-	ok("сборщик сразу берёт пластину и кристалл", asm.input_accepts(IDs.I.COPPER_PLATE)
+	ok("верстак сразу берёт пластину и кристалл", asm.input_accepts(IDs.I.COPPER_PLATE)
 			and asm.input_accepts(IDs.I.CRYSTAL) and asm.receive_item(IDs.I.COPPER_PLATE, 1) == 0)
 
-	src.receive_item(IDs.I.STEEL_PLATE, INGOTS)
-	await wait(1.5)
-	ok("манипулятор не тащит вход без чертежа", _count(src, IDs.I.STEEL_PLATE) == INGOTS
-			and sm.stock.is_empty() and ins.held == IDs.I.NONE,
-			"в сундуке %d, в станке %s" % [_count(src, IDs.I.STEEL_PLATE), str(sm.stock)])
-
-	player.inv.add(IDs.I.STEEL_PLATE, 2)
-	player.inv.selected = _slot_of(IDs.I.STEEL_PLATE)
-	player.global_position = World.cell_to_world(c0 + Vector2i(3, 0))
-	aim(World.cell_to_world(c0 + Vector2i(3, -2)))
-	hold(KEY_E)
-	await wait(0.4)
-	release(KEY_E)
-	await wait(0.1)
-	ok("E не загрузил вход без чертежа", player.inv.count_of(IDs.I.STEEL_PLATE) == 2 and sm.stock.is_empty(),
-			"в руке %d, в станке %s" % [player.inv.count_of(IDs.I.STEEL_PLATE), str(sm.stock)])
-
+	var wall: Dictionary = {}
+	for r in DB.recipes_for("hand"):
+		if int(r["out"]) == IDs.I.STEEL_WALL:
+			wall = r
+	ok("стена — ручной рецепт на слитках", not wall.is_empty()
+			and int(wall["in"].get(IDs.I.IRON_INGOT, 0)) == 2 and int(wall["amount"]) == 4)
+	player.inv.mark_seen(IDs.I.IRON_INGOT)
+	player.inv.mark_seen(IDs.I.COAL)
+	var panel: InventoryPanel = UI.panel
+	panel.open(player)
+	ok("без чертежа стены нет в панели", not panel._recipes("hand").has(wall))
 	while Game.next_blueprint_name() != "" and Game.next_blueprint_name() != "STEEL_WALL":
 		Game.give_next_blueprint()
 	ok("чертёж стальной стены выдан", Game.give_next_blueprint() == IDs.I.STEEL_WALL
 			and Game.has_blueprint(IDs.I.STEEL_WALL))
-	ok("после чертежа стальная пластина принимается", sm.input_accepts(IDs.I.STEEL_PLATE))
-
-	player.global_position = World.cell_to_world(c0 + Vector2i(3, 0))
-	hold(KEY_E)
-	await wait_until(func() -> bool: return player.inv.count_of(IDs.I.STEEL_PLATE) == 0, 2.0)
-	release(KEY_E)
-	clear_input()
-	ok("E загрузил пластины после чертежа", player.inv.count_of(IDs.I.STEEL_PLATE) == 0,
-			"в руке %d" % player.inv.count_of(IDs.I.STEEL_PLATE))
-
-	var moved: bool = await wait_until(func() -> bool: return _count(src, IDs.I.STEEL_PLATE) == 0, 10.0)
-	ok("манипулятор перенёс пластины после чертежа", moved, "в сундуке %d" % _count(src, IDs.I.STEEL_PLATE))
-	var rolled: bool = await wait_until(func() -> bool: return _ground_count(IDs.I.STEEL_WALL) > 0, 12.0)
-	ok("плавильня льёт стальную стену", rolled)
+	panel._check_cache()
+	ok("после чертежа стена в панели", panel._recipes("hand").has(wall))
+	player.inv.add(IDs.I.IRON_INGOT, 2)
+	player.inv.add(IDs.I.COAL, 1)
+	panel._craft(wall)
+	ok("стена скрафчена руками, 4 штуки", player.inv.count_of(IDs.I.STEEL_WALL) == 4,
+			"стен %d" % player.inv.count_of(IDs.I.STEEL_WALL))
+	panel.close()
 	finish()
 
 

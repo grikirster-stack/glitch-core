@@ -264,9 +264,12 @@ static func near_machine(p: Player, kind: String) -> MachineBase:
 ## Панель считает то же со своими кэшами и подписями; здесь — проверка команды клиента.
 static func craft_check(p: Player, rec: Dictionary) -> Dictionary:
 	var station: String = String(rec["station"])
-	if not DB.recipe_unlocked(rec):
-		return {"code": "locked", "near": null,
-				"reason": "Нет чертежа: «%s» — в терминале." % DB.item_name(int(rec.get("out", 0)))}
+	# who = прокси клиента: подбор (#171) смотрит его рюкзак, не героя хоста.
+	if not DB.recipe_unlocked(rec, p):
+		var why: String = "Нет чертежа: «%s» — в терминале." % DB.item_name(int(rec.get("out", 0)))
+		if String(rec.get("reveal", "")) == "seen" and Game.blueprint_name(int(rec.get("out", 0))) == "":
+			why = "Рецепт ещё закрыт: сначала подбери ингредиент."
+		return {"code": "locked", "near": null, "reason": why}
 	var near: MachineBase = null
 	if station != "hand":
 		near = near_machine(p, "Smelter" if station == "smelter" else "Assembler")
@@ -611,7 +614,7 @@ func _push_inv(peer: int, p: Player) -> void:
 	var slots: Array = []
 	for s in p.inv.slots:
 		slots.append([s.id, s.count])
-	Net.send(NetCodec.Msg.INV, NetCodec.encode_inv(slots, p.inv.selected), peer)
+	Net.send(NetCodec.Msg.INV, NetCodec.encode_inv(slots, p.inv.selected, p.inv.seen_items.keys()), peer)
 
 
 static func _chest_slots(c: Chest) -> Array:
