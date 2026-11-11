@@ -16,7 +16,7 @@ const POWER_CHECK_INTERVAL: float = Balance.POWER_CHECK_INTERVAL
 const POWER_CONSUMERS: Array[String] = ["Drill", "Smelter", "Assembler"]
 ## Машины, чья отрисовка зависит от времени (вращение, мерцание):
 ## им нужна перерисовка каждый кадр.
-const TIME_ANIMATED: Array[String] = ["Drill", "Smelter", "Assembler", "DeepDrill"]
+const TIME_ANIMATED: Array[String] = ["Drill", "Smelter", "Assembler", "DeepDrill", "Burner"]
 ## Шанс, что разрушенная машина оставит свой предмет (§ 4.4).
 const DESTROY_DROP_CHANCE: float = 0.5
 ## Сколько осколков разлетается при разрушении.
@@ -94,6 +94,9 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 			m = Turret.new()
 		"Floodlight":
 			m = Floodlight.new()
+		# --- Свет (ADR-005, #164) ---
+		"Burner":
+			m = Burner.new()
 		_:
 			return false
 	m.cell = c
@@ -106,6 +109,8 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 		World.belts[c] = m
 	Game.register_power_source(m, c)
 	World.add_world_node(m)
+	if World.beams != null:
+		World.beams.note_machines()
 	return true
 
 
@@ -133,7 +138,16 @@ func turn() -> void:
 
 ## Хук наследника: направление изменилось (пересчитать луч, зеркало и т. п.).
 func _on_turned() -> void:
-	pass
+	if World.beams != null:
+		World.beams.mark_dirty()
+
+
+## Что луч делает, попав в эту постройку. in_dir — откуда пришёл (0 вправо …),
+## color — маска Beams. Возвращает выходы [[out_dir, color], ...].
+## База луч гасит: зеркало, смеситель и призма переопределят в C2.
+## Горелка не пропускает — у неё своего выхода нет.
+func beam_pass(_in_dir: int, _color: int) -> Array:
+	return []
 
 
 ## Нужен ли этой машине статус питания.
@@ -268,6 +282,8 @@ func destroy() -> void:
 		World.machines.erase(cell)
 	if World.belts.get(cell) == self:
 		World.belts.erase(cell)
+	if World.beams != null:
+		World.beams.note_machines()
 	var item: int = machine_item_id(kind)
 	if item != IDs.I.NONE and randf() < DESTROY_DROP_CHANCE:
 		spawn_item(item, 1, global_position + Vector2(0.0, -4.0))
@@ -300,6 +316,8 @@ func dismantle() -> int:
 		World.machines.erase(cell)
 	if World.belts.get(cell) == self:
 		World.belts.erase(cell)
+	if World.beams != null:
+		World.beams.note_machines()
 	_destroyed = true
 	# Осколки — как при сносе (звук и подсказку даёт герой, который разбирает).
 	var col: Color = DB.item_color(item) if item != IDs.I.NONE else Color(0.5, 0.5, 0.55)
@@ -544,6 +562,8 @@ func net_remove() -> void:
 		World.machines.erase(cell)
 	if World.belts.get(cell) == self:
 		World.belts.erase(cell)
+	if World.beams != null:
+		World.beams.note_machines()
 	var item: int = machine_item_id(kind)
 	var col: Color = DB.item_color(item) if item != IDs.I.NONE else Color(0.5, 0.5, 0.55)
 	for i in DESTROY_CHIPS:

@@ -106,6 +106,8 @@ const HINT_BEACON: String = "[E] — активировать релей-ядр�
 const HINT_CHEST: String = "[E] — открыть сундук"
 const HINT_GEN_COAL: String = "[E] — загрузить уголь в ТЭЦ"
 const HINT_GEN_SWITCH: String = "[E] — рубильник ТЭЦ (вкл/выкл) · уголь в руке + [E] — топка"
+const HINT_BURNER_FUEL: String = "[E] — загрузить топливо в горелку"
+const HINT_BURNER_SWITCH: String = "[E] — рубильник горелки (вкл/выкл) · топливо в руке + [E] — топка"
 const HINT_SOLAR_SWITCH: String = "[E] — рубильник генератора (вкл/выкл)"
 ## Подсказка управления в начале забега: клавиатура и мышь / телефон (#149).
 const CONTROLS_KEYS: Array = [
@@ -417,6 +419,8 @@ func _compute_hint(_pos: Vector2) -> String:
 	_hint_target = _cell_rect(tg["cell"])
 	if kind == player.ET_GENERATOR:
 		return generator_hint(tg["node"])
+	if kind == player.ET_BURNER:
+		return burner_hint(tg["node"])
 	if kind == player.ET_TERMINAL:
 		return HINT_TERMINAL
 	if kind == player.ET_BEACON:
@@ -476,6 +480,13 @@ func generator_hint(g) -> String:
 			return HINT_GEN_COAL
 		return HINT_GEN_SWITCH + _dismantle_tail(g)
 	return HINT_SOLAR_SWITCH + _dismantle_tail(g)
+
+
+## Подсказка у горелки: топливо в руке — топка, пустая рука — рубильник (#164).
+func burner_hint(b) -> String:
+	if player != null and Balance.FUEL.has(player.inv.selected_stack().id):
+		return HINT_BURNER_FUEL
+	return HINT_BURNER_SWITCH + _dismantle_tail(b)
 
 
 # ------------------------------------------------ ТРЕКЕР ЦЕЛИ, ОБУЧЕНИЕ, МОЩНОСТЬ

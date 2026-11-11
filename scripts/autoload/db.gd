@@ -232,6 +232,8 @@ func _build_item_defs() -> void:
 	_add_item_def(IDs.I.RELAY_ANTENNA, "Антенна релея", Color(0.35, 0.95, 0.80), "antenna", 1, "")
 	_add_item_def(IDs.I.BLACK_BOX, "Чёрный ящик", Color(0.90, 0.35, 0.20), "blackbox", 20, "")
 	_add_item_def(IDs.I.LOOT_BAG, "Мешок", Color(0.45, 0.38, 0.30), "bag", 1, "")
+	# Свет (ADR-005, #164): горелка ставится руками, стак небольшой — это не расходник.
+	_add_item_def(IDs.I.BURNER, "Горелка", Color(0.55, 0.32, 0.22), "burner", 10, "machine:Burner")
 
 	# Требования релей-ядра — из Balance (§ 4.7).
 	relay_req = Balance.RELAY_REQ.duplicate()
@@ -302,6 +304,8 @@ func _build_recipes() -> void:
 	# Конвейер и сундук доступны с первой смены руками (T0): сборщик делает их выгоднее.
 	_recipe(IDs.I.BELT, 1, {IDs.I.IRON_PLATE: 1}, "hand", 1.5, "Конвейер вручную")
 	_recipe(IDs.I.CHEST, 1, {IDs.I.IRON_PLATE: 4}, "hand", 2.5, "Сундук вручную")
+	# Горелка (ADR-005 § 4): 4 камня + 2 хлама, руками, сразу. Железа не требует.
+	_recipe(IDs.I.BURNER, 1, {IDs.I.STONE: 4, IDs.I.SCRAP: 2}, "hand", 0.0, "Горелка")
 
 	# --- Плавильня: вдвое больше слитков за ту же руду -----------------------
 	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 1}, "smelter", 2.0, "Выплавка железа")
@@ -1523,6 +1527,19 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 			for x in range(3, 13):
 				_px(img, x, 5, c.lightened(0.25))
 			_px(img, 11, 7, Color(0.3, 1.0, 0.4))
+		"burner":
+			# Корпус и окно топки; носик вправо — туда бьёт луч.
+			for y in range(3, 13):
+				for x in range(2, 11):
+					_px(img, x, y, c.darkened(0.15))
+			for y in range(6, 11):
+				for x in range(4, 9):
+					_px(img, x, y, Color("#FFD86E"))
+			for y in range(6, 10):
+				_px(img, 11, y, c.darkened(0.35))
+				_px(img, 12, y, c.darkened(0.35))
+			_px(img, 13, 7, Color("#FFD86E"))
+			_px(img, 14, 7, Color("#FFD86E"))
 		"bag":
 			for y in range(5, 14):
 				var half: int = 5 - int(absf(float(y) - 10.0) * 0.5)

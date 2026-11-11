@@ -59,6 +59,9 @@ func _ready() -> void:
 		(decor as CanvasItem).material = tile_material
 	if UI.world_fx != null and UI.world_fx.has_method("set_glow_material"):
 		UI.world_fx.set_glow_material(glow_material)
+		# Луч рисуется на самом WorldFX: без материала ночь гасит линию.
+		if UI.world_fx.material == null:
+			UI.world_fx.material = tile_material
 	_apply()
 
 
@@ -93,9 +96,12 @@ func _apply() -> void:
 ## Цвета свечения палитры: точное совпадение пикселя — эмиссия.
 static func glow_colors() -> Array[Color]:
 	var cr: Color = DB.pal("crystal")
+	# Смеси луча (Y/C/M) — суммы каналов Beams.COLOR: без них ночь гасит жёлтый,
+	# голубой и пурпурный, хотя чистые R/G/B и белый уже в списке.
 	return [DB.pal("m_glow"), DB.pal("d_glow"), cr, cr.lightened(0.4),
 			DB.pal("lava"), DB.pal("lava_hi"), DB.pal("lava").darkened(0.25),
-			DB.pal("screen_hi"), DB.pal("bio"), DB.pal("bio_core"), Color.WHITE]
+			DB.pal("screen_hi"), DB.pal("bio"), DB.pal("bio_core"), Color.WHITE,
+			Color(1.0, 1.0, 0.4275), Color(1.0, 0.8471, 1.0), Color(0.4353, 1.0, 1.0)]
 
 
 ## Шейдер: цвета свечения вписываются константами (сравнение без массивов uniform).

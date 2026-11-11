@@ -115,6 +115,9 @@ var peak_arcs: int = 0
 ## Сколько раз пришёл vent_warning и сколько дуг выпущено — для сценариев.
 var stat_vent_warnings: int = 0
 var stat_arcs: int = 0
+## Мкс последнего кадра, в котором перерисовывались лучи (#164). Для замера.
+var beam_draw_us: int = 0
+var _beam_rev: int = -1
 
 # ------------------------------------------------------------ ВНУТРЕННЕЕ
 var _dirty: bool = true
@@ -155,6 +158,9 @@ func _process(delta: float) -> void:
 		_dirty = true
 	if World.lights.size() != _last_light_count:
 		_last_light_count = World.lights.size()
+		_dirty = true
+	if World.beams != null and World.beams.changed != _beam_rev:
+		_beam_rev = World.beams.changed
 		_dirty = true
 	if animating:
 		_dirty = true
@@ -435,6 +441,9 @@ func _draw() -> void:
 		var lf: float = clampf(float(p["life"]) / float(p["max"]), 0.0, 1.0)
 		draw_circle(Vector2(p["pos"]), float(p["size"]), Color(0.78, 0.82, 0.86, float(p["a"]) * lf))
 
+	# --- Лучи света (#164): постоянный список сегментов, не вспышка дуги ------
+	_draw_beams(view)
+
 	# --- Дуги турели ----------------------------------------------------------
 	for a in arcs:
 		var ta: float = 1.0 - float(a["t"]) / ARC_LIFE
@@ -448,6 +457,33 @@ func _draw() -> void:
 		var t2: float = float(s["t"]) / 0.22
 		var col2: Color = Color(1, 1, 1, 1.0 - t2)
 		draw_arc(Vector2(s["pos"]), 14.0 + t2 * 8.0, -0.9 + t2 * 1.8, 0.9 + t2 * 1.8, 12, col2, 3.0)
+
+
+## Линия луча по центрам клеток: 4 px, яркая у источника и тусклая к концу.
+## Цвет — Beams.COLOR; те же цвета в Emission.glow_colors, ночью светятся сами.
+## Перерисовка — только когда beams.changed (см. _process).
+func _draw_beams(view: Rect2) -> void:
+	if World.beams == null or World.beams.segments.is_empty():
+		return
+	var t0: int = Time.get_ticks_usec()
+	var tile: float = float(World.TILE)
+	for s in World.beams.segments:
+		var a: Vector2 = World.cell_to_world(s["from"])
+		var b: Vector2 = World.cell_to_world(s["to"])
+		if view.size != Vector2.ZERO and not view.grow(tile).intersects(Rect2(a, b - a).abs()):
+			continue
+		var mask: int = int(s["color"])
+		if mask <= 0 or mask >= Beams.COLOR.size():
+			continue
+		var col: Color = Beams.COLOR[mask]
+		# Доля длины у начала сегмента: 1 у горелки, меньше после построек.
+		var head: float = clampf(float(s["strength"]), 0.0, 1.0)
+		var tail: float = lerpf(0.35, head, 0.35)
+		var mid: Vector2 = (a + b) * 0.5
+		# Одна линия 4 px: у источника альфа 1, к концу 0,35.
+		draw_line(a, mid, Color(col.r, col.g, col.b, head), 4.0)
+		draw_line(mid, b, Color(col.r, col.g, col.b, tail), 4.0)
+	beam_draw_us = Time.get_ticks_usec() - t0
 
 
 ## Материал слоя ореолов (Emission, ADR-003 V3).

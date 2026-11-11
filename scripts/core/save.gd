@@ -146,6 +146,11 @@ static func apply(d: Dictionary) -> bool:
 	# а не добавится к загруженному.
 	close_windows()
 	_clear_world_nodes()
+	# Машины снесены: их лучи больше не светят. Новые зажгутся после постановки.
+	if World.beams != null:
+		World.beams.cells.clear()
+		World.beams.segments.clear()
+		World._apply_beam_lights()
 	# Другой мир — сначала тот же мир по сиду (терминалы, руины, таблички, лор).
 	if sd != World.world_seed or World.tiles.size() != World.W * World.H:
 		if World.tilemap:
@@ -170,6 +175,11 @@ static func apply(d: Dictionary) -> bool:
 	for m in World.machines.values():
 		if m.has_method("relight"):
 			m.relight()
+	# Луч (#164): горелки уже с топливом, карту и свет считаем в этом же кадре.
+	if World.beams != null:
+		World.beams.mark_dirty()
+		World.beams.rebuild()
+		World._apply_beam_lights()
 	# Экран смерти — прочь: после загрузки герой жив и в мире.
 	var sc: Node = World.get_tree().current_scene
 	if sc != null:
