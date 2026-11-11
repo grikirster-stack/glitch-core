@@ -33,7 +33,8 @@ func run() -> void:
 	ok("панель открыта", panel.visible)
 
 	# ---- 1. Подсказка рецепта с нехваткой ----------------------------------------
-	var row: Rect2 = _row_of(hand, copper)
+	# Строка — в списке панели, не в полном DB: закрытые чертежи там не рисуются.
+	var row: Rect2 = _row_of(panel._recipes("hand"), copper)
 	await _move(row.position + Vector2(60, 12))
 	var tip: String = _joined(panel._tooltip_for(panel._hover_target()))
 	ok("подсказка называет вход словами и «есть/нужно»", tip.contains("Медная руда — есть 0 / нужно 2"), tip)
@@ -53,7 +54,7 @@ func run() -> void:
 	ok("стальная стена без чертежа не в списке панели", wall.is_empty() or not panel._recipes("smelter").has(wall))
 	for id in asm["in"].keys():
 		player.inv.add(int(id), int(asm["in"][id]))
-	var arow: Rect2 = _row_of(hand, asm)
+	var arow: Rect2 = _row_of(panel._recipes("hand"), asm)
 	await _click(arow.position + Vector2(60, 12))
 	ok("сборщик скрафчен без дерева технологий", player.inv.count_of(IDs.I.ASSEMBLER) == 1)
 	panel.scroll = 0
@@ -64,14 +65,14 @@ func run() -> void:
 	var smelt: Array = DB.recipes_for("smelter")
 	var iron: Dictionary = _find(smelt, IDs.I.IRON_INGOT)
 	player.inv.add(IDs.I.IRON_ORE, 2)
-	await _click(_row_of(smelt, iron).position + Vector2(60, 12))
+	await _click(_row_of(panel._recipes("smelter"), iron).position + Vector2(60, 12))
 	ok("без плавильни рядом руда не ушла", player.inv.count_of(IDs.I.IRON_ORE) == 2)
 	ok("причина: нужна плавильня рядом", panel.last_feedback.to_lower().contains("плавильн"), panel.last_feedback)
 
 	# ---- 5. Успешный ручной крафт --------------------------------------------------
 	await _click(panel._tab_rect(0).get_center())
 	player.inv.add(IDs.I.COPPER_ORE, 4)
-	await _click(_row_of(hand, copper).position + Vector2(60, 12))
+	await _click(_row_of(panel._recipes("hand"), copper).position + Vector2(60, 12))
 	ok("слиток скрафчен кликом мыши", player.inv.count_of(IDs.I.COPPER_INGOT) == ingots + 1)
 	ok("обратная связь «Скрафчено: Медный слиток»", panel.last_feedback.begins_with("Скрафчено: Медный слиток"),
 			panel.last_feedback)
@@ -84,7 +85,7 @@ func run() -> void:
 	ok("плавильня поставлена рядом", MachineBase.place_machine("Smelter", sc))
 	var sm: Smelter = World.machines.get(sc)
 	await _click(panel._tab_rect(1).get_center())
-	await _click(_row_of(smelt, iron).position + Vector2(60, 12))
+	await _click(_row_of(panel._recipes("smelter"), iron).position + Vector2(60, 12))
 	ok("руда ушла в плавильню", sm != null and player.inv.count_of(IDs.I.IRON_ORE) == 1
 			and int(sm.stock.get(IDs.I.IRON_ORE, 0)) >= 1,
 			"руды в инвентаре %d, в станке %s" % [player.inv.count_of(IDs.I.IRON_ORE), str(sm.stock) if sm else "—"])

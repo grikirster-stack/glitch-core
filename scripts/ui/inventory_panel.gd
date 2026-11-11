@@ -3,7 +3,8 @@ extends Control
 ## Экран инвентаря: сетка предметов, крафт (ручной / плавильня / сборщик) и сундуки.
 ##
 ## Рецепт, чей выход в списке чертежей, без чертежа не рисуется вовсе (#169).
-## Внизу панели — одна строка «Чертежи: N из M · следующий — в терминале».
+## Под списком — одна строка «Чертежи: N из M». Имя следующего чертежа
+## в строку не пишется: длинное имя резалось в «…».
 ##
 ## Понятность для новичка (#69):
 ##  * сундук и инвентарь: ЛКМ — взять/положить, ПКМ — половина/по одному,
@@ -14,9 +15,10 @@ extends Control
 ##  * рецепт: по наведению — подсказка с названиями входов, «есть N / нужно M»,
 ##    станцией, временем и причиной недоступности словами; после клика —
 ##    вспышка строки и строка обратной связи внизу панели (уведомления HUD
-##    панель закрывает);
-##  * цель «Релей-ядро» — сетка «иконка + название + есть/нужно» в границах
-##    блока; не влезает — компактный режим (иконка + счёт, имя — в подсказке).
+##    панель закрывает).
+## Счётчик деталей релея (микросхема, энергоячейка, антенна) с панели снят
+## (#169): дерево данных и этот список — не язык чертежей. Прогресс сдачи
+## остаётся в трекере HUD и в тексте у ядра.
 ## Все подписи идут через _text(): она обрезает строку с «…» по ширине шрифта
 ## и, если включён text_audit, записывает прямоугольник строки — сценарий
 ## inventory_text_fit проверяет, что ничего не вылезает за свои рамки.
@@ -105,8 +107,6 @@ var _tag: String = ""                   ## раздел для аудита по
 ## Станки рядом и вообще в мире (обновляет _scan_stations): station -> MachineBase / bool.
 var _near: Dictionary = {}
 var _counts: Dictionary = {}            ## id -> сколько в инвентаре (на кадр)
-var _cells: Array = []                  ## ячейки цели этого кадра
-var _cells_key: int = -1
 var _row_named: Dictionary = {}         ## имя рецепта -> входы с названиями влезают
 var _built: Dictionary = {}
 ## Сенсорный тап по списку рецептов (#81): где нажали (x < 0 — нет) и сколько
@@ -279,10 +279,6 @@ func _inv_slot_rect(i: int) -> Rect2:
 	return Rect2(_panel_pos() + Vector2(16 + col * INV_SLOT, y), Vector2(INV_SLOT - 4, INV_SLOT - 4))
 
 
-func _goal_rect() -> Rect2:
-	return Rect2(_panel_pos() + Vector2(16, 418), Vector2(356, 76))
-
-
 ## Строка рецепта row (0…RECIPE_ROWS-1) на экране.
 func _recipe_row_rect(row: int) -> Rect2:
 	return Rect2(_panel_pos() + Vector2(380, 116 + row * RECIPE_H), Vector2(424, RECIPE_H - 6))
@@ -442,7 +438,6 @@ func _draw() -> void:
 	var rx: float = origin.x + 380
 	_draw_recipes(rx, origin)
 
-	_draw_goal()
 	_draw_bottom(origin)
 	_draw_held()
 	_draw_tooltip()
@@ -525,12 +520,8 @@ func _draw_recipes(rx: float, origin: Vector2) -> void:
 		_draw_recipe(_recipe_row_rect(i - first), recipes[i])
 	_tag = "recipes"
 	var y: float = origin.y + 116 + RECIPE_ROWS * RECIPE_H + 6
-	var nxt_id: int = Game.next_blueprint_id()
-	if nxt_id >= 0:
-		_icon(nxt_id, Rect2(Vector2(rx, y - 12), Vector2(14, 14)))
-		_text(Vector2(rx + 18, y), _blueprint_line(), 406, UI.FONT["small"], Color(0.45, 0.95, 1.0))
-	else:
-		_text(Vector2(rx, y), _blueprint_line(), 424, UI.FONT["small"], Color(0.45, 0.95, 1.0))
+	# Иконку следующего чертежа не рисуем: она была чужим предметом рядом со строкой.
+	_text(Vector2(rx, y), _blueprint_line(), 424, UI.FONT["small"], Color(0.45, 0.95, 1.0))
 	if recipes.size() > RECIPE_ROWS:
 		y += 16
 		_text(Vector2(rx, y), "%d–%d из %d · колесо мыши — листать" % [first + 1, last, recipes.size()],
@@ -561,105 +552,6 @@ func _station_line(station: String) -> Array:
 	if bool(_built.get(station, false)):
 		return ["Подойди %s ближе (≤ 5 клеток) — иначе клик не сработает." % String(si["to"]), C_WARN]
 	return [String(si["made"]), C_WARN]
-
-
-func _draw_goal() -> void:
-	_tag = "goal"
-	var goal: Rect2 = _goal_rect()
-	var req: Dictionary = _goal_req()
-	draw_rect(goal, Color(0.08, 0.14, 0.18, 0.9))
-	draw_rect(goal, Color(0.3, 0.8, 0.95, 0.5), false, 1.0)
-	var done: int = 0
-	for id in req.keys():
-		if _have(id) >= int(req[id]):
-			done += 1
-	var right: String = "детали %d/%d" % [done, req.size()]
-	var rw: float = _w(right, UI.FONT["small"])
-	# Заголовок — этап цели (#32): «ЦЕЛЬ 3/4: СОБРАТЬ РЕЛЕЙ»; ниже — детали релея.
-	_text(goal.position + Vector2(8, 16), Game.objective_text(), goal.size.x - rw - 24, UI.FONT["small"], Color(0.4, 0.9, 1.0),
-			HORIZONTAL_ALIGNMENT_LEFT, goal)
-	_text(goal.position + Vector2(goal.size.x - rw - 8, 16), right, rw, UI.FONT["small"],
-			C_OK if done == req.size() else C_DIM, HORIZONTAL_ALIGNMENT_LEFT, goal)
-	for cell in _goal_cells():
-		var r: Rect2 = cell["rect"]
-		var id: int = int(cell["id"])
-		if id == IDs.I.NONE:
-			_text(r.position + Vector2(2, 12), String(cell["more"]), r.size.x - 2, UI.FONT["small"], C_DIM,
-					HORIZONTAL_ALIGNMENT_LEFT, goal)
-			continue
-		var need: int = int(req[id])
-		var have: int = _have(id)
-		var col: Color = C_OK if have >= need else Color(1.0, 0.6, 0.45)
-		if r.has_point(mouse_pos):
-			draw_rect(r, Color(1, 1, 1, 0.06))
-		_icon(id, Rect2(r.position + Vector2(0, 1), Vector2(14, 14)))
-		var cnt: String = "%d/%d" % [mini(have, need), need]   ## прогресс цели: сверх нужного не считаем
-		var cw: float = _w(cnt, UI.FONT["small"])
-		_text(Vector2(r.end.x - cw - 2, r.position.y + 12), cnt, cw, UI.FONT["small"], col, HORIZONTAL_ALIGNMENT_LEFT, goal)
-		if bool(cell["named"]):
-			# Длинное название сначала мельчает на кегль, и только потом — «…».
-			var nm: String = DB.item_name(id)
-			var nw: float = r.size.x - 18 - cw - 6
-			var fs: int = UI.FONT["small"]
-			_text(r.position + Vector2(18, 12), nm, nw, fs,
-					Color(col, 0.9).lerp(C_TEXT, 0.35), HORIZONTAL_ALIGNMENT_LEFT, goal)
-
-
-## Требования цели — тот же источник, что у запуска релея (Game.try_finish):
-## Game.relay_req из DB/Balance. Этапы релея (#32) поменяют словарь — сетка
-## подстроится сама.
-func _goal_req() -> Dictionary:
-	return Game.relay_req
-
-
-## Ячейки цели: [{id, rect, named, more}]. Сначала пробуем две колонки
-## «иконка + название + есть/нужно»; не влезает по высоте или названия
-## обрезались бы до огрызка — компактная сетка «иконка + счёт» (название —
-## в подсказке по наведению). Совсем много — последняя ячейка «+N».
-func _goal_cells() -> Array:
-	var goal: Rect2 = _goal_rect()
-	var req: Dictionary = _goal_req()
-	var key: int = hash([req, goal.position])
-	if key == _cells_key:
-		return _cells
-	_cells = _goal_cells_build(goal, req)
-	_cells_key = key
-	return _cells
-
-
-func _goal_cells_build(goal: Rect2, req: Dictionary) -> Array:
-	var ids: Array = req.keys()
-	var n: int = ids.size()
-	var area: Rect2 = Rect2(goal.position + Vector2(6, 22), Vector2(goal.size.x - 12, goal.size.y - 26))
-	var row_h: float = 16.0
-	var max_rows: int = maxi(1, int(area.size.y / row_h))
-	var out: Array = []
-	if n == 0:
-		return out
-	var cols: int = 2
-	var cell_w: float = (area.size.x - 6.0) / 2.0
-	var named: bool = ceili(float(n) / 2.0) <= max_rows
-	if named:
-		# Название должно остаться читаемым: хотя бы 70 px после счётчика.
-		for id in ids:
-			var cw: float = _w("%d/%d" % [int(req[id]), int(req[id])], UI.FONT["small"])
-			if cell_w - 18.0 - cw - 4.0 < 70.0:
-				named = false
-				break
-	if not named:
-		cell_w = 66.0
-		cols = maxi(1, int((area.size.x + 6.0) / (cell_w + 6.0)))
-	var cap: int = cols * max_rows
-	for k in n:
-		var col: int = k % cols
-		var row: int = int(k / cols)
-		var r: Rect2 = Rect2(area.position + Vector2(col * (cell_w + 6.0), row * row_h),
-				Vector2(cell_w, row_h - 1.0))
-		if n > cap and k == cap - 1:
-			out.append({"id": IDs.I.NONE, "rect": r, "named": false, "more": "+%d" % (n - cap + 1)})
-			break
-		out.append({"id": int(ids[k]), "rect": r, "named": named, "more": ""})
-	return out
 
 
 func _draw_bottom(origin: Vector2) -> void:
@@ -844,11 +736,6 @@ func _hover_target() -> Dictionary:
 	for i in range(first, mini(recipes.size(), first + RECIPE_ROWS)):
 		if _recipe_row_rect(i - first).has_point(p):
 			return {"kind": "recipe", "rec": recipes[i]}
-	for cell in _goal_cells():
-		if (cell["rect"] as Rect2).has_point(p) and int(cell["id"]) != IDs.I.NONE:
-			return {"kind": "goal", "id": int(cell["id"])}
-	if _goal_rect().has_point(p):
-		return {"kind": "goal_box"}
 	return {}
 
 
@@ -889,16 +776,6 @@ func _tooltip_for(t: Dictionary) -> Array:
 			out.append(_line(String(tips[int(t["i"])]), C_TEXT))
 		"recipe":
 			out = _recipe_tooltip(t["rec"])
-		"goal":
-			var id: int = int(t["id"])
-			var need: int = int(_goal_req()[id])
-			var have: int = _have(id)
-			out.append(_line(DB.item_name(id), C_TEXT, id))
-			out.append(_line("есть %d / нужно %d" % [have, need], C_OK if have >= need else C_BAD))
-			out.append(_line("Где взять: " + _source_of(id), C_DIM))
-		"goal_box":
-			out.append(_line(Game.objective_text(), Color(0.4, 0.9, 1.0)))
-			out.append(_line("Ниже — детали релея: собери их в инвентаре, подойди к релей-ядру в центре базы и удерживай E 3 с.", C_TEXT))
 	return out
 
 
@@ -1050,14 +927,10 @@ func _source_of(id: int) -> String:
 	return String(_source[id])
 
 
-## Одна строка про чертежи (#169): сколько уже есть и где следующий.
+## Одна строка про чертежи (#169): сколько уже есть. Имя следующего
+## сюда не входит — длинное («Решётка вентиляции») резалось в «…».
 func _blueprint_line() -> String:
-	var n: int = Game.blueprints.size()
-	var m: int = Game.blueprint_total()
-	var nxt: String = Game.next_blueprint_name()
-	if nxt == "":
-		return "Чертежи: %d из %d · все с терминалов" % [n, m]
-	return "Чертежи: %d из %d · следующий — в терминале (%s)" % [n, m, Game.blueprint_label(nxt)]
+	return "Чертежи: %d из %d" % [Game.blueprints.size(), Game.blueprint_total()]
 
 
 # ---------------------------------------------------------------- КЭШ РЕЦЕПТОВ

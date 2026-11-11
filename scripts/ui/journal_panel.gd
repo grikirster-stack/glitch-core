@@ -1,22 +1,27 @@
 class_name JournalPanel
 extends Control
 ## Журнал экспедиции (клавиша J; ADR-001, § 4.9): экипаж «Кербер-9», главы
-## журнала и обрывки из чёрных ящиков.
+## журнала, обрывки из чёрных ящиков и полученные чертежи (#169).
 ##
 ## Тексты — из `Lore` (детерминированы сидом мира), что прочитано и найдено —
 ## из `Tech` (`read_chapters`, `fragments`). Неоткрытая глава видна строкой «▒▒▒».
 ## «Не тот» в списке экипажа ничем не выделен: журнал его не выдаёт.
+## Чертёж — иконка предмета и короткое имя (DB.item_name), без рецепта и
+## без строки «N из M». Список берётся из Game.blueprints.
 ##
 ## Открытая панель блокирует ввод в мир так же, как инвентарь (`UI.blocking()`).
 
 const W: float = 820.0
-const H: float = 470.0
+const H: float = 520.0
 ## Заглушка вместо названия непрочитанной главы.
 const LOCKED: String = "▒▒▒"
 const CREW_ROW: float = 24.0
 const CHAPTER_ROW: float = 20.0
 const TEXT_X: float = 296.0
 const TEXT_W: float = 508.0
+## Полоска полученных чертежей под текстом главы: иконка и короткое имя.
+const BP_ICON: float = 28.0
+const BP_ROW: float = 36.0
 
 ## Выбранная глава (номер 0..8) или -1 — ничего не прочитано.
 var selected: int = -1
@@ -107,6 +112,7 @@ func _draw() -> void:
 	_draw_crew(o, font)
 	_draw_chapters(o, font)
 	_draw_text(o, font)
+	_draw_blueprints(o, font)
 	_draw_fragments(o, font)
 	draw_string(font, o + Vector2(16, H - 10),
 			"ЛКМ по главе — читать   колесо — листать обрывки   J/ESC — закрыть",
@@ -154,13 +160,52 @@ func _draw_text(o: Vector2, font: Font) -> void:
 	if not author.is_empty():
 		meta = "%s, %s · %s" % [String(author["full"]), String(author["role"]), meta]
 	draw_string(font, Vector2(x, o.y + 74), meta, HORIZONTAL_ALIGNMENT_LEFT, TEXT_W, UI.FONT["small"], Color(0.6, 0.62, 0.68))
+	# Текст короче: ниже полоска чертежей, она не должна наезжать на главу.
 	draw_multiline_string(font, Vector2(x, o.y + 98), Lore.chapter(selected), HORIZONTAL_ALIGNMENT_LEFT,
-			TEXT_W, UI.FONT["small"], 11, Color(0.85, 0.87, 0.9))
+			TEXT_W, UI.FONT["small"], 5, Color(0.85, 0.87, 0.9))
+
+
+## Прямоугольник чертежа i в полоске (для кадра и клика-подсказки).
+func blueprint_rect(i: int) -> Rect2:
+	var o: Vector2 = _panel_pos()
+	return Rect2(Vector2(o.x + TEXT_X, o.y + 252 + i * BP_ROW), Vector2(TEXT_W, BP_ROW - 4.0))
+
+
+## Подпись чертежа: короткое имя предмета, без «чертёж» и без «…».
+func blueprint_caption(i: int) -> String:
+	var id: int = Game.blueprint_item_id(i) if i >= 0 and i < Game.blueprints.size() else -1
+	if id < 0:
+		return ""
+	return DB.item_name(id)
+
+
+func _draw_blueprints(o: Vector2, font: Font) -> void:
+	var x: float = o.x + TEXT_X
+	var top: float = o.y + 240
+	draw_line(Vector2(x, top - 8), Vector2(o.x + W - 16, top - 8), Color(1, 1, 1, 0.1), 1.0)
+	draw_string(font, Vector2(x, top + 6), "ЧЕРТЕЖИ", HORIZONTAL_ALIGNMENT_LEFT, -1, UI.FONT["small"], Color(0.85, 0.8, 0.6))
+	if Game.blueprints.is_empty():
+		draw_string(font, Vector2(x, top + 26), "Терминал под питанием отдаёт чертёж.", HORIZONTAL_ALIGNMENT_LEFT,
+				TEXT_W, UI.FONT["small"], Color(0.5, 0.52, 0.56))
+		return
+	for i in Game.blueprints.size():
+		var r: Rect2 = blueprint_rect(i)
+		if r.end.y > o.y + 372:
+			break
+		draw_rect(r, Color(0.12, 0.13, 0.1, 0.9))
+		draw_rect(r, Color(0.75, 0.68, 0.45, 0.55), false, 1.0)
+		var id: int = Game.blueprint_item_id(i)
+		var tex: ImageTexture = DB.item_texture(id) if id >= 0 else null
+		if tex:
+			draw_texture_rect(tex, Rect2(r.position + Vector2(4, 2), Vector2(BP_ICON, BP_ICON)), false)
+		var cap: String = blueprint_caption(i)
+		draw_string(font, r.position + Vector2(BP_ICON + 12, 22), cap, HORIZONTAL_ALIGNMENT_LEFT,
+				r.size.x - BP_ICON - 20, UI.FONT["body"], Color(0.95, 0.93, 0.82))
 
 
 func _draw_fragments(o: Vector2, font: Font) -> void:
 	var x: float = o.x + TEXT_X
-	var top: float = o.y + 334
+	var top: float = o.y + 380
 	draw_line(Vector2(x, top - 14), Vector2(o.x + W - 16, top - 14), Color(1, 1, 1, 0.1), 1.0)
 	draw_string(font, Vector2(x, top), "ОБРЫВКИ", HORIZONTAL_ALIGNMENT_LEFT, -1, UI.FONT["small"], Color(0.85, 0.8, 0.6))
 	if Tech.fragments.is_empty():

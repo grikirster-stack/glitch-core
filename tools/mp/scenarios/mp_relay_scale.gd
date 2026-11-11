@@ -116,7 +116,9 @@ func run_client(_i: int) -> void:
 		var want: String = "%s %d/%d" % [DB.item_name(PLATE),   # сдано (хост мог уже сдать) + своё
 				Game.relay_count(PLATE) + player.inv.count_of(PLATE), int(req[PLATE])]
 		ok("c0: HUD (этап 2, собрать релей) — «%s»" % want, line.contains(want), "«%s»" % line)
-		ok("c0: окно цели в инвентаре — то же требование", UI.panel != null and UI.panel._goal_req() == req)
+		# Счётчик деталей с панели снят (#169): требование читает трекер HUD, не окно крафта.
+		ok("c0: панель крафта больше не рисует счётчик деталей", UI.panel != null
+				and not UI.panel.has_method("_goal_req"))
 	await barrier("dep")
 	var have = share_get("have")
 	ok("c0: вклад хоста виден (COOP RELAY)", have is Dictionary and await wait_until(

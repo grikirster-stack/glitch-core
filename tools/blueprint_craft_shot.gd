@@ -1,5 +1,7 @@
 extends SceneTree
-## Кадр панели крафта с чертежом (#169) для PR: docs/img/shots/blueprint_craft.png.
+## Кадр панели крафта (#169): docs/img/shots/blueprint_craft.png.
+## К приёмке не относится: вкладка «Плавильня» и рецепт из стальных пластин.
+## Кадр приёмки — docs/img/shots/blueprint_journal.png (tools/blueprint_journal_shot.gd).
 ##
 ## Headless не рисует кадр. Окно — за пределами экрана, без звука; скрипт сам
 ## выходит (≤ 18 с):
