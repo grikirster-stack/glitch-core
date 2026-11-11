@@ -1,45 +1,24 @@
 class_name MachineBase
 extends Node2D
-## Базовый класс построек: питание, приём/выдача предметов, логистика, прочность.
+## Базовый класс построек: приём/выдача предметов и прочность.
 ##
-## Питание (ADR-001, § 4.3): статус `powered` и `efficiency` машине выставляет
-## Game.update_power_budget() раз в Balance.POWER_CHECK_INTERVAL — сама машина
-## питание больше не опрашивает. Станки умножают свой прогресс на efficiency
-## через work(delta).
+## Питание снято (#170, ADR-005 § 7): машины не спрашивают ток и не замедляются.
+## Готовое отдаётся соседнему сундуку, иначе падает на землю.
 
-## Как часто Game раскладывает потребителей по генераторам (оставлено для
-## совместимости: значение берётся из Balance).
-const POWER_CHECK_INTERVAL: float = Balance.POWER_CHECK_INTERVAL
-## Машины, которые потребляют питание. Полная таблица потребления —
-## Balance.POWER_DRAW: всё, что в ней есть, тоже потребитель (см. consumes_power).
-## У конвейеров и сундуков питание не используется вовсе.
-const POWER_CONSUMERS: Array[String] = ["Drill", "Smelter", "Assembler"]
-## Машины, чья отрисовка зависит от времени (вращение, мерцание):
+## Машины, чья отрисовка зависит от времени (пламя горелки):
 ## им нужна перерисовка каждый кадр.
-const TIME_ANIMATED: Array[String] = ["Drill", "Smelter", "Assembler", "DeepDrill", "Burner"]
+const TIME_ANIMATED: Array[String] = ["Burner"]
 ## Шанс, что разрушенная машина оставит свой предмет (§ 4.4).
 const DESTROY_DROP_CHANCE: float = 0.5
 ## Сколько осколков разлетается при разрушении.
 const DESTROY_CHIPS: int = 4
-## Сколько готовых предметов машина держит для манипулятора (take_output, #30),
-## прежде чем снова выбрасывать готовое на землю.
-const OUTPUT_CAP: int = 20
 
 ## Машина разрушена (до удаления из мира). Для угрозы/HUD/звука.
 signal destroyed(machine: MachineBase)
 
 var cell: Vector2i = Vector2i.ZERO
 var kind: String = ""
-var powered: bool = false
-var power_radius: float = 0.0
-var power_active: bool = false
-## Сколько мощности тянет потребитель (Balance.POWER_DRAW; ставится при постройке).
-var power_draw: float = 0.0
-## Доля мощности, которую машина получает: clamp(output / load, 0, 1).
-## У потребителя — от своего генератора (0 без питания); у генератора — его
-## собственное отношение мощности к нагрузке.
-var efficiency: float = 0.0
-## Наработка: секунды полезной работы с учётом efficiency (см. work()).
+## Наработка: секунды полезной работы (см. work()). Питания больше нет (#170).
 var work_time: float = 0.0
 var hp: float = Balance.MACHINE_HP
 var max_hp: float = Balance.MACHINE_HP
@@ -47,7 +26,7 @@ var progress: float = 0.0
 var anim: float = 0.0
 var _last_progress: float = 0.0
 var _destroyed: bool = false
-## Готовое, ждущее манипулятора (#30): id -> count. См. deliver() и take_output().
+## Готовое, ещё не отданное (id -> count). deliver() кладёт его в сундук или на землю.
 var _output: Dictionary = {}
 var _output_count: int = 0
 ## Направление постройки: 0 — вправо, 1 — вниз, 2 — влево, 3 — вверх (как у конвейера).
@@ -66,38 +45,12 @@ var permanent: bool = false
 static func place_machine(p_kind: String, c: Vector2i) -> bool:
 	if World.machines.has(c):
 		return false
-	if World.belts.has(c):
-		return false
 	if World.get_tile_v(c) != IDs.T.AIR:
 		return false
 	var m: MachineBase = null
 	match p_kind:
-		"Drill":
-			m = Drill.new()
-		"Smelter":
-			m = Smelter.new()
-		"Assembler":
-			m = Assembler.new()
 		"Chest":
 			m = Chest.new()
-		"CoalGen":
-			m = CoalGen.new()
-		"Solar":
-			m = Solar.new()
-		"Belt":
-			m = Belt.new()
-		# --- Автоматизация (#30) ---
-		"Inserter":
-			m = Inserter.new()
-		"Analyzer":
-			m = Analyzer.new()
-		"DeepDrill":
-			m = DeepDrill.new()
-		# --- Оборона (#31) ---
-		"Turret":
-			m = Turret.new()
-		"Floodlight":
-			m = Floodlight.new()
 		# --- Свет (ADR-005, #164) ---
 		"Burner":
 			m = Burner.new()
@@ -117,16 +70,13 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 		"Accumulator":
 			m = Accumulator.new()
 		_:
+			# Старый сейв: бур, лента, ТЭЦ и прочие снятые машины (#170).
 			return false
 	m.cell = c
 	m.kind = p_kind
-	m.power_draw = float(Balance.POWER_DRAW.get(p_kind, 0.0))
 	m.global_position = World.cell_to_world(c)
 	m.position = m.global_position
 	World.machines[c] = m
-	if m is Belt:
-		World.belts[c] = m
-	Game.register_power_source(m, c)
 	World.add_world_node(m)
 	if World.beams != null:
 		World.beams.note_machines()
@@ -134,15 +84,15 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 
 
 func _process(delta: float) -> void:
+	# Питания нет (#170): каждая постройка работает на полной скорости.
+	work(delta)
 	# Затухание вспышки анимации (например, после добычи).
 	if anim > 0.0:
 		anim = maxf(0.0, anim - delta * 2.0)
 		queue_redraw()
-	# Полоса прогресса у станков.
 	if progress != _last_progress:
 		_last_progress = progress
 		queue_redraw()
-	# Непрерывная анимация отрисовки (вращение бура, мерцание горна).
 	if has_time_animation():
 		queue_redraw()
 
@@ -174,27 +124,10 @@ func beam_pass(_in_dir: int, _color: int) -> Array:
 	return []
 
 
-## Нужен ли этой машине статус питания.
-func consumes_power() -> bool:
-	return kind in POWER_CONSUMERS or Balance.POWER_DRAW.has(kind)
-
-
-## Итог раскладки питания для этой машины. Вызывает Game.update_power_budget().
-func apply_power(p_powered: bool, p_efficiency: float) -> void:
-	if p_powered != powered:
-		powered = p_powered
-		queue_redraw()
-	efficiency = p_efficiency if p_powered else 0.0
-
-
-## Полезная работа за кадр: delta, умноженная на efficiency (0 без питания).
-## Станки двигают прогресс на это значение вместо голого delta.
+## Полезная работа за кадр. Питания нет (#170): работа идёт на полной скорости.
 func work(delta: float) -> float:
-	if not powered:
-		return 0.0
-	var w: float = delta * efficiency
-	work_time += w
-	return w
+	work_time += delta
+	return delta
 
 
 ## Зависит ли отрисовка от времени (тогда нужна перерисовка каждый кадр).
@@ -211,59 +144,17 @@ func input_accepts(item_id: int) -> bool:
 	return false
 
 
-## Отдаёт предмет: сначала соседний конвейер/сундук/станция, иначе — на землю.
+## Отдаёт предмет соседнему сундуку. Не влезло — на землю (#170).
 func deliver(item_id: int, count: int) -> void:
-	for d in [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
-		var n: Vector2i = cell + d
-		if World.belts.has(n):
-			var b: Belt = World.belts[n]
-			# Лента, которая везёт в нас, — вход, а не выход (#30): иначе готовое
-			# уезжает обратно в станок (слиток — во вход проката пластин).
-			if b.cell + b._dir_cell() == cell:
-				continue
-			if b.add_item(item_id, count):
-				return
-			continue
-		if World.machines.has(n):
-			var m: MachineBase = World.machines[n]
-			if m.receive_item(item_id, count) == 0:
-				return
-	# Готовое забирает манипулятор (#30) — держим у себя, не бросаем на землю.
-	if _output_count + count <= OUTPUT_CAP and _has_puller():
-		_output[item_id] = int(_output.get(item_id, 0)) + count
-		_output_count += count
-		return
-	spawn_item(item_id, count, global_position + Vector2(0.0, -4.0))
-
-
-## Выдать манипулятору один готовый предмет (#30). filter — только этот id
-## (NONE — любой); accepts — возьмёт ли приёмник (пустой Callable — да).
-## Возвращает id выданного предмета или IDs.I.NONE.
-func take_output(filter: int = IDs.I.NONE, accepts: Callable = Callable()) -> int:
-	if _output_count <= 0:
-		return IDs.I.NONE
-	for id in _output.keys():
-		if filter != IDs.I.NONE and int(id) != filter:
-			continue
-		if accepts.is_valid() and not bool(accepts.call(int(id))):
-			continue
-		var left: int = int(_output[id]) - 1
-		if left <= 0:
-			_output.erase(id)
-		else:
-			_output[id] = left
-		_output_count -= 1
-		return int(id)
-	return IDs.I.NONE
-
-
-## Стоит ли рядом манипулятор, который берёт из этой клетки.
-func _has_puller() -> bool:
+	var left: int = count
 	for d in [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
 		var n = World.machines.get(cell + d)
-		if n is Inserter and n.source_cell() == cell:
-			return true
-	return false
+		if n is Chest:
+			left = n.receive_item(item_id, left)
+			if left <= 0:
+				return
+	if left > 0:
+		spawn_item(item_id, left, global_position + Vector2(0.0, -4.0))
 
 
 func spawn_item(item_id: int, count: int, pos: Vector2) -> void:
@@ -298,8 +189,7 @@ func take_damage(amount: float) -> void:
 
 
 ## Разрушить машину: убрать из мира, с шансом DESTROY_DROP_CHANCE оставить
-## её предмет, разбросать осколки. Индекс питания в Game пересоберётся сам
-## (число машин в мире изменилось).
+## её предмет, разбросать осколки.
 func destroy() -> void:
 	if not Net.is_authority():   # СЕТЬ (ADR-002): снос — событие от хоста (net_remove)
 		return
@@ -311,8 +201,6 @@ func destroy() -> void:
 	_drop_output()
 	if World.machines.get(cell) == self:
 		World.machines.erase(cell)
-	if World.belts.get(cell) == self:
-		World.belts.erase(cell)
 	if World.beams != null:
 		World.beams.note_machines()
 	var item: int = machine_item_id(kind)
@@ -333,8 +221,8 @@ func _on_destroyed() -> void:
 
 ## Разобрать постройку: снять с мира и вернуть предмет в инвентарь героя.
 ## Неразборные постройки (permanent) и уже снятые — не трогаем: возвращают NONE.
-## Содержимое (готовое в буфере, кристаллы анализатора) высыпается на землю —
-## ничего не пропадает. Возвращает id предмета, который надо вернуть герою.
+## Содержимое высыпается на землю — ничего не пропадает.
+## Возвращает id предмета, который надо вернуть герою.
 func dismantle() -> int:
 	if permanent or _destroyed:
 		return IDs.I.NONE
@@ -342,11 +230,9 @@ func dismantle() -> int:
 		return IDs.I.NONE
 	var item: int = machine_item_id(kind)
 	_on_destroyed()      # содержимое постройки — на землю
-	_drop_output()       # готовое, не забранное манипулятором, — на землю
+	_drop_output()
 	if World.machines.get(cell) == self:
 		World.machines.erase(cell)
-	if World.belts.get(cell) == self:
-		World.belts.erase(cell)
 	if World.beams != null:
 		World.beams.note_machines()
 	_destroyed = true
@@ -358,7 +244,7 @@ func dismantle() -> int:
 	return item
 
 
-## Высыпать на землю готовое, не забранное манипулятором (#30).
+## Высыпать на землю готовое, которое ещё не отдали.
 func _drop_output() -> void:
 	for id in _output.keys():
 		spawn_item(int(id), int(_output[id]), global_position + Vector2(0.0, -4.0))
@@ -373,12 +259,6 @@ static func machine_item_id(p_kind: String) -> int:
 		if String(DB.item_defs[id].get("place", "")) == place:
 			return int(id)
 	return IDs.I.NONE
-
-
-func power_label() -> String:
-	if power_radius <= 0.0:
-		return ""
-	return "%d" % int(power_radius)
 
 
 # ------------------------------------------------------------- ВИД (ADR-003, V6)
@@ -401,10 +281,10 @@ const C_LAVA: Color = _PAL["lava"]            ## топка, горнило
 const C_LAVA_HI: Color = _PAL["lava_hi"]
 const C_BIO: Color = _PAL["bio"]              ## био-бирюза: прогресс, кристаллы в работе
 const C_SOOT: Color = _PAL["bed"]             ## холодная топка, фон шкал
-## Лампа «нет питания / выключено» — единственный красный у машин (в палитре
-## концепта его нет: `danger` оставлен угрозе — фантомам и ночи).
+## Лампа «выключено» — единственный красный у машин (в палитре концепта его
+## нет: `danger` оставлен угрозе — фантомам и ночи).
 const C_LAMP_OFF: Color = Color("#E0503C")
-## Корпус без питания: та же эмаль, приглушённая к тени.
+## Корпус выключенной постройки: та же эмаль, приглушённая к тени.
 const C_METAL_OFF: Color = Color("#C9C3B5")
 ## Корпус машины по умолчанию — вся клетка.
 const BODY: Rect2 = Rect2(-8.0, -8.0, 16.0, 16.0)
@@ -416,7 +296,7 @@ var _moss_mask: int = -1
 
 ## Кремовый короб: кромка 1 px, блик сверху, жёлтая разметка штрихами над
 ## нижней кромкой и лишайник на верхней (ADR-003 § 4.1, «обрастание»).
-## on — под питанием (без питания эмаль тусклее). hazard — рисовать ли разметку.
+## on — работает (выключенная эмаль тусклее). hazard — рисовать ли разметку.
 func _draw_body(r: Rect2 = BODY, on: bool = true, hazard: bool = true) -> void:
 	draw_rect(r, C_METAL_D)
 	draw_rect(r.grow(-1.0), C_METAL if on else C_METAL_OFF)
@@ -548,15 +428,15 @@ static func recipe_from(station: String, ref) -> Dictionary:
 ## не идёт (Net.is_authority() в _process наследников): ни прогресса, ни выдачи, ни
 ## питания — только анимация и отрисовка по полученному состоянию.
 ##
-## База — NET_BASE_BYTES: hp u8 (доля max_hp) · флаги u8 (NF_*) · efficiency u8 ·
-## progress u8. Наследник дописывает своё через super(); apply_net_state() возвращает
-## смещение после прочитанного — наследник читает дальше с него.
+## База — NET_BASE_BYTES: hp u8 (доля max_hp) · флаги u8 (NF_*) · резерв u8 ·
+## progress u8. Длина та же (#170): байт питания больше не пишется смыслом,
+## но пакет не короче — иначе PROTO. Наследник дописывает своё через super().
 
 const NET_BASE_BYTES: int = 4
-const NF_POWERED: int = 1
-const NF_ACTIVE: int = 2      ## power_active (генераторы)
-const NF_ENABLED: int = 4     ## рубильник генератора
-const NF_OVERLOAD: int = 8    ## генератор перегружен (браун-аут в радиусе)
+const NF_POWERED: int = 1     ## резерв: питание снято, бит не ставится
+const NF_ACTIVE: int = 2      ## резерв генератора (класса больше нет)
+const NF_ENABLED: int = 4     ## рубильник (накопитель читает свой байт)
+const NF_OVERLOAD: int = 8    ## резерв браун-аута
 const NF_DIR_SHIFT: int = 4   ## dir 0..3 — биты 4–5 байта флагов
 ## Восемь положений в эти два бита не влезают (биты 2–3 — рубильник генератора).
 ## Горелка кладёт dir в свободные биты своего байта пламени, зеркало — в свой
@@ -567,9 +447,8 @@ func net_state() -> PackedByteArray:
 	var b: PackedByteArray = PackedByteArray()
 	b.resize(NET_BASE_BYTES)
 	b[0] = net_u8(hp / maxf(max_hp, 0.001))
-	b[1] = (NF_POWERED if powered else 0) | (NF_ACTIVE if power_active else 0)
-	b[1] |= (dir & 3) << NF_DIR_SHIFT   ## 0..3; диагональ 4..7 дописывает наследник
-	b[2] = net_u8(efficiency)
+	b[1] = (dir & 3) << NF_DIR_SHIFT   ## 0..3; диагональ 4..7 дописывает наследник
+	b[2] = 0                           ## байт efficiency снят (#170), длина та же
 	b[3] = net_u8(progress)
 	return b
 
@@ -579,7 +458,6 @@ func apply_net_state(b: PackedByteArray) -> int:
 	if b.size() < NET_BASE_BYTES:
 		return -1
 	hp = float(b[0]) / 255.0 * max_hp
-	power_active = (b[1] & NF_ACTIVE) != 0
 	# Восемь положений базу не касаются: два бита здесь — только 0..3.
 	# Горелка и зеркало дочитывают dir сами, иначе диагональ затиралась бы.
 	if turn_steps <= 4:
@@ -587,7 +465,6 @@ func apply_net_state(b: PackedByteArray) -> int:
 		if d != dir:
 			dir = d
 			queue_redraw()
-	apply_power((b[1] & NF_POWERED) != 0, float(b[2]) / 255.0)
 	progress = float(b[3]) / 255.0
 	return NET_BASE_BYTES
 
@@ -600,8 +477,6 @@ func net_remove() -> void:
 	destroyed.emit(self)
 	if World.machines.get(cell) == self:
 		World.machines.erase(cell)
-	if World.belts.get(cell) == self:
-		World.belts.erase(cell)
 	if World.beams != null:
 		World.beams.note_machines()
 	var item: int = machine_item_id(kind)

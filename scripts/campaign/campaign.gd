@@ -1,8 +1,7 @@
 class_name Campaign
 extends RefCounted
-## Кампания (ADR-004): пять глав на одном мире — сиде SEED. От главы к главе база
-## «Кербер-9» растёт (CampaignBase), каждая глава знакомит с частью механик и ставит
-## цель: починить линию, спуститься в шахту, пережить осаду, удержать сигнал.
+## Кампания. Главы 2–5 ушли с фабрикой (#170). Осталась «Тёмная станция».
+## Главы «Свет» — в работе (#177), здесь их нет.
 ##
 ## Запуск: меню «Кампания» (одиночная) или «Создать игру» → «Режим» (сеть) кладут id
 ## главы в Net.session["mission"]; для отладки — флаг --mission=<id>. main.gd строит
@@ -13,7 +12,7 @@ extends RefCounted
 const SEED: int = 31337
 const DIR: String = "res://scripts/campaign/missions/"
 ## Главы по порядку (id = имя файла в DIR).
-const CHAPTERS: Array[String] = ["dark_station", "conveyor", "mine", "siege", "signal"]
+const CHAPTERS: Array[String] = ["dark_station"]
 
 
 static func has(id: String) -> bool:

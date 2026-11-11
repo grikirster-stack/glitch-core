@@ -1,8 +1,8 @@
 extends ScenarioBase
-## Сохранение и загрузка (#37): бот ставит маленькую фабрику (сундук → манипулятор
-## → лента → плавильня → лента → сундук, ТЭЦ), ждёт первые слитки, жмёт F5,
-## ломает плавильню, копает, меняет инвентарь и данные, жмёт F9 — всё вернулось
-## как было в момент F5, и фабрика продолжает плавить.
+## Сохранение и загрузка (#37, #170): бот ставит лагерь (сундук, горелка, зеркало),
+## ждёт, пока горелка горит, жмёт F5, разбирает зеркало, копает, меняет инвентарь
+## и данные, жмёт F9 — всё вернулось как при F5, горелка продолжает жечь топливо.
+## Фабрики больше нет: бур, лента, плавильня и турель не ставятся.
 ##
 ## Клавиши идут настоящим событием ввода (Input.parse_input_event) — через UI,
 ## как у человека. Слот — свой («scenario»): сохранение игрока не трогаем.
@@ -22,24 +22,26 @@ func run() -> void:
 		for y in range(c0.y - 1, c0.y + 6):
 			World.set_tile(x, y, IDs.T.AIR)
 	var ok_place: bool = true
-	for e in [["Chest", 0, 0], ["Inserter", 1, 0], ["Belt", 2, 0], ["Smelter", 3, 0],
-			["Belt", 4, 0], ["Chest", 5, 0], ["CoalGen", 3, 2], ["Turret", 1, 2]]:
+	for e in [["Chest", 0, 0], ["Burner", 2, 0], ["Mirror", 3, 0], ["Chest", 5, 0]]:
 		ok_place = MachineBase.place_machine(String(e[0]), c0 + Vector2i(int(e[1]), int(e[2]))) and ok_place
-	ok("фабрика поставлена", ok_place)
+	ok("лагерь поставлен", ok_place)
+	ok("фабрика больше не ставится",
+			not MachineBase.place_machine("Smelter", c0 + Vector2i(4, 0))
+			and not MachineBase.place_machine("Turret", c0 + Vector2i(1, 2))
+			and not MachineBase.place_machine("Belt", c0 + Vector2i(6, 0)))
 	var src: Chest = World.machines.get(c0)
 	var dst: Chest = World.machines.get(c0 + Vector2i(5, 0))
-	var gen: CoalGen = World.machines.get(c0 + Vector2i(3, 2))
-	if not ok_place or src == null or dst == null or gen == null:
+	var burner: Burner = World.machines.get(c0 + Vector2i(2, 0))
+	if not ok_place or src == null or dst == null or burner == null:
 		_cleanup(slot0)
 		return
-	for c in [c0 + Vector2i(2, 0), c0 + Vector2i(4, 0)]:
-		(World.belts[c] as Belt).dir = 0
-	gen.add_fuel(CoalGen.FUEL_MAX_UNITS)
+	burner.add_fuel(IDs.I.COAL, 4)
 	src.receive_item(IDs.I.COPPER_ORE, 30)
 	# Чертёж в файл: после F9 панель должна показать тот же рецепт.
 	# Первый доступный — смеситель (#165).
 	Game.give_next_blueprint()
-	# Оборона (#31): шлюз у фабрики, решётка на вентиляции. Релей (#32): сигнал держится.
+	# Решётка на вентиляции. Шлюз в новом файле остаётся тайлом (конверсия —
+	# только если в файле есть фабрика).
 	var lock: Vector2i = c0 + Vector2i(7, 1)
 	World.set_tile(lock.x, lock.y, IDs.T.AIRLOCK)
 	var grate: Vector2i = Vector2i(-1, -1)
@@ -53,14 +55,18 @@ func run() -> void:
 	Game.relay_active = true
 	Game.relay_timer = 170.0
 	Game.update_objective()
-	var got: bool = await wait_until(func() -> bool: return _count(dst, IDs.I.COPPER_INGOT) >= 2, 20.0)
-	ok("фабрика дала первые слитки", got, "слитков %d" % _count(dst, IDs.I.COPPER_INGOT))
+	var burn0: float = burner.burn_left
+	var got: bool = await wait_until(func() -> bool:
+		var b: Burner = World.machines.get(c0 + Vector2i(2, 0))
+		return b != null and b.burn_left > 0.0 and b.burn_left < burn0, 3.0)
+	ok("горелка жжёт уголь", got, "осталось %.1f" % burner.burn_left)
 
 	# Снимки — в тот же кадр, что и клавиша (сигналы UI): дальше фабрика едет.
 	var cap: Dictionary = {}
 	var on_saved: Callable = func() -> void:
 		cap["saved"] = Save.gather()
-		cap["ingots"] = _count(World.machines.get(c0 + Vector2i(5, 0)), IDs.I.COPPER_INGOT)
+		var b: Burner = World.machines.get(c0 + Vector2i(2, 0))
+		cap["burn"] = b.burn_left if b != null else -1.0
 	var on_loaded: Callable = func() -> void:
 		cap["loaded"] = Save.gather()
 	UI.run_saved.connect(on_saved)
@@ -76,22 +82,19 @@ func run() -> void:
 	var file_state: Dictionary = Save.decode(FileAccess.get_file_as_bytes(Save.path_for(SLOT)))
 	ok("в файле — мир в момент F5", var_to_bytes(file_state) == var_to_bytes(cap["saved"]))
 	var snap: Dictionary = cap["saved"]
-	var ingots0: int = int(cap["ingots"])
+	var burn_at_save: float = float(cap["burn"])
 	print("  [замер] F5: %.1f мс, файл %.1f КБ (несжато %.1f КБ)" % [Save.last_save_ms,
 			float(Save.last_size) / 1024.0, float(Save.last_raw_size) / 1024.0])
 
-	# --- Меняем мир: ломаем плавильню, копаем, трогаем инвентарь и данные.
-	var sm: MachineBase = World.machines.get(c0 + Vector2i(3, 0))
-	if sm != null:
-		sm.destroy()
+	# --- Меняем мир: разбираем зеркало, копаем, трогаем инвентарь и данные.
+	var mir: MachineBase = World.machines.get(c0 + Vector2i(3, 0))
+	if mir != null:
+		mir.destroy()
 	for x in range(bx - 8, bx + 8):
 		World.set_tile(x, base + 3, IDs.T.AIR)
 	player.inv.add(IDs.I.STONE, 50)
 	player.global_position += Vector2(200.0, -40.0)
 	Game.blueprints = PackedStringArray()
-	var tur: MachineBase = World.machines.get(c0 + Vector2i(1, 2))
-	if tur != null:
-		tur.destroy()
 	World.set_tile(lock.x, lock.y, IDs.T.AIR)
 	if grate.x >= 0:
 		World.damage_grate(grate, 1.0e6)
@@ -109,10 +112,9 @@ func run() -> void:
 		return
 	print("  [замер] F9: %.1f мс, изменено клеток %d" % [Save.last_load_ms, World.load_changed_cells])
 	var after: Dictionary = cap["loaded"]
-	ok("плавильня вернулась", World.machines.get(c0 + Vector2i(3, 0)) is Smelter)
-	ok("турель вернулась", World.machines.get(c0 + Vector2i(1, 2)) is Turret)
-	ok("шлюз вернулся", World.airlocks.has(lock) and (World.get_tile_v(lock) == IDs.T.AIRLOCK
-			or World.get_tile_v(lock) == IDs.T.AIRLOCK_OPEN))
+	ok("зеркало вернулось", World.machines.get(c0 + Vector2i(3, 0)) is Mirror)
+	ok("турель не вернулась", World.machines.get(c0 + Vector2i(1, 2)) == null)
+	ok("шлюз свежего файла на месте", World.airlocks.has(lock) and World.get_tile_v(lock) == IDs.T.AIRLOCK)
 	ok("решётка вернулась с прежним HP", grate.x < 0 or (World.is_vent_sealed(grate)
 			and World.vents_sealed[grate] == snap["world"]["vents_sealed"][grate]),
 			"HP %s" % str(World.vents_sealed.get(grate)))
@@ -122,13 +124,16 @@ func run() -> void:
 		ok("«%s» как при F5" % sec, var_to_bytes(after[sec]) == var_to_bytes(snap[sec]))
 	ok("герой там же, инвентарь тот же", after["player"]["pos"] == snap["player"]["pos"]
 			and after["player"]["inv"] == snap["player"]["inv"])
-	dst = World.machines.get(c0 + Vector2i(5, 0))
-	if dst == null:
+	var back: Burner = World.machines.get(c0 + Vector2i(2, 0))
+	if back == null:
 		_cleanup(slot0)
 		return
-	got = await wait_until(func() -> bool: return _count(dst, IDs.I.COPPER_INGOT) > ingots0, 20.0)
-	ok("после загрузки фабрика продолжает плавить", got,
-			"слитков %d → %d" % [ingots0, _count(dst, IDs.I.COPPER_INGOT)])
+	var left0: float = back.burn_left
+	got = await wait_until(func() -> bool:
+		var b: Burner = World.machines.get(c0 + Vector2i(2, 0))
+		return b != null and b.burn_left < left0 and b.burn_left < burn_at_save, 4.0)
+	ok("после загрузки горелка продолжает жечь", got,
+			"осталось %.1f → %.1f (в файле %.1f)" % [left0, back.burn_left, burn_at_save])
 	ok("чертёж из сохранения на месте", Game.has_blueprint(IDs.I.MIXER), str(Game.blueprints))
 	var panel: InventoryPanel = UI.panel
 	panel.open(player)

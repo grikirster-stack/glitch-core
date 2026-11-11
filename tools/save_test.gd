@@ -2,14 +2,13 @@ extends SceneTree
 class_name SaveTest
 ## Сохранение и загрузка забега (issue #37, ADR-001 PR-N).
 ##
-## На каждом сиде: маленькая фабрика (сундук → манипулятор → лента → плавильня →
-## лента → сундук, ТЭЦ, бур, глубинный бур, анализатор, сборщик, солнечная
-## панель), вода течёт в выкопанную яму, открыт кусок тумана, у героя инвентарь
+## На каждом сиде: лагерь света (сундук, горелка, зеркало, маяк, коллектор),
+## вода течёт в выкопанную яму, открыт кусок тумана, у героя инвентарь
 ## и кулдауны, на земле предмет и мешок, Game/Tech с прогрессом. Дальше:
 ##   снимок → файл → мир меняется (тайлы, вода, туман, машины, инвентарь,
 ##   Game/Tech; во втором раунде — вообще другой сид) → загрузка → снимок.
 ## Снимки должны совпасть побайтно (var_to_bytes) — целиком и по разделам, а
-## файл — с кодировкой снимка после загрузки. После загрузки фабрика работает.
+## файл — с кодировкой снимка после загрузки. После загрузки горелка жжёт уголь.
 ## Плюс: битый файл не загружается и не трогает мир.
 ##
 ## Отдельный запуск (три сида CI в одном процессе):
@@ -117,7 +116,7 @@ class Runner extends Node:
 		game.reset_run()
 		game.tasks_total = world.terminals.size()
 		_build_factory()
-		_next(2, 1.5)   # фабрика поработала, вода потекла, ленты везут
+		_next(2, 1.5)   # горелка погорела, вода потекла
 
 
 	func _s_save_and_load() -> void:
@@ -172,8 +171,8 @@ class Runner extends Node:
 		_ok("весь снимок побайтно равен", var_to_bytes(_snap) == var_to_bytes(after))
 		_ok("файл = кодировка мира после загрузки", save_s.encode(after) == file_bytes,
 				"%d байт" % file_bytes.size())
-		var ins = world.machines.get(_c0 + Vector2i(1, 0))
-		_ok("фильтр манипулятора вернулся", ins != null and int(ins.filter) == IDs.I.COPPER_ORE)
+		var mir = world.machines.get(_c0 + Vector2i(3, 0))
+		_ok("зеркало вернулось", mir != null and String(mir.kind) == "Mirror")
 		var bag_ok: bool = false
 		for it in Array(after["items"]):
 			if not Array(it["bag"]).is_empty():
@@ -181,15 +180,13 @@ class Runner extends Node:
 		_ok("мешок после смерти вернулся", bag_ok)
 		_ok("тайники руин снова ссылаются на сундуки", _ruin_links_ok())
 		# Оборона (#31), релей (#32), небесный тайник (#60).
-		var tur = world.machines.get(_c0 + Vector2i(2, 2))
-		_ok("турель вернулась с hp и счётчиком", tur != null and String(tur.kind) == "Turret"
-				and is_equal_approx(float(tur.hp), float(_snap_machine("Turret").get("hp", -1.0))),
-				"hp %.1f" % (float(tur.hp) if tur != null else -1.0))
-		var fl = world.machines.get(_c0 + Vector2i(8, 3))
-		var fl_light: bool = fl != null and fl.lit and world.lights.has(fl._light)
-		_ok("прожектор светит, как при сохранении (свет — через add_light_source)",
-				fl != null and _lit_at_save and bool(fl.lit) and fl_light,
-				"lit %s" % str(_lit_at_save))
+		var ph = world.machines.get(_c0 + Vector2i(2, 2))
+		_ok("маяк вернулся с hp", ph != null and String(ph.kind) == "Pharos"
+				and is_equal_approx(float(ph.hp), float(_snap_machine("Pharos").get("hp", -1.0))),
+				"hp %.1f" % (float(ph.hp) if ph != null else -1.0))
+		var col = world.machines.get(_c0 + Vector2i(0, 3))
+		_ok("коллектор вернулся", col != null and String(col.kind) == "Collector"
+				and int(col.dir) == int(_snap_machine("Collector").get("dir", -1)))
 		_ok("шлюз в реестре", world.airlocks.has(_c0 + Vector2i(8, 0)))
 		_ok("решётка запечатала вентиляцию с прежним HP", _grate.x < 0 or (world.is_vent_sealed(_grate)
 				and float(world.vents_sealed[_grate]) < float(Balance.GRATE_HP)),
@@ -200,19 +197,19 @@ class Runner extends Node:
 		_ok("небесный тайник: открыт, ссылка на сундук", wreck == null or (bool(wreck.opened)
 				and wreck.chest != null and wreck.chest == world.machines.get(world.sky_cache["cell"])
 				and world.sky_cache["chest"] == wreck.chest))
-		var gen = world.machines.get(_c0 + Vector2i(3, 2))
-		_fuel_at_load = float(gen.fuel) if gen != null else 0.0
+		var gen = world.machines.get(_c0 + Vector2i(2, 0))
+		_fuel_at_load = float(gen.burn_left) if gen != null else 0.0
 		_work_at_load = _total_work()
 		if p != null:
 			p.invuln = 1.0e9
 		_next(3, 1.5)
 
 
-	## Фабрика после загрузки продолжает работать.
+	## Горелка после загрузки продолжает жечь уголь.
 	func _s_running() -> void:
-		var gen = world.machines.get(_c0 + Vector2i(3, 2))
-		_ok("ТЭЦ жжёт уголь после загрузки", gen != null and float(gen.fuel) < _fuel_at_load,
-				"топливо %.2f → %.2f" % [_fuel_at_load, float(gen.fuel) if gen != null else -1.0])
+		var gen = world.machines.get(_c0 + Vector2i(2, 0))
+		_ok("горелка жжёт уголь после загрузки", gen != null and float(gen.burn_left) < _fuel_at_load,
+				"пламя %.2f → %.2f" % [_fuel_at_load, float(gen.burn_left) if gen != null else -1.0])
 		_ok("машины работают после загрузки", _total_work() > _work_at_load + 0.5,
 				"наработка %.2f → %.2f с" % [_work_at_load, _total_work()])
 		if _round == 0:
@@ -245,7 +242,7 @@ class Runner extends Node:
 
 	# ------------------------------------------------------------------ мир
 
-	## Фабрика у базы (как в сценарии inserter_chain) и остальное состояние забега.
+	## Лагерь света у базы и остальное состояние забега. Фабрика не ставится (#170).
 	func _build_factory() -> void:
 		var bx: int = world.beacon_cell.x
 		var base: int = world.beacon_cell.y
@@ -255,50 +252,32 @@ class Runner extends Node:
 				world.set_tile(x, y, IDs.T.AIR)
 		var mb: GDScript = load("res://scripts/machines/machine_base.gd")
 		var plan: Array = [
-			["Chest", Vector2i(0, 0)], ["Inserter", Vector2i(1, 0)], ["Belt", Vector2i(2, 0)],
-			["Smelter", Vector2i(3, 0)], ["Belt", Vector2i(4, 0)], ["Chest", Vector2i(5, 0)],
-			["CoalGen", Vector2i(3, 2)], ["Drill", Vector2i(6, 3)], ["DeepDrill", Vector2i(7, 3)],
-			["Analyzer", Vector2i(1, 2)], ["Assembler", Vector2i(5, 2)], ["Solar", Vector2i(0, 3)],
-			# Оборона (#31)
-			["Turret", Vector2i(2, 2)], ["Floodlight", Vector2i(8, 3)], ["CoalGen", Vector2i(8, 5)],
+			["Chest", Vector2i(0, 0)], ["Burner", Vector2i(2, 0)], ["Mirror", Vector2i(3, 0)],
+			["Chest", Vector2i(5, 0)], ["Pharos", Vector2i(2, 2)], ["Collector", Vector2i(0, 3)],
+			["Accumulator", Vector2i(5, 2)], ["Prism", Vector2i(6, 3)], ["Mixer", Vector2i(7, 3)],
 		]
 		var placed: int = 0
 		for e in plan:
 			if mb.place_machine(String(e[0]), _c0 + Vector2i(e[1])):
 				placed += 1
-		_ok("фабрика поставлена", placed == plan.size(), "%d из %d" % [placed, plan.size()])
-		for dx in [2, 4]:
-			var b = world.belts.get(_c0 + Vector2i(dx, 0))
-			if b != null:
-				b.dir = 0
+		_ok("лагерь поставлен", placed == plan.size(), "%d из %d" % [placed, plan.size()])
+		_ok("бур больше не ставится", not mb.place_machine("Drill", _c0 + Vector2i(8, 4)))
 		var src = world.machines.get(_c0)
 		if src != null:
 			src.receive_item(IDs.I.SAND, 6)
 			src.receive_item(IDs.I.COPPER_ORE, 30)
-		var ins = world.machines.get(_c0 + Vector2i(1, 0))
-		if ins != null:
-			ins.filter = IDs.I.COPPER_ORE
-		var gen = world.machines.get(_c0 + Vector2i(3, 2))
-		if gen != null:
-			gen.add_fuel(10)
-		var gen2 = world.machines.get(_c0 + Vector2i(8, 5))   ## своя ТЭЦ прожектора
-		if gen2 != null:
-			gen2.add_fuel(10)
-		var an = world.machines.get(_c0 + Vector2i(1, 2))
-		if an != null:
-			an.receive_item(IDs.I.CRYSTAL, 3)
-		var asm = world.machines.get(_c0 + Vector2i(5, 2))
-		if asm != null:
-			asm.stock[IDs.I.IRON_PLATE] = 2
-			asm.hp = 37.5
-		var sol = world.machines.get(_c0 + Vector2i(0, 3))
-		if sol != null:
-			sol.enabled = false
-		var tur = world.machines.get(_c0 + Vector2i(2, 2))
-		if tur != null:
-			tur.shots = 3
-			tur._cooldown = 0.4
-			tur.hp = 61.0
+		var burner = world.machines.get(_c0 + Vector2i(2, 0))
+		if burner != null:
+			burner.add_fuel(IDs.I.COAL, 4)
+		var mir = world.machines.get(_c0 + Vector2i(3, 0))
+		if mir != null:
+			mir.hp = 61.0
+		var col = world.machines.get(_c0 + Vector2i(0, 3))
+		if col != null:
+			col.turn()
+		var ph = world.machines.get(_c0 + Vector2i(2, 2))
+		if ph != null:
+			ph.hp = 61.0
 		# Оборона (#31): шлюз в площадке и решётка на вентиляции с надкусанным HP.
 		world.set_tile(_c0.x + 8, _c0.y, IDs.T.AIRLOCK)
 		_grate = Vector2i(-1, -1)
@@ -324,7 +303,7 @@ class Runner extends Node:
 			p.invuln = 1.0e9
 			p.global_position = world.spawn_point
 			p.inv.add(IDs.I.SCRAP, 17)
-			p.inv.add(IDs.I.BELT, 9)
+			p.inv.add(IDs.I.IRON_INGOT, 9)
 			p.inv.selected = 3
 			p.hide_cd = 4.25
 			p.hp = 73.0
@@ -374,7 +353,7 @@ class Runner extends Node:
 		game.relay_timer = 0.0
 		world.reveal_around(world.beacon_cell + Vector2i(0, 60), 12)
 		var mb: GDScript = load("res://scripts/machines/machine_base.gd")
-		var victim = world.machines.get(_c0 + Vector2i(3, 0))
+		var victim = world.machines.get(_c0 + Vector2i(6, 3))
 		if victim != null:
 			victim.destroy()
 		mb.place_machine("Chest", _c0 + Vector2i(8, 4))
@@ -420,7 +399,7 @@ class Runner extends Node:
 		var p = game.player
 		var d: Dictionary = save_s.gather()
 		_ok("одиночное сохранение: версия %d, разделов сети нет" % int(save_s.VERSION),
-				int(d["version"]) == 2 and not d.has("players") and not d.has("session"))
+				int(d["version"]) == int(save_s.VERSION) and not d.has("players") and not d.has("session"))
 		var v1: Dictionary = d.duplicate(true)
 		v1["version"] = 1
 		(v1["game"] as Dictionary).erase("relay_have")
@@ -467,6 +446,60 @@ class Runner extends Node:
 		_ok("журнал из старого файла восстановлен", ok_l and tech.read_chapters == [0, 2], str(tech.read_chapters))
 		_ok("старый этап 4 сжат в 3", ok_l and game.objective_stage == 3, str(game.objective_stage))
 		save_s.remove(SLOT + "_legacy")
+		_legacy_factory_case()
+
+
+	## Старый мир фабрики: машины не ставятся, предметы ложатся в сундук лагеря.
+	## Классов бура и ТЭЦ уже нет — файл собираем словарём, как его писал бы v2.
+	func _legacy_factory_case() -> void:
+		var d: Dictionary = save_s.gather()
+		var chest_cell: Vector2i = _c0
+		var machines: Array = []
+		for md in d.get("machines", []):
+			if md is Dictionary and md.get("cell") == chest_cell:
+				machines.append(md)
+		machines.append({"kind": "CoalGen", "cell": _c0 + Vector2i(4, 2), "hp": 40.0})
+		machines.append({"kind": "Turret", "cell": _c0 + Vector2i(4, 3), "hp": 40.0})
+		machines.append({"kind": "Belt", "cell": _c0 + Vector2i(4, 4), "hp": 20.0})
+		machines.append({"kind": "Belt", "cell": _c0 + Vector2i(5, 4), "hp": 20.0})
+		machines.append({"kind": "Belt", "cell": _c0 + Vector2i(6, 4), "hp": 20.0})
+		d["machines"] = machines
+		var pd: Dictionary = d["player"]
+		var slots: Array = Array(pd.get("inv", [])).duplicate(true)
+		var placed_plate: bool = false
+		for i in slots.size():
+			var e = slots[i]
+			if e is Array and int(e[1]) == 0:
+				slots[i] = [IDs.I.IRON_PLATE, 1]
+				placed_plate = true
+				break
+		if not placed_plate:
+			slots.append([IDs.I.IRON_PLATE, 1])
+		pd["inv"] = slots
+		_write(SLOT + "_factory", save_s.encode(d))
+		var ok_f: bool = save_s.load_game(SLOT + "_factory")
+		var chest = world.machines.get(chest_cell)
+		var got_burner: bool = false
+		var got_pharos: bool = false
+		var got_ingot: bool = false
+		if chest != null:
+			for s in chest.slots:
+				if s.is_empty():
+					continue
+				if s.id == IDs.I.BURNER:
+					got_burner = true
+				if s.id == IDs.I.PHAROS:
+					got_pharos = true
+				if s.id == IDs.I.IRON_INGOT and s.count >= 2:
+					got_ingot = true
+		_ok("старая фабрика грузится без падения", ok_f, save_s.last_error)
+		_ok("ТЭЦ стала горелкой в сундуке", ok_f and got_burner)
+		_ok("турель стала маяком в сундуке", ok_f and got_pharos)
+		_ok("три ленты — два слитка (вверх на весь файл)", ok_f and got_ingot)
+		_ok("пластина в инвентаре стала двумя слитками", ok_f
+				and game.player.inv.count_of(IDs.I.IRON_PLATE) == 0
+				and game.player.inv.count_of(IDs.I.IRON_INGOT) >= 2)
+		save_s.remove(SLOT + "_factory")
 
 
 	func _write(s: String, bytes: PackedByteArray) -> void:

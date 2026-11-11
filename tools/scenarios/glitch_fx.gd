@@ -81,14 +81,9 @@ func run() -> void:
 	Game.objective_stage = stage0
 	await _expect_off("relay_signal")
 
-	# --- 3. Браун-аут — разрыв строк по всему экрану.
-	await _shot_before()
-	Game.brownout_changed.emit(true)
-	ok("браун-аут → разрыв строк", fx.glitch_active() and fx.active_name() == "brownout")
-	await _shot_after("glitch_brownout", player.global_position)
-	Game.brownout_changed.emit(false)
-	ok("конец браун-аута эффекта не даёт", fx.active_name() == "brownout")
-	await _expect_off("brownout")
+	# --- 3. Браун-аут снят вместе с питанием (#170). Имя эффекта в таблице осталось.
+	ok("браун-аута больше нет: питание не рвёт строки", not fx.glitch_active()
+			and GlitchFx.NAMES[GlitchFx.Kind.BROWNOUT] == "brownout")
 
 	# --- 4. Вентиляция: рядом — блоки, далеко (вне экрана) — ничего.
 	var near: Vector2i = World.world_to_cell(player.global_position) + Vector2i(4, -2)
@@ -171,10 +166,8 @@ func run() -> void:
 			and fx.get_child(0).material == null)
 	await _shot_after("glitch_calm", bp)
 	await _expect_off("relay_start (спокойная вспышка)")
-	Game.brownout_changed.emit(true)
 	Threat.vent_warning.emit(near + Vector2i(1, 0))
-	ok("меньше глитча: браун-аут и вентиляция — ничего", not fx.active() and fx.stat_fired == fired0)
-	Game.brownout_changed.emit(false)
+	ok("меньше глитча: вентиляция подряд — ничего", not fx.active() and fx.stat_fired == fired0)
 	GlitchFx.set_calm(false)
 
 	# --- 7. Настройка в профиле: одно поле, туда-обратно.

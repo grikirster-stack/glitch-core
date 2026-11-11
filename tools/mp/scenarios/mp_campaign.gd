@@ -8,7 +8,7 @@ extends "res://tools/mp/scenarios/mp_coop_base.gd"
 ##  * хост готовит базу — у клиента этап «Осада»; рассвет — победа у обоих, экран итога
 ##    главы у клиента и отметка в его профиле.
 
-const MISSION: String = "siege"
+const MISSION: String = "dark_station"
 const WAIT: float = 8.0
 
 
@@ -32,17 +32,13 @@ func run_host() -> void:
 	ok("прокси клиента с вводом", await wait_proxies(1, 10.0))
 	var p0: Player = hero_of(0)
 	ok("хост: прокси клиента получил набор главы", await wait_until(func() -> bool:
-		return p0 != null and p0.inv.count_of(IDs.I.TURRET) == 1, WAIT))
+		return p0 != null and p0.inv.count_of(IDs.I.LAMP) >= 1, WAIT))
 	await barrier("in")
 	await barrier("seen")
-	# Подготовка базы — у клиента этап «Осада».
-	var bx: int = World.beacon_cell.x
-	var row: int = World.beacon_cell.y
-	CampaignBase.put("Turret", Vector2i(bx - 5, row))
-	var vent: Vector2i = m.get("_vent")
-	World.set_tile(vent.x, vent.y, IDs.T.VENT_GRATE)
-	CampaignBase.put("Floodlight", Vector2i(bx + 5, row))
-	ok("хост: база готова → «Осада»", await wait_until(func() -> bool: return m.stage == 1, WAIT), str(m.goals))
+	# Хлам у прокси двигает этап. Турелей и буров больше нет (#170).
+	if p0 != null:
+		p0.inv.add(IDs.I.SCRAP, HUD.TUT_SCRAP)
+	ok("хост: хлам → следующий этап", await wait_until(func() -> bool: return m.stage >= 1, WAIT), str(m.goals))
 	await barrier("night")
 	Game.time_of_day = Balance.NIGHT_END - 0.002
 	ok("хост: рассвет — победа", await wait_until(func() -> bool:
@@ -57,25 +53,25 @@ func run_client(_i: int) -> void:
 	ok("клиент: id главы в приветствии хоста", String(Net.session.get("mission", "")) == MISSION,
 			str(Net.session.get("mission", "")))
 	var got: bool = await wait_until(func() -> bool:
-		return Game.in_mission() and bool(Game.mission.puppet) and String(Game.mission.stage_title) == "Подготовка", WAIT)
-	ok("клиент: марионетка главы, этап «Подготовка»", got)
+		return Game.in_mission() and bool(Game.mission.puppet) and String(Game.mission.id) == MISSION, WAIT)
+	ok("клиент: марионетка главы, первый этап", got)
 	await barrier("in")
 	var m = Game.mission
-	ok("клиент: задачи хоста", m != null and m.goals.size() == 3, str(m.goals) if m != null else "")
-	ok("клиент: база главы из снимка — турели и глубинные буры", Mission.machines_of("Turret") >= 3
-			and Mission.machines_of("DeepDrill") == 2,
-			"турелей %d, буров %d" % [Mission.machines_of("Turret"), Mission.machines_of("DeepDrill")])
-	ok("клиент: набор главы — турель, решётка, прожектор", await wait_until(func() -> bool:
-		return player.inv.count_of(IDs.I.TURRET) == 1 and player.inv.count_of(IDs.I.VENT_GRATE) == 1, WAIT))
+	ok("клиент: задачи хоста", m != null and m.goals.size() >= 1, str(m.goals) if m != null else "")
+	ok("клиент: база главы без фабрики", Mission.machines_of("Burner") >= 1
+			and Mission.machines_of("Turret") == 0 and Mission.machines_of("DeepDrill") == 0,
+			"горелок %d" % Mission.machines_of("Burner"))
+	ok("клиент: набор главы — лампы, без турели", await wait_until(func() -> bool:
+		return player.inv.count_of(IDs.I.LAMP) >= 1 and player.inv.count_of(IDs.I.TURRET) == 0, WAIT))
 	ok("клиент: сохранение закрыто", Save.save_blocker() != "")
 	var hud: HUD = UI.hud
 	if hud != null:
 		hud._compute_tracker()
-		ok("клиент: HUD — карточка первой цели главы 4", hud.card_text != "" and hud.card_need == 4
-				and hud.card_icon == IDs.I.TURRET, "«%s» %d/%d" % [hud.card_text, hud.card_have, hud.card_need])
+		ok("клиент: HUD — карточка первой цели", hud.card_text != "" and hud.card_need >= 1,
+				"«%s» %d/%d" % [hud.card_text, hud.card_have, hud.card_need])
 	await barrier("seen")
-	ok("клиент: этап «Осада» от хоста", await wait_until(func() -> bool:
-		return m != null and is_instance_valid(m) and m.stage == 1 and String(m.stage_title) == "Осада", WAIT),
+	ok("клиент: этап сдвинулся от хоста", await wait_until(func() -> bool:
+		return m != null and is_instance_valid(m) and m.stage >= 1, WAIT),
 			str(m.stage_title) if m != null else "")
 	await barrier("night")
 	ok("клиент: победа вместе с хостом", await wait_until(func() -> bool:

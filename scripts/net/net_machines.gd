@@ -77,7 +77,7 @@ var _snap_seen: int = 0
 var _machines: Dictionary = {}  ## хост: клетка (y·W + x) → машина, какой её знают клиенты
 var _last: Dictionary = {}      ## хост: клетка → net_state прошлого машинного такта
 var _ids: Dictionary = {}       ## хост: клетка → instance_id той машины
-var _shots: Dictionary = {}     ## хост: клетка турели → выстрелов, о которых клиенты знают
+
 var _items: Dictionary = {}     ## хост: net_id → ItemEntity
 var _item_sig: Dictionary = {}  ## хост: net_id → подпись (число, приземлён, мешок)
 var _next_item: int = 1
@@ -108,7 +108,7 @@ func _on_session_started() -> void:
 	_machines.clear()
 	_last.clear()
 	_ids.clear()
-	_shots.clear()
+
 	_items.clear()
 	_item_sig.clear()
 	_puppets.clear()
@@ -173,8 +173,6 @@ func _host_tick() -> void:
 	_scan_items(machine_tick)
 	if machine_tick:
 		send_states()
-	else:
-		_send_shots()
 
 
 ## Клиенты в рассылке — те, кому NetWorld отдал снимок. Новый — с пустым кэшем;
@@ -231,8 +229,6 @@ func _scan_machines(send: bool) -> void:
 		_ids[idx] = iid
 		_machines[idx] = m
 		_last.erase(idx)
-		if m is Turret:
-			_shots[idx] = m.shots
 		if send:
 			_send_add(m)
 	if matched == _ids.size():
@@ -245,7 +241,6 @@ func _scan_machines(send: bool) -> void:
 		_ids.erase(idx)
 		_machines.erase(idx)
 		_last.erase(idx)
-		_shots.erase(idx)
 		if send:
 			_send_del(idx)
 
@@ -313,10 +308,6 @@ func send_states() -> void:
 				cache[idx] = _last[idx]
 				list.append([idx, _last[idx]])
 		out[id] = list
-	for idx in _shots:
-		var t = _machines.get(idx)
-		if is_instance_valid(t):
-			_shots[idx] = t.shots
 	gather_us = Time.get_ticks_usec() - t0
 	gather_us_max = maxi(gather_us_max, gather_us)
 	gather_us_sum += gather_us
@@ -324,33 +315,6 @@ func send_states() -> void:
 	gather_machines = _machines.size()
 	for id in out:
 		_send_states_to(id, out[id])
-
-
-## Выстрел турели — в ближайший такт (дуга и звук у клиента без задержки 4 Гц).
-func _send_shots() -> void:
-	var fired: Array = []
-	for idx in _shots:
-		var t = _machines.get(idx)
-		if is_instance_valid(t) and t.shots != int(_shots[idx]):
-			_shots[idx] = t.shots
-			fired.append(idx)
-	if fired.is_empty():
-		return
-	for idx in fired:
-		_last[idx] = _machines[idx].net_state()
-	for id in _peers:
-		var cache: Dictionary = _peers[id]["ms"]
-		var has_c: Array = [false]
-		var rect: Rect2 = _aoi(id, has_c)
-		var list: Array = []
-		for idx in fired:
-			var t = _machines[idx]
-			if has_c[0] and not rect.has_point(t.global_position):
-				continue
-			var st: PackedByteArray = _last[idx]
-			cache[idx] = st
-			list.append([idx, st])
-		_send_states_to(id, list)
 
 
 func _send_states_to(id: int, list: Array) -> void:

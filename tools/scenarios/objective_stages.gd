@@ -57,17 +57,10 @@ func _on_stage(s: int) -> void:
 	_seen.append(s)
 
 
-## Поставить ТЭЦ у терминала, встать рядом, удерживать E до засчитанного задания.
+## Встать у терминала и удерживать E до засчитанного задания. ТЭЦ не нужна (#170).
 func _read_quick(t: Vector2i) -> bool:
 	var spot: Vector2 = World.cell_to_world(t)
-	if not Game.is_powered(spot):
-		var gen: CoalGen = _place_gen_near(t)
-		ok("ТЭЦ у терминала", gen != null, str(t))
-		if gen == null:
-			return false
-		gen.add_fuel(4)
-	var powered: bool = await wait_until(func() -> bool: return Game.is_powered(spot), 2.0)
-	ok("терминал под питанием", powered)
+	ok("терминал читается без ТЭЦ", Game.is_powered(spot))
 	if not await stand_at_terminal(t):
 		return false
 	var done0: int = Game.tasks_done

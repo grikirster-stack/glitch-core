@@ -7,7 +7,7 @@ extends Node
 ## а звучат только LOOP_VOICES ближайших к камере, плееры не создаются и не
 ## удаляются после _ready (ADR-001, PR-M, issue #36).
 ##
-## Новые звуки (vent_hum, turret_zap, swarm, doppel_whisper, brownout) не
+## Новые звуки (vent_hum, turret_zap, swarm, doppel_whisper) не
 ## синтезируются в _ready: их «прогревает» _process по одному за кадр, а если
 ## звук попросили раньше — он синтезируется по требованию. Так _ready не
 ## дорожает (приёмка #36: рост не больше 20 %).
@@ -32,7 +32,6 @@ const LOOP_REFRESH: float = 0.25
 const GAP_MS: Dictionary = {
 	"swarm": 120,
 	"doppel_whisper": 1500,
-	"brownout": 800,
 }
 ## Новые звуки: имя → частота дискретизации. Синтез отложенный (см. выше).
 const LAZY: Dictionary = {
@@ -40,7 +39,6 @@ const LAZY: Dictionary = {
 	"turret_zap": RATE,
 	"swarm": RATE,
 	"doppel_whisper": RATE,
-	"brownout": RATE,
 }
 ## Зацикленные звуки (петля по всей длине буфера).
 const LOOPED: Dictionary = {"vent_hum": true}
@@ -228,8 +226,6 @@ func synth(id: String) -> PackedFloat32Array:
 			return _syn_swarm()
 		"doppel_whisper":
 			return _syn_doppel_whisper()
-		"brownout":
-			return _syn_brownout()
 	return PackedFloat32Array()
 
 
@@ -508,47 +504,7 @@ func _syn_doppel_whisper() -> PackedFloat32Array:
 	return data
 
 
-## Брауn-аут: гудение машин проседает вниз, свет мигает, в начале — искра.
-func _syn_brownout() -> PackedFloat32Array:
-	var n: int = int(0.75 * RATE)
-	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
-	rng.seed = 4040
-	# Мигание блоками по 20 мс: чем дальше, тем чаще «гаснет».
-	var blocks: int = int(0.75 * 50.0) + 1
-	var gates: PackedFloat32Array = PackedFloat32Array()
-	gates.resize(blocks)
-	for b in blocks:
-		gates[b] = 1.0 if rng.randf() > float(b) / float(blocks) * 0.7 else 0.15
-	var data: PackedFloat32Array = PackedFloat32Array()
-	data.resize(n)
-	var spark_n: int = int(0.08 * RATE)
-	var phase: float = 0.0
-	# Частота падает 120 → 42 Гц по экспоненте: множитель на каждый отсчёт.
-	var dp: float = TAU * 120.0 / float(RATE)
-	var fall: float = pow(0.35, 1.0 / float(n))
-	var g: float = 1.0
-	var gate: float = 1.0
-	var env: float = 0.0
-	var inv_att: float = 100.0 / float(n)
-	for i in n:
-		if i % CTRL == 0:
-			var t: float = float(i) / float(n)
-			var u: float = 1.0 - t
-			env = u * sqrt(u) * 0.75
-			gate = gates[mini(int(float(i) / float(RATE) * 50.0), blocks - 1)]
-		phase += dp
-		dp *= fall
-		var s: float = sin(phase)
-		# Мягкий «квадрат» плюс вторая гармоника (s² = (1 − cos 2x) / 2).
-		var buzz: float = clampf(s * 3.0, -1.0, 1.0) * 0.5 + (s * s - 0.5) * 0.4
-		# Сглаживаем ступеньки мигания, чтобы не щёлкало.
-		g = g * 0.995 + gate * 0.005
-		var spark: float = 0.0
-		if i < spark_n:
-			spark = rng.randf_range(-1.0, 1.0) * (1.0 - float(i) / float(spark_n)) * 0.5
-		# Атака 10 мс — по отсчётам, иначе блоки огибающей щёлкнут.
-		data[i] = (buzz * g + spark) * env * minf(1.0, float(i) * inv_att)
-	return data
+
 
 
 # ------------------------------------------------------------------ кодирование

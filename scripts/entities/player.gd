@@ -504,23 +504,8 @@ func _do_place(cell: Vector2i, fresh: bool = true) -> void:
 		if MachineBase.place_machine(kind, cell):
 			inv.remove_at(inv.selected, 1)
 			_sfx_here("place_machine", -8.0)
-			_auto_orient(cell, kind)
 		else:
 			_notify("Сюда нельзя поставить.", Color(1.0, 0.6, 0.5))
-
-
-## Конвейер сразу встаёт в сторону ближайшей принимающей постройки.
-func _auto_orient(cell: Vector2i, kind: String) -> void:
-	if kind != "Belt" or not World.belts.has(cell):
-		return
-	var b: Belt = World.belts[cell]
-	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]
-	for i in 4:
-		var n: Vector2i = cell + dirs[i]
-		if World.belts.has(n) or World.machines.has(n):
-			b.dir = i
-			return
-	b.dir = 0
 
 
 ## Сюда можно поставить блок или машину: клетка свободна (и машины в ней нет), герой
@@ -550,17 +535,17 @@ func _place_allowed(cell: Vector2i) -> bool:
 ## Радиусы E — от героя до центра объекта, px.
 const E_TERMINAL: float = 42.0
 const E_BEACON: float = 56.0
-const E_MACHINE: float = 40.0      ## ТЭЦ, сундук, манипулятор рядом
+const E_MACHINE: float = 40.0      ## горелка, сундук, маяк рядом
 const E_STATION: float = 44.0      ## загрузка предмета в станок и ремонт хламом
 
 ## Виды цели E (поле "kind" у interact_target()).
-const ET_TERMINAL: String = "terminal"          ## терминал под питанием: держать E — задание
-const ET_TERMINAL_OFF: String = "terminal_off"  ## без питания: E даёт только «нет питания»
+const ET_TERMINAL: String = "terminal"          ## терминал: держать E — чертёж и глава
+const ET_TERMINAL_OFF: String = "terminal_off"  ## резерв: питания нет, терминал всегда доступен
 const ET_BEACON: String = "beacon"              ## релей-ядро: держать E
-const ET_GENERATOR: String = "generator"        ## уголь в руке — топка, иначе — рубильник
+const ET_GENERATOR: String = "generator"        ## резерв: ТЭЦ снята (#170)
 const ET_BURNER: String = "burner"              ## топливо в руке — топка, пустая — рубильник
 const ET_ACCUMULATOR: String = "accumulator"    ## рубильник накопителя: копить / отдавать
-const ET_INSERTER: String = "inserter"          ## предмет в руке — фильтр, пустая рука — сброс
+const ET_INSERTER: String = "inserter"          ## резерв: манипулятор снят (#170)
 const ET_CHEST: String = "chest"                ## сундук и тайники руин / небесный тайник
 const ET_REPAIR: String = "repair"              ## хлам в руке, машина повреждена
 const ET_LOAD: String = "load"                  ## предмет в руке подходит станку
@@ -577,10 +562,7 @@ var _task_cell: Vector2i = Vector2i(-1, -1)
 ## Пустой словарь — E сейчас некуда.
 ## Правило: объект под курсором, если герой до него дотягивается (радиус E
 ## объекта); иначе — ближайший к герою. Терминал без питания — цель, только
-## если он под курсором или строго ближе всего остального (E подскажет «нет
-## питания»); при равенстве соседний сундук или ТЭЦ важнее.
-## powered — проверка питания терминала (клетка -> bool); HUD передаёт свою,
-## с кэшем; по умолчанию — Game.is_powered.
+## Питания нет (#170): терминал читается всегда. powered оставлен для HUD.
 func interact_target(powered: Callable = Callable()) -> Dictionary:
 	var pos: Vector2 = global_position
 	var aimed: Dictionary = _target_at(building_cell, pos, true, powered)
@@ -679,9 +661,9 @@ func _chest_empty(m) -> bool:
 
 
 ## Что E сделает с объектом в клетке c (пусто — ничего или далеко).
-## aimed — клетка под курсором: манипулятор тогда достаётся на всю досягаемость.
-## allow_dismantle — искать цель разбора (бур, конвейер…): в поиске «ближайшего»
-## разбор не участвует, чтобы не отбирать E у сундука и терминала.
+## aimed — клетка под курсором.
+## allow_dismantle — искать цель разбора: в поиске «ближайшего» разбор не
+## участвует, чтобы не отбирать E у сундука и терминала.
 func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable,
 		allow_dismantle: bool = true) -> Dictionary:
 	if c.x < 0:
@@ -694,22 +676,16 @@ func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable,
 		var tg: Dictionary = {"cell": c, "node": m, "pos": mp}
 		if not sel.is_empty() and sel.id == IDs.I.SCRAP and m.hp < m.max_hp and d < E_STATION:
 			tg["kind"] = ET_REPAIR
-		elif m is Generator and d < E_MACHINE:
-			tg["kind"] = ET_GENERATOR
 		elif m is Burner and d < E_MACHINE:
 			tg["kind"] = ET_BURNER
 		elif m is Accumulator and d < E_MACHINE:
 			tg["kind"] = ET_ACCUMULATOR
-		elif m is Inserter and (d < E_MACHINE or (aimed and d <= REACH)):
-			tg["kind"] = ET_INSERTER
 		elif m is Chest and d < E_MACHINE and not _chest_empty(m):
 			tg["kind"] = ET_CHEST
-		elif not sel.is_empty() and d <= E_STATION and not (m is Belt or m is Chest or m is Generator or m is Burner) \
+		elif not sel.is_empty() and d <= E_STATION and not (m is Chest or m is Burner) \
 				and m.input_accepts(sel.id):
 			tg["kind"] = ET_LOAD
 		elif allow_dismantle and d < E_MACHINE and sel.is_empty() and _can_dismantle(m):
-			# Разбор: своего действия E у машины нет (бур, плавильня, сборщик,
-			# конвейер) или сундук пуст.
 			tg["kind"] = ET_DISMANTLE
 			tg["item"] = MachineBase.machine_item_id(m.kind)
 		else:
@@ -724,8 +700,8 @@ func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable,
 		var tp: Vector2 = World.cell_to_world(c)
 		if tp.distance_to(pos) >= E_TERMINAL:
 			return {}
-		var on: bool = bool(powered.call(c)) if powered.is_valid() else Game.is_powered(tp)
-		return {"kind": ET_TERMINAL if on else ET_TERMINAL_OFF, "cell": c, "node": null, "pos": tp}
+		# Питания нет (#170): терминал читается без ТЭЦ.
+		return {"kind": ET_TERMINAL, "cell": c, "node": null, "pos": tp}
 	return {}
 
 
@@ -747,11 +723,9 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 		return
 	match kind:
 		ET_TERMINAL_OFF:
-			# Терминалы работают только под питанием (ADR-001 § 4.6, #29).
+			# Ветки больше нет (#170): терминал читается без питания.
 			if fresh:
-				_sfx_here("craft", -16.0, 0.6)
-				_notify("Терминал: нет питания. Поставьте рядом ТЭЦ или солнечную панель.",
-						Color(1.0, 0.7, 0.4))
+				_notify("Терминал готов. Держите E.", Color(0.7, 0.95, 1.0))
 		ET_TERMINAL:
 			task_progress += dt / 2.2
 			if task_progress >= 1.0:
@@ -762,9 +736,8 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 			if task_progress >= 1.0:
 				task_progress = 0.0
 				Game.try_finish(self)   # вклад деталей — из своего инвентаря (MP-I, #94)
-		ET_GENERATOR, ET_INSERTER, ET_BURNER, ET_ACCUMULATOR:
-			# ТЭЦ: уголь — топка, иначе рубильник (#25); манипулятор: фильтр/сброс (#30);
-			# горелка: топливо — топка, пустая рука — рубильник (#164);
+		ET_BURNER, ET_ACCUMULATOR:
+			# Горелка: топливо — топка, пустая рука — рубильник (#164);
 			# накопитель: рубильник «копить / отдавать» (#166).
 			tg["node"].interact(self)
 		ET_CHEST:

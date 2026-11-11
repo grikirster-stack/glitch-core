@@ -470,7 +470,7 @@ func _move_flying(dir: Vector2, speed: float, dt: float) -> void:
 # ------------------------------------------------------------------ ТИПЫ
 
 ## Ищем машину-цель не чаще раза в SEEK_INTERVAL: машин бывает сотни.
-## Рой — работающий бур/сборщик, тень — работающий генератор или прожектор.
+## Рой — горящая горелка, тень — горящая горелка или маяк под жёлтым (#170).
 func _seek_machine(dt: float, radius: float) -> void:
 	if target_machine != null and not is_instance_valid(target_machine):
 		target_machine = null
@@ -490,8 +490,8 @@ func _seek_machine(dt: float, radius: float) -> void:
 	target_machine = best
 
 
-## Подходит ли машина в цели этому типу. Рой — работающий бур/сборщик
-## (есть питание), тень — работающий генератор или прожектор.
+## Подходит ли машина в цели этому типу. Рой — горящая горелка (или пурпурный
+## маяк). Тень — горящая горелка, жёлтый маяк или пурпурный маяк.
 func _is_prey(m: Node) -> bool:
 	if not (m is MachineBase):
 		return false
@@ -502,11 +502,12 @@ func _is_prey(m: Node) -> bool:
 		if mb.kind == "Pharos" and int(mb.get("color")) == Beams.M and bool(mb.get("active")):
 			return true
 	if kind == "swarm":
-		return (mb.kind == "Drill" or mb.kind == "Assembler") and mb.powered
+		return mb.kind == "Burner" and mb.has_method("burning") and bool(mb.call("burning"))
 	if kind == "shade":
-		if mb is Generator:
-			return mb.power_active
-		return mb.kind == "Floodlight"
+		if mb.kind == "Burner" and mb.has_method("burning") and bool(mb.call("burning")):
+			return true
+		# Прожектор стал маяком под жёлтым (#170).
+		return mb.kind == "Pharos" and int(mb.get("color")) == Beams.Y and bool(mb.get("active"))
 	return false
 
 
@@ -519,8 +520,8 @@ func _swarm_tick(dt: float) -> void:
 	_machine_attack(dt)
 
 
-## Тень: у ТЭЦ сжигает уголь (генератор она не ломает — она им питается),
-## касание гасит солнечную панель, прожектор бьёт.
+## Тень: у горелки съедает одну единицу топлива (как раньше уголь ТЭЦ).
+## Маяк не осушить — тень бьёт его как машину.
 func _shade_tick(dt: float) -> void:
 	var m: Node2D = target_machine
 	if m == null or not is_instance_valid(m):
@@ -528,22 +529,24 @@ func _shade_tick(dt: float) -> void:
 	if global_position.distance_to(m.global_position) > MACHINE_REACH + 8.0:
 		_drain_t = Balance.SHADE_DRAIN_PERIOD
 		return
-	if m is CoalGen:
-		var gen: CoalGen = m
+	if m is Burner and (m as Burner).burning():
+		var burner: Burner = m
 		_drain_t -= dt
 		if _drain_t <= 0.0:
 			_drain_t = Balance.SHADE_DRAIN_PERIOD
-			if gen.fuel > 0.0:
-				gen.fuel = maxf(0.0, gen.fuel - Balance.COAL_BURN)
+			if burner.burn_left > 0.0 or burner.fuel_units() > 0:
+				# Как уголь ТЭЦ: одна единица за период, текущее пламя гаснет.
+				burner.burn_left = 0.0
+				burner.color = 0
+				if burner.fuel_units() > 0:
+					var top: Array = burner.fuel[0]
+					top[1] = int(top[1]) - 1
+					if int(top[1]) <= 0:
+						burner.fuel.pop_front()
 				coal_drained += 1
-	elif m is Solar:
-		# Касание гасит панель рубильником (#25): игрок включит её обратно по E.
-		var sol: Solar = m
-		if sol.enabled:
-			sol.set_enabled(false)
+				burner.queue_redraw()
 	else:
-		# Прожектор (#31) и пурпурный маяк (#168) не выключить и не осушить —
-		# тень бьёт их как машину. У маяка топки нет.
+		# Жёлтый и пурпурный маяк не выключить и не осушить — тень бьёт их.
 		_machine_attack(dt)
 
 

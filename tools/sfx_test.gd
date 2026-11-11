@@ -2,7 +2,8 @@ extends SceneTree
 class_name SfxTest
 ## Автотест процедурного звука (ADR-001, PR-M; issue #36).
 ##
-## Проверяет новые звуки vent_hum, turret_zap, swarm, doppel_whisper, brownout:
+## Проверяет звуки vent_hum, turret_zap, swarm, doppel_whisper.
+## brownout остаётся в NetCodec.SOUNDS (append-only), синтеза больше нет (#170).
 ## есть в Sfx.sounds, длина > 0, в сигнале нет NaN/INF, пик в [-1, 1] и звук не
 ## тишина, синтез детерминирован (дважды — побайтно одно и то же), петля гула
 ## без щелчка на стыке. Плюс API: play/play_at, промежуток GAP_MS, зацикленные
@@ -19,7 +20,7 @@ class_name SfxTest
 
 # --------------------------------------------------------------- КОНСТАНТЫ
 ## Новые звуки зоны PR-M.
-const NEW_SOUNDS: Array = ["vent_hum", "turret_zap", "swarm", "doppel_whisper", "brownout"]
+const NEW_SOUNDS: Array = ["vent_hum", "turret_zap", "swarm", "doppel_whisper"]
 ## Звуки, которые были до PR-M, — не должны пропасть.
 const OLD_SOUNDS: Array = ["mine", "break", "place", "pickup", "craft", "place_machine",
 		"hit", "alarm", "power", "step"]
@@ -122,7 +123,7 @@ class Runner extends Node:
 				and hum.loop_end == h.size(), "loop_end %d" % (hum.loop_end if hum != null else -1))
 		_ok("vent_hum: стык петли без щелчка", seam <= max_step,
 				"стык %.4f, наибольший шаг %.4f" % [seam, max_step])
-		_ok("разовые звуки не зациклены", _no_loop(["turret_zap", "swarm", "doppel_whisper", "brownout"]))
+		_ok("разовые звуки не зациклены", _no_loop(["turret_zap", "swarm", "doppel_whisper"]))
 
 
 	func _no_loop(ids: Array) -> bool:
@@ -144,11 +145,11 @@ class Runner extends Node:
 		_ok("play_at: рядом с камерой — звучит", bool(sfx.play_at("turret_zap", lp + Vector2(32, 0), -40.0)))
 		_ok("play_at: дальше HEAR_DIST — голос не тратится",
 				not bool(sfx.play_at("turret_zap", lp + Vector2(sfx.HEAR_DIST + 100.0, 0), -40.0)))
-		# Промежуток GAP_MS: второй запуск подряд глушится.
-		sfx._last_ms.erase("brownout")
-		var first: bool = bool(sfx.play("brownout", -40.0))
-		var second: bool = bool(sfx.play("brownout", -40.0))
-		_ok("brownout: повтор раньше GAP_MS не звучит", first and not second)
+		# Промежуток GAP_MS: второй запуск подряд глушится. brownout снят (#170).
+		sfx._last_ms.erase("doppel_whisper")
+		var first: bool = bool(sfx.play("doppel_whisper", -40.0))
+		var second: bool = bool(sfx.play("doppel_whisper", -40.0))
+		_ok("doppel_whisper: повтор раньше GAP_MS не звучит", first and not second)
 		sfx.enabled = false
 		_ok("enabled = false: тишина", not bool(sfx.play("swarm")) and not bool(sfx.play_at("swarm", lp)))
 		sfx.enabled = en0

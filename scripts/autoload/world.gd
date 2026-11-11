@@ -56,7 +56,7 @@ var beacon_cell: Vector2i = Vector2i.ZERO
 var spawn_point: Vector2 = Vector2.ZERO
 var lights: Array[Dictionary] = []
 var machines: Dictionary = {}       # Vector2i -> Node (машина)
-var belts: Dictionary = {}         # Vector2i -> {dir:int, items:Array}
+
 ## Лучи света (ADR-005, #164). Перестраиваются в _process, не чаще раза в кадр.
 var beams: Beams = Beams.new()
 ## Ручки света луча: клетка → источник World.add_light_source. Снимаются целиком
@@ -166,7 +166,7 @@ func generate(p_seed: int) -> void:
 				parent.remove_child(m)
 			m.queue_free()
 	machines.clear()
-	belts.clear()
+
 	tiles = PackedByteArray()
 	tiles.resize(W * H)
 	tiles.fill(0)
@@ -176,7 +176,7 @@ func generate(p_seed: int) -> void:
 	terminal_chapters.clear()
 	vents.clear()
 	machines.clear()
-	belts.clear()
+
 	lights.clear()
 	_light_cells.clear()
 	_beam_lights.clear()
@@ -913,21 +913,22 @@ const RUIN_CACHE_MAX: int = 6          # максимум разных пред�
 const RUIN_CACHE_SALT: int = 0x52554E53  # «RUNS»: свой поток случайных чисел
 ## Что хозяин руины хранил у себя: роль → [[предмет, мин, макс], ...]. В пуле
 ## не меньше RUIN_CACHE_MAX позиций, чтобы тайник набирался без повторов.
+## Фабрика снята (#170): в тайниках слитки, стекло, уголь, кристаллы и свет.
 const RUIN_LOOT: Dictionary = {
-	"капитан": [[IDs.I.POWER_CELL, 1, 2], [IDs.I.CIRCUIT, 2, 4], [IDs.I.STEEL_PLATE, 2, 4],
-			[IDs.I.IRON_PLATE, 3, 6], [IDs.I.LAMP, 1, 3], [IDs.I.SOLAR, 1, 1]],
-	"инженер": [[IDs.I.COPPER_PLATE, 4, 8], [IDs.I.IRON_PLATE, 4, 8], [IDs.I.STEEL_PLATE, 2, 4],
-			[IDs.I.BELT, 4, 10], [IDs.I.DRILL, 1, 1], [IDs.I.ASSEMBLER, 1, 1]],
+	"капитан": [[IDs.I.CRYSTAL, 2, 4], [IDs.I.GLASS, 2, 4], [IDs.I.IRON_INGOT, 3, 6],
+			[IDs.I.COPPER_INGOT, 2, 4], [IDs.I.LAMP, 1, 3], [IDs.I.COLLECTOR, 1, 1]],
+	"инженер": [[IDs.I.COPPER_INGOT, 4, 8], [IDs.I.IRON_INGOT, 4, 8], [IDs.I.COAL, 4, 8],
+			[IDs.I.GLASS, 2, 6], [IDs.I.BURNER, 1, 1], [IDs.I.CHEST, 1, 1]],
 	"медик": [[IDs.I.SCRAP, 4, 10], [IDs.I.GLASS, 3, 6], [IDs.I.SAND, 4, 8],
-			[IDs.I.LAMP, 1, 2], [IDs.I.POWER_CELL, 1, 1], [IDs.I.CRYSTAL, 1, 3]],
+			[IDs.I.LAMP, 1, 2], [IDs.I.CRYSTAL, 1, 3], [IDs.I.COAL, 2, 4]],
 	"геолог": [[IDs.I.COPPER_ORE, 6, 12], [IDs.I.IRON_ORE, 6, 12], [IDs.I.CRYSTAL, 2, 5],
-			[IDs.I.COAL, 6, 12], [IDs.I.STONE, 6, 12], [IDs.I.DRILL, 1, 1]],
-	"связист": [[IDs.I.CIRCUIT, 2, 5], [IDs.I.COPPER_PLATE, 3, 6], [IDs.I.COPPER_INGOT, 3, 6],
-			[IDs.I.CRYSTAL, 2, 4], [IDs.I.GLASS, 2, 4], [IDs.I.SOLAR, 1, 1]],
-	"пилот": [[IDs.I.COAL, 8, 16], [IDs.I.POWER_CELL, 1, 2], [IDs.I.IRON_INGOT, 3, 6],
-			[IDs.I.STEEL_PLATE, 2, 4], [IDs.I.COAL_GEN, 1, 1], [IDs.I.LAMP, 1, 3]],
-	"техник": [[IDs.I.IRON_INGOT, 3, 6], [IDs.I.COPPER_INGOT, 3, 6], [IDs.I.BELT, 6, 12],
-			[IDs.I.CHEST, 1, 2], [IDs.I.IRON_PLATE, 3, 6], [IDs.I.SMELTER, 1, 1]],
+			[IDs.I.COAL, 6, 12], [IDs.I.STONE, 6, 12], [IDs.I.IRON_INGOT, 2, 4]],
+	"связист": [[IDs.I.COPPER_INGOT, 3, 6], [IDs.I.CRYSTAL, 2, 5], [IDs.I.GLASS, 2, 4],
+			[IDs.I.IRON_INGOT, 2, 4], [IDs.I.PHAROS, 1, 1], [IDs.I.COLLECTOR, 1, 1]],
+	"пилот": [[IDs.I.COAL, 8, 16], [IDs.I.CRYSTAL, 1, 2], [IDs.I.IRON_INGOT, 3, 6],
+			[IDs.I.GLASS, 2, 4], [IDs.I.BURNER, 1, 1], [IDs.I.LAMP, 1, 3]],
+	"техник": [[IDs.I.IRON_INGOT, 3, 6], [IDs.I.COPPER_INGOT, 3, 6], [IDs.I.GLASS, 2, 6],
+			[IDs.I.CHEST, 1, 2], [IDs.I.COAL, 4, 8], [IDs.I.STONE, 4, 8]],
 }
 
 ## Тайники текущего мира, по одному на руину, в порядке генерации:
@@ -2049,21 +2050,16 @@ func move_body(pos: Vector2, motion: Vector2, size: Vector2, phantom: bool = fal
 	return {"position": p, "hit_x": hit_x, "hit_y": hit_y, "on_ground": on_ground}
 
 
-# ------------------------------------------------------------ ОБОРОНА (#31)
-# ADR-001 § 4.4: стальная стена, шлюз, решётка вентиляции, свет прожекторов.
+# ------------------------------------------------------------ ОБОРОНА (#31, #170)
+# Стальная стена и решётка вентиляции. Шлюз снят (ADR-005 § 4.1): тайлы
+# AIRLOCK остаются в enum, но не открываются и при загрузке становятся камнем.
 #   * Флаги тайлов — упакованные таблицы по id: _solid_tbl (стена для тел),
-#     _psolid_tbl (phantom_solid: стена для фантомов и A*, плюс шлюз в любом
-#     состоянии), _dig_tbl (dig: копатель роет — флаг dig в DB и твёрдость
-#     не выше BURROWER_DIG_MAX_HARD).
-#   * Шлюз — тайлы AIRLOCK/AIRLOCK_OPEN. Открыт, если игрок ближе
-#     AIRLOCK_OPEN_DIST_TILES и ни одного фантома ближе AIRLOCK_SAFE_DIST_TILES
-#     (и всегда, пока игрок стоит в проёме — иначе дверь его зажмёт; фантому
-#     открытый шлюз всё равно стена). Пересчёт раз в AIRLOCK_CHECK_PERIOD
-#     только по реестру airlocks.
+#     _psolid_tbl (phantom_solid: стена для фантомов и A*), _dig_tbl (dig:
+#     копатель роет — флаг dig в DB и твёрдость не выше BURROWER_DIG_MAX_HARD).
 #   * Решётка — тайл VENT_GRATE на клетке вентиляции; vents_sealed: клетка → HP.
 #     Threat не спавнит из запечатанных. Копатель рядом грызёт решётку:
 #     GRATE_HP за GRATE_BREAK_TIME секунд (damage_grate — для любого урона).
-#   * Свет машин — публичные add_light_source/remove_light_source (прожектор).
+#   * Свет машин — публичные add_light_source/remove_light_source.
 
 ## Выстрел турели (для FX/HUD, #34): откуда и куда. Имя не менять — на него
 ## подписаны сеть и сценарии. Цвет дуги — отдельный сигнал маяка (#167).
@@ -2192,69 +2188,29 @@ func _defense_on_set_tile(c: Vector2i, id: int) -> void:
 
 
 func _defense_tick(delta: float) -> void:
-	if not Net.is_authority():   # СЕТЬ (ADR-002): шлюзы и решётки — на хосте, тайлы приходят батчем
+	if not Net.is_authority():   # СЕТЬ (ADR-002): решётки — на хосте, тайлы приходят батчем
 		return
-	if airlocks.is_empty() and vents_sealed.is_empty():
+	if vents_sealed.is_empty():
 		_defense_t = 0.0
 		return
 	_defense_t += delta
-	if _defense_t < Balance.AIRLOCK_CHECK_PERIOD:
+	if _defense_t < 0.25:
 		return
 	var dt: float = _defense_t
 	_defense_t = 0.0
-	var ph: PackedVector2Array = PackedVector2Array()
 	var burrowers: PackedVector2Array = PackedVector2Array()
 	for p in get_tree().get_nodes_in_group("phantom"):
 		if not is_instance_valid(p) or not bool(p.get("alive")):
 			continue
-		ph.append(p.global_position)
 		if String(p.get("kind")) == "burrower":
 			burrowers.append(p.global_position)
-	if not airlocks.is_empty() and Game.players.size() > 1:   # СЕТЬ (ADR-002, MP-F): шлюз — любому герою
-		update_airlocks_heroes(net_hero_positions(), ph)
-	elif not airlocks.is_empty():
-		var pl = Game.player
-		var has_pl: bool = pl != null and is_instance_valid(pl) \
-				and not bool(pl.get("dead")) and not bool(pl.get("hiding"))
-		update_airlocks(pl.global_position if has_pl else Vector2.ZERO, has_pl, ph)
-	if not vents_sealed.is_empty() and not burrowers.is_empty():
+	if not burrowers.is_empty():
 		_gnaw_grates(burrowers, dt)
 
 
-## Пересчёт всех шлюзов по положению игрока и фантомов. Публичная — для замера.
-func update_airlocks(ppos: Vector2, has_player: bool, phantoms: PackedVector2Array) -> void:
-	var t0: int = Time.get_ticks_usec()
-	if _airlock_dirty:
-		_airlock_dirty = false
-		_airlock_cells = airlocks.keys()
-		_airlock_pos = PackedVector2Array()
-		_airlock_idx = PackedInt32Array()
-		for c in _airlock_cells:
-			_airlock_pos.append(cell_to_world(c))
-			_airlock_idx.append(c.y * W + c.x)
-	var open_r: float = Balance.AIRLOCK_OPEN_DIST_TILES * TILE
-	var open_r2: float = open_r * open_r
-	var safe_r: float = Balance.AIRLOCK_SAFE_DIST_TILES * TILE
-	var safe_r2: float = safe_r * safe_r
-	# Перекрытие тела героя (12×22) с клеткой: |dx| < 8 + 6, |dy| < 8 + 11.
-	var ox: float = TILE * 0.5 + 6.0
-	var oy: float = TILE * 0.5 + 11.0
-	var np: int = phantoms.size()
-	for i in _airlock_pos.size():
-		var cp: Vector2 = _airlock_pos[i]
-		var want: bool = false
-		if has_player:
-			if absf(cp.x - ppos.x) < ox and absf(cp.y - ppos.y) < oy:
-				want = true   # игрок в проёме — не зажимаем
-			elif cp.distance_squared_to(ppos) <= open_r2:
-				want = true
-				for k in np:
-					if cp.distance_squared_to(phantoms[k]) < safe_r2:
-						want = false
-						break
-		if tiles[_airlock_idx[i]] != (IDs.T.AIRLOCK_OPEN if want else IDs.T.AIRLOCK):
-			_set_airlock(_airlock_cells[i], want)
-	airlock_tick_us = Time.get_ticks_usec() - t0
+## Шлюз снят (#170). Сигнатуры оставлены: сценарии и сеть вызывают, ничего не открывают.
+func update_airlocks(_ppos: Vector2, _has_player: bool, _phantoms: PackedVector2Array) -> void:
+	airlock_tick_us = 0
 
 
 ## Открыть/закрыть шлюз: только тайл и картинка. A* не трогаем — для фантомов
@@ -3173,42 +3129,6 @@ func net_hero_positions() -> PackedVector2Array:
 	return out
 
 
-## Пересчёт всех шлюзов по нескольким героям (публичная — для сценариев).
-func update_airlocks_heroes(heroes: PackedVector2Array, phantoms: PackedVector2Array) -> void:
-	if heroes.size() <= 1:
-		update_airlocks(heroes[0] if heroes.size() == 1 else Vector2.ZERO, heroes.size() == 1, phantoms)
-		return
-	var t0: int = Time.get_ticks_usec()
-	if _airlock_dirty:
-		_airlock_dirty = false
-		_airlock_cells = airlocks.keys()
-		_airlock_pos = PackedVector2Array()
-		_airlock_idx = PackedInt32Array()
-		for c in _airlock_cells:
-			_airlock_pos.append(cell_to_world(c))
-			_airlock_idx.append(c.y * W + c.x)
-	var open_r: float = Balance.AIRLOCK_OPEN_DIST_TILES * TILE
-	var open_r2: float = open_r * open_r
-	var safe_r: float = Balance.AIRLOCK_SAFE_DIST_TILES * TILE
-	var safe_r2: float = safe_r * safe_r
-	var ox: float = TILE * 0.5 + 6.0
-	var oy: float = TILE * 0.5 + 11.0
-	for i in _airlock_pos.size():
-		var cp: Vector2 = _airlock_pos[i]
-		var want: bool = false
-		var near: bool = false
-		for hp in heroes:
-			if absf(cp.x - hp.x) < ox and absf(cp.y - hp.y) < oy:
-				want = true   # герой в проёме — не зажимаем
-				break
-			if cp.distance_squared_to(hp) <= open_r2:
-				near = true
-		if not want and near:
-			want = true
-			for ph in phantoms:
-				if cp.distance_squared_to(ph) < safe_r2:
-					want = false
-					break
-		if tiles[_airlock_idx[i]] != (IDs.T.AIRLOCK_OPEN if want else IDs.T.AIRLOCK):
-			_set_airlock(_airlock_cells[i], want)
-	airlock_tick_us = Time.get_ticks_usec() - t0
+## Шлюз снят (#170). Несколько героев шлюз больше не открывают.
+func update_airlocks_heroes(_heroes: PackedVector2Array, _phantoms: PackedVector2Array) -> void:
+	airlock_tick_us = 0

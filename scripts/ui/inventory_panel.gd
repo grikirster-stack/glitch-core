@@ -43,17 +43,12 @@ const TOAST_MS: int = 4500
 ## Ширина всплывающей подсказки.
 const TIP_W: float = 360.0
 
-const TABS: Array = ["Ручной крафт", "Плавильня", "Верстак"]
-const STATIONS: Array = ["hand", "smelter", "assembler"]
-## Вид машины станции и падежи её названия для фраз подсказок.
+## Одна вкладка (#170). «Исследования» убирает D2 — её уже нет.
+const TABS: Array = ["Крафт"]
+const STATIONS: Array = ["hand"]
+## Руками. Станков больше нет: словарь оставлен, чтобы фразы не падали на пустом ключе.
 const STATION_INFO: Dictionary = {
 	"hand": {"kind": "", "name": "руками"},
-	"smelter": {"kind": "Smelter", "name": "плавильня", "Name": "Плавильня", "to": "к плавильне",
-			"in": "в плавильню", "need": "Нужна плавильня рядом", "it": "Она", "self": "сама",
-			"made": "Плавильни нет: сделай её в «Ручном крафте» и поставь (ПКМ)."},
-	"assembler": {"kind": "Assembler", "name": "верстак", "Name": "Верстак", "to": "к верстаку",
-			"in": "в верстак", "need": "Нужен верстак рядом", "it": "Он", "self": "сам",
-			"made": "Верстака нет: сделай его в «Ручном крафте» и поставь (ПКМ)."},
 }
 
 const C_TITLE: Color = Color(0.85, 0.93, 1.0)
@@ -76,7 +71,7 @@ var held: ItemStack:
 		return _hand[0]
 	set(v):
 		_hand[0] = v
-var station_tab: int = 0            ## 0 — ручной, 1 — плавильня, 2 — верстак
+var station_tab: int = 0            ## одна вкладка «Крафт» (#170)
 var scroll: int = 0
 ## Последняя позиция мыши в координатах панели (из _gui_input).
 var mouse_pos: Vector2 = Vector2(-1, -1)
@@ -431,12 +426,6 @@ func _draw() -> void:
 		draw_rect(r, Color(0.4, 0.8, 1.0, 0.9) if active else Color(1, 1, 1, 0.2), false, 1.0)
 		_text(r.position + Vector2(10, 20), String(TABS[i]), r.size.x - 30, UI.FONT["small"],
 				Color(1, 1, 1) if active else Color(0.7, 0.75, 0.85), HORIZONTAL_ALIGNMENT_LEFT, r)
-		var dot: Vector2 = r.position + Vector2(r.size.x - 12, r.size.y * 0.5)
-		# Станок рядом — зелёный огонёк на его вкладке.
-		if i == 1 or i == 2:
-			if _near.get(String(STATIONS[i])) != null:
-				draw_circle(dot, 4.0, C_OK)
-
 	if not _shot_list_only:
 		_draw_chest(origin)
 		_draw_inventory(origin)
@@ -515,8 +504,7 @@ func _draw_inventory(origin: Vector2) -> void:
 func _draw_recipes(rx: float, origin: Vector2) -> void:
 	_tag = "recipes"
 	var station: String = String(STATIONS[station_tab])
-	var head: String = "РЕЦЕПТЫ — руками, сразу в инвентарь" if station == "hand" \
-			else "РЕЦЕПТЫ — %s" % String(STATION_INFO[station]["name"])
+	var head: String = "РЕЦЕПТЫ — руками, сразу в инвентарь"
 	_text(Vector2(rx, origin.y + 90), head, 424, UI.FONT["small"], C_HEAD)
 	var st: Array = _station_line(station)
 	_text(Vector2(rx, origin.y + 108), String(st[0]), 424, UI.FONT["small"], st[1])
@@ -536,12 +524,8 @@ func _draw_recipes(rx: float, origin: Vector2) -> void:
 				424, UI.FONT["small"], C_DIM)
 	if _shot_list_only:
 		return
-	# Пояснение вкладки: как работает этот вид крафта.
-	var info: String = "Руками сразу и без станка. Слиток руками — 2 руды, в плавильне — 1."
-	if station != "hand":
-		var si: Dictionary = STATION_INFO[station]
-		info = "%s работает %s: клик загружает сырьё %s, готовое выпадет рядом со станком или уедет по ленте. Нужно питание (ТЭЦ или солнечная панель рядом)." \
-				% [String(si["Name"]), String(si["self"]), String(si["in"])]
+	# Пояснение вкладки: станков больше нет (#170).
+	var info: String = "Руками сразу и без станка. Слиток — две руды."
 	var ly: float = y + 18
 	for line in _wrap(info, 424, UI.FONT["small"], 2):
 		_text(Vector2(rx, ly), line, 424, UI.FONT["small"], Color(C_DIM, 0.85))
@@ -549,18 +533,8 @@ func _draw_recipes(rx: float, origin: Vector2) -> void:
 
 
 ## Строка состояния под заголовком рецептов: [текст, цвет].
-func _station_line(station: String) -> Array:
-	if station == "hand":
-		return ["Наведи — что нужно. Клик — сделать.", C_DIM]
-	var si: Dictionary = STATION_INFO[station]
-	var near: MachineBase = _near.get(station)
-	if near != null:
-		if not near.powered:
-			return ["%s рядом, но без питания — загрузить можно, плавить не начнёт." % String(si["Name"]), C_WARN]
-		return ["%s рядом и под питанием — клик загружает сырьё." % String(si["Name"]), C_OK]
-	if bool(_built.get(station, false)):
-		return ["Подойди %s ближе (≤ 5 клеток) — иначе клик не сработает." % String(si["to"]), C_WARN]
-	return [String(si["made"]), C_WARN]
+func _station_line(_station: String) -> Array:
+	return ["Наведи — что нужно. Клик — сделать.", C_DIM]
 
 
 func _draw_bottom(origin: Vector2) -> void:
@@ -625,23 +599,10 @@ func _have(id: int) -> int:
 	return int(_counts.get(id, 0))
 
 
-## Один проход по машинам: какие станки рядом и какие вообще построены.
+## Станков нет (#170): рядом ничего не ищем.
 func _scan_stations() -> void:
-	_near = {"smelter": null, "assembler": null}
-	_built = {"smelter": false, "assembler": false}
-	if player == null:
-		return
-	for m in World.machines.values():
-		var st: String = ""
-		if m.kind == "Smelter":
-			st = "smelter"
-		elif m.kind == "Assembler":
-			st = "assembler"
-		else:
-			continue
-		_built[st] = true
-		if _near[st] == null and m.global_position.distance_to(player.global_position) < STATION_REACH:
-			_near[st] = m
+	_near = {}
+	_built = {}
 
 
 func _draw_slot(r: Rect2, stack: ItemStack, hotbar: bool) -> void:
@@ -797,10 +758,7 @@ func _recipe_tooltip(rec: Dictionary) -> Array:
 	if String(rec["name"]) != DB.item_name(out_id):
 		res = "%s → %s" % [String(rec["name"]), res]
 	out.append(_line(res, C_TEXT, out_id))
-	if station == "hand":
-		out.append(_line("Станция: руками · сразу", C_DIM))
-	else:
-		out.append(_line("Станция: %s · ≈ %.1f с в станке" % [String(STATION_INFO[station]["name"]), float(rec["time"])], C_DIM))
+	out.append(_line("Станция: руками · сразу", C_DIM))
 	for id in rec["in"].keys():
 		var need: int = int(rec["in"][id])
 		var have: int = _have(id)
@@ -811,13 +769,7 @@ func _recipe_tooltip(rec: Dictionary) -> Array:
 	for r in reasons:
 		out.append(_line(String(r), C_WARN))
 	if reasons.is_empty():
-		if station == "hand":
-			out.append(_line("Клик — сделать: результат сразу в инвентаре.", C_OK))
-		else:
-			out.append(_line("Клик — загрузить сырьё %s; результат выпадет рядом со станком." % String(STATION_INFO[station]["in"]), C_OK))
-			var near: MachineBase = _near.get(station)
-			if near != null and not near.powered:
-				out.append(_line("Станок без питания: поставь рядом ТЭЦ или солнечную панель.", C_WARN))
+		out.append(_line("Клик — сделать: результат сразу в инвентаре.", C_OK))
 	return out
 
 
@@ -898,13 +850,8 @@ func _recipe_problems(rec: Dictionary) -> Array:
 	return out
 
 
-func _station_text(station: String) -> String:
-	var si: Dictionary = STATION_INFO[station]
-	if bool(_built.get(station, false)):
-		return "Подойди %s ближе (≤ 5 клеток)." % String(si["to"])
-	if station == "smelter":
-		return "%s (≤ 5 клеток): сделай её во вкладке «Ручной крафт» и поставь (ПКМ)." % String(si["need"])
-	return "%s (≤ 5 клеток): сделай его во вкладке «Ручной крафт» и поставь (ПКМ)." % String(si["need"])
+func _station_text(_station: String) -> String:
+	return "Крафт только руками."
 
 
 ## Чего не хватает: ["Медная руда (ещё 1)", …].
@@ -925,7 +872,7 @@ func _source_of(id: int) -> String:
 		for r in DB.recipes:
 			if int(r["out"]) != id:
 				continue
-			var p: String = String(STATION_INFO[String(r["station"])]["name"])
+			var p: String = "руками"
 			if not parts.has(p):
 				parts.append(p)
 		_source[id] = ", ".join(parts) if not parts.is_empty() else "добыча и тайники руин"

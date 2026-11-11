@@ -203,8 +203,7 @@ func _input(event: InputEvent) -> void:
 		elif k.keycode == KEY_ESCAPE and pause.can_pause():   # окон нет — пауза (#119)
 			pause.open()
 			get_viewport().set_input_as_handled()
-		elif k.keycode == KEY_P and world_fx:
-			world_fx.show_power = not world_fx.show_power
+		# P больше не показывает радиус питания (#170).
 		elif k.keycode == KEY_F5:
 			quick_save()
 			get_viewport().set_input_as_handled()

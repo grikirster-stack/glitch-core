@@ -175,7 +175,7 @@ func _black_box() -> void:
 			"кристаллов %d → %d" % [c0, player.inv.count_of(IDs.I.CRYSTAL)])
 
 
-## Шлюз открывается товарищу (свой герой хоста далеко), уходит — закрывается.
+## Шлюз снят (#170): тайл остаётся закрытым и у героя рядом, и когда тот ушёл.
 func _airlock() -> void:
 	var p0: Player = hero_of(0)
 	if p0 == null:
@@ -184,20 +184,19 @@ func _airlock() -> void:
 	var cell: Vector2i = Vector2i(-1, -1)
 	for off in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(1, -1), Vector2i(-1, -1)]:
 		var c: Vector2i = hc + off
-		if World.get_tile_v(c) == IDs.T.AIR and World.cell_to_world(c).distance_to(p0.global_position) \
-				<= Balance.AIRLOCK_OPEN_DIST_TILES * World.TILE:
+		if World.get_tile_v(c) == IDs.T.AIR:
 			cell = c
 			break
-	ok("клетка для шлюза рядом с клиентом 0", cell.x >= 0, str(cell))
+	ok("клетка рядом с клиентом 0", cell.x >= 0, str(cell))
 	if cell.x < 0:
 		return
 	World.set_tile(cell.x, cell.y, IDs.T.AIRLOCK)
 	await wait(0.4)
-	ok("шлюз открылся товарищу (хост далеко)", World.get_tile_v(cell) == IDs.T.AIRLOCK_OPEN
+	ok("шлюз не открывается товарищу", World.get_tile_v(cell) == IDs.T.AIRLOCK
 			and player.global_position.distance_to(p0.global_position) > 200.0, DB.tile_name(World.get_tile_v(cell)))
 	await teleport_proxy(p0, surface_stand(hc.x - 12))
 	await wait(0.4)
-	ok("товарищ ушёл — шлюз закрылся", World.get_tile_v(cell) == IDs.T.AIRLOCK)
+	ok("товарищ ушёл — шлюз так и закрыт", World.get_tile_v(cell) == IDs.T.AIRLOCK)
 	World.set_tile(cell.x, cell.y, IDs.T.AIR)
 
 

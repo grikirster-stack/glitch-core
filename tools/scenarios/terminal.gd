@@ -1,7 +1,6 @@
 extends ScenarioBase
-## Терминал без питания (ADR-001 § 4.6, #29): подойти к терминалу базы,
-## удерживать E → подсказка «нет питания», прогресс не растёт, задание
-## не засчитано, глава журнала не прочитана. С питанием — сценарий terminal_powered.
+## Терминал без ТЭЦ (ADR-005 § 7, #170): подойти к терминалу базы и удерживать E.
+## Питания больше нет — задание засчитывается, глава журнала прочитана.
 
 var _hints: Array = []
 
@@ -14,7 +13,7 @@ func run() -> void:
 		finish()
 		return
 	var spot: Vector2 = World.cell_to_world(t)
-	ok("терминал без питания", not Game.is_powered(spot))
+	ok("терминал читается без ТЭЦ", Game.is_powered(spot))
 	if not await stand_at_terminal(t):
 		finish()
 		return
@@ -23,20 +22,19 @@ func run() -> void:
 	var done_before: int = Game.tasks_done
 	var bp_before: int = Game.blueprints.size()
 	hold(KEY_E)
-	await wait(3.0)
-	ok("прогресс задания не растёт", player.task_progress <= 0.0, "%.2f" % player.task_progress)
+	var done: bool = await wait_until(func() -> bool: return Game.tasks_done > done_before, 4.0)
 	release(KEY_E)
 	Game.notification.disconnect(_on_hint)
 	var no_power: int = 0
 	for h in _hints:
 		if String(h).contains("нет питания"):
 			no_power += 1
-	ok("подсказка «нет питания»", no_power > 0, str(_hints))
-	ok("подсказка одна на нажатие", no_power == 1, "показана %d раз" % no_power)
-	ok("задание не засчитано", Game.tasks_done == done_before, "%d → %d" % [done_before, Game.tasks_done])
-	ok("чертёж не выдан", Game.blueprints.size() == bp_before, str(Game.blueprints))
-	ok("глава не прочитана", not Tech.is_chapter_read(0))
-	ok("терминал на месте", World.get_tile_v(t) == IDs.T.TERMINAL and World.terminals.has(t))
+	ok("подсказки «нет питания» нет", no_power == 0, str(_hints))
+	ok("задание засчитано без генератора", done and Game.tasks_done == done_before + 1,
+			"%d → %d" % [done_before, Game.tasks_done])
+	ok("чертёж выдан", Game.blueprints.size() == bp_before + 1, str(Game.blueprints))
+	ok("глава прочитана", Tech.is_chapter_read(0))
+	ok("терминал отработал", not World.terminals.has(t))
 	finish()
 
 

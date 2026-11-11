@@ -10,15 +10,15 @@ func run() -> void:
 	await wait(0.4)
 	var pc: Vector2i = World.world_to_cell(player.global_position)
 	var cell: Vector2i = Vector2i(pc.x + 2, floor_y - 1)
-	ok("ТЭЦ поставлена", MachineBase.place_machine("CoalGen", cell), str(cell))
-	var gen: CoalGen = World.machines.get(cell)
+	ok("горелка поставлена", MachineBase.place_machine("Burner", cell), str(cell))
+	var gen = World.machines.get(cell)
 	if gen == null:
 		finish()
 		return
 	var d: float = gen.global_position.distance_to(player.global_position)
-	ok("герой у ТЭЦ", d < 40.0, "%.0f px" % d)
+	ok("герой у горелки", d < 40.0, "%.0f px" % d)
 	gen.take_damage(50.0)
-	ok("ТЭЦ повреждена", gen.hp < gen.max_hp, "hp %.0f/%.0f" % [gen.hp, gen.max_hp])
+	ok("горелка повреждена", gen.hp < gen.max_hp, "hp %.0f/%.0f" % [gen.hp, gen.max_hp])
 
 	player.inv.remove_id(IDs.I.SCRAP, player.inv.count_of(IDs.I.SCRAP))
 	player.inv.slots[4] = ItemStack.new(IDs.I.SCRAP, 5)

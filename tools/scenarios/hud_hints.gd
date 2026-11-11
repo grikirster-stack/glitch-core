@@ -20,9 +20,9 @@ func run() -> void:
 	var hud: HUD = UI.hud
 	var gen_cell: Vector2i = Vector2i(bx + 9, base - 1)
 	var chest_cell: Vector2i = Vector2i(bx + 14, base - 1)
-	var placed: bool = MachineBase.place_machine("CoalGen", gen_cell) \
+	var placed: bool = MachineBase.place_machine("Burner", gen_cell) \
 			and MachineBase.place_machine("Chest", chest_cell)
-	ok("ТЭЦ и сундук поставлены", placed)
+	ok("горелка и сундук поставлены", placed)
 	# Большая фабрика вдали: подсказки не должны от неё зависеть.
 	var far: int = 0
 	for i in 400:
@@ -30,7 +30,7 @@ func run() -> void:
 			break
 		var c: Vector2i = Vector2i(20 + i % 40, 4 + i / 40)
 		World.set_tile(c.x, c.y, IDs.T.AIR)
-		if MachineBase.place_machine("Chest" if i % 2 == 0 else "CoalGen", c):
+		if MachineBase.place_machine("Chest" if i % 2 == 0 else "Burner", c):
 			far += 1
 	ok("вдали поставлено 200 построек", far == 200, "%d" % far)
 	if not placed:
@@ -45,7 +45,7 @@ func run() -> void:
 	var fr0: int = hud.stat_frames
 	await wait(0.3)
 	await wait_until(func() -> bool: return hud.stat_frames >= fr0 + 3, 3.0)
-	ok("вдали от построек подсказки ТЭЦ/сундука нет", hud.hint_text == _want(gen, chest),
+	ok("вдали от построек подсказки горелки/сундука нет", hud.hint_text == _want(gen, chest),
 			"«%s»" % hud.hint_text)
 
 	# Туда: вправо до сундука.
@@ -62,17 +62,17 @@ func run() -> void:
 	await wait(0.1)
 
 	var seen: Dictionary = stats["seen"]
-	var hint_gen: String = hud.generator_hint(gen)
-	ok("подсказка ТЭЦ появлялась у ТЭЦ", seen.has(hint_gen), "«%s»" % hint_gen)
+	var hint_gen: String = hud.burner_hint(gen)
+	ok("подсказка горелки появлялась у горелки", seen.has(hint_gen), "«%s»" % hint_gen)
 	ok("подсказка сундука появлялась у сундука", seen.has(HINT_CHEST))
 	ok("подсказка появляется и пропадает сразу", int(stats["max_lag"]) <= MAX_LAG_FRAMES,
 			"наибольшее отставание %d кадр(а)" % int(stats["max_lag"]))
 	# ADR-003 V6: рамка интерактива — вокруг ТЭЦ/сундука, пока горит их подсказка,
 	# и нет рамки, когда подсказки нет.
-	ok("рамка интерактива — вокруг ТЭЦ/сундука и только при подсказке",
+	ok("рамка интерактива — вокруг горелки/сундука и только при подсказке",
 			int(stats["mark_ok"]) > 0 and int(stats["mark_bad"]) == 0,
 			"верно %d кадров, неверно %d" % [int(stats["mark_ok"]), int(stats["mark_bad"])])
-	ok("отошёл — подсказки ТЭЦ/сундука нет", hud.hint_text == _want(gen, chest)
+	ok("отошёл — подсказки горелки/сундука нет", hud.hint_text == _want(gen, chest)
 			and hud.hint_text != hint_gen and hud.hint_text != HINT_CHEST, "«%s»" % hud.hint_text)
 	finish()
 

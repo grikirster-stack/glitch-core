@@ -1,18 +1,16 @@
 extends ScenarioBase
-## Приоритет E (#116): сундук рядом с терминалом без питания открывается по E.
+## Приоритет E (#116, #170): сундук рядом с терминалом открывается по E.
 ##
 ## Регресс: player._do_interact перебирал объекты жёстким порядком «терминал
-## раньше сундука», и терминал руины без питания в ~37 px от тайника забирал E —
+## раньше сундука», и терминал руины в ~37 px от тайника забирал E —
 ## тайник было не открыть (CI main на сиде 12345, inventory_transfer). Теперь цель
 ## E одна — Player.interact_target(): объект под курсором (если дотягиваемся),
-## иначе ближайший (при равенстве терминал без питания уступает). Что у самого
-## терминала E достаётся терминалу, проверяет chest_vs_terminal.
+## иначе ближайший. Питания больше нет: терминал читается без ТЭЦ.
 ##
-## Проверки: сундук через клетку от терминала базы без питания, герой между ними
-## ближе к сундуку — цель E сундук, подсказка и рамка HUD на нём, E открывает его
-## без «нет питания»; курсор на терминале — цель
-## он, подсказка «нет питания» (рамки нет: без питания E не работает, V6), E даёт
-## «нет питания» и сундук не открывает; курсор на сундуке — снова сундук.
+## Проверки: сундук через клетку от терминала базы, герой между ними
+## ближе к сундуку — цель E сундук, подсказка и рамка HUD на нём, E открывает его;
+## курсор на терминале — цель он, подсказка «выполнить задание», E начинает
+## отсчёт и сундук не открывает; курсор на сундуке — снова сундук.
 
 var _notices: Array = []
 
@@ -30,7 +28,7 @@ func run() -> void:
 	if t.x < 0:
 		finish()
 		return
-	ok("терминал базы без питания", not Game.is_powered(World.cell_to_world(t)))
+	ok("терминал базы читается без ТЭЦ", Game.is_powered(World.cell_to_world(t)))
 
 	# Слева от терминала у базы пусто: герой — в соседней клетке, сундук — через одну.
 	var stand: Vector2i = t + Vector2i(-1, 0)
@@ -61,7 +59,7 @@ func run() -> void:
 			"до терминала %.0f px, до сундука %.0f px" % [td, cd])
 
 	var tg: Dictionary = player.interact_target()
-	ok("цель E — сундук, а не терминал без питания", tg.get("kind", "") == Player.ET_CHEST
+	ok("цель E — сундук, а не терминал", tg.get("kind", "") == Player.ET_CHEST
 			and tg.get("node") == ch, str(tg))
 	ok("подсказка HUD — «открыть сундук»", hud.hint_text == HUD.HINT_CHEST, "«%s»" % hud.hint_text)
 	ok("рамка HUD — вокруг сундука", _mark_on(hud, ch.global_position), str(hud.mark_rect))
@@ -71,28 +69,25 @@ func run() -> void:
 	var opened: bool = await wait_until(func() -> bool: return UI.panel.visible and UI.panel.chest == ch, 2.0)
 	release(KEY_E)
 	ok("сундук рядом с терминалом открыт по E", opened)
-	ok("терминал не перехватил E", _no_power_notes() == 0, str(_notices))
+	ok("терминал не перехватил E", _task_notes() == 0, str(_notices))
 	if UI.panel.visible:
 		UI.panel.close()
 	await wait(0.2)
 
-	# Курсор на терминале: цель — он, подсказка «нет питания».
+	# Курсор на терминале: цель — он, подсказка задания. Питание не нужно (#170).
 	aim(World.cell_to_world(t))
 	await wait(0.4)
 	tg = player.interact_target()
-	ok("курсор на терминале — цель E терминал без питания",
-			tg.get("kind", "") == Player.ET_TERMINAL_OFF and tg.get("cell", Vector2i(-1, -1)) == t, str(tg))
-	ok("подсказка HUD — «нет питания»", hud.hint_text == HUD.HINT_TERMINAL_NO_POWER, "«%s»" % hud.hint_text)
-	ok("рамки нет: без питания E не работает (и не на сундуке)", hud.mark_rect.size == Vector2i.ZERO,
-			str(hud.mark_rect))
+	ok("курсор на терминале — цель E терминал",
+			tg.get("kind", "") == Player.ET_TERMINAL and tg.get("cell", Vector2i(-1, -1)) == t, str(tg))
+	ok("подсказка HUD — выполнить задание", hud.hint_text == HUD.HINT_TERMINAL, "«%s»" % hud.hint_text)
 	_notices.clear()
 	hold(KEY_E)
-	await wait(0.3)
+	await wait(0.4)
 	release(KEY_E)
 	await wait(0.1)
-	ok("E по терминалу — «нет питания»", _no_power_notes() == 1, str(_notices))
+	ok("E по терминалу начинает отсчёт", player.task_progress > 0.0, "%.2f" % player.task_progress)
 	ok("сундук при этом не открылся", not UI.panel.visible)
-	ok("отсчёт задания не идёт", player.task_progress <= 0.0, "%.2f" % player.task_progress)
 
 	# Курсор на сундуке — снова сундук (цель под курсором главнее).
 	aim(ch.global_position)
@@ -119,10 +114,10 @@ func _empty_slot() -> int:
 	return 9
 
 
-func _no_power_notes() -> int:
+func _task_notes() -> int:
 	var n: int = 0
 	for s in _notices:
-		if String(s).contains("нет питания"):
+		if String(s).contains("Терминал"):
 			n += 1
 	return n
 

@@ -108,7 +108,6 @@ func _ready() -> void:
 	Game.objective_changed.connect(_mark_global.unbind(1))
 	Game.state_changed.connect(_mark_global.unbind(1))
 	Game.task_completed.connect(_mark_global.unbind(2))
-	Game.brownout_changed.connect(_mark_global.unbind(1))
 	# Сессия могла начаться раньше, чем узел вошёл в дерево.
 	if Net.is_online() and Net.session.has("mode"):
 		_on_session_started()

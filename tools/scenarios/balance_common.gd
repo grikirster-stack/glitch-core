@@ -188,18 +188,19 @@ func clear_phantoms() -> void:
 
 var _lost: Array = []
 
-## «Обычная» база § 4.5 у релея: 2 ТЭЦ, 2 бура, плавильня, сборщик (все под
-## питанием — добыча для роя). defended — ещё 2 турели и стальная стена по бокам.
-## Возвращает {ok, machines, turrets}.
+## База у релея без фабрики (#170): две горящие горелки и сундук — добыча для роя.
+## defended — ещё 2 красных маяка (горелка R + зеркало) и стальная стена по бокам.
+## Возвращает {ok, machines, turrets} — turrets здесь число красных маяков.
 func build_base(defended: bool) -> Dictionary:
 	var bx: int = World.beacon_cell.x
 	var row: int = World.beacon_cell.y
 	stand_in_corridor(0)
-	var plan: Array = [["CoalGen", 5], ["Drill", 7], ["Drill", 8], ["Smelter", 10],
-			["Assembler", 12], ["CoalGen", 14]]
+	var plan: Array = [["Burner", 5], ["Chest", 7], ["Chest", 8], ["Burner", 10], ["Chest", 12]]
 	if defended:
-		plan.append(["Turret", 6])
-		plan.append(["Turret", 13])
+		plan.append(["Pharos", 6])
+		plan.append(["Mirror", 4])
+		plan.append(["Pharos", 13])
+		plan.append(["Mirror", 15])
 	var machines: Array = []
 	var turrets: int = 0
 	var all_ok: bool = true
@@ -211,22 +212,27 @@ func build_base(defended: bool) -> Dictionary:
 			continue
 		var m: MachineBase = World.machines[c]
 		machines.append(m)
-		if m.kind == "Turret":
+		if m.kind == "Pharos":
 			turrets += 1
-		if m is CoalGen:
-			(m as CoalGen).add_fuel(CoalGen.FUEL_MAX_UNITS)
+		if m.kind == "Burner" and m.has_method("add_fuel"):
+			m.add_fuel(IDs.I.COAL, 8)
 		m.destroyed.connect(func(mb: MachineBase) -> void: _lost.append(mb.kind))
 	if defended:
 		for x in [bx + 3, bx + 16]:
 			for y in range(row - 3, row + 1):
 				if World.get_tile(x, y) == IDs.T.AIR and not World.machines.has(Vector2i(x, y)):
 					World.set_tile(x, y, IDs.T.STEEL_WALL)
-	# Плавильне — руды: пусть база работает, а не стоит.
-	for m in machines:
-		if m is Smelter:
-			m.receive_item(IDs.I.IRON_ORE, 40)
-	Game.update_power_budget()
+		# Красный: уголь в горелке у зеркала. Цвет маяка задаёт луч, не предмет.
+		_light_red(bx + 5, row)
+		_light_red(bx + 14, row)
 	return {"ok": all_ok, "machines": machines, "turrets": turrets}
+
+
+## Горелка на угле светит красным в зеркало слева от маяка.
+func _light_red(burner_x: int, row: int) -> void:
+	var b = World.machines.get(Vector2i(burner_x, row))
+	if b != null and b.has_method("add_fuel"):
+		b.add_fuel(IDs.I.COAL, 4)
 
 
 ## Ночь day у базы: герой стоит у релей-ядра и базу не защищает (не бьёт, не
@@ -274,7 +280,7 @@ func siege_night(day: int, speed: float) -> Dictionary:
 		await get_tree().process_frame
 	var min_hp: float = INF
 	for m in World.machines.values():
-		if m is CoalGen and not m.power_active:
+		if m.kind == "Burner" and float(m.get("burn_left")) <= 0.0:
 			gens_out += 1
 		if m is MachineBase and is_instance_valid(m) and absi(m.cell.x - bx) < 20 \
 				and absi(m.cell.y - row) < 6:

@@ -1,7 +1,7 @@
 extends Node
-## Автотест игровой логики: копание, подбор, крафт, конвейер, питание, фантомы, релей.
-## Плюс секция «== Анимации ==» — общий код из tools/anim_test.gd (issue #6),
-## секция «== Индекс питания ==» — общий код из tools/power_test.gd (issue #11),
+## Автотест игровой логики: копание, подбор, крафт, сундук, горелка, фантомы, релей.
+## Плюс секция «== Анимации ==» — общий код из tools/anim_test.gd (issue #6).
+## Индекс питания снят вместе с ТЭЦ (#170).
 ## секции «== Данные ==» и «== Сутки ==» — согласованность IDs/DB/Balance и цикл смены (#24),
 ## секция «== Лор ==» — общий код из tools/lore_test.gd (issue #26),
 ## секция «== Звук ==» — общий код из tools/sfx_test.gd (issue #36),
@@ -19,8 +19,6 @@ extends Node
 ## Общий код проверок анимаций: тот же самый, что и в отдельном
 ## tools/anim_test.gd (issue #6). Дублирования нет — файл подключается один раз.
 const AnimTestScript = preload("res://tools/anim_test.gd")
-## Общий код регрессий индекса питания: tools/power_test.gd (issue #11).
-const PowerTestScript = preload("res://tools/power_test.gd")
 ## Общий код проверок генеративного лора: tools/lore_test.gd (issue #26).
 const LoreTestScript = preload("res://tools/lore_test.gd")
 ## Общий код проверок процедурного звука: tools/sfx_test.gd (issue #36).
@@ -67,6 +65,7 @@ var assembler_cell: Vector2i = Vector2i.ZERO
 var prod_chest2_cell: Vector2i = Vector2i.ZERO
 var water_hole: Vector2i = Vector2i(-1, -1)
 var water_src: Vector2i = Vector2i(-1, -1)
+var _anim_wait_ms: int = 0
 
 var _day0: int = 0            ## смена на момент проверки суток
 var _day_signals: int = 0     ## сколько раз пришёл Game.day_started
@@ -101,10 +100,6 @@ func _process(_delta: float) -> void:
 		3: _t_pickup()
 		4: _t_craft()
 		5: _t_machines()
-		6: _t_power()
-		7: _t_belt()
-		8: _t_production()
-		9: _t_production_result()
 		10: _t_phantom()
 		11: _t_day_noon()
 		12: _t_day_dawn()
@@ -114,8 +109,6 @@ func _process(_delta: float) -> void:
 		16: _t_water_check()
 		17: _t_anim_start()
 		18: _t_anim_wait()
-		19: _t_power_start()
-		20: _t_power_wait()
 		21: _t_lore_start()
 		22: _t_lore_wait()
 		23: _t_sfx_start()
@@ -286,9 +279,10 @@ func _t_craft() -> void:
 	_ok("названия предметов на месте",
 			DB.item_name(IDs.I.COPPER_ORE) == "Медная руда"
 			and DB.item_name(IDs.I.LAMP) == "Светокристалл"
-			and DB.item_name(IDs.I.DRILL) == "Буровая станция")
+			and DB.item_name(IDs.I.BURNER) == "Горелка")
 	_ok("стак руды больше 1", DB.item_max_stack(IDs.I.COPPER_ORE) > 1)
-	_ok("буровая ставится", DB.item_place(IDs.I.DRILL) == "machine:Drill")
+	_ok("бур снят, горелка ставится", DB.item_place(IDs.I.DRILL) == ""
+			and DB.item_place(IDs.I.BURNER) == "machine:Burner")
 	var ore_before: int = player.inv.count_of(IDs.I.COPPER_ORE)
 	player.inv.add(IDs.I.COPPER_ORE, 5)
 	var recipes: Array = DB.recipes_for("hand")
@@ -325,101 +319,22 @@ func _t_machines() -> void:
 	print("== Постройки ==")
 	var bx: int = World.beacon_cell.x
 	var base: int = World.beacon_cell.y
-	drill_cell = Vector2i(bx - 30, base + 6)
-	chest_cell = drill_cell + Vector2i(2, 0)
-	gen_cell = Vector2i(bx - 34, base + 6)
+	chest_cell = Vector2i(bx - 30, base + 6)
+	gen_cell = Vector2i(bx - 32, base + 6)
 	for i in 4:
 		for dy in range(-1, 2):
 			World.set_tile(gen_cell.x + i, gen_cell.y + dy, IDs.T.AIR)
 			World.set_tile(chest_cell.x + i, chest_cell.y + dy, IDs.T.AIR)
-			World.set_tile(drill_cell.x + i, drill_cell.y + dy, IDs.T.AIR)
-	_ok("буровая поставлена", MachineBase.place_machine("Drill", drill_cell))
-	_ok("конвейер поставлен", MachineBase.place_machine("Belt", drill_cell + Vector2i(1, 0)))
 	_ok("сундук поставлен", MachineBase.place_machine("Chest", chest_cell))
-	_ok("ТЭЦ поставлена", MachineBase.place_machine("CoalGen", gen_cell))
-	var b: Belt = World.belts.get(drill_cell + Vector2i(1, 0))
-	if b:
-		b.dir = 0
-	var gen: Node = World.machines.get(gen_cell)
-	if gen:
-		gen.add_fuel(3)
-	_next(6, 1.0)
-
-
-func _t_power() -> void:
-	print("== Питание ==")
-	var gen: Node = World.machines.get(gen_cell)
-	var drill: Node = World.machines.get(drill_cell)
-	_ok("ТЭЦ работает", gen != null and gen.power_active, "fuel=%.1f" % (gen.fuel if gen else 0.0))
-	_ok("зона питания покрывает буровую", Game.is_powered(World.cell_to_world(drill_cell)))
-	_ok("буровая под питанием", drill != null and drill.powered)
-	_next(7, 5.0)
-
-
-func _t_belt() -> void:
-	print("== Конвейер и добыча ==")
+	_ok("горелка поставлена", MachineBase.place_machine("Burner", gen_cell))
+	_ok("бур больше не ставится", not MachineBase.place_machine("Drill", chest_cell + Vector2i(2, 0)))
+	var burner = World.machines.get(gen_cell)
+	if burner != null and burner.has_method("add_fuel"):
+		burner.add_fuel(IDs.I.COAL, 2)
 	var chest: Chest = World.machines.get(chest_cell)
-	var found: int = -1
-	if chest:
-		for s in chest.slots:
-			if not s.is_empty():
-				found = s.id
-				break
-	_ok("предмет доехал до сундука", found >= 0, "id=%d" % found)
-	var drill: Node = World.machines.get(drill_cell)
-	_ok("бурова на месте", drill != null)
-	_next(8)
-
-
-func _t_production() -> void:
-	print("== Производство ==")
-	var bx: int = World.beacon_cell.x
-	var base: int = World.beacon_cell.y
-	smelter_cell = Vector2i(bx - 32, base + 6)
-	prod_chest_cell = Vector2i(bx - 31, base + 6)
-	assembler_cell = Vector2i(bx - 33, base + 8)
-	prod_chest2_cell = Vector2i(bx - 32, base + 8)
-	# Расчищаем площадку под цех.
-	for x in range(bx - 35, bx - 26):
-		for y in range(base + 4, base + 9):
-			World.set_tile(x, y, IDs.T.AIR)
-	_ok("плавильня поставлена", MachineBase.place_machine("Smelter", smelter_cell))
-	_ok("сундук цеха поставлен", MachineBase.place_machine("Chest", prod_chest_cell))
-	_ok("сборщик поставлен", MachineBase.place_machine("Assembler", assembler_cell))
-	_ok("сундук сборщика поставлен", MachineBase.place_machine("Chest", prod_chest2_cell))
-	var sm: Smelter = World.machines.get(smelter_cell)
-	var asm: Assembler = World.machines.get(assembler_cell)
-	if sm:
-		_ok("плавильня принимает руду", sm.input_accepts(IDs.I.COPPER_ORE))
-		_ok("руда загружена в плавильню", sm.receive_item(IDs.I.COPPER_ORE, 2) == 0)
-	if asm:
-		_ok("сборщик принимает пластину", asm.input_accepts(IDs.I.COPPER_PLATE))
-		_ok("пластина загружена", asm.receive_item(IDs.I.COPPER_PLATE, 1) == 0)
-		_ok("кристалл загружен", asm.receive_item(IDs.I.CRYSTAL, 2) == 0)
-	_next(9, 5.0)
-
-
-func _t_production_result() -> void:
-	print("== Результат производства ==")
-	var sm: Smelter = World.machines.get(smelter_cell)
-	var asm: Assembler = World.machines.get(assembler_cell)
-	_ok("плавильня под питанием", sm != null and sm.powered)
-	_ok("сборщик под питанием", asm != null and asm.powered)
-	var chest: Chest = World.machines.get(prod_chest_cell)
-	var ingots: int = 0
-	if chest:
-		for s in chest.slots:
-			if not s.is_empty() and s.id == IDs.I.COPPER_INGOT:
-				ingots += s.count
-	_ok("слиток доехал до сундука", ingots > 0, "слитков %d" % ingots)
-	var chest2: Chest = World.machines.get(prod_chest2_cell)
-	var circuits: int = 0
-	if chest2:
-		for s in chest2.slots:
-			if not s.is_empty() and s.id == IDs.I.CIRCUIT:
-				circuits += s.count
-	_ok("микросхема доехала до сундука", circuits > 0, "микросхем %d" % circuits)
-	_next(10)
+	var took: bool = chest != null and chest.receive_item(IDs.I.STONE, 3) == 0
+	_ok("сундук принял камень", took)
+	_next(10, 0.3)
 
 
 func _t_phantom() -> void:
@@ -475,7 +390,7 @@ func _check_data() -> void:
 			and not DB.recipe_unlocked({"out": IDs.I.PHAROS})
 			and not DB.recipe_unlocked({"out": IDs.I.STEEL_WALL}),
 			"выдан %s" % DB.item_name(first))
-	_ok("рецептов достаточно", DB.recipes.size() >= 30, "n=%d" % DB.recipes.size())
+	_ok("рецептов достаточно", DB.recipes.size() >= 12, "n=%d" % DB.recipes.size())
 	# Релей: только существующие предметы, количества положительные.
 	var bad_relay: bool = false
 	for id in DB.relay_req.keys():
@@ -590,8 +505,8 @@ func _t_day_noon() -> void:
 	var jump: float = _daylight_max_jump()
 	_ok("свет без скачков", jump < 0.2, "макс. скачок за сотую цикла %.3f" % jump)
 	_ok("солнце гаснет ровно к ночи",
-			_daylight_at(ns) <= Balance.SOLAR_MIN_DAYLIGHT + 0.001
-			and _daylight_at(ns - 0.02) > Balance.SOLAR_MIN_DAYLIGHT,
+			_daylight_at(ns) <= Balance.COLLECTOR_MIN_DAYLIGHT + 0.001
+			and _daylight_at(ns - 0.02) > Balance.COLLECTOR_MIN_DAYLIGHT,
 			"daylight(%.2f)=%.2f" % [ns, _daylight_at(ns)])
 	_ok("цикл суток 240 с", Game.DAY_LENGTH >= 240.0, "%.0f с" % Game.DAY_LENGTH)
 	# Полдень: смена меняться не должна. Регресс: раньше day_number = 1 + int(t * 2)
@@ -713,44 +628,31 @@ func _t_water_check() -> void:
 
 
 func _t_anim_start() -> void:
-	# Секция «== Анимации ==»: те же самые проверки, что и в tools/anim_test.gd.
-	# Общий код — дублирования нет.
+	# Секция «== Анимации ==»: те же проверки, что и в tools/anim_test.gd.
+	# Общий код — дублирования нет. Шаг 19 раньше звал power_test (#170 снят).
 	anim = AnimTestScript.Runner.new(self)
 	add_child(anim)
 	anim.start(scene)
+	_anim_wait_ms = Time.get_ticks_msec()
 	_next(18, 0.2)
 
 
 func _t_anim_wait() -> void:
 	if anim == null:
-		_next(19)
+		_next(21)
 		return
 	if anim.done:
 		checks += anim.checks
 		fails += anim.fails
 		anim.queue_free()
 		anim = null
-		_next(19, 0.2)
-
-
-func _t_power_start() -> void:
-	# Секция «== Индекс питания ==»: те же проверки, что и в tools/power_test.gd.
-	# Общий код — дублирования нет.
-	power = PowerTestScript.Runner.new(self)
-	add_child(power)
-	power.start(scene)
-	_next(20, 0.2)
-
-
-func _t_power_wait() -> void:
-	if power == null:
-		_next(21)
+		_next(21, 0.2)
 		return
-	if power.done:
-		checks += power.checks
-		fails += power.fails
-		power.queue_free()
-		power = null
+	# Анимации должны закончиться за секунды. Молчаливое ожидание вешало прогон.
+	if Time.get_ticks_msec() - _anim_wait_ms > 20000:
+		_ok("анимации завершились", false, "шаг %s" % str(anim.step))
+		anim.queue_free()
+		anim = null
 		_next(21, 0.2)
 
 
@@ -1181,16 +1083,16 @@ func _check_defense() -> void:
 	World.set_tile(c.x, c.y, t0)
 	_ok("реестры шлюзов и решёток следуют за set_tile", in_reg and sealed
 			and not World.airlocks.has(c) and not World.vents_sealed.has(c))
-	# Свет прожектора: публичный источник, light_at его видит, снятие — убирает.
+	# Свет машин: публичный источник, light_at его видит, снятие — убирает.
 	var p: Vector2 = World.cell_to_world(c)
-	var far: Vector2i = c + Vector2i(8, 0)
+	var far: Vector2i = c + Vector2i(4, 0)
 	var l0: float = World.light_at(far)
 	var n0: int = World.lights.size()
-	var h: Dictionary = World.add_light_source(p, Floodlight.light_radius(), Balance.FLOODLIGHT_POWER)
+	var h: Dictionary = World.add_light_source(p, 6.0 * World.TILE, 1.0)
 	var lit: float = World.light_at(far)
 	var near: bool = World.get_lights_near(Rect2(p, Vector2(1, 1))).has(h)
 	World.remove_light_source(h)
-	_ok("add/remove_light_source: свет ≈ 10 клеток, снимается без следа",
-			is_equal_approx(lit, l0 + Balance.FLOODLIGHT_POWER) and near and World.lights.size() == n0
+	_ok("add/remove_light_source: свет виден и снимается без следа",
+			lit > l0 and near and World.lights.size() == n0
 			and is_equal_approx(World.light_at(far), l0),
-			"свет в 8 клетках %.2f → %.2f, источников %d → %d" % [l0, lit, n0, World.lights.size()])
+			"свет в 4 клетках %.2f → %.2f, источников %d → %d" % [l0, lit, n0, World.lights.size()])

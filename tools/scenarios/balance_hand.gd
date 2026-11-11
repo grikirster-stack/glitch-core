@@ -1,11 +1,9 @@
 extends "res://tools/scenarios/balance_common.gd"
 ## Бот баланса «релей руками» (#33, ADR-001 § 2: руками ≥ 25 мин добычи).
 ##
-## 1. Бюджет: детали релея (Balance.RELAY_REQ) + станки, без которых деталь
-##    не сделать (сборщик, плавильня, ТЭЦ), раскладываются до сырья по ручным
-##    рецептам (2 руды → 1 слиток); что руками не делается (сталь, микросхемы,
-##    ячейки, антенна) — по рецепту станка, но его вход — снова руками.
-##    Минус стартовый набор, плюс уголь на работу станков.
+## 1. Бюджет: детали релея (Balance.RELAY_REQ). Фабрика снята (#170): пластины
+##    и антенна остаются требованием до F1, но рецептов станков больше нет —
+##    в добычу идёт то, что ещё раскладывается руками (стена, решётка, свет).
 ## 2. Замер: бот копает каждое сырьё через шов ввода — наводит «мышь» на тайл,
 ##    держит ЛКМ, ждёт, пока предмет долетит до него (магнит), — и засекает
 ##    игровые секунды на единицу. Берёт самый мягкий тайл, из которого это
@@ -32,14 +30,13 @@ func run() -> void:
 	# ---- 1. бюджет
 	var need: Dictionary = {}
 	var st_time: Dictionary = {}
-	var basket: Dictionary = Balance.RELAY_REQ.duplicate()
-	for m in [IDs.I.ASSEMBLER, IDs.I.SMELTER, IDs.I.COAL_GEN]:
-		basket[m] = int(basket.get(m, 0)) + 1
+	# Релей до F1 — пластины без рецепта. Считаем свет базы, который ещё крафтится.
+	var basket: Dictionary = {
+		IDs.I.BURNER: 1, IDs.I.PHAROS: 2, IDs.I.MIRROR: 2,
+		IDs.I.COLLECTOR: 1, IDs.I.STEEL_WALL: 8,
+	}
 	for id in basket.keys():
 		expand(int(id), int(basket[id]), ["hand"], need, [], st_time)
-	# Уголь на работу станков (сталь, микросхемы, ячейки, антенна — не руками).
-	var machine_secs: float = float(st_time.get("smelter", 0.0)) + float(st_time.get("assembler", 0.0))
-	need[IDs.I.COAL] = int(need.get(IDs.I.COAL, 0)) + int(ceil(machine_secs / Balance.COAL_BURN))
 	# Стартовый набор (как в ScenarioRunner._reset_world и в обычной игре).
 	# Медной руды в наборе нет (#171): слиток открывается первым подбором.
 	var kit: Dictionary = {}
@@ -48,8 +45,7 @@ func run() -> void:
 	for id in kit.keys():
 		need[id] = maxi(0, int(need.get(id, 0)) - int(kit[id]))
 	print("  [бюджет руками] %s" % items_str(need))
-	print("  [станки] плавильня %.0f с, сборщик %.0f с работы" % [
-			float(st_time.get("smelter", 0.0)), float(st_time.get("assembler", 0.0))])
+	print("  [свет] руками, станков нет (#170)")
 	ok("бюджет релея разложен до сырья", not need.is_empty())
 
 	# ---- 2. замер секунд на единицу
