@@ -5,7 +5,10 @@ class_name OreCensus
 ##
 ## Запуск:
 ##   godot --headless --path . -- --ore-census --seed=31337
+##   godot --headless --path . -- --ore-census --days=10 --seed=31337
 ## Флаг разбирает scripts/main.gd рядом с --map-dump: печатает после генерации мира и выходит.
+## --days=N — ещё N рассветов без разведки (World.regrow_ores): руда в тумане
+## возвращается к начальной переписи (ADR-005 § 6.4, #174).
 ##
 ## «Столбец бура» — 16 (бур) и 40 (глубинный) клеток под клеткой, на которую можно
 ## поставить бур: воздух, под ним твёрдое. Считаются все такие клетки мира (пещеры и
@@ -17,11 +20,42 @@ const ORES: Dictionary = {
 }
 
 
-static func dump(_args: PackedStringArray) -> void:
+static func dump(args: PackedStringArray) -> void:
+	var days: int = _arg_int(args, "--days=", 0)
 	print("== ПЕРЕПИСЬ РУДЫ · сид %d · мир %d×%d ==" % [World.world_seed, World.W, World.H])
 	_veins()
+	if days > 0:
+		_regrow(days)
 	_columns(16, "бур (16 вниз)")
 	_columns(40, "глубинный бур (40 вниз)")
+
+
+static func _arg_int(args: PackedStringArray, key: String, fallback: int) -> int:
+	for a in args:
+		if a.begins_with(key):
+			return int(a.substr(key.length()))
+	return fallback
+
+
+## N рассветов без разведки: туман не открывается, regrow_ores растит руду в камне.
+static func _regrow(days: int) -> void:
+	print("-- отрастание: %d рассветов без разведки (цель — начальная перепись ± 1 %%)" % days)
+	var names: Dictionary = ORES
+	var before: Dictionary = {}
+	for tid in World.REGROW_ORES:
+		before[tid] = World.ore_count(tid)
+		print("  день 0  %-9s %5d" % [names.get(tid, str(tid)), before[tid]])
+	var t0: int = Time.get_ticks_usec()
+	for d in range(1, days + 1):
+		World.regrow_ores(d)
+	var us: int = Time.get_ticks_usec() - t0
+	for tid in World.REGROW_ORES:
+		var initial: int = int(World.ore_initial.get(str(tid), 0))
+		var now: int = World.ore_count(tid)
+		var drift: float = 0.0 if initial == 0 else 100.0 * float(now - initial) / float(initial)
+		print("  день %-3d %-9s %5d  цель %5d  откл. %+.2f%%" % [days, names.get(tid, str(tid)),
+				now, initial, drift])
+	print("  рассветов %d за %.0f мс" % [days, float(us) / 1000.0])
 
 
 ## Жилы: связные области одного тайла по 4 соседям.

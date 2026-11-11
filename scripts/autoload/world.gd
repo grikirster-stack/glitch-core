@@ -352,6 +352,7 @@ func generate(p_seed: int) -> void:
 	var t_end: int = Time.get_ticks_usec()
 	spawn_point = Vector2(float((bx - 4) * TILE) + TILE * 0.5, float(surface[bx] * TILE) - 12.0)
 	_reset_explored()   # туман войны (#59): закрыто всё, кроме старта
+	_census_ores()      # бесконечная игра (#174): цель отрастания — эта перепись
 
 	gen_stats = {
 		"gen_ms": float(t_end - t_start) / 1000.0,
@@ -1439,6 +1440,117 @@ func set_tile_raw(x: int, y: int, id: int) -> void:
 	tiles[y * W + x] = id
 
 
+# ------------------------------------------------------------ ОТРАСТАНИЕ РУДЫ (#174, ADR-005 § 6.4)
+## Планета живая: каждый рассвет в неразведанной породе (explored == 0, глубже
+## ORE_REGROW_MIN_DEPTH) камень рядом с жилой становится той же рудой — пока клеток
+## не станет столько, сколько было после генерации (ore_initial). Хлам не растёт.
+## Выбор клеток детерминирован от world_seed + день: тот же сид и та же перепись —
+## те же клетки. На глазах у игрока ничего не прорастает.
+
+## Начальная перепись: id тайла руды → клеток после генерации. Хлам не входит.
+var ore_initial: Dictionary = {}
+## Сколько клеток руды приросло за последний рассвет (замер ore-census и сценарий).
+var ore_regrow_last: Dictionary = {}
+## Сколько рассветов отрастание уже отработало (load не вызывает его повторно).
+var ore_regrow_dawns: int = 0
+
+const REGROW_ORES: Array[int] = [IDs.T.COAL_ORE, IDs.T.COPPER_ORE, IDs.T.IRON_ORE, IDs.T.CRYSTAL_ORE]
+const _REGROW_DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+
+
+## Перепись руды по готовому миру. Зовётся в конце generate(); load_state её не трогает.
+func _census_ores() -> void:
+	ore_initial.clear()
+	ore_regrow_last.clear()
+	ore_regrow_dawns = 0
+	for tid in REGROW_ORES:
+		ore_initial[str(tid)] = 0
+	if tiles.size() != W * H:
+		return
+	for i in tiles.size():
+		var key: String = str(tiles[i])
+		if ore_initial.has(key):
+			ore_initial[key] = int(ore_initial[key]) + 1
+
+
+## Клеток руды tid сейчас.
+func ore_count(tid: int) -> int:
+	if tiles.size() != W * H:
+		return 0
+	return tiles.count(tid)
+
+
+## Рассвет: вернуть до 1 % начальной переписи каждой руды. Нет кандидатов — пропуск.
+## Возвращает, сколько клеток добавлено по каждой руде (id → n).
+func regrow_ores(day: int) -> Dictionary:
+	var added: Dictionary = {}
+	ore_regrow_last = added
+	if tiles.size() != W * H or explored.size() != W * H or surface.size() != W:
+		return added
+	if ore_initial.is_empty():
+		_census_ores()
+	ore_regrow_dawns += 1
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	rng.seed = int(world_seed) + day * 100003
+	for tid in REGROW_ORES:
+		var initial: int = int(ore_initial.get(str(tid), 0))
+		var have: int = ore_count(tid)
+		var want: int = ceili(Balance.ORE_REGROW_RATE * float(initial))
+		var deficit: int = initial - have
+		var n: int = mini(want, maxi(0, deficit))
+		added[tid] = 0
+		if n <= 0:
+			continue
+		var pool: Array[int] = _regrow_candidates(tid)
+		if pool.is_empty():
+			continue
+		_regrow_shuffle(pool, rng)
+		var take: int = mini(n, pool.size())
+		for k in take:
+			var idx: int = pool[k]
+			var x: int = idx % W
+			var y: int = int(idx / W)
+			# set_tile, не raw: клиенты получают клетку обычной синхронизацией тайлов.
+			set_tile(x, y, tid)
+		added[tid] = take
+	return added
+
+
+## Камень в тумане, глубже порога, соседний по 4 сторонам с этой рудой.
+func _regrow_candidates(tid: int) -> Array[int]:
+	var out: Array[int] = []
+	var min_d: int = Balance.ORE_REGROW_MIN_DEPTH
+	for y in range(H - 3):
+		var row: int = y * W
+		for x in range(W):
+			var idx: int = row + x
+			if tiles[idx] != IDs.T.STONE or explored[idx] != 0:
+				continue
+			if y - surface[x] <= min_d:
+				continue
+			var touch: bool = false
+			for d in _REGROW_DIRS:
+				var nx: int = x + d.x
+				var ny: int = y + d.y
+				if nx < 0 or ny < 0 or nx >= W or ny >= H:
+					continue
+				if tiles[ny * W + nx] == tid:
+					touch = true
+					break
+			if touch:
+				out.append(idx)
+	return out
+
+
+## Фишер–Йейтс от ГСЧ рассветa: тот же сид и день — тот же порядок.
+func _regrow_shuffle(pool: Array[int], rng: RandomNumberGenerator) -> void:
+	for i in range(pool.size() - 1, 0, -1):
+		var j: int = rng.randi_range(0, i)
+		var tmp: int = pool[i]
+		pool[i] = pool[j]
+		pool[j] = tmp
+
+
 ## Ставит тайл и обновляет визуализацию.
 func set_tile(x: int, y: int, id: int) -> void:
 	if x < 0 or x >= W or y < 0 or y >= H:
@@ -2445,6 +2557,9 @@ func save_state() -> Dictionary:
 		"vents_sealed": vents_sealed.duplicate(),
 		# Небесный тайник (#60): подходили ли к обломку, открыт ли сундук (обрывок выдан).
 		"sky": _sky_save(),
+		# Отрастание (#174): цель — перепись этого мира, а не пересчёт по уже изменённым тайлам.
+		"ore_initial": ore_initial.duplicate(),
+		"ore_regrow_dawns": ore_regrow_dawns,
 	}
 
 
@@ -2530,6 +2645,14 @@ func load_state(d: Dictionary) -> bool:
 	explore_cells = explored.count(1)
 	_explore_cell = Vector2i(-9999, -9999)
 	explored_reset.emit()
+	var oi: Dictionary = d.get("ore_initial", {})
+	if oi is Dictionary and not oi.is_empty():
+		ore_initial.clear()
+		for k in oi.keys():
+			ore_initial[str(k)] = int(oi[k])
+	elif ore_initial.is_empty():
+		_census_ores()
+	ore_regrow_dawns = int(d.get("ore_regrow_dawns", ore_regrow_dawns))
 	return true
 
 
