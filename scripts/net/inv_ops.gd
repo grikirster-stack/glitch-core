@@ -250,7 +250,7 @@ static func select(p: Player, i: int) -> void:
 
 # ------------------------------------------------------------------ КРАФТ
 
-## Станок рядом с героем (ближе STATION_REACH): kind — "Smelter", "Assembler".
+## Станок рядом с героем. Плавильни и верстака больше нет (#170) — всегда null.
 static func near_machine(p: Player, kind: String) -> MachineBase:
 	if p == null:
 		return null
@@ -272,9 +272,7 @@ static func craft_check(p: Player, rec: Dictionary) -> Dictionary:
 		return {"code": "locked", "near": null, "reason": why}
 	var near: MachineBase = null
 	if station != "hand":
-		near = near_machine(p, "Smelter" if station == "smelter" else "Assembler")
-		if near == null:
-			return {"code": "far", "near": null, "reason": "Станок далеко: подойди ближе (≤ 5 клеток)."}
+		return {"code": "far", "near": null, "reason": "Станков больше нет: крафт только руками."}
 	for id in rec["in"].keys():
 		if p.inv.count_of(id) < int(rec["in"][id]):
 			return {"code": "missing", "near": near, "reason": "Не хватает материалов."}
@@ -300,21 +298,10 @@ static func do_craft(p: Player, rec: Dictionary, near: MachineBase) -> Dictionar
 		else:
 			out = {"text": "Скрафчено: %s ×%d — в инвентаре." % [DB.item_name(out_id), amount], "tone": Tone.OK}
 	else:
-		var loaded: PackedStringArray = PackedStringArray()
+		# Станков нет (#170): сырьё возвращаем, крафт не уходит «в никуда».
 		for id in rec["in"].keys():
-			var n: int = int(rec["in"][id])
-			var back: int = near.receive_item(id, n)
-			if back > 0:
-				# Станок не взял — обратно в инвентарь, ничего не теряется.
-				p.inv.add(id, back)
-			if n - back > 0:
-				loaded.append("%s ×%d" % [DB.item_name(id), n - back])
-		var si: Dictionary = InventoryPanel.STATION_INFO[station]
-		var tail: String = "%s сделает %s %s (≈ %.1f с)" % [String(si["it"]), DB.item_name(out_id),
-				String(si["self"]), float(rec["time"])]
-		if not near.powered:
-			tail += ", когда будет питание"
-		out = {"text": "Загружено %s: %s. %s." % [String(si["in"]), ", ".join(loaded), tail], "tone": Tone.OK}
+			p.inv.add(int(id), int(rec["in"][id]))
+		out = {"text": "Станков больше нет: крафт только руками.", "tone": Tone.WARN}
 	Game.stats_crafted += 1
 	return out
 

@@ -49,9 +49,9 @@ func run_host() -> void:
 	notes.clear()
 	await barrier("leave")
 	ok("Аня вышла", await wait_until(func() -> bool: return Net.peers.size() == 1 and Game.hero_count() == 1, 15.0))
+	# Вклада не было: N = 1 — ровно базовое требование, не «пластины из воздуха».
 	var req1: Dictionary = base.duplicate()
-	req1[PLATE] = plates
-	ok("N = 1: требование одиночное, пластин — не ниже сданного (%d)" % plates,
+	ok("N = 1: требование одиночное",
 			await wait_until(func() -> bool: return Game.relay_req == req1, WAIT), str(Game.relay_req))
 	ok("N = 1: дуги целы", Game.core_arcs == int(share_get("arcs")), str(Game.core_arcs))
 	ok("уведомление команде: героев 1, ×1", notes_with("Героев на связи: 1") >= 1, str(notes))

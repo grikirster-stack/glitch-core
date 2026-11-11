@@ -466,9 +466,7 @@ func _draw() -> void:
 		for i in 3:
 			draw_line(Vector2(p.x - 4 + i * 4, p.y - 4), Vector2(p.x - 4 + i * 4, p.y + 4), Color(0.35, 0.42, 0.5), 1.0)
 
-	# --- Оверлей питания ------------------------------------------------------
-	if show_power:
-		_draw_power(view)
+	# Питание снято (#170): колец радиуса больше нет.
 
 	# --- Ядро: пульс, когда горят все семь дуг --------------------------------
 	if Game.core_placed() and (Game.core_arcs & 0x7F) == 0x7F:
@@ -702,21 +700,4 @@ func _light_dist2(l: Dictionary, center: Vector2) -> float:
 	return (Vector2(l["pos"]) - center).length_squared()
 
 
-## Оверлей питания: только генераторы, попадающие в кадр камеры.
-func _draw_power(view: Rect2) -> void:
-	var drawn: int = 0
-	for m in World.machines.values():
-		if not (m is Generator):
-			continue
-		if drawn >= MAX_POWER_RINGS:
-			break
-		var pos: Vector2 = m.global_position
-		var r: float = m.power_radius * World.TILE
-		if r <= 0.0:
-			continue
-		if view.size != Vector2.ZERO and not view.grow(r).has_point(pos):
-			continue
-		drawn += 1
-		var col: Color = Color(1.0, 0.85, 0.25, 0.16) if m.power_active else Color(0.5, 0.5, 0.55, 0.10)
-		draw_circle(pos, r, col)
-		draw_arc(pos, r, 0.0, TAU, 48, Color(col.r, col.g, col.b, 0.6), 1.5)
+## Кольца питания сняты вместе с генераторами (#170).

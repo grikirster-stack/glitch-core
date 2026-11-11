@@ -13,7 +13,7 @@ extends CanvasLayer
 ##      отметки отсчёта удержания (Game.RELAY_REMINDERS) — «приём сигнала»;
 ##  * двойник раскрыт (первый раз замер под взглядом) или ударил героя — разрыв
 ##    строк: полосы ROW_PX px мира сдвигаются вбок, с расслоением каналов;
-##  * браун-аут (Game.brownout_changed) — слабый разрыв строк по всему экрану;
+##  * браун-аут снят вместе с питанием (#170): вид эффекта в таблице остался,
 ##  * телеграф вентиляции (Threat.vent_warning) рядом с героем, на экране — несколько
 ##    блоков у решётки.
 ## Дозирование: у каждого события своя пауза (COOLDOWN), слабое событие не перебивает
@@ -129,7 +129,6 @@ func _ready() -> void:
 	_rect.visible = false
 	add_child(_rect)
 	Game.objective_changed.connect(_on_objective)
-	Game.brownout_changed.connect(_on_brownout)
 	Threat.vent_warning.connect(_on_vent)
 	Threat.phantom_spawned.connect(_on_phantom)
 	UI.run_loaded.connect(_wake)
@@ -161,11 +160,6 @@ func _on_objective(stage: int) -> void:
 	elif stage == 2:
 		fire(Kind.RELAY_SIGNAL, bp)
 	_wake()
-
-
-func _on_brownout(on: bool) -> void:
-	if on:
-		fire(Kind.BROWNOUT, Vector2.ZERO)
 
 
 func _on_vent(cell: Vector2i) -> void:

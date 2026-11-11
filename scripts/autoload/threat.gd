@@ -194,8 +194,7 @@ static func plan_roster(points: float, night: int, relay: bool, doppel_taken: in
 	return out
 
 
-## Горящие горелки (для T). Маяка (#167) ещё нет — pharos_lit() смотрит kind
-## «Pharos» и метод lit(); пока блока нет, вклад 0.
+## Горящие горелки (для T). Бывшие генераторы (#170) сюда не входят.
 func burners_lit() -> int:
 	return _count_burners()
 

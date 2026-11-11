@@ -110,7 +110,6 @@ func begin() -> void:
 	_stages = stages()
 	Game.time_of_day = start_time
 	build()
-	Game.update_power_budget()
 	Game.tasks_total = World.terminals.size() + Game.tasks_done
 	say("Глава %d. %s" % [chapter, title])
 	_enter(0)

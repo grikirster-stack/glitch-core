@@ -2,11 +2,11 @@ extends MpScenarioBase
 ## mp_join_snapshot (ADR-002, § 4.2.2, § 4.10; MP-C, #88): вход в идущую игру снимком.
 ##
 ## Хост до входа клиента копает героем (шов ввода), строит, ставит постройки (сундук,
-## солнечная панель, прожектор) и льёт воду в яму. Клиент входит позже: мир по сиду,
+## коллектор, маяк) и льёт воду в яму. Клиент входит позже: мир по сиду,
 ## затем снимок Save.gather_join() по каналу 0. После входа хост льёт ещё воды и
 ## копает — это уже дельты. Когда вода у хоста успокоилась, хэши тайлов, воды и
 ## построек у хоста и клиента равны, сверка GLOBAL совпала. У клиента не работают
-## вода, питание, цель и угроза (счётчики = 0).
+## вода, цель и угроза (счётчики = 0). Питание снято (#170).
 ## Замер: вход (Net.join → снимок применён), мс; снимок, Б; сборка и применение, мс.
 ##
 ## Хэши клиент сообщает хосту именем барьера «h:тайлы:вода:постройки» — у харнесса
@@ -50,10 +50,10 @@ func run_host() -> void:
 		for y in range(_ground, _ground + 3):
 			World.set_tile(x, y, IDs.T.AIR)
 	var placed: int = 0
-	for kv in [["Chest", -4], ["Solar", -7], ["Floodlight", -10]]:
+	for kv in [["Chest", -4], ["Collector", -7], ["Pharos", -10]]:
 		if MachineBase.place_machine(String(kv[0]), Vector2i(_col + int(kv[1]), _ground - 1)):
 			placed += 1
-	ok("хост: постройки поставлены (сундук, панель, прожектор)", placed == 3, "%d из 3" % placed)
+	ok("хост: постройки поставлены (сундук, коллектор, маяк)", placed == 3, "%d из 3" % placed)
 	# Горелка (#164): клиент после входа сам строит луч из реплицированного состояния.
 	var bcell: Vector2i = Vector2i(_col - 12, _ground - 1)
 	for k in range(0, 8):
@@ -154,8 +154,6 @@ static func hashes() -> Array:
 
 func run_client(i: int) -> void:
 	var nw: NetWorld = Game.net_world
-	var power: Array = [0]
-	Game.power_updated.connect(func() -> void: power[0] += 1)
 	var got: bool = await wait_until(func() -> bool: return nw.is_joined, 20.0)
 	ok("c%d: снимок получен и применён" % i, got)
 	if not got:
@@ -174,12 +172,11 @@ func run_client(i: int) -> void:
 	ok("c%d: после входа видит луч горелки" % i, saw)
 	await barrier("joined")
 	await client_report(self, i)
-	# Клиент не считает мир: вода, питание, цель, угроза.
-	Game.update_power_budget()            # и прямой вызов молчит
+	# Клиент не считает мир: вода, цель, угроза. Питания больше нет (#170).
 	ok("c%d: вода не считается (шагов %d, пересчётов %d), уровни пришли (%d клеток)" % [
 			i, World.fluid_ticks, World.fluid_steps, nw.fluid_rx],
 			World.fluid_ticks == 0 and World.fluid_steps == 0 and nw.fluid_rx > 0)
-	ok("c%d: питание не считается (раскладок %d)" % [i, power[0]], power[0] == 0)
+	ok("c%d: терминал читается без питания" % i, Game.is_powered(player.global_position))
 	ok("c%d: цель не считается" % i, Game._objective_t == 0.0, "таймер %.2f" % Game._objective_t)
 	ok("c%d: угроза не работает (директор выключен, фантомов %d)" % [i, Threat.spawned_total],
 			not Threat.is_processing() and Threat.spawned_total == 0)

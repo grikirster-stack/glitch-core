@@ -271,9 +271,8 @@ func _ready() -> void:
 	World.explored_changed.connect(_on_explored)
 	World.explored_reset.connect(_on_explored_reset)
 	_on_explored_reset()
-	# Смена этапа и браун-аут — пересчитать трекер/индикатор в этот же кадр.
+	# Смена этапа — пересчитать карточку в этот же кадр.
 	Game.objective_changed.connect(_on_state_signal)
-	Game.brownout_changed.connect(_on_state_signal)
 	# Копатель сломал решётку — сверить миникарту в этот же кадр.
 	World.grate_broken.connect(_on_grate_broken)
 
@@ -370,21 +369,17 @@ func _fill_key() -> void:
 	_ensure_layout()   # #159: раскладка сменилась (размер, тач-кнопки, строки) — перерисовать
 	_key[62] = _lay_sig
 	_key[39] = night_countdown
-	_key[40] = 1 if Game.brownout else 0
-	var g = power_gen
-	if g != null and is_instance_valid(g):
-		_key[41] = g.get_instance_id() & 0x7fffffff
-		power_load_x10 = int(float(g.power_load) * 10.0)
-		power_out_x10 = int(g.current_output() * 10.0)
-		power_flags = (POWER_ON if g.enabled else 0) | (POWER_OVER if g.overloaded() else 0) 				| (POWER_NO_FUEL if _gen_no_fuel(g) else 0)
-	else:
-		_key[41] = 0
-		power_load_x10 = 0
-		power_out_x10 = 0
-		power_flags = 0
-	_key[42] = power_load_x10
-	_key[43] = power_out_x10
-	_key[44] = power_flags
+	# Питания нет (#170): ключ [40..44] остаётся нулём, длина не сдвигается.
+	_key[40] = 0
+	power_gen = null
+	power_text = ""
+	power_load_x10 = 0
+	power_out_x10 = 0
+	power_flags = 0
+	_key[41] = 0
+	_key[42] = 0
+	_key[43] = 0
+	_key[44] = 0
 	_key[45] = 1 if Game.is_night() else 0    # скобки опасности и метка суток (V6)
 	# Карточка «Сейчас» (#160): иконка, счётчик и виден ли маркер. Текст — в _state_hash.
 	_key[63] = card_icon
@@ -449,10 +444,8 @@ func _compute_hint(_pos: Vector2) -> String:
 	# называем — цикл зависимостей).
 	var kind: String = String(tg["kind"])
 	if kind == player.ET_TERMINAL_OFF:
-		return HINT_TERMINAL_NO_POWER   # без питания E не работает — и рамки нет
+		return HINT_TERMINAL
 	_hint_target = _cell_rect(tg["cell"])
-	if kind == player.ET_GENERATOR:
-		return generator_hint(tg["node"])
 	if kind == player.ET_BURNER:
 		return burner_hint(tg["node"])
 	if kind == player.ET_ACCUMULATOR:
@@ -465,8 +458,6 @@ func _compute_hint(_pos: Vector2) -> String:
 		return HINT_TERMINAL
 	if kind == player.ET_BEACON:
 		return HINT_BEACON
-	if kind == player.ET_INSERTER:
-		return HINT_INSERTER + _dismantle_tail(tg.get("node"))
 	if kind == player.ET_CHEST:
 		return HINT_CHEST
 	if kind == player.ET_REPAIR:
@@ -493,33 +484,14 @@ static func _cell_rect(c: Vector2i) -> Rect2:
 	return Rect2(Vector2(c * World.TILE), Vector2(World.TILE, World.TILE))
 
 
-## Подсказка у терминала: без питания E не работает (#29) — так и пишем.
-func terminal_hint(t: Vector2i) -> String:
-	return HINT_TERMINAL if _terminal_powered(t) else HINT_TERMINAL_NO_POWER
+## Подсказка у терминала. Питания нет (#170): терминал читается всегда.
+func terminal_hint(_t: Vector2i) -> String:
+	return HINT_TERMINAL
 
 
-## Под питанием ли терминал. Game.is_powered перебирает все генераторы мира,
-## поэтому: ни одного работающего — сразу нет; иначе ответ кэшируется до
-## следующего пересчёта состояния (STATE_RECHECK_SEC — тот же шаг, что у
-## раскладки питания).
-func _terminal_powered(t: Vector2i) -> bool:
-	if Game.power_output_total <= 0.0:
-		return false
-	var v = _term_power.get(t)
-	if v == null:
-		v = Game.is_powered(World.cell_to_world(t))
-		_term_power[t] = v
-	return bool(v)
-
-
-## Подсказка у генератора: ТЭЦ с углём в руке — топка, иначе — рубильник (#25).
-## Хвост про разбор — если генератор не кампанийный.
-func generator_hint(g) -> String:
-	if g is CoalGen:
-		if player != null and player.inv.selected_stack().id == IDs.I.COAL:
-			return HINT_GEN_COAL
-		return HINT_GEN_SWITCH + _dismantle_tail(g)
-	return HINT_SOLAR_SWITCH + _dismantle_tail(g)
+## Терминал доступен без ТЭЦ (#170). Кэш шага оставлен, чтобы не звать мир каждый кадр.
+func _terminal_powered(_t: Vector2i) -> bool:
+	return true
 
 
 ## Подсказка у горелки: топливо в руке — топка, пустая рука — рубильник (#164).
@@ -540,85 +512,14 @@ func _update_state(delta: float) -> void:
 		_state_t = 0.0
 	_last_game_time = Game.game_time
 	_state_t -= delta
-	var cursor_changed: bool = false
-	if player != null and player.building_cell != _power_cursor:
-		_power_cursor = player.building_cell
-		cursor_changed = true
 	if _state_t <= 0.0:
 		_state_t = STATE_RECHECK_SEC
-		_term_power.clear()
-		_power_near = _scan_power_gen()
 		_compute_tracker()
 		_compute_tutorial()
-		cursor_changed = true
+		_state_hash = hash([card_text, card_have, card_need, card_icon, card_at, card_mark_on,
+				tutorial_text])
 	_update_card_look(delta)
 	_update_card_mark()
-	if cursor_changed:
-		power_gen = _pick_power_gen()
-		power_text = _power_line(power_gen)
-		_state_hash = hash([card_text, card_have, card_need, card_icon, card_at, card_mark_on,
-				tutorial_text, power_text])
-
-
-## Генератор под курсором (в досягаемости), иначе ближайший к игроку.
-func _pick_power_gen():
-	if player == null:
-		return null
-	var m = World.machines.get(_power_cursor)
-	if m is Generator and is_instance_valid(m) \
-			and m.global_position.distance_to(player.global_position) <= CURSOR_GEN_REACH:
-		return m
-	if _power_near != null and is_instance_valid(_power_near):
-		return _power_near
-	return null
-
-
-## Ближайший к игроку генератор в прямоугольнике ±POWER_SCAN_CELLS клеток по
-## горизонтали и ±POWER_SCAN_ROWS по вертикали — только клетки вокруг игрока,
-## не все постройки мира. Пока игрок в той же клетке и число построек то же —
-## прошлый ответ (сканирование — сотня выборок из словаря).
-func _scan_power_gen():
-	if player == null:
-		return null
-	var pos: Vector2 = player.global_position
-	var pc: Vector2i = World.world_to_cell(pos)
-	if pc == _scan_cell and World.machines.size() == _scan_machines 			and (_power_near == null or is_instance_valid(_power_near)):
-		return _power_near
-	_scan_cell = pc
-	_scan_machines = World.machines.size()
-	stat_power_scans += 1
-	var r: int = POWER_SCAN_CELLS
-	var best = null
-	var best_d2: float = INF
-	for dy in range(-POWER_SCAN_ROWS, POWER_SCAN_ROWS + 1):
-		for dx in range(-r, r + 1):
-			var m = World.machines.get(pc + Vector2i(dx, dy))
-			if not (m is Generator) or not is_instance_valid(m):
-				continue
-			var d2: float = m.global_position.distance_squared_to(pos)
-			if d2 < best_d2:
-				best_d2 = d2
-				best = m
-	return best
-
-
-static func _gen_no_fuel(g) -> bool:
-	return g is CoalGen and g.enabled and float(g.fuel) <= 0.0
-
-
-static func _gen_name(g) -> String:
-	if g is CoalGen:
-		return "ТЭЦ"
-	if g is Solar:
-		return "Солнечная панель"
-	return "Генератор"
-
-
-## Строка индикатора мощности (без чисел нагрузки — они рисуются из ключа).
-func _power_line(g) -> String:
-	if g == null or not is_instance_valid(g):
-		return ""
-	return _gen_name(g)
 
 
 ## Карточка «Сейчас» (#160): одна невыполненная цель. tracker_* заполняется тем же
@@ -719,13 +620,12 @@ func _compute_tutorial() -> void:
 	var scrap: int = 0
 	if player != null:
 		scrap = player.inv.count_of(IDs.I.SCRAP)
+	# Питания нет (#170): хлам → крафт горелки → поставить → терминал.
 	if Game.tasks_done > 0 or Game.objective_stage >= 2:
 		lvl = Tut.DONE
-	elif _base_terminal_powered():
+	elif player != null and _burner_near():
 		lvl = Tut.TERMINAL
-	elif Game.power_output_total > 0.0:
-		lvl = Tut.POWER
-	elif _power_near != null or (player != null and player.inv.count_of(IDs.I.COAL_GEN) > 0):
+	elif player != null and player.inv.count_of(IDs.I.BURNER) > 0:
 		lvl = Tut.PLACE
 	elif scrap >= TUT_SCRAP:
 		lvl = Tut.CRAFT
@@ -733,17 +633,15 @@ func _compute_tutorial() -> void:
 	var n: int = tutorial_step + 1
 	match tutorial_step:
 		Tut.DIG:
-			tutorial_text = "%d/5 Копай: %s по земле — хлам %d/%d на ТЭЦ" % [n,
+			tutorial_text = "%d/4 Копай: %s по земле — хлам %d/%d на горелку" % [n,
 					"тап" if UI.touch_on else "ЛКМ", mini(scrap, TUT_SCRAP), TUT_SCRAP]
 		Tut.CRAFT:
-			tutorial_text = "%d/5 Крафт: I — «Угольная ТЭЦ»" % n
+			tutorial_text = "%d/4 Крафт: I — «Горелка»" % n
 		Tut.PLACE:
-			tutorial_text = ("%d/5 ТЭЦ: выбери в хотбаре, тап у терминала; [E] с углём — топка" if UI.touch_on
-					else "%d/5 ТЭЦ: ПКМ — у терминала, [E] с углём — топка") % n
-		Tut.POWER:
-			tutorial_text = "%d/5 Питание: терминал вне зоны (P — радиус)" % n
+			tutorial_text = ("%d/4 Горелка: выбери в хотбаре, тап у базы" if UI.touch_on
+					else "%d/4 Горелка: ПКМ — у базы") % n
 		Tut.TERMINAL:
-			tutorial_text = "%d/5 Терминал под питанием: держите [E]" % n
+			tutorial_text = "%d/4 Терминал: держите [E]" % n
 		_:
 			tutorial_text = ""
 
@@ -818,14 +716,16 @@ func _update_card_look(delta: float) -> void:
 		player.camera.reset_smoothing()
 
 
-## Под питанием ли хоть один терминал базы (главы 1–2) — обучение про них.
-func _base_terminal_powered() -> bool:
-	if Game.power_output_total <= 0.0:
+## Горелка рядом с героем — шаг «поставить» пройден. Питания больше нет (#170).
+func _burner_near() -> bool:
+	if player == null:
 		return false
-	for t in World.terminals:
-		var ch: int = int(World.terminal_chapters.get(t, -1))
-		if ch >= 0 and ch < Lore.BASE_TERMINALS and _terminal_powered(t):
-			return true
+	var pc: Vector2i = World.world_to_cell(player.global_position)
+	for dy in range(-3, 4):
+		for dx in range(-8, 9):
+			var m = World.machines.get(pc + Vector2i(dx, dy))
+			if m != null and m.kind == "Burner":
+				return true
 	return false
 
 
@@ -1726,17 +1626,6 @@ func _draw_status_block(font: Font) -> void:
 				bar_y0 = y
 			bar_y1 = y + ROW_H
 		var tx: float = x + 10.0
-		if kind == "power":
-			var g = r["gen"]
-			var out: float = float(r["out"])
-			var ld: float = float(r["load"])
-			var bar: Rect2 = Rect2(tx, y + 9.0, 112.0, 7.0)
-			draw_rect(bar, C_PLATE)
-			var frac: float = clampf(ld / maxf(out, 0.001), 0.0, 1.0) if out > 0.0 else (1.0 if ld > 0.0 else 0.0)
-			var col: Color = C_WARN if (is_instance_valid(g) and g.overloaded()) else C_HAZARD
-			draw_rect(Rect2(bar.position + Vector2(1, 1), Vector2((bar.size.x - 2) * frac, bar.size.y - 2)), col)
-			draw_rect(bar, Color(C_LINE, 0.3), false, 1.0)
-			tx += STATUS_BAR_W
 		_text_on_plate(font, Vector2(tx, y + 19.0), String(r["text"]), fb, r["color"])
 	if bar_y0 >= 0.0:
 		draw_rect(Rect2(x, bar_y0, 4, bar_y1 - bar_y0), C_BIO)
