@@ -100,6 +100,13 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 		# --- Маяк (ADR-005 § 5, #167) ---
 		"Pharos":
 			m = Pharos.new()
+		# --- Оптика (ADR-005 § 4, #165) ---
+		"Mirror":
+			m = Mirror.new()
+		"Mixer":
+			m = Mixer.new()
+		"Prism":
+			m = Prism.new()
 		_:
 			return false
 	m.cell = c
@@ -145,10 +152,14 @@ func _on_turned() -> void:
 		World.beams.mark_dirty()
 
 
+## Постройка пропускает или преобразует луч (зеркало, смеситель, призма).
+## База и горелка гасят: у них флаг выключен, Beams пишет в клетку код 1.
+var beam_passer: bool = false
+
+
 ## Что луч делает, попав в эту постройку. in_dir — откуда пришёл (0 вправо …),
 ## color — маска Beams. Возвращает выходы [[out_dir, color], ...].
-## База луч гасит: зеркало, смеситель и призма переопределят в C2.
-## Горелка не пропускает — у неё своего выхода нет.
+## База луч гасит. Зеркало, смеситель и призма переопределяют и поднимают beam_passer.
 func beam_pass(_in_dir: int, _color: int) -> Array:
 	return []
 

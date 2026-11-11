@@ -236,6 +236,10 @@ func _build_item_defs() -> void:
 	_add_item_def(IDs.I.BURNER, "Горелка", Color(0.55, 0.32, 0.22), "burner", 10, "machine:Burner")
 	# Маяк (ADR-005 § 4–5, #167): приёмник луча. Стак 5 — это башня, не расходник.
 	_add_item_def(IDs.I.PHAROS, "Маяк", Color(0.72, 0.55, 0.38), "pharos", 5, "machine:Pharos")
+	# Оптика (ADR-005 § 4, #165). Смеситель открывается чертежом терминала.
+	_add_item_def(IDs.I.MIRROR, "Зеркало", Color(0.72, 0.78, 0.86), "mirror", 20, "machine:Mirror")
+	_add_item_def(IDs.I.MIXER, "Смеситель", Color(0.45, 0.55, 0.62), "mixer", 10, "machine:Mixer")
+	_add_item_def(IDs.I.PRISM, "Призма", Color(0.75, 0.88, 0.95), "prism", 20, "machine:Prism")
 
 	# Требования релей-ядра — из Balance (§ 4.7).
 	relay_req = Balance.RELAY_REQ.duplicate()
@@ -310,6 +314,11 @@ func _build_recipes() -> void:
 	_recipe(IDs.I.BURNER, 1, {IDs.I.STONE: 4, IDs.I.SCRAP: 2}, "hand", 0.0, "Горелка")
 	# Маяк (ADR-005 § 4): 2 железных слитка + стекло + кристалл, руками. Чертёж PHAROS.
 	_recipe(IDs.I.PHAROS, 1, {IDs.I.IRON_INGOT: 2, IDs.I.GLASS: 1, IDs.I.CRYSTAL: 1}, "hand", 0.0, "Маяк")
+	# Оптика (ADR-005 § 4, #165). Зеркало и призма — по подбору (E1), смеситель —
+	# чертёж 1 (имя MIXER в Balance.BLUEPRINT_ORDER, панель прячет без чертежа).
+	_recipe(IDs.I.MIRROR, 1, {IDs.I.COPPER_INGOT: 2, IDs.I.GLASS: 1}, "hand", 0.0, "Зеркало")
+	_recipe(IDs.I.MIXER, 1, {IDs.I.COPPER_INGOT: 2, IDs.I.GLASS: 2}, "hand", 0.0, "Смеситель")
+	_recipe(IDs.I.PRISM, 1, {IDs.I.GLASS: 3}, "hand", 0.0, "Призма")
 
 	# --- Плавильня: вдвое больше слитков за ту же руду -----------------------
 	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 1}, "smelter", 2.0, "Выплавка железа")
@@ -1554,6 +1563,43 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 					_px(img, x, y, Color("#FFD86E"))
 			_px(img, 7, 2, Color("#FFD86E"))
 			_px(img, 8, 2, Color("#FFD86E"))
+		"mirror":
+			# Корпус и яркая диагональ «/»: ребёнок видит, куда повернёт луч.
+			for y in range(3, 13):
+				for x in range(3, 13):
+					_px(img, x, y, c.darkened(0.25))
+			for i in range(2, 12):
+				_px(img, i, 14 - i, Color(0.92, 0.96, 1.0))
+				_px(img, i + 1, 14 - i, Color(0.75, 0.86, 0.95))
+		"mixer":
+			# Три тёмных входа и яркий выход вправо — цвет смеси.
+			for y in range(3, 13):
+				for x in range(3, 12):
+					_px(img, x, y, c.darkened(0.3))
+			for y in range(4, 7):
+				_px(img, 3, y, Color(0.18, 0.20, 0.24))
+			for x in range(4, 8):
+				_px(img, x, 11, Color(0.18, 0.20, 0.24))
+			for y in range(9, 12):
+				_px(img, 3, y, Color(0.18, 0.20, 0.24))
+			for y in range(6, 10):
+				_px(img, 12, y, Color(1.0, 1.0, 0.55))
+				_px(img, 13, y, Color(1.0, 0.95, 0.45))
+		"prism":
+			# Треугольник в корпусе: белый входит, три цвета выходят.
+			for y in range(3, 13):
+				for x in range(3, 13):
+					_px(img, x, y, c.darkened(0.35))
+			for row in range(8):
+				var y: int = 4 + row
+				var half: int = row / 2
+				for x in range(8 - half, 8 + half + 1):
+					var stripe: Color = Color(1.0, 0.85, 0.45)
+					if x < 7:
+						stripe = Color(0.50, 1.0, 0.82)
+					elif x > 8:
+						stripe = Color(0.45, 0.95, 1.0)
+					_px(img, x, y, stripe)
 		"bag":
 			for y in range(5, 14):
 				var half: int = 5 - int(absf(float(y) - 10.0) * 0.5)
