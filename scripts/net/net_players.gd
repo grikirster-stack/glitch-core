@@ -230,6 +230,8 @@ func _host_tick() -> void:
 
 ## Ввод владельца → шов test_input прокси. Нажатия, пропавшие между пакетами, —
 ## импульсом на один кадр. Цифры хотбара — всегда «отпущены» (слот — из пакета).
+## Десять бит клавиш 0–9 остаются в пакете (#161): формат не меняется, PROTO не растёт.
+## Ячейки за hotbar_size хост не выбирает — лишние нажатия просто не доходят до слота.
 func _apply_input(p: Player, st: Dictionary) -> void:
 	var mask: int = int(st["keys"]) if p.net_linked else 0
 	var inp: Dictionary = NetCodec.mask_to_input(mask)

@@ -152,8 +152,9 @@ func _smart_aim() -> void:
 	var base: int = stand_in_corridor(3)
 	_settle_camera()
 	await wait(0.6)
+	# Хотбар на телефоне — 6 ячеек (#161): 6-я выбирается, пустое место за ней — нет.
+	player.apply_hotbar_size(Inventory.HOTBAR_MIN)
 	player.inv.slots[5] = ItemStack.new(IDs.I.STONE, 10)
-	player.inv.slots[6] = ItemStack.new()
 	_tap(3, UI.hud.hotbar_slot_rect(5).get_center())
 	await wait(0.1)
 	ok("тап по хотбару выбирает слот, блок в руке включает «строить»",
@@ -183,10 +184,17 @@ func _smart_aim() -> void:
 	ok("тап за препятствием и радиусом ставит блок со своей стороны", placed,
 			DB.tile_name(World.get_tile_v(near)))
 
-	# Пустая ячейка хотбара — «копать»; тап за радиусом копает ближнюю стену по лучу.
-	_tap(3, UI.hud.hotbar_slot_rect(6).get_center())
+	# Пустое место за 6-й ячейкой — не хотбар: слот и режим не меняются.
+	var past: Rect2 = UI.hud.hotbar_slot_rect(5)
+	_tap(3, past.get_center() + Vector2(past.size.x + 8.0, 0.0))
 	await wait(0.1)
-	ok("пустая ячейка хотбара включает «копать»", player.inv.selected == 6 and not tc.build_mode)
+	ok("тап за 6-й ячейкой хотбара ничего не выбирает", player.inv.selected == 5 and tc.build_mode,
+			"слот %d" % player.inv.selected)
+	# Пустая ячейка хотбара — «копать»; тап за радиусом копает ближнюю стену по лучу.
+	player.inv.slots[4] = ItemStack.new()
+	_tap(3, UI.hud.hotbar_slot_rect(4).get_center())
+	await wait(0.1)
+	ok("пустая ячейка хотбара включает «копать»", player.inv.selected == 4 and not tc.build_mode)
 	_touch(1, _screen(World.cell_to_world(far)), true)
 	await wait(0.1)
 	ok("тап за радиусом целит в ближнюю стену по лучу", tc.aim_cell == near, str(tc.aim_cell))
@@ -218,6 +226,7 @@ func _pinch_zoom() -> void:
 	vz.set_now(ViewZoom.DEFAULT)
 	_settle_camera()
 	await wait(0.6)
+	player.apply_hotbar_size(Inventory.HOTBAR_MIN)
 	player.inv.slots[5] = ItemStack.new(IDs.I.STONE, 10)
 	_tap(3, UI.hud.hotbar_slot_rect(5).get_center())
 	await wait(0.1)
@@ -261,7 +270,8 @@ func _pinch_zoom() -> void:
 	ok("короткий тап (быстрее ожидания щипка) ставит блок", placed and player.inv.slots[5].count == stones - 1,
 			DB.tile_name(World.get_tile_v(cell)))
 	World.set_tile(cell.x, cell.y, IDs.T.AIR)
-	_tap(3, UI.hud.hotbar_slot_rect(6).get_center())
+	player.inv.slots[4] = ItemStack.new()
+	_tap(3, UI.hud.hotbar_slot_rect(4).get_center())
 	await wait(0.1)
 
 

@@ -9,6 +9,7 @@ extends Node
 ## секция «== Сохранение ==» — общий код из tools/save_test.gd (issue #37),
 ## секция «== Небесный тайник ==» — обломок «Кербер-9» в небе (issue #60),
 ## секция «== Размер интерфейса ==» — tools/ui_scale_test.gd (#159),
+## секция «== Хотбар ==» — tools/hotbar_test.gd (#161),
 ## секция «== Меню и профиль ==» — общий код из tools/menu_test.gd (ADR-002, MP-B, #87).
 ## Запускается из main.gd флагом `--test`.
 ##
@@ -30,6 +31,8 @@ const SaveTestScript = preload("res://tools/save_test.gd")
 const MenuTestScript = preload("res://tools/menu_test.gd")
 ## Размер интерфейса: tools/ui_scale_test.gd (#159).
 const UiScaleTestScript = preload("res://tools/ui_scale_test.gd")
+## Хотбар 6/10: tools/hotbar_test.gd (#161).
+const HotbarTestScript = preload("res://tools/hotbar_test.gd")
 
 var scene: Node = null
 var step: int = 0
@@ -43,6 +46,7 @@ var sfx_t: Node = null
 var save_t: Node = null
 var menu_t: Node = null   ## меню и профиль (MP-B, #87)
 var ui_scale_t: Node = null   ## размер интерфейса (#159)
+var hotbar_t: Node = null     ## хотбар 6/10 (#161)
 
 var _wait_until_ms: int = 0
 
@@ -123,6 +127,8 @@ func _process(_delta: float) -> void:
 		29: _t_finish()
 		30: _t_ui_scale_start()   # размер интерфейса (#159)
 		31: _t_ui_scale_wait()
+		32: _t_hotbar_start()     # хотбар 6/10 (#161)
+		33: _t_hotbar_wait()
 
 
 func _ok(label: String, cond: bool, extra: String = "") -> void:
@@ -815,6 +821,23 @@ func _t_ui_scale_wait() -> void:
 			fails += ui_scale_t.fails
 			ui_scale_t.queue_free()
 			ui_scale_t = null
+		_next(32)
+
+
+func _t_hotbar_start() -> void:
+	hotbar_t = HotbarTestScript.new()
+	add_child(hotbar_t)
+	hotbar_t.start(scene)
+	_next(33, 0.1)
+
+
+func _t_hotbar_wait() -> void:
+	if hotbar_t == null or hotbar_t.done:
+		if hotbar_t != null:
+			checks += hotbar_t.checks
+			fails += hotbar_t.fails
+			hotbar_t.queue_free()
+			hotbar_t = null
 		_next(27, 0.1)
 
 

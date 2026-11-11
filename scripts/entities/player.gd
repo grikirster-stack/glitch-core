@@ -106,7 +106,7 @@ var _dismantle_cell: Vector2i = Vector2i(-1, -1)
 
 
 func _ready() -> void:
-	inv = Inventory.new(36, 10)
+	inv = Inventory.new(36, hotbar_from_profile())
 	if not _net_view():   # СЕТЬ (ADR-002): камера только у своего героя
 		z_index = 5
 		return
@@ -274,12 +274,13 @@ func _update_step(prev_phase: float, phase: float, sprint: bool) -> void:
 func _handle_input(dt: float) -> void:
 	if dead:
 		return
-	# Выбор слота хотбара
+	# Выбор слота хотбара. Клавиши 1–0 всегда читаются (пакет ввода несёт 10 бит),
+	# но ячейки за hotbar_size не выбираются: при хотбаре 6 цифры 7–0 ничего не делают (#161).
 	for i in 9:
-		if _key(KEY_1 + i):
+		if i < inv.hotbar_size and _key(KEY_1 + i):
 			inv.selected = i
 			break
-	if _key(KEY_0):
+	if inv.hotbar_size > 9 and _key(KEY_0):
 		inv.selected = 9
 
 	if net_role == NetRole.OWNER:   # СЕТЬ (ADR-002): действия своего героя клиента — у хоста
@@ -1000,6 +1001,25 @@ func _draw_mining_fx(pivot: Vector2) -> void:
 
 func _make_slash_fx(p: Vector2) -> void:
 	_fx(NetCodec.Fx.SLASH, p)
+
+
+## Размер хотбара при создании героя (#161): из профиля; поля нет — 6 на сенсорном
+## экране или с --touch, иначе 10. Файл здесь не пишем: умолчание записывает меню.
+static func hotbar_from_profile() -> int:
+	var saved: int = Profile.read_hotbar()
+	if saved > 0:
+		return saved
+	return Inventory.default_hotbar(DisplayServer.is_touchscreen_available(), OS.get_cmdline_user_args())
+
+
+## Применить размер хотбара из меню или профиля. Сужение переносит ячейки 7–10
+## в рюкзак; что не влезло — падает под ноги (spawn_item), ничего не теряется.
+func apply_hotbar_size(n: int) -> void:
+	if inv == null:
+		return
+	var spilled: Array[ItemStack] = inv.set_hotbar_size(n)
+	for s in spilled:
+		spawn_item(s.id, s.count, global_position)
 
 
 # ------------------------------------------------- СОХРАНЕНИЕ (#37)

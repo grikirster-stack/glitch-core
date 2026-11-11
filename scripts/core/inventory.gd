@@ -1,6 +1,7 @@
 class_name Inventory
 extends RefCounted
-## Модель инвентаря: 10 слотов хотбара + 26 основных.
+## Модель инвентаря: hotbar_size слотов хотбара + остальные — рюкзак (всего 36).
+## Размер хотбара — 6 или 10 (#161); число 10 вшито только как потолок пакета и ключа HUD.
 
 signal changed
 
@@ -9,15 +10,42 @@ var size: int = 36
 var hotbar_size: int = 10
 var selected: int = 0
 
+## Допустимые размеры хотбара (#161): телефон — 6, ПК — 10. Больше 10 пакет ввода не несёт.
+const HOTBAR_MIN: int = 6
+const HOTBAR_MAX: int = 10
+
 func _init(p_size: int = 36, p_hotbar: int = 10) -> void:
 	size = p_size
-	hotbar_size = p_hotbar
+	hotbar_size = clamp_hotbar(p_hotbar)
 	slots.resize(size)
 	for i in size:
 		slots[i] = ItemStack.new()
 
+
+## Размер стопки без глобального имени DB: anim_test.gd стартует как --script,
+## и на этапе компиляции автозагрузки ещё нет. В игре узел уже есть.
+static func _item_max_stack(id: int) -> int:
+	var loop: MainLoop = Engine.get_main_loop()
+	if loop is SceneTree:
+		var db: Node = (loop as SceneTree).root.get_node_or_null("DB")
+		if db != null:
+			return int(db.call("item_max_stack", id))
+	return 99
+
+
+## 6 или 10; иное — ближайшее из двух (битое поле профиля не оставляет хотбар без ячеек).
+static func clamp_hotbar(n: int) -> int:
+	return HOTBAR_MIN if n < (HOTBAR_MIN + HOTBAR_MAX) / 2 else HOTBAR_MAX
+
+
+## Умолчание (#161): сенсорный экран или флаг --touch — 6, иначе 10.
+static func default_hotbar(touchscreen: bool, args: PackedStringArray) -> int:
+	if touchscreen or args.has("--touch"):
+		return HOTBAR_MIN
+	return HOTBAR_MAX
+
 func slot_max(id: int) -> int:
-	return DB.item_max_stack(id)
+	return _item_max_stack(id)
 
 func can_add(id: int, amount: int = 1) -> bool:
 	if id == IDs.I.NONE or amount <= 0:
@@ -51,7 +79,7 @@ static func stack_into(arr: Array[ItemStack], id: int, amount: int, from: int = 
 	if id == IDs.I.NONE or amount <= 0:
 		return amount
 	var end: int = arr.size() if to < 0 else mini(to, arr.size())
-	var maxst: int = DB.item_max_stack(id)
+	var maxst: int = _item_max_stack(id)
 	var left: int = amount
 	for i in range(from, end):
 		if left <= 0:
@@ -150,3 +178,26 @@ func first_empty() -> int:
 		if slots[i].is_empty():
 			return i
 	return -1
+
+
+## Сменить размер хотбара (#161). Слоты не двигаются: верхний ряд панели рисует
+## первые hotbar_size ячеек, остальные 26 — рюкзак рядами по 10. Сужение 10→6
+## переносит стопки из ячеек 6…9 в рюкзак; не влезло — в spilled (под ноги, spawn_item).
+## Расширение 6→10 только открывает ячейки: они уже в инвентаре, перекладывать нечего.
+func set_hotbar_size(n: int) -> Array[ItemStack]:
+	var next: int = clamp_hotbar(n)
+	var spilled: Array[ItemStack] = []
+	if next < hotbar_size:
+		for i in range(next, hotbar_size):
+			var s: ItemStack = slots[i]
+			if s.is_empty():
+				continue
+			var left: int = stack_into(slots, s.id, s.count, hotbar_size)
+			if left > 0:
+				spilled.append(ItemStack.new(s.id, left))
+			slots[i] = ItemStack.new()
+	hotbar_size = next
+	if selected >= hotbar_size:
+		selected = hotbar_size - 1
+	changed.emit()
+	return spilled

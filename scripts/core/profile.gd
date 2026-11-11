@@ -13,6 +13,8 @@ extends RefCounted
 ##   [access]  less_glitch — «Меньше глитча и мерцания» (ADR-003 V7, #108): GlitchFx.calm;
 ##             ui_scale — «Размер интерфейса» (#159, UI.SCALES: 1.0…2.5); 0 — не выбирали,
 ##                    UI при первом запуске считает умолчание от экрана и записывает;
+##             hotbar — «Хотбар: 6 / 10» (#161, Inventory.HOTBAR_MIN/MAX); 0 — не выбирали,
+##                    игра при первом запуске берёт 6 на сенсорном экране (или --touch) и 10 иначе;
 ##   [view]    zoom — зум камеры (ViewZoom): его пишет сама игра, не меню, поэтому
 ##                    поля в профиле нет — read_zoom/write_zoom, save_to его сохраняет.
 ##
@@ -44,6 +46,8 @@ var port: int = DEFAULT_PORT
 var less_glitch: bool = false
 ## Размер интерфейса (UI.SCALES); 0.0 — в файле поля нет (первый запуск).
 var ui_scale: float = 0.0
+## Размер хотбара (#161): 6 или 10; 0 — в файле поля нет (первый запуск).
+var hotbar: int = 0
 ## Пройденные главы кампании (id из Campaign.CHAPTERS, ADR-004).
 var campaign_done: PackedStringArray = PackedStringArray()
 
@@ -137,6 +141,8 @@ static func load_or_create(path: String = "") -> Profile:
 	p.less_glitch = v_lg if v_lg is bool else false
 	var v_us: Variant = cfg.get_value("access", "ui_scale", 0.0)
 	p.ui_scale = float(v_us) if (v_us is float or v_us is int) and float(v_us) > 0.0 else 0.0
+	var v_hb: Variant = cfg.get_value("access", "hotbar", 0)
+	p.hotbar = Inventory.clamp_hotbar(int(v_hb)) if v_hb is int and int(v_hb) > 0 else 0
 	var v_done: Variant = cfg.get_value("campaign", "done", PackedStringArray())
 	if v_done is PackedStringArray or v_done is Array:
 		for c in v_done:
@@ -167,6 +173,12 @@ func save_to(path: String = "") -> Error:
 		us = read_ui_scale(path)
 	if us > 0.0:
 		cfg.set_value("access", "ui_scale", us)
+	# Хотбар — так же: меню могло загрузиться до первого забега, не стираем записанное.
+	var hb: int = hotbar
+	if hb <= 0:
+		hb = read_hotbar(path)
+	if hb > 0:
+		cfg.set_value("access", "hotbar", Inventory.clamp_hotbar(hb))
 	# Главы отмечает и сама игра (Campaign.mark_done) — свой экземпляр, загруженный раньше
 	# (меню, пауза), не должен стереть отметку: в файл — объединение.
 	var old: ConfigFile = ConfigFile.new()
@@ -208,6 +220,28 @@ static func read_ui_scale(path: String = "") -> float:
 		return 0.0
 	var v: Variant = cfg.get_value("access", "ui_scale", 0.0)
 	return float(v) if (v is float or v is int) and float(v) > 0.0 else 0.0
+
+
+## «Хотбар: 6 / 10» из файла, не создавая профиль (#161). 0 — не выбирали, нет файла
+## или битое поле; вызывающий тогда берёт Inventory.default_hotbar.
+static func read_hotbar(path: String = "") -> int:
+	if path == "":
+		path = default_path()
+	var cfg: ConfigFile = ConfigFile.new()
+	if cfg.load(path) != OK:
+		return 0
+	var v: Variant = cfg.get_value("access", "hotbar", 0)
+	return Inventory.clamp_hotbar(int(v)) if v is int and int(v) > 0 else 0
+
+
+## Записать размер хотбара в файл, не трогая остальное (как write_ui_scale).
+static func write_hotbar(n: int, path: String = "") -> Error:
+	if path == "":
+		path = default_path()
+	var cfg: ConfigFile = ConfigFile.new()
+	cfg.load(path)
+	cfg.set_value("access", "hotbar", Inventory.clamp_hotbar(n))
+	return cfg.save(path)
 
 
 ## Записать «Размер интерфейса» в файл, не трогая остальное (как write_zoom).
