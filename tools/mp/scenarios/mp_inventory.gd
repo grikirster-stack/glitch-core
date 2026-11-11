@@ -99,7 +99,8 @@ func run_host() -> void:
 	ch.slots[5] = ItemStack.new(IDs.I.LAMP, 2)
 	await barrier("poll")
 
-	# --- Крафт с клиента 0.
+	# --- Крафт с клиента 0. Руды в стартовом наборе нет (#171) — кладём сами.
+	p0.inv.add(IDs.I.COPPER_ORE, 4)
 	p0.inv.mark_seen(IDs.I.COPPER_ORE)
 	var ore0: int = p0.inv.count_of(IDs.I.COPPER_ORE)
 	var ingot0: int = p0.inv.count_of(IDs.I.COPPER_INGOT)
@@ -271,6 +272,7 @@ func run_client(i: int) -> void:
 			if int(r["out"]) == IDs.I.COPPER_INGOT:
 				rec = r
 				break
+		player.inv.add(IDs.I.COPPER_ORE, 4)
 		var ore0: int = player.inv.count_of(IDs.I.COPPER_ORE)
 		var ingot0: int = player.inv.count_of(IDs.I.COPPER_INGOT)
 		var rtt0: int = (InvOps.stats["rtt_ms"] as PackedFloat32Array).size()
