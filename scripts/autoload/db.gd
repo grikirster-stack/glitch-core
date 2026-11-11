@@ -246,6 +246,8 @@ func _build_item_defs() -> void:
 	# Сирена и линза (ADR-005 § 7.2, #172). Сирена — блок, линза — предмет в руке.
 	_add_item_def(IDs.I.SIREN, "Сирена", Color(0.85, 0.45, 0.18), "siren", 5, "machine:Siren")
 	_add_item_def(IDs.I.LENS, "Линза", Color(0.82, 0.92, 1.0), "lens", 5, "")
+	# Радужное ядро (ADR-005 § 6.3, #175): одно в сундуке лагеря, дальше — чертёж.
+	_add_item_def(IDs.I.RAINBOW_CORE, "Радужное ядро", Color(0.22, 0.24, 0.30), "rainbow_core", 5, "machine:RainbowCore")
 
 	# Требования релей-ядра — из Balance (§ 4.7).
 	relay_req = Balance.RELAY_REQ.duplicate()
@@ -308,6 +310,8 @@ func _build_recipes() -> void:
 	_recipe(IDs.I.CHEST, 1, {IDs.I.COPPER_INGOT: 4}, "hand", 0.0, "", "seen")
 	# Маяк — чертёж (#167). Цена из таблицы #171, руками, имя из словаря.
 	_recipe(IDs.I.PHAROS, 1, {IDs.I.IRON_INGOT: 2, IDs.I.GLASS: 1, IDs.I.CRYSTAL: 1}, "hand", 0.0, "")
+	# Второе ядро — чертёж 9 (BLUEPRINT_ORDER). Первое лежит в сундуке лагеря.
+	_recipe(IDs.I.RAINBOW_CORE, 1, {IDs.I.IRON_INGOT: 4, IDs.I.CRYSTAL: 3}, "hand", 0.0, "")
 	# Стена и решётка — чертёж (#169). Цена — из таблицы #171, только руками.
 	# На плавильне стены нет: первый подходящий рецепт съел бы сталь линии
 	# в стену, и релей оставался бы без 24 пластин.
@@ -1617,6 +1621,21 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 				_px(img, 12, y, c.darkened(0.35))
 			_px(img, 13, 7, Color("#FFD86E"))
 			_px(img, 14, 7, Color("#FFD86E"))
+		"rainbow_core":
+			# Тёмный куб и семь дуг по верху — тот же силуэт, что у постройки в мире.
+			for y in range(5, 14):
+				for x in range(3, 13):
+					_px(img, x, y, Color(0.16, 0.17, 0.20))
+			for y in range(6, 13):
+				for x in range(4, 12):
+					_px(img, x, y, Color(0.10, 0.11, 0.14))
+			var arcs: Array[Color] = [
+				Color("#FFD86E"), Color(1.0, 1.0, 0.43), Color("#7FE6D2"), Color(0.44, 1.0, 1.0),
+				Color("#6FF5E0"), Color(1.0, 0.85, 1.0), Color.WHITE,
+			]
+			for i in arcs.size():
+				_px(img, 3 + i, 3, arcs[i])
+				_px(img, 3 + i, 4, arcs[i].darkened(0.25))
 		"pharos":
 			# Башня с линзой сверху: ребёнок отличает маяк от горелки по силуэту.
 			for y in range(8, 15):

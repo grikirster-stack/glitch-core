@@ -1,5 +1,5 @@
 extends ScenarioBase
-## Релей (ADR-001 § 4.7, #32): выдать детали → удерживать E у ядра → этап 4,
+## Ядро (ADR-005 § 6.3, #175): семь дуг → E 3 с у ядра → этап 4,
 ## отсчёт Balance.RELAY_TIME (180 с) → победа, на финальном экране — эпилог Lore.
 ## Ждать три минуты в тесте смысла нет: отсчёт ускоряется (Game.relay_speed).
 
@@ -8,37 +8,33 @@ const SPEED: float = 60.0          ## 180 с удержания — за 3 с р
 
 func run() -> void:
 	player.invuln = 1.0e9
-	# Выдаём детали, которых не хватает релею.
-	for id in Game.relay_req.keys():
-		player.inv.add(int(id), int(Game.relay_req[id]) + 1)
-	var missing: Array = []
-	for id in Game.relay_req.keys():
-		if player.inv.count_of(int(id)) < int(Game.relay_req[id]):
-			missing.append(DB.item_name(int(id)))
-	ok("детали для релея на месте", missing.is_empty(), ", ".join(missing))
+	var cell: Vector2i = _place_core()
+	ok("ядро поставлено", cell.x >= 0 and Game.core_cell == cell, str(cell))
+	if cell.x < 0:
+		finish()
+		return
+	_feed_all()
+	ok("семь дуг горят", Game.core_arcs == 0x7F, str(Game.core_arcs))
 
-	# Встаём у релей-ядра: радиус взаимодействия — 56 px от клетки ядра.
-	var placed: bool = stand_next_to_beacon()
-	ok("герой встал у релея", placed, str(World.beacon_cell))
+	var placed: bool = stand_next_to_cell(cell)
+	ok("герой встал у ядра", placed, str(cell))
 	if not placed:
 		finish()
 		return
 	await wait(0.4)
-	var dist: float = World.cell_to_world(World.beacon_cell).distance_to(player.global_position)
-	ok("герой в радиусе релея", dist < 56.0, "%.0f px" % dist)
+	var dist: float = World.cell_to_world(cell).distance_to(player.global_position)
+	ok("герой в радиусе ядра", dist < 56.0, "%.0f px" % dist)
 
-	# Держим E: отсчёт запускается.
 	hold(KEY_E)
 	await wait(0.8)
-	ok("отсчёт релея идёт", player.task_progress > 0.05, "%.2f" % player.task_progress)
+	ok("отсчёт запуска идёт", player.task_progress > 0.05, "%.2f" % player.task_progress)
 	var started: bool = await wait_until(func() -> bool: return Game.relay_active, 6.0)
 	release(KEY_E)
-	ok("релей запущен", started)
+	ok("ядро запущено", started)
 	ok("удержание — %d с" % int(Balance.RELAY_TIME), Balance.RELAY_TIME == 180.0
 			and absf(Game.relay_timer - Balance.RELAY_TIME) < 2.0, "%.1f с" % Game.relay_timer)
-	ok("этап цели 3 — удержать сигнал", Game.objective_stage == 3, Game.objective_text())
+	ok("этап цели 4 — удержать сигнал", Game.objective_stage == 4, Game.objective_text())
 
-	# Ускоряем отсчёт: 180 с проходят за RELAY_TIME / SPEED реальных секунд.
 	Game.relay_speed = SPEED
 	var t0: float = Game.relay_timer
 	await wait(0.5)
@@ -46,7 +42,7 @@ func run() -> void:
 	var won: bool = await wait_until(func() -> bool: return Game.state == Game.State.WON,
 			Balance.RELAY_TIME / SPEED + 4.0)
 	ok("победа", won, "state=%d" % Game.state)
-	ok("релей отработал", not Game.relay_active and Game.relay_timer == 0.0)
+	ok("ядро отработало", not Game.relay_active and Game.relay_timer == 0.0)
 
 	var es: EndScreen = scene.get("end_screen")
 	await await_frame()
@@ -60,3 +56,32 @@ func run() -> void:
 				and (es.get_parent() as CanvasLayer).layer > UI.layer)
 	Game.relay_speed = 1.0
 	finish()
+
+
+func _place_core() -> Vector2i:
+	var cell: Vector2i = World.beacon_cell + Vector2i(2, 0)
+	if World.get_tile_v(cell) != IDs.T.AIR:
+		World.set_tile(cell.x, cell.y, IDs.T.AIR)
+	if not MachineBase.place_machine("RainbowCore", cell):
+		return Vector2i(-1, -1)
+	return cell
+
+
+func _feed_all() -> void:
+	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M, Beams.W]:
+		Game.core_feed(c)
+
+
+func stand_next_to_cell(cell: Vector2i) -> bool:
+	var base: int = cell.y + 1
+	for dx in [1, -1, 2, -2, 0]:
+		var px: int = cell.x + int(dx)
+		if not World.is_solid_cell(Vector2i(px, base)):
+			World.set_tile(px, base, IDs.T.STEEL)
+		for y in range(base - 3, base):
+			if World.get_tile_v(Vector2i(px, y)) != IDs.T.AIR and Vector2i(px, y) != cell:
+				World.set_tile(px, y, IDs.T.AIR)
+		player.global_position = Vector2(float(px * World.TILE) + 8.0, float(base * World.TILE) - 11.0)
+		player.vel = Vector2.ZERO
+		return true
+	return false

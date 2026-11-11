@@ -52,7 +52,11 @@ var terminals: Array[Vector2i] = []
 ## базы — главы 0–1, терминал i-й руины — глава Lore.BASE_TERMINALS + i (#29).
 var terminal_chapters: Dictionary = {}
 var vents: Array[Vector2i] = []
+## Клетка лагеря высадки (центр площадки). Ядро сюда больше не ставится тайлом:
+## оно лежит в сундуке лагеря и ставится игроком куда угодно (#175).
 var beacon_cell: Vector2i = Vector2i.ZERO
+## Сундук лагеря: кирка нет, светокристаллы, уголь и стартовое ядро.
+var camp_chest_cell: Vector2i = Vector2i(-1, -1)
 var spawn_point: Vector2 = Vector2.ZERO
 var lights: Array[Dictionary] = []
 var machines: Dictionary = {}       # Vector2i -> Node (машина)
@@ -1351,16 +1355,17 @@ func _place_sky_cache() -> void:
 
 
 func _place_base(cx: int) -> void:
-	## Открытая станция на расчищенной площадке: стальной пол, панели, лампы, терминалы, релей.
+	## Открытая станция на расчищенной площадке: стальной пол, панели, лампы, терминалы.
+	## Ядро — предмет в сундуке лагеря, не тайл в центре (ADR-005 § 6.3, #175).
 	var base: int = surface[cx]
 	# Пол платформы
 	for x in range(cx - 12, cx + 13):
 		set_tile_raw(x, base, IDs.T.STEEL)
 		set_tile_raw(x, base + 1, IDs.T.STEEL)
-	# Ряд построек (по одному тайлу, игрок ходит между ними)
-	# Релей-ядро в центре
+	# Центр лагеря пуст: сюда встанет ядро, если игрок его поставит.
 	beacon_cell = Vector2i(cx, base - 1)
-	set_tile_raw(cx, base - 1, IDs.T.RELAY_CORE)
+	set_tile_raw(cx, base - 1, IDs.T.AIR)
+	_place_camp_chest(cx, base)
 	# Терминалы
 	for i in 2:
 		var tx: int = cx - 6 + i * 12
@@ -1375,6 +1380,24 @@ func _place_base(cx: int) -> void:
 		set_tile_raw(int(px), base - 1, IDs.T.PANEL)
 	# Вентиляция у базы
 	vents.append(Vector2i(cx - 13, base - 1))
+
+
+## Сундук лагеря высадки: левый край площадки. Справа от центра — коридор
+## сценариев (bx+1…bx+17): сундук там сносился бы вместе с полом и ронял ядро
+## под ноги. Терминал базы — cx+6, его E сундук не перехватывает. Внутри —
+## стартовый набор и Радужное ядро (ADR-005 § 6.3). Разобрать нельзя.
+func _place_camp_chest(cx: int, base: int) -> void:
+	var cell: Vector2i = Vector2i(cx - 10, base - 1)
+	if get_tile(cell.x, cell.y) != IDs.T.AIR:
+		set_tile_raw(cell.x, cell.y, IDs.T.AIR)
+	if not MachineBase.place_machine("Chest", cell):
+		return
+	var chest: Chest = machines[cell]
+	chest.permanent = true
+	chest.receive_item(IDs.I.LAMP, 3)
+	chest.receive_item(IDs.I.COAL, 8)
+	chest.receive_item(IDs.I.RAINBOW_CORE, 1)
+	camp_chest_cell = cell
 
 
 # ------------------------------------------------------------ ВОДА
@@ -2520,7 +2543,7 @@ func _rebuild_lights() -> void:
 		_light_add_static(v, 26.0, 0.35)
 	for c in terminals:
 		_light_add_static(c, 40.0, 0.4)
-	_light_add_static(beacon_cell, 70.0, 0.6)
+	# Свет лагеря — от светокристаллов. Ядро светит само, когда его поставят.
 	_relight_sources()
 
 
@@ -2990,6 +3013,7 @@ func save_state() -> Dictionary:
 		"terminal_chapters": terminal_chapters.duplicate(),
 		"vents": Array(vents),
 		"beacon_cell": beacon_cell,
+		"camp_chest_cell": camp_chest_cell,
 		"spawn_point": spawn_point,
 		"ruin_signs": signs,
 		# Оборона (#31): шлюзы и решётки с их HP (реестры, которые ведёт set_tile).
@@ -3063,6 +3087,7 @@ func load_state(d: Dictionary) -> bool:
 	for v in d.get("vents", []):
 		vents.append(v)
 	beacon_cell = d.get("beacon_cell", beacon_cell)
+	camp_chest_cell = d.get("camp_chest_cell", camp_chest_cell)
 	spawn_point = d.get("spawn_point", spawn_point)
 	var signs: Array = d.get("ruin_signs", [])
 	for i in mini(signs.size(), ruin_caches.size()):

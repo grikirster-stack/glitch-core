@@ -18,8 +18,8 @@ extends SceneTree
 
 ## Схема протокола PROTO = SCHEMA_PROTO. Поменяли кодек, порядок IDs или таблицы DB —
 ## поднимите Net.PROTO и впишите сюда новый PROTO и хэш, который напечатает тест.
-const SCHEMA_PROTO: int = 16
-const SCHEMA_HASH: String = "04718b5df53f902819de25d0926e0918"
+const SCHEMA_PROTO: int = 17
+const SCHEMA_HASH: String = "c804a52ebddf26130673e73c31c7df73"
 
 const PORT_BASE: int = 24900
 const LOOP: String = "127.0.0.1"
@@ -216,7 +216,8 @@ func _codec() -> void:
 	# Глобальное
 	var gl: Dictionary = {"time": 0.5, "day": 65535, "state": 2, "research": 999, "stage": 4,
 			"relay_active": true, "relay_timer": 180.0, "tasks_done": 3, "tasks_total": 12, "threat": 1,
-			"threat_budget": 7.25, "brownout": false, "hash": 0xFFFFFFFF, "game_time": 3600.5}
+			"threat_budget": 7.25, "brownout": false, "hash": 0xFFFFFFFF, "game_time": 3600.5,
+			"core_arcs": 0, "core_cell": Vector2i(-1, -1)}
 	var gb: PackedByteArray = NetCodec.encode_global(gl)
 	ok("GLOBAL — %d Б, туда-обратно" % NetCodec.GLOBAL_BYTES, gb.size() == NetCodec.GLOBAL_BYTES and NetCodec.decode_global(gb) == gl,
 			str(NetCodec.decode_global(gb)))
@@ -683,6 +684,12 @@ func _codec_coop() -> void:
 			and NetCodec.decode_coop(PackedByteArray([NetCodec.CoopEv.RELAY, 1, 9, 1, 0])).is_empty() \
 			and NetCodec.decode_coop(PackedByteArray([99])).is_empty()
 	ok("COOP: битый кадр — пусто", bad)
+	var core: Dictionary = NetCodec.decode_coop(NetCodec.encode_coop_core(0x7F, Vector2i(320, 90)))
+	var none: Dictionary = NetCodec.decode_coop(NetCodec.encode_coop_core(0x15, Vector2i(-1, -1)))
+	ok("COOP CORE — 6 Б, дуги и клетка", NetCodec.encode_coop_core(0x7F, Vector2i(320, 90)).size() == 6
+			and core.get("kind") == NetCodec.CoopEv.CORE and int(core.get("arcs", 0)) == 0x7F
+			and core.get("cell") == Vector2i(320, 90)
+			and none.get("cell") == Vector2i(-1, -1) and int(none.get("arcs", -1)) == 0x15)
 
 
 # ------------------------------------------------------------------ 6. КОМАНДА (MP-J, #95)

@@ -604,7 +604,7 @@ func interact_target(powered: Callable = Callable()) -> Dictionary:
 		elif td < best_d:
 			best_d = td
 			best = tt
-	var bt: Dictionary = _target_at(World.beacon_cell, pos, false, powered)
+	var bt: Dictionary = _target_at(Game.core_cell, pos, false, powered)
 	if not bt.is_empty() and Vector2(bt["pos"]).distance_to(pos) < best_d:
 		best_d = Vector2(bt["pos"]).distance_to(pos)
 		best = bt
@@ -714,6 +714,9 @@ func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable,
 		elif not sel.is_empty() and d <= E_STATION and not (m is Belt or m is Chest or m is Generator or m is Burner) \
 				and m.input_accepts(sel.id):
 			tg["kind"] = ET_LOAD
+		elif m is RainbowCore and d < E_BEACON:
+			# Запуск ядра важнее разбора: пустая рука у ядра держит E 3 с.
+			tg["kind"] = ET_BEACON
 		elif allow_dismantle and d < E_MACHINE and sel.is_empty() and _can_dismantle(m):
 			# Разбор: своего действия E у машины нет (бур, плавильня, сборщик,
 			# конвейер) или сундук пуст.
@@ -722,11 +725,7 @@ func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable,
 		else:
 			return {}
 		return tg
-	if c == World.beacon_cell:
-		var bp: Vector2 = World.cell_to_world(c)
-		if bp.distance_to(pos) < E_BEACON:
-			return {"kind": ET_BEACON, "cell": c, "node": null, "pos": bp}
-		return {}
+	# Пустая клетка лагеря ядро не запускает: запуск — только у постройки RainbowCore.
 	if World.terminals.has(c):
 		var tp: Vector2 = World.cell_to_world(c)
 		if tp.distance_to(pos) >= E_TERMINAL:
@@ -768,7 +767,7 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 			task_progress += dt / 3.0
 			if task_progress >= 1.0:
 				task_progress = 0.0
-				Game.try_finish(self)   # вклад деталей — из своего инвентаря (MP-I, #94)
+				Game.try_finish(self)   # запуск ядра: семь дуг, иначе перечень (#175)
 		ET_GENERATOR, ET_INSERTER, ET_BURNER, ET_ACCUMULATOR, ET_SIREN:
 			# ТЭЦ: уголь — топка, иначе рубильник (#25); манипулятор: фильтр/сброс (#30);
 			# горелка: топливо — топка, пустая рука — рубильник (#164);

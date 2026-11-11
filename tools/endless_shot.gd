@@ -47,9 +47,6 @@ func _run(scene: Node) -> void:
 	var player: Node = scene.get("player")
 	if player != null:
 		player.set("invuln", 1.0e9)
-		var req: Dictionary = game.get("relay_req")
-		for id in req.keys():
-			player.inv.add(int(id), int(req[id]))
 	game.set("game_time", 40.0)
 	game.set("time_of_day", 0.42)
 	var ui: Node = root.get_node("UI")
@@ -61,6 +58,11 @@ func _run(scene: Node) -> void:
 		hud.set("notes", [])
 		hud.set("hint_text", "")
 		hud.set("_hint_t", 1.0e6)
+	var core: Vector2i = world.beacon_cell + Vector2i(2, 0)
+	world.set_tile(core.x, core.y, 0)
+	MachineBase.place_machine("RainbowCore", core)
+	for c in [1, 2, 4, 3, 6, 5, 7]:
+		game.call("core_feed", c)
 	game.call("try_finish", player)
 	game.set("relay_timer", 0.02)
 	var es: Node = scene.get("end_screen")

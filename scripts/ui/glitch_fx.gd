@@ -8,8 +8,8 @@ extends CanvasLayer
 ##  * релей ловит сигнал — блоки «артефактов сжатия» у излучателя: квадрат
 ##    2×2 макропикселя (по BLOCK_PX px мира), часть блоков — мозаика со сдвигом,
 ##    часть подкрашена цветом опасности или свечением спор;
-##      этап 2 «релей отзывается», этап 3 при запущенном релее «релей запущен»
-##      (Game.objective_changed + Game.relay_active, #169: этапов временно три),
+##      этап 2 «приём сигнала», этап 4 при запущенном ядре «ядро запущено»
+##      (Game.objective_changed + Game.relay_active, #175: этапов четыре),
 ##      отметки отсчёта удержания (Game.RELAY_REMINDERS) — «приём сигнала»;
 ##  * двойник раскрыт (первый раз замер под взглядом) или ударил героя — разрыв
 ##    строк: полосы ROW_PX px мира сдвигаются вбок, с расслоением каналов;
@@ -154,9 +154,8 @@ func active_name() -> String:
 # ------------------------------------------------------------------ СОБЫТИЯ
 
 func _on_objective(stage: int) -> void:
-	var bp: Vector2 = World.cell_to_world(World.beacon_cell)
-	# Этап 3 — и сборка релея, и удержание (#169). «Релей запущен» — только когда
-	# отсчёт уже идёт; иначе этап 3 перебивает слабый телеграф вентиляции.
+	var bp: Vector2 = World.cell_to_world(Game.core_cell if Game.core_placed() else World.beacon_cell)
+	# Этап 4 — удержание сигнала. «Ядро запущено» — только когда отсчёт уже идёт.
 	if stage == Game.OBJECTIVE_STAGES and Game.relay_active:
 		fire(Kind.RELAY_START, bp)
 	elif stage == 2:
@@ -300,7 +299,7 @@ func _watch() -> void:
 		if _relay_prev >= 0.0:
 			for r in Game.RELAY_REMINDERS:
 				if _relay_prev > float(r) and t <= float(r):
-					fire(Kind.RELAY_SIGNAL, World.cell_to_world(World.beacon_cell))
+					fire(Kind.RELAY_SIGNAL, World.cell_to_world(Game.core_cell if Game.core_placed() else World.beacon_cell))
 		_relay_prev = t
 	else:
 		_relay_prev = -1.0
