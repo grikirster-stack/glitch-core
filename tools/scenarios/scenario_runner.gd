@@ -61,8 +61,13 @@ const REGISTRY: Dictionary = {
 	},
 	"relay": {
 		"file": "relay.gd",
-		"title": "релей",
-		"desc": "выдать детали, удерживать E, этап 3, отсчёт 180 с (ускорен), победа и эпилог",
+		"title": "ядро",
+		"desc": "семь дуг, удерживать E, этап 4, отсчёт 180 с (ускорен), победа и эпилог",
+	},
+	"rainbow_core": {
+		"file": "rainbow_core.gd",
+		"title": "радужное ядро",
+		"desc": "ядро в 200 клетках от лагеря, смерть, возрождение у ядра; семь дуг за ≤ 120 с",
 	},
 	"night": {
 		"file": "night.gd",
@@ -274,7 +279,7 @@ const REGISTRY: Dictionary = {
 	"objective_stages": {
 		"file": "objective_stages.gd",
 		"title": "этапы цели",
-		"desc": "терминалы базы → этап 2, T5 → этап 3, запуск релея → этап 4",
+		"desc": "ядро → этап 2, семь дуг → этап 3, запуск → этап 4",
 	},
 	"relay_doppel_spawns": {
 		"file": "relay_doppel_spawns.gd",

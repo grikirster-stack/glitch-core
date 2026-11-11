@@ -110,8 +110,11 @@ func _ground(item_id: int) -> int:
 
 func _stay() -> void:
 	# Game.player сценарий не ставит: try_finish берёт героя из аргумента.
-	for id in Game.relay_req.keys():
-		player.inv.add(int(id), int(Game.relay_req[id]))
+	var core: Vector2i = World.beacon_cell + Vector2i(2, 0)
+	World.set_tile(core.x, core.y, IDs.T.AIR)
+	MachineBase.place_machine("RainbowCore", core)
+	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M, Beams.W]:
+		Game.core_feed(c)
 	Game.try_finish(player)
 	ok("ядро запущено для проверки финала", Game.relay_active)
 	Game.relay_timer = 0.05
@@ -135,8 +138,6 @@ func _stay() -> void:
 	ok("карточка: «Смена %d · Сигнал отправлен»" % Game.day_number,
 			hud != null and hud.tracker_title == "Смена %d · Сигнал отправлен" % Game.day_number,
 			hud.tracker_title if hud != null else "нет HUD")
-	for id in Game.relay_req.keys():
-		player.inv.add(int(id), int(Game.relay_req[id]))
 	var again: bool = Game.try_finish(player)
 	ok("повторный запуск ядра возможен", again and Game.relay_active,
 			"relay_active=%s" % str(Game.relay_active))

@@ -1,15 +1,10 @@
 extends "res://tools/mp/scenarios/mp_coop_base.gd"
-## mp_relay_scale (ADR-002 § 4.7 «Релей вчетвером», § 8 вопрос 3; #139): требование
-## релея растёт с числом героев — DB.relay_req × (1 + MP_RELAY_REQ_PER_PLAYER·(N − 1)).
+## mp_relay_scale (#139, переписан под #175): свободная сеть запускает ядро дугами.
+## Требование деталей от N остаётся в Game (глава «Сигнал»), но запуск его не ждёт.
 ##
-##  * N = 2 (хост + Аня): у хоста и у Ани одно требование ×1.25 (COOP RELAY / снимок входа);
-##  * хост сдаёт в ядро жел. пластин больше одиночного требования, но меньше ×1.25, и сталь;
-##    Аня видит тот же вклад;
-##  * Аня вышла (N = 1): требование — одиночное, но пластин — не ниже сданного (прогресс не
-##    потерян), вклад цел, команде — уведомление с новым множителем;
-##  * Аня вернулась (N = 2): у обоих снова ×1.25, вклад тот же (снимок входа);
-##  * Аня вышла снова (N = 1): требование как в первый раз; хост докладывает недостающее —
-##    релей запускается: сданное при N = 2 засчитано.
+##  * N = 2: дуги хоста видны Ане (COOP CORE), требование ×1.25 всё ещё считается;
+##  * шесть дуг — запуск отказывает; седьмая — ядро запущено;
+##  * Аня вышла и вернулась — дуги на месте (не гаснут), команде — уведомление о N.
 ## Отсчёты — по игровым часам (wait_until), не по кадрам.
 
 const WAIT: float = 8.0
@@ -41,18 +36,13 @@ func run_host() -> void:
 	share_put("req", Game.relay_req.duplicate())
 	await barrier("n2")
 
-	# --- Вклад при N = 2: пластин больше одиночного требования, меньше нового.
-	var plates: int = int(base[PLATE]) + (int(req2[PLATE]) - int(base[PLATE])) / 2
-	var steel: int = int(base[STEEL]) / 2
-	for id in Game.relay_req:
-		player.inv.remove_id(int(id), player.inv.count_of(int(id)))
-	player.inv.add(PLATE, plates)
-	player.inv.add(STEEL, steel)
-	ok("хост сдал в ядро %d пластин и %d стали" % [plates, steel], Game.relay_deposit(player).size() == 2
-			and Game.relay_count(PLATE) == plates and Game.relay_count(STEEL) == steel, str(Game.relay_have))
-	ok("требование вкладом не изменилось", Game.relay_req == req2)
-	var have: Dictionary = Game.relay_have.duplicate()
-	share_put("have", have)
+	var cell: Vector2i = World.beacon_cell + Vector2i(2, 0)
+	World.set_tile(cell.x, cell.y, IDs.T.AIR)
+	ok("ядро поставлено", MachineBase.place_machine("RainbowCore", cell) and Game.core_cell == cell)
+	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M]:
+		Game.core_feed(c)
+	ok("шесть дуг — запуск отказывает", Game.core_arc_count() == 6 and not Game.try_finish(player))
+	share_put("arcs", Game.core_arcs)
 	await barrier("dep")
 
 	# --- Аня вышла: N = 1.
@@ -63,7 +53,7 @@ func run_host() -> void:
 	req1[PLATE] = plates
 	ok("N = 1: требование одиночное, пластин — не ниже сданного (%d)" % plates,
 			await wait_until(func() -> bool: return Game.relay_req == req1, WAIT), str(Game.relay_req))
-	ok("N = 1: вклад цел", Game.relay_have == have, str(Game.relay_have))
+	ok("N = 1: дуги целы", Game.core_arcs == int(share_get("arcs")), str(Game.core_arcs))
 	ok("уведомление команде: героев 1, ×1", notes_with("Героев на связи: 1") >= 1, str(notes))
 
 	# --- Аня вернулась: N = 2.
@@ -72,7 +62,7 @@ func run_host() -> void:
 	ok("Аня вошла снова", await wait_players(2, 45.0))
 	ok("N = 2 снова: требование хоста ×1.25", await wait_until(func() -> bool: return Game.relay_req == req2, WAIT),
 			str(Game.relay_req))
-	ok("N = 2 снова: вклад тот же", Game.relay_have == have)
+	ok("N = 2 снова: дуги те же", Game.core_arcs == int(share_get("arcs")))
 	await barrier("back")
 
 	# --- Аня вышла снова: N = 1, и прогресс засчитан до победы.
@@ -80,15 +70,10 @@ func run_host() -> void:
 	ok("Аня вышла снова", await wait_until(func() -> bool: return Net.peers.size() == 1, 15.0))
 	ok("N = 1 снова: требование как в первый раз", await wait_until(func() -> bool: return Game.relay_req == req1, WAIT),
 			str(Game.relay_req))
-	for id in Game.relay_req:
-		var miss: int = int(Game.relay_req[id]) - Game.relay_count(int(id))
-		if miss > 0:
-			player.inv.add(int(id), miss)
-	var p_left: int = player.inv.count_of(PLATE)
-	ok("сданные при N = 2 пластины засчитаны — докладывать их не нужно", p_left == 0, str(p_left))
-	ok("недостающее доложено — релей запущен", Game.try_finish(player) and Game.relay_active)
+	Game.core_feed(Beams.W)
+	ok("седьмая дуга — ядро запущено", Game.try_finish(player) and Game.relay_active and Game.core_arcs == 0x7F)
 	Game.relay_active = false
-	share_clear(["req", "have"])
+	share_clear(["req", "arcs"])
 	finish()
 
 
@@ -99,9 +84,9 @@ func run_client(_i: int) -> void:
 		var want = share_get("req")
 		ok("c0: вернулся — требование ×1.25, как у хоста", want is Dictionary and await wait_until(
 				func() -> bool: return Game.relay_req == want, WAIT), "%s / %s" % [str(Game.relay_req), str(want)])
-		var have = share_get("have")
-		ok("c0: вклад тот же, что у хоста (снимок входа)", have is Dictionary and await wait_until(
-				func() -> bool: return Game.relay_have == have, WAIT), "%s / %s" % [str(Game.relay_have), str(have)])
+		var arcs = share_get("arcs")
+		ok("c0: дуги те же, что у хоста (COOP CORE)", arcs is int and await wait_until(
+				func() -> bool: return Game.core_arcs == int(arcs), WAIT), str(Game.core_arcs))
 		await barrier("back")
 		await barrier("leave2")
 		finish()
@@ -113,16 +98,14 @@ func run_client(_i: int) -> void:
 			func() -> bool: return Game.relay_req == req, WAIT), "%s / %s" % [str(Game.relay_req), str(req)])
 	if req is Dictionary:
 		var line: String = _hud_line()
-		var want: String = "%s %d/%d" % [DB.item_name(PLATE),   # сдано (хост мог уже сдать) + своё
-				Game.relay_count(PLATE) + player.inv.count_of(PLATE), int(req[PLATE])]
-		ok("c0: HUD (этап 2, собрать релей) — «%s»" % want, line.contains(want), "«%s»" % line)
+		ok("c0: HUD (этап 2) — дуги", line.begins_with("дуги "), "«%s»" % line)
 		# Счётчик деталей с панели снят (#169): требование читает трекер HUD, не окно крафта.
 		ok("c0: панель крафта больше не рисует счётчик деталей", UI.panel != null
 				and not UI.panel.has_method("_goal_req"))
 	await barrier("dep")
-	var have = share_get("have")
-	ok("c0: вклад хоста виден (COOP RELAY)", have is Dictionary and await wait_until(
-			func() -> bool: return Game.relay_have == have, WAIT), "%s / %s" % [str(Game.relay_have), str(have)])
+	var arcs = share_get("arcs")
+	ok("c0: дуги хоста видны (COOP CORE)", arcs is int and await wait_until(
+			func() -> bool: return Game.core_arcs == int(arcs), WAIT), str(Game.core_arcs))
 	ok("c0: требование вкладом не изменилось", Game.relay_req == req)
 	await barrier("leave")
 	finish()

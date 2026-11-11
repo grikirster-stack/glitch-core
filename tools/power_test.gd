@@ -314,7 +314,8 @@ class Runner extends Node:
 		var seed_used: int = int(world.world_seed)
 		world.generate(seed_used)
 		# Сундуки-тайники руин (#35) и небесный тайник (#60) ставит сама генерация — их не считаем.
-		var caches: int = world.ruin_caches.size() + (0 if world.sky_cache.is_empty() else 1)
+		var caches: int = world.ruin_caches.size() + (0 if world.sky_cache.is_empty() else 1) \
+				+ (0 if world.camp_chest_cell.x < 0 else 1)
 		_ok("после перегенерации машин в мире нет", world.machines.size() == caches,
 				"машин %d, тайников %d" % [world.machines.size(), caches])
 		_ok("после перегенерации питания нет нигде", not _powered_at(_pos(_in_cell)))

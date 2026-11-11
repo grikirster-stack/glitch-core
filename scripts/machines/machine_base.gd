@@ -16,7 +16,7 @@ const POWER_CHECK_INTERVAL: float = Balance.POWER_CHECK_INTERVAL
 const POWER_CONSUMERS: Array[String] = ["Drill", "Smelter", "Assembler"]
 ## Машины, чья отрисовка зависит от времени (вращение, мерцание):
 ## им нужна перерисовка каждый кадр.
-const TIME_ANIMATED: Array[String] = ["Drill", "Smelter", "Assembler", "DeepDrill", "Burner"]
+const TIME_ANIMATED: Array[String] = ["Drill", "Smelter", "Assembler", "DeepDrill", "Burner", "RainbowCore"]
 ## Шанс, что разрушенная машина оставит свой предмет (§ 4.4).
 const DESTROY_DROP_CHANCE: float = 0.5
 ## Сколько осколков разлетается при разрушении.
@@ -111,6 +111,9 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 			m = Mixer.new()
 		"Prism":
 			m = Prism.new()
+		# --- Радужное ядро (ADR-005 § 6.3, #175) ---
+		"RainbowCore":
+			m = RainbowCore.new()
 		_:
 			return false
 	m.cell = c

@@ -154,7 +154,8 @@ func _t_world() -> void:
 	_ok("игрок создан", player != null)
 	_ok("мир сгенерирован", World.tiles.size() == World.W * World.H)
 	_ok("терминалы есть", World.terminals.size() > 0, "n=%d" % World.terminals.size())
-	_ok("релей на месте", World.get_tile_v(World.beacon_cell) == IDs.T.RELAY_CORE)
+	_ok("центр лагеря пуст — ядро в сундуке", World.get_tile_v(World.beacon_cell) == IDs.T.AIR
+			and World.machines.get(World.camp_chest_cell) is Chest)
 	_ok("игрок не в стене", not World.rect_solid(Rect2(player.global_position - Vector2(6, 11), Vector2(12, 22))))
 	_ok("задачи назначены", Game.tasks_total == World.terminals.size())
 	_check_floating_trees()
@@ -652,10 +653,13 @@ func _daylight_max_jump() -> float:
 
 func _t_relay() -> void:
 	print("== Релей ==")
-	for id in Game.relay_req.keys():
-		player.inv.add(int(id), int(Game.relay_req[id]) + 2)
-	var ok: bool = Game.try_finish()
-	_ok("релей запущен", ok)
+	var cell: Vector2i = World.beacon_cell + Vector2i(2, 0)
+	World.set_tile(cell.x, cell.y, IDs.T.AIR)
+	var placed: bool = MachineBase.place_machine("RainbowCore", cell)
+	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M, Beams.W]:
+		Game.core_feed(c)
+	var ok: bool = placed and Game.try_finish()
+	_ok("ядро запущено", ok and Game.core_arcs == 0x7F)
 	_ok("таймер идёт", Game.relay_active and Game.relay_timer > 0.0)
 	Game.relay_timer = 0.05
 	_next(15, 0.5)

@@ -131,7 +131,7 @@ func _start() -> void:
 
 func _intro_notify() -> void:
 	Game.notify("Экспедиция «Кербер-9». Связь с орбитой потеряна.", Color(0.8, 0.9, 1.0))
-	Game.notify("Цель: собрать релей-ядро и улететь. Начните с добычи руды.", Color(0.5, 0.95, 0.8))
+	Game.notify("Цель: поставь Радужное ядро и зажги семь дуг. Ядро — в сундуке лагеря.", Color(0.5, 0.95, 0.8))
 	Game.notify("Терминал под питанием даёт главу журнала и чертёж. %s" % ("Копать — тап к стене, строить — блок в хотбаре."
 			if UI.touch_on else "Копать — ЛКМ, строить — ПКМ."), Color(0.85, 0.85, 0.7))
 
@@ -313,15 +313,17 @@ func _on_player_died() -> void:
 func _respawn() -> void:
 	if not player.dead or Game.state != Game.State.PLAYING:
 		return
-	player.respawn_at(World.spawn_point)
+	var at_core: bool = Game.core_placed()
+	player.respawn_at(Game.respawn_point())
 	end_screen.hide_end()
+	var where: String = "У ядра." if at_core else "Капсула на базе."
 	if Game.in_mission():   # ADR-004: ночь главы не перематывается — её надо пережить
-		Game.notify("Капсула на базе. Мешок с вещами остался на месте гибели.", Color(1.0, 0.85, 0.6))
+		Game.notify("%s Мешок с вещами остался на месте гибели." % where, Color(1.0, 0.85, 0.6))
 		return
 	# К рассвету: ставим время чуть раньше конца ночи — Game сам перейдёт рубеж
 	# и начнёт новую смену (day_number, «Смена N», роспуск фантомов — по сигналу).
 	Game.time_of_day = Balance.NIGHT_END - 0.0005
-	Game.notify("Капсула на базе. Мешок с вещами остался на месте гибели.", Color(1.0, 0.85, 0.6))
+	Game.notify("%s Мешок с вещами остался на месте гибели." % where, Color(1.0, 0.85, 0.6))
 
 
 # ------------------------------------------------- СЕТЬ (ADR-002, MP-A #86)

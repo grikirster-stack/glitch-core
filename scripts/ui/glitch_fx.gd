@@ -154,9 +154,8 @@ func active_name() -> String:
 # ------------------------------------------------------------------ СОБЫТИЯ
 
 func _on_objective(stage: int) -> void:
-	var bp: Vector2 = World.cell_to_world(World.beacon_cell)
-	# Этап 3 — и сборка релея, и удержание (#169). «Релей запущен» — только когда
-	# отсчёт уже идёт; иначе этап 3 перебивает слабый телеграф вентиляции.
+	var bp: Vector2 = World.cell_to_world(Game.core_cell if Game.core_placed() else World.beacon_cell)
+	# Этап 4 — удержание сигнала. «Ядро запущено» — только когда отсчёт уже идёт.
 	if stage == Game.OBJECTIVE_STAGES and Game.relay_active:
 		fire(Kind.RELAY_START, bp)
 	elif stage == 2:
@@ -300,7 +299,7 @@ func _watch() -> void:
 		if _relay_prev >= 0.0:
 			for r in Game.RELAY_REMINDERS:
 				if _relay_prev > float(r) and t <= float(r):
-					fire(Kind.RELAY_SIGNAL, World.cell_to_world(World.beacon_cell))
+					fire(Kind.RELAY_SIGNAL, World.cell_to_world(Game.core_cell if Game.core_placed() else World.beacon_cell))
 		_relay_prev = t
 	else:
 		_relay_prev = -1.0
