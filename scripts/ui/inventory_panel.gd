@@ -1,6 +1,6 @@
 class_name InventoryPanel
 extends Control
-## Экран инвентаря: сетка предметов, крафт (ручной / плавильня / сборщик) и сундуки.
+## Экран инвентаря: сетка предметов, крафт (ручной / плавильня / верстак) и сундуки.
 ##
 ## Рецепт, чей выход в списке чертежей, без чертежа не рисуется вовсе (#169).
 ## Под списком — одна строка «Чертежи: N из M». Имя следующего чертежа
@@ -26,7 +26,7 @@ extends Control
 const PANEL: Vector2 = Vector2(820, 540)
 const SLOT: int = 38
 ## Сетка инвентаря (#135, #161): верхний ряд — хотбар (ровно inv.hotbar_size ячеек,
-## клавиши 1…0 или 1…6), ниже рюкзак рядами по 10. Шаг чуть мельче SLOT, чтобы
+## клавиши 1-0 или 1-6), ниже рюкзак рядами по 10. Шаг чуть мельче SLOT, чтобы
 ## 10 колонок рюкзака встали левее рецептов.
 const INV_SLOT: int = 36
 ## Зазор между хотбаром и рюкзаком (в нём — разделитель), px.
@@ -43,7 +43,7 @@ const TOAST_MS: int = 4500
 ## Ширина всплывающей подсказки.
 const TIP_W: float = 360.0
 
-const TABS: Array = ["Ручной крафт", "Плавильня", "Сборщик"]
+const TABS: Array = ["Ручной крафт", "Плавильня", "Верстак"]
 const STATIONS: Array = ["hand", "smelter", "assembler"]
 ## Вид машины станции и падежи её названия для фраз подсказок.
 const STATION_INFO: Dictionary = {
@@ -51,9 +51,9 @@ const STATION_INFO: Dictionary = {
 	"smelter": {"kind": "Smelter", "name": "плавильня", "Name": "Плавильня", "to": "к плавильне",
 			"in": "в плавильню", "need": "Нужна плавильня рядом", "it": "Она", "self": "сама",
 			"made": "Плавильни нет: сделай её в «Ручном крафте» и поставь (ПКМ)."},
-	"assembler": {"kind": "Assembler", "name": "сборщик", "Name": "Сборщик", "to": "к сборщику",
-			"in": "в сборщик", "need": "Нужен сборщик рядом", "it": "Он", "self": "сам",
-			"made": "Сборщика нет: сделай его в «Ручном крафте» и поставь (ПКМ)."},
+	"assembler": {"kind": "Assembler", "name": "верстак", "Name": "Верстак", "to": "к верстаку",
+			"in": "в верстак", "need": "Нужен верстак рядом", "it": "Он", "self": "сам",
+			"made": "Верстака нет: сделай его в «Ручном крафте» и поставь (ПКМ)."},
 }
 
 const C_TITLE: Color = Color(0.85, 0.93, 1.0)
@@ -76,7 +76,7 @@ var held: ItemStack:
 		return _hand[0]
 	set(v):
 		_hand[0] = v
-var station_tab: int = 0            ## 0 — ручной, 1 — плавильня, 2 — сборщик
+var station_tab: int = 0            ## 0 — ручной, 1 — плавильня, 2 — верстак
 var scroll: int = 0
 ## Последняя позиция мыши в координатах панели (из _gui_input).
 var mouse_pos: Vector2 = Vector2(-1, -1)
@@ -90,7 +90,11 @@ var text_audit = null
 ## не меняется, а панель перерисовывается на каждое движение мыши. Ключ сверки —
 ## размер DB.recipes (вдруг кто-то допишет рецепт на ходу).
 var _recipes_cache: Dictionary = {}     ## station -> Array
+var _seen_inv: Inventory = null
 var _source: Dictionary = {}            ## id предмета -> «где взять»
+## Кадр #171 подменяет список строк. Только список: без сундука, сетки и подвала.
+var _shot_rows = null
+var _shot_list_only: bool = false
 var _cache_size: int = -1
 
 var _font: Font = null
@@ -129,6 +133,7 @@ func open(p: Player) -> void:
 	_return_held()
 	player = p
 	chest = null
+	_bind_seen(p)
 	visible = true
 	queue_redraw()
 
@@ -137,6 +142,7 @@ func open_chest(p: Player, c: Chest) -> void:
 	_return_held()
 	player = p
 	chest = c
+	_bind_seen(p)
 	visible = true
 	_chest_title = "СУНДУК"
 	for rc in World.ruin_caches:
@@ -431,14 +437,16 @@ func _draw() -> void:
 			if _near.get(String(STATIONS[i])) != null:
 				draw_circle(dot, 4.0, C_OK)
 
-	_draw_chest(origin)
-	_draw_inventory(origin)
+	if not _shot_list_only:
+		_draw_chest(origin)
+		_draw_inventory(origin)
 
 	# ---- Рецепты -------------------------------------------------------------
 	var rx: float = origin.x + 380
 	_draw_recipes(rx, origin)
 
-	_draw_bottom(origin)
+	if not _shot_list_only:
+		_draw_bottom(origin)
 	_draw_held()
 	_draw_tooltip()
 	_tag = ""
@@ -488,7 +496,7 @@ func _draw_inventory(origin: Vector2) -> void:
 	_tag = "inv"
 	var inv_y: float = _inv_y()
 	var cols: int = _hotbar_cols()
-	var keys: String = "1…0" if cols >= Inventory.HOTBAR_MAX else "1…%d" % cols
+	var keys: String = "1-0" if cols >= Inventory.HOTBAR_MAX else "1-%d" % cols
 	var w: float = _text(origin + Vector2(16, inv_y - 6), "ВЫ", 40, UI.FONT["small"], C_HEAD)
 	_text(origin + Vector2(16 + w + 8, inv_y - 6), "верхний ряд — хотбар (%s)" % keys, 300 - w, UI.FONT["small"], C_DIM)
 	# Разделитель хотбар | рюкзак — посередине зазора между рядами, по ширине рюкзака (10).
@@ -526,9 +534,10 @@ func _draw_recipes(rx: float, origin: Vector2) -> void:
 		y += 16
 		_text(Vector2(rx, y), "%d–%d из %d · колесо мыши — листать" % [first + 1, last, recipes.size()],
 				424, UI.FONT["small"], C_DIM)
+	if _shot_list_only:
+		return
 	# Пояснение вкладки: как работает этот вид крафта.
-	var info: String = "Ручной крафт — без станка и сразу, но дороже: слиток руками стоит 2 руды, в плавильне — 1. " \
-			+ "Наведи на рецепт — увидишь, что нужно."
+	var info: String = "Руками сразу и без станка. Слиток руками — 2 руды, в плавильне — 1."
 	if station != "hand":
 		var si: Dictionary = STATION_INFO[station]
 		info = "%s работает %s: клик загружает сырьё %s, готовое выпадет рядом со станком или уедет по ленте. Нужно питание (ТЭЦ или солнечная панель рядом)." \
@@ -542,7 +551,7 @@ func _draw_recipes(rx: float, origin: Vector2) -> void:
 ## Строка состояния под заголовком рецептов: [текст, цвет].
 func _station_line(station: String) -> Array:
 	if station == "hand":
-		return ["Наведи на рецепт — что нужно. Клик — сделать.", C_DIM]
+		return ["Наведи — что нужно. Клик — сделать.", C_DIM]
 	var si: Dictionary = STATION_INFO[station]
 	var near: MachineBase = _near.get(station)
 	if near != null:
@@ -671,7 +680,7 @@ func _draw_recipe(r: Rect2, rec: Dictionary) -> void:
 	var dim: Color = Color(1, 1, 1, 1)
 	_icon(out_id, Rect2(r.position + Vector2(6, 6), Vector2(28, 28)), dim)
 	# Ярлык состояния справа.
-	var tag: String = "клик — сделать" if String(rec["station"]) == "hand" else "клик — загрузить"
+	var tag: String = ""
 	var tag_col: Color = C_OK
 	match code:
 		"missing":
@@ -680,34 +689,30 @@ func _draw_recipe(r: Rect2, rec: Dictionary) -> void:
 		"far", "none":
 			tag = "станок далеко" if code == "far" else "нет станка"
 			tag_col = C_WARN
-	var tw: float = minf(_w(tag, UI.FONT["small"]), 170.0)
-	_text(Vector2(r.end.x - tw - 8, r.position.y + 17), tag, tw, UI.FONT["small"], tag_col, HORIZONTAL_ALIGNMENT_LEFT, r)
+	var tw: float = 0.0
+	if tag != "":
+		tw = minf(_w(tag, UI.FONT["small"]), 170.0)
+		_text(Vector2(r.end.x - tw - 8, r.position.y + 17), tag, tw, UI.FONT["small"], tag_col, HORIZONTAL_ALIGNMENT_LEFT, r)
 	var name_col: Color = Color(0.95, 0.97, 1.0) if can else Color(0.72, 0.75, 0.82)
-	var title: String = String(rec["name"])
+	var title: String = String(rec["name"]) if String(rec["name"]) != "" else DB.item_name(out_id)
 	if int(rec["amount"]) > 1:
 		title += " ×%d" % int(rec["amount"])
 	_text(r.position + Vector2(42, 17), title, r.size.x - 42 - tw - 18, UI.FONT["small"], name_col, HORIZONTAL_ALIGNMENT_LEFT, r)
-	# Входы: «иконка Название есть/нужно»; не влезают — «иконка есть/нужно».
+	# Входы — иконка и короткое имя. Счёт «есть/нужно» остаётся в подсказке.
 	var ins: Array = rec["in"].keys()
-	var avail: float = r.size.x - 42 - 8
-	var rkey: String = String(rec["name"])
-	if not _row_named.has(rkey):
-		var total: float = 0.0
-		for id in ins:
-			total += 14 + 4 + _w("%s %d/%d" % [DB.item_name(id), 999, int(rec["in"][id])], UI.FONT["small"]) + 14
-		_row_named[rkey] = total <= avail
-	var named: bool = bool(_row_named[rkey])
 	var gx: float = r.position.x + 42
 	for id in ins:
 		var need: int = int(rec["in"][id])
 		var have: int = _have(id)
 		var col: Color = C_OK if have >= need else C_BAD
 		_icon(id, Rect2(Vector2(gx, r.position.y + 23), Vector2(14, 14)), dim)
-		gx += 18
-		var label: String = "%d/%d" % [mini(have, 999), need]
-		if named:
-			label = "%s %s" % [DB.item_name(id), label]
-		gx += _text(Vector2(gx, r.position.y + 34), label, r.end.x - gx - 6, UI.FONT["small"], col, HORIZONTAL_ALIGNMENT_LEFT, r) + 14
+		gx += 16
+		var label: String = _short_name(id)
+		if need > 1:
+			label += " ×%d" % need
+		var left_n: int = ins.size() - ins.find(id)
+		var room: float = maxf(8.0, (r.end.x - 6.0 - gx) / float(maxi(left_n, 1)) - 8.0)
+		gx += _text(Vector2(gx, r.position.y + 34), label, room, UI.FONT["small"], col, HORIZONTAL_ALIGNMENT_LEFT, r) + 8
 
 
 # ---------------------------------------------------------------- ПОДСКАЗКИ
@@ -771,7 +776,7 @@ func _tooltip_for(t: Dictionary) -> Array:
 			var tips: Array = [
 				"Крафт руками: без станка, сразу в инвентарь.",
 				"Плавильня: встань рядом с построенной плавильней — клик загружает в неё сырьё, плавит она сама.",
-				"Сборщик: встань рядом с построенным сборщиком — клик загружает в него детали, собирает он сам.",
+				"Верстак: встань рядом с построенным верстаком — клик загружает в него детали, собирает он сам.",
 			]
 			out.append(_line(String(tips[int(t["i"])]), C_TEXT))
 		"recipe":
@@ -936,20 +941,57 @@ func _blueprint_line() -> String:
 # ---------------------------------------------------------------- КЭШ РЕЦЕПТОВ
 
 func _check_cache() -> void:
-	if _cache_size == DB.recipes.size():
+	var seen_n: int = player.inv.seen_items.size() if player != null and player.inv != null else 0
+	var bp_n: int = Game.blueprints.size()
+	var key: int = DB.recipes.size() * 1000 + seen_n * 10 + bp_n
+	if _cache_size == key:
 		return
-	_cache_size = DB.recipes.size()
+	_cache_size = key
 	_recipes_cache = {}
 	_source = {}
 
 
-## Рецепты станции (кэш поверх DB.recipes_for).
+## Подписка на первое появление предмета: уведомление и сброс списка рецептов.
+func _bind_seen(p: Player) -> void:
+	if p == null or p.inv == null or p.inv == _seen_inv:
+		return
+	if _seen_inv != null and _seen_inv.item_first_seen.is_connected(_on_item_first_seen):
+		_seen_inv.item_first_seen.disconnect(_on_item_first_seen)
+	_seen_inv = p.inv
+	if not _seen_inv.item_first_seen.is_connected(_on_item_first_seen):
+		_seen_inv.item_first_seen.connect(_on_item_first_seen)
+
+
+func _on_item_first_seen(id: int) -> void:
+	_cache_size = -1
+	for r in DB.recipes_opened_by(id, player):
+		var text: String = "Теперь можно сделать: %s" % DB.item_name(int(r["out"]))
+		var icon: int = int(r["out"])
+		if player != null and player.has_method("_notify"):
+			player._notify(text, Color(0.55, 0.95, 0.7), icon)
+		else:
+			Game.notify(text, Color(0.55, 0.95, 0.7), icon)
+	queue_redraw()
+
+
+## Короткое имя входа: 2–4 слова, без «…».
+func _short_name(id: int) -> String:
+	var name: String = DB.item_name(id)
+	var words: PackedStringArray = name.split(" ", false)
+	if words.size() <= 2:
+		return name
+	return " ".join(words.slice(0, 2))
+
+
+## Рецепты станции. Чертёж и подбор прячут строку целиком (#169, #171).
 func _recipes(station: String) -> Array:
+	if _shot_rows is Array and station == "hand":
+		return _shot_rows
 	_check_cache()
 	if not _recipes_cache.has(station):
 		var shown: Array = []
 		for r in DB.recipes_for(station):
-			if DB.recipe_unlocked(r):
+			if DB.recipe_unlocked(r, player):
 				shown.append(r)
 		_recipes_cache[station] = shown
 	return _recipes_cache[station]

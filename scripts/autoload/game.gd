@@ -207,7 +207,13 @@ func daylight() -> float:
 	return lerpf(solar, 0.0, (t - night) / (1.0 - night))
 
 
-func notify(text: String, color: Color = Color(0.85, 0.9, 1.0)) -> void:
+## Иконка последнего уведомления. Сигнал остаётся (text, color): лишний аргумент
+## ломает чужие connect. HUD читает last_note_icon.
+var last_note_icon: int = 0
+
+
+func notify(text: String, color: Color = Color(0.85, 0.9, 1.0), icon: int = 0) -> void:
+	last_note_icon = icon
 	notification.emit(text, color)
 
 

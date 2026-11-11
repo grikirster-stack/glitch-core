@@ -134,6 +134,9 @@ func run() -> void:
 	panel.open(player)
 	panel.station_tab = 0
 	panel._cache_size = -1
+	player.inv.mark_seen(IDs.I.IRON_INGOT)
+	player.inv.mark_seen(IDs.I.COAL)
+	panel._check_cache()
 	var shown: bool = false
 	for r in panel._recipes("hand"):
 		if int(r["out"]) == IDs.I.MIXER:

@@ -20,10 +20,11 @@ func run() -> void:
 	stand_in_corridor(12)
 	await wait(0.3)
 	player.inv.remove_id(IDs.I.COPPER_ORE, player.inv.count_of(IDs.I.COPPER_ORE))
+	player.inv.mark_seen(IDs.I.COPPER_ORE)
 	var hand: Array = DB.recipes_for("hand")
 	var copper: Dictionary = _find(hand, IDs.I.COPPER_INGOT)
 	var asm: Dictionary = _find(hand, IDs.I.ASSEMBLER)
-	ok("рецепты медного слитка и сборщика есть", not copper.is_empty() and not asm.is_empty())
+	ok("рецепты медного слитка и верстака есть", not copper.is_empty() and not asm.is_empty())
 	if copper.is_empty() or asm.is_empty():
 		finish()
 		return
@@ -54,9 +55,10 @@ func run() -> void:
 	ok("стальная стена без чертежа не в списке панели", wall.is_empty() or not panel._recipes("smelter").has(wall))
 	for id in asm["in"].keys():
 		player.inv.add(int(id), int(asm["in"][id]))
+	panel._check_cache()
 	var arow: Rect2 = _row_of(panel._recipes("hand"), asm)
 	await _click(arow.position + Vector2(60, 12))
-	ok("сборщик скрафчен без дерева технологий", player.inv.count_of(IDs.I.ASSEMBLER) == 1)
+	ok("верстак скрафчен без дерева технологий", player.inv.count_of(IDs.I.ASSEMBLER) == 1)
 	panel.scroll = 0
 
 	# ---- 4. Плавильня: станка рядом нет --------------------------------------------

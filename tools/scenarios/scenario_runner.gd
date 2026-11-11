@@ -292,7 +292,9 @@ const REGISTRY: Dictionary = {
 	"inventory_transfer": {"file": "inventory_transfer.gd", "title": "сундук ↔ инвентарь",
 		"desc": "клики мышью: в руку, Shift+ЛКМ туда и обратно, «Забрать/Сложить всё», предмет в руке не теряется"},
 	"craft_feedback": {"file": "craft_feedback.gd", "title": "крафт: подсказка и отклик",
-		"desc": "наведение — входы и «есть/нужно»; нехватка, замок, станок — причина словами; «Скрафчено» / «Загружено»"},
+		"desc": "наведение — входы и «есть/нужно»; нехватка, чертёж, станок — причина словами; «Скрафчено» / «Загружено»"},
+	"recipe_reveal": {"file": "recipe_reveal.gd", "title": "рецепт по первому подбору",
+		"desc": "новый забег — светокристалл виден, стекло и слиток нет; песок открывает стекло; уведомление один раз"},
 	"inventory_text_fit": {"file": "inventory_text_fit.gd", "title": "подписи панели в рамках",
 		"desc": "1280×720 и 960×540, все вкладки: подписи внутри рамок, без наложений; цель в границах блока"},
 	# --- Копка по лучу (ADR-005 § 3) ---
@@ -607,11 +609,12 @@ func _reset_world() -> void:
 	for i in p.inv.slots.size():
 		p.inv.slots[i] = ItemStack.new()
 	p.inv.selected = 0
-	# Стартовый набор — как в обычной игре.
+	p.inv.seen_items = {}
+	# Стартовый набор — как в обычной игре. Подбор рецептов (#171) идёт от него.
 	p.inv.add(IDs.I.LAMP, 3)
 	p.inv.add(IDs.I.COAL, 6)
-	p.inv.add(IDs.I.IRON_PLATE, 2)
-	p.inv.add(IDs.I.COPPER_ORE, 4)
+	p.inv.add(IDs.I.STONE, 4)
+	p.inv.add(IDs.I.SCRAP, 4)
 	p.global_position = World.spawn_point
 	# Экран финала мог остаться от прошлого сценария.
 	var es: Node = scene.get("end_screen")
