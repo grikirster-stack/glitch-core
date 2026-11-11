@@ -153,6 +153,8 @@ var card_have: int = 0
 var card_need: int = 0
 var card_icon: int = -1
 var card_at: Vector2 = Vector2.INF
+## Подсказка-картинка главы 6: три смеси (R+G, G+B, R+B) под заголовком.
+var card_mix: bool = false
 ## Маркер на экране: false — цели нет или она за кадром (тогда стрелка).
 var card_mark_on: bool = false
 ## Камера показывает цель ещё столько секунд (клик по карточке).
@@ -382,7 +384,7 @@ func _fill_key() -> void:
 	_key[44] = 0
 	_key[45] = 1 if Game.is_night() else 0    # скобки опасности и метка суток (V6)
 	# Карточка «Сейчас» (#160): иконка, счётчик и виден ли маркер. Текст — в _state_hash.
-	_key[63] = card_icon
+	_key[63] = card_icon + (100 if card_mix else 0)
 	_key[64] = card_have
 	_key[65] = card_need
 	_key[66] = 1 if card_mark_on else (2 if card_at != Vector2.INF else 0)
@@ -596,6 +598,8 @@ func _compute_mission() -> void:
 		return
 	_set_card(String(open["text"]), int(open["have"]), int(open["need"]),
 			int(open.get("icon", -1)), open.get("at", Vector2.INF))
+	# Глава «Радуга»: таблица смесей — три картинки, не слова клавиш.
+	card_mix = String(open.get("text", "")) == "Зажги семь дуг"
 
 
 ## Записать карточку. Текст длиннее 6 слов режется — полный текст глав правит G*.
@@ -605,6 +609,7 @@ func _set_card(text: String, have: int, need: int, icon: int, at: Vector2) -> vo
 	card_need = maxi(0, need)
 	card_icon = icon
 	card_at = at if at is Vector2 else Vector2.INF
+	card_mix = false
 
 
 ## Шаг обучения: самый дальний выполненный признак (вперёд — сразу, назад — никогда).
@@ -1507,6 +1512,8 @@ func _card_width() -> float:
 	var tw: float = _tw(card_text, ft)
 	if card_need > 1:
 		tw = maxf(tw, _tw("%d / %d" % [card_have, card_need], fb))
+	if card_mix:
+		tw = maxf(tw, 92.0)
 	return CARD_ICON + 16.0 + tw + 12.0
 
 
@@ -1534,10 +1541,23 @@ func _draw_card(font: Font) -> void:
 	var tx: float = icon_r.end.x + 8.0
 	var ft: int = UI.FONT["title"]
 	_text_outlined(font, Vector2(tx, r.position.y + 8.0 + float(ft)), card_text, ft, C_LINE)
-	if card_need > 1:
+	if card_mix:
+		_draw_mix_row(Vector2(tx, r.position.y + 8.0 + float(ft) + 6.0))
+	elif card_need > 1:
 		var fb: int = UI.FONT["body"]
 		_text_outlined(font, Vector2(tx, r.position.y + 8.0 + float(ft) + 4.0 + float(fb)),
 				"%d / %d" % [card_have, card_need], fb, C_BIO.lerp(C_LINE, 0.25))
+
+
+## Три смеси на карточке: R+G, G+B, R+B. Квадраты, без букв и клавиш.
+func _draw_mix_row(at: Vector2) -> void:
+	var pairs: Array = [[Beams.R, Beams.G], [Beams.G, Beams.B], [Beams.R, Beams.B]]
+	var x: float = at.x
+	for pair in pairs:
+		draw_rect(Rect2(x, at.y, 6.0, 6.0), Beams.COLOR[int(pair[0])])
+		draw_rect(Rect2(x + 8.0, at.y, 6.0, 6.0), Beams.COLOR[int(pair[1])])
+		draw_rect(Rect2(x + 16.0, at.y, 6.0, 6.0), Beams.COLOR[int(pair[0]) | int(pair[1])])
+		x += 30.0
 
 
 ## Пиктограмма этапа, когда у цели нет предмета: куб с дугами, молния — квадратами.

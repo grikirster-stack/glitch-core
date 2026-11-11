@@ -197,6 +197,11 @@ func _process(_delta: float) -> void:
 	if _args.has("--shot") and not _shot_taken and Game.game_time > 2.0:
 		_shot_taken = true
 		_take_screenshot()
+	if _shot_name() == "chapter_light_5" and not _shot_taken and Game.game_time > 0.4:
+		_shot_taken = true
+		var shot: Node = load("res://tools/chapter_light_5_shot.gd").new()
+		shot.name = "ChapterLight5Shot"
+		add_child(shot)
 
 
 func _restart() -> void:
@@ -276,6 +281,13 @@ func _base_stats() -> Array:
 		"Смертей: %d" % Game.stats_deaths,
 		"Время в игре: %d:%02d" % [int(Game.game_time) / 60, int(Game.game_time) % 60],
 	]
+
+
+func _shot_name() -> String:
+	for a in _args:
+		if a.begins_with("--shot="):
+			return a.substr(7).strip_edges()
+	return ""
 
 
 func _take_screenshot() -> void:

@@ -2,7 +2,7 @@ class_name Campaign
 extends RefCounted
 ## Кампания (ADR-004, ADR-005 § 9): главы «Свет» на одном мире — сиде SEED.
 ## Фабрика снята (#170): цеха, шахты и осады нет. Главы 1–2 (#177) копают по лучу
-## и зажигают горелку. Дальше — «Зеркало» и «Цвета» (#178). «Тёмной станции» нет.
+## и зажигают горелку. Дальше — «Зеркало» и «Цвета» (#178), «Солнце» и «Радуга» (#179).
 ##
 ## Запуск: меню «Кампания» (одиночная) или «Создать игру» → «Режим» (сеть) кладут id
 ## главы в Net.session["mission"]; для отладки — флаг --mission=<id>. main.gd строит
@@ -13,7 +13,7 @@ extends RefCounted
 const SEED: int = 31337
 const DIR: String = "res://scripts/campaign/missions/"
 ## Главы по порядку (id = имя файла в DIR).
-const CHAPTERS: Array[String] = ["dig", "fire", "mirror", "colors"]
+const CHAPTERS: Array[String] = ["dig", "fire", "mirror", "colors", "sun", "rainbow"]
 
 
 static func has(id: String) -> bool:
