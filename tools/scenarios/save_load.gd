@@ -139,7 +139,7 @@ func run() -> void:
 	panel._check_cache()
 	var shown: bool = false
 	for r in panel._recipes("hand"):
-		if int(r["out"]) == IDs.I.PHAROS or int(r["out"]) == IDs.I.STEEL_WALL:
+		if int(r["out"]) == IDs.I.PHAROS:
 			shown = true
 	ok("после загрузки панель показывает рецепт чертежа", shown)
 	panel.close()

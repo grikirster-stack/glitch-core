@@ -297,12 +297,12 @@ func _build_recipes() -> void:
 	_recipe(IDs.I.LAMP, 1, {IDs.I.CRYSTAL: 1, IDs.I.COAL: 1}, "hand", 0.0, "", "seen")
 	_recipe(IDs.I.BURNER, 1, {IDs.I.STONE: 4, IDs.I.SCRAP: 2}, "hand", 0.0, "", "seen")
 	_recipe(IDs.I.CHEST, 1, {IDs.I.COPPER_INGOT: 4}, "hand", 0.0, "", "seen")
+	# Маяк — чертёж (#167). Цена из таблицы #171, руками, имя из словаря.
+	_recipe(IDs.I.PHAROS, 1, {IDs.I.IRON_INGOT: 2, IDs.I.GLASS: 1, IDs.I.CRYSTAL: 1}, "hand", 0.0, "")
 	# Стена и решётка — чертёж (#169). Цена — из таблицы #171, только руками.
 	# На плавильне стены нет: иначе слиток уходит в стену, а не в сталь.
 	_recipe(IDs.I.STEEL_WALL, 4, {IDs.I.IRON_INGOT: 2, IDs.I.COAL: 1}, "hand", 0.0, "")
 	_recipe(IDs.I.VENT_GRATE, 1, {IDs.I.IRON_INGOT: 2}, "hand", 0.0, "")
-	# Маяк (#167): 2 железных слитка + стекло + кристалл, руками. Чертёж PHAROS.
-	_recipe(IDs.I.PHAROS, 1, {IDs.I.IRON_INGOT: 2, IDs.I.GLASS: 1, IDs.I.CRYSTAL: 1}, "hand", 0.0, "Маяк")
 
 	# Станки фабрики. #170 снимет сами машины; до тех пор цепочка «руда → релей»
 	# должна собираться. Пластины в ручной список #171 не входят.
