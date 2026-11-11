@@ -47,7 +47,7 @@ func stages() -> Array:
 			"hint": "Горелку ставят у метки на полу",
 			"say": ["Горелка — наш свет. Поставь её у метки."],
 			"goals": [["Поставь горелку у входа", func() -> Vector2i:
-				return Vector2i(machines_of("Burner"), 1),
+				return Vector2i(1 if _burner() != null else 0, 1),
 				IDs.I.BURNER, func() -> Vector2: return World.cell_to_world(mark())]]},
 		{"title": "Уголь",
 			"hint": "Уголь в руке — и горелка зажигается",
@@ -88,10 +88,11 @@ func mark() -> Vector2i:
 
 
 func _burner() -> Burner:
-	for c in World.machines:
-		var m = World.machines[c]
-		if m is Burner and is_instance_valid(m):
-			return m
+	# Станция (#170) уже ставит свою горелку у релея. Глава ждёт ту, что на метке:
+	# первая в словаре машин — не она, и этап «Уголь» иначе не закрывается.
+	var at: Burner = World.machines.get(mark()) as Burner
+	if at != null and is_instance_valid(at):
+		return at
 	return null
 
 
