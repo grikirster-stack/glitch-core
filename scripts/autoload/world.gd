@@ -1036,11 +1036,14 @@ func _place_ruin_cache(i: int, cx: int, base: int, half: int) -> void:
 	var t0: int = Time.get_ticks_usec()
 	var owner: Dictionary = Lore.ruin_owner(i)
 	var role: String = String(owner.get("role", ""))
+	# Сундук — у середины, но не вплотную к терминалу (правый край комнаты).
+	# Иначе в узкой руине единственная стоянка попадает в радиус E терминала.
 	var cell: Vector2i = Vector2i(-1, -1)
-	for dx in [0, -1, 1, -2, 2, -3, 3]:
+	for dx in [-1, -2, 0, 1, -3, 2, 3]:
 		cell = _ruin_floor_cell(cx + int(dx), base)
-		if cell.x >= 0:
+		if cell.x >= 0 and absi(cell.x - (cx + half - 1)) >= 2:
 			break
+		cell = Vector2i(-1, -1)
 	if cell.x < 0:
 		cell = Vector2i(cx, base - 1)
 		set_tile_raw(cell.x, cell.y, IDs.T.AIR)
@@ -1069,19 +1072,27 @@ func _place_ruin_cache(i: int, cx: int, base: int, half: int) -> void:
 	ruin_cache_ms += float(Time.get_ticks_usec() - t0) / 1000.0
 
 
-## Клетка у сундука, где герой встаёт: воздух на две клетки вверх, не терминал.
+## Клетки у сундука, где герой встаёт: воздух на две клетки вверх, не терминал.
+## В узкой руине (half 3) одна клетка попадает в радиус E терминала, и сундук
+## не открыть. Чистим обе стороны, чтобы встать можно было не у терминала.
 func _clear_ruin_stand(cell: Vector2i, base: int) -> void:
-	for dx in [-1, 1, -2, 2, 3, -3]:
+	var cleared: int = 0
+	for dx in [-1, 1, -2, 2, -3, 3]:
 		var x: int = cell.x + dx
 		if x < 1 or x >= W - 1:
 			continue
-		if get_tile(x, base) != IDs.T.STEEL:
-			continue
 		if get_tile(x, base - 1) == IDs.T.TERMINAL:
 			continue
+		var floor_t: int = get_tile(x, base)
+		if floor_t != IDs.T.STEEL and floor_t != IDs.T.PANEL and floor_t != IDs.T.AIR:
+			continue
+		if floor_t != IDs.T.STEEL:
+			set_tile_raw(x, base, IDs.T.STEEL)
 		set_tile_raw(x, base - 1, IDs.T.AIR)
 		set_tile_raw(x, base - 2, IDs.T.AIR)
-		return
+		cleared += 1
+		if cleared >= 2:
+			return
 
 
 ## Пол комнаты: воздух прямо над сталью ряда base.
