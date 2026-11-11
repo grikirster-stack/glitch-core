@@ -107,6 +107,11 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 			m = Mixer.new()
 		"Prism":
 			m = Prism.new()
+		# --- Коллектор и накопитель (ADR-005 § 4, #166) ---
+		"Collector":
+			m = Collector.new()
+		"Accumulator":
+			m = Accumulator.new()
 		_:
 			return false
 	m.cell = c
