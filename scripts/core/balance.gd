@@ -70,6 +70,21 @@ const PHAROS_LURE_HP: float = 200.0
 ## Белый показывает руду в 8 клетках (квадрат Чебышёва), раз в секунду.
 const PHAROS_WHITE_RADIUS: int = 8
 const PHAROS_WHITE_PERIOD: float = 1.0
+## Линза в маяке (#172): красный бьёт на 10 клеток, урон и жёлтый свет × 1.5,
+## синий, купол и приманка + 2 клетки, белый — 12. Зелёный радиус не растёт.
+## Без линзы числа выше не меняются.
+const LENS_RANGE_TILES: float = 10.0
+const LENS_MUL: float = 1.5
+const LENS_RADIUS_BONUS: int = 2
+const LENS_LURE_BONUS_PX: float = 32.0
+const LENS_WHITE_RADIUS: int = 12
+
+# ------------------------------------------------------- Сирена (ADR-005 § 7.2, #172)
+## E при полном заряде гонит всех фантомов в 10 клетках, включая рой и тень.
+## Заряд копится только под лучом: 60 с до готовности, гон длится 10 с.
+const SIREN_RADIUS_TILES: float = 10.0
+const SIREN_TIME: float = 10.0
+const SIREN_RECHARGE: float = 60.0
 
 # ------------------------------------------------------- § 4.2 Автоматизация
 const DRILL_CYCLE: float = 2.0         ## с на единицу руды

@@ -465,6 +465,8 @@ func _check_data() -> void:
 	_ok("рецепты ссылаются на существующие предметы", bad.is_empty(), str(bad))
 	_ok("стальная стена без чертежа закрыта", not DB.recipe_unlocked({"out": IDs.I.STEEL_WALL}))
 	_ok("маяк без чертежа закрыт", not DB.recipe_unlocked({"out": IDs.I.PHAROS}))
+	_ok("сирена без чертежа закрыта", not DB.recipe_unlocked({"out": IDs.I.SIREN}))
+	_ok("линза без чертежа закрыта", not DB.recipe_unlocked({"out": IDs.I.LENS}))
 	_ok("смеситель без чертежа закрыт", not DB.recipe_unlocked({"out": IDs.I.MIXER}))
 	_ok("накопитель без чертежа закрыт", not DB.recipe_unlocked({"out": IDs.I.ACCUMULATOR}))
 	_ok("коллектор без чертежа закрыт", not DB.recipe_unlocked({"out": IDs.I.COLLECTOR}))
@@ -1132,9 +1134,14 @@ func _check_sky_cache() -> void:
 	_ok("обломок в пределах мира", out_of_world.is_empty(), str(out_of_world.slice(0, 4)))
 	_ok("миникарта (рельеф) обломок не видит", on_map.is_empty(), str(on_map.slice(0, 4)))
 	var items: Array = []
+	var lens_n: int = 0
 	for s in chest.slots:
-		if not s.is_empty():
-			items.append([s.id, s.count])
+		if s.is_empty():
+			continue
+		if s.id == IDs.I.LENS:
+			lens_n += s.count
+			continue
+		items.append([s.id, s.count])
 	var foreign: Array = []
 	for it in items:
 		if not Balance.SKY_LOOT.has(int(it[0])):
@@ -1142,6 +1149,7 @@ func _check_sky_cache() -> void:
 	_ok("в небесном тайнике 3–6 предметов", items.size() >= Balance.SKY_CACHE_MIN
 			and items.size() <= Balance.SKY_CACHE_MAX and foreign.is_empty(),
 			"%d: %s" % [items.size(), str(items)])
+	_ok("линза всегда в небесном тайнике", lens_n >= 1, "линз %d" % lens_n)
 	var plan: Dictionary = World.sky_plan()
 	var same: bool = not plan.is_empty()
 	for k in plan.keys():

@@ -532,6 +532,21 @@ godot --headless --path . --script res://tools/save_test.gd
   `is_explored` за 2 с, камень и руда за радиусом — нет. Печатает мкс `reveal_cells`
   на 50 клетках.
 
+### Сирена и линза (ADR-005 § 7.2, #172)
+
+Сценарии (`-- --scenario=siren,lens,sky_secret`):
+
+* `siren` — горелка с углём заряжает сирену за 60 с. Рой из 5 и тень в 6 клетках
+  по E уходят в FLEE на 10 с, расстояние растёт. Без луча заряд стоит. Подсказка
+  E — не длиннее 6 слов.
+* `lens` — маяк без линзы молчит по эху в 9 клетках (дальность 7). С линзой бьёт
+  на 10 клеток, урон × 1,5. Разбор возвращает маяк и линзу.
+* `sky_secret` — бот достраивается до обломка; в сундуке 3–6 случайных предметов
+  и отдельно линза. Быстрая проверка только линзы — `sky_secret_lens` (три сида).
+
+Кадр `docs/img/shots/siren.png` — `tools/siren_shot.gd`, окно за экраном:
+`timeout 120 godot --path . --audio-driver Dummy --disable-vsync --windowed --position -10000,-10000 --resolution 1280x720 --script res://tools/siren_shot.gd -- --seed=31337`.
+
 Кадр `docs/img/shots/beacon_white.png` — `tools/beacon_white_shot.gd`, окно за экраном:
 `timeout 120 godot --path . --audio-driver Dummy --disable-vsync --windowed --position -10000,-10000 --resolution 1280x720 --script res://tools/beacon_white_shot.gd -- --seed=31337`.
 

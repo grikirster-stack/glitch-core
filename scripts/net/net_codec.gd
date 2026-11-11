@@ -965,7 +965,8 @@ static func schema_sample() -> PackedByteArray:
 
 ## Звуки EVENT.SOUND: id u8 — индекс здесь. Только дописывать в конец (иначе — PROTO).
 const SOUNDS: Array = ["mine", "break", "place", "pickup", "craft", "place_machine", "hit",
-		"alarm", "power", "step", "vent_hum", "turret_zap", "swarm", "doppel_whisper", "brownout"]
+		"alarm", "power", "step", "vent_hum", "turret_zap", "swarm", "doppel_whisper", "brownout",
+		"siren"]
 
 ## Виды EVENT.FX (аргумент — в скобках). Только дописывать в конец.
 enum Fx {

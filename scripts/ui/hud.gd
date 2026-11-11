@@ -130,6 +130,9 @@ const HINT_LOAD: String = "[E] — загрузить в постройку"
 const HINT_DISMANTLE: String = "[E] (удерживать) — разобрать"
 ## Хвост подсказки: к своему действию E машины добавляется разбор.
 const HINT_DISMANTLE_TAIL: String = " · удерживать [E] — разобрать"
+## Сирена (#172): не больше шести слов — ребёнок читает кнопку, не абзац.
+const HINT_SIREN: String = "[E] — включить сирену"
+const HINT_LENS: String = "[E] — вставить линзу"
 
 ## Цепочка обучения: шаги по порядку, TUT_DONE — пройдена (строка скрыта).
 enum Tut { DIG, CRAFT, PLACE, POWER, TERMINAL, DONE }
@@ -454,6 +457,10 @@ func _compute_hint(_pos: Vector2) -> String:
 		return burner_hint(tg["node"])
 	if kind == player.ET_ACCUMULATOR:
 		return HINT_ACCUMULATOR + _dismantle_tail(tg["node"])
+	if kind == player.ET_SIREN:
+		return HINT_SIREN
+	if kind == player.ET_LENS:
+		return HINT_LENS
 	if kind == player.ET_TERMINAL:
 		return HINT_TERMINAL
 	if kind == player.ET_BEACON:

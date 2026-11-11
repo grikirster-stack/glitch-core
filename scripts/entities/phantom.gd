@@ -48,6 +48,9 @@ const BUZZ_MIN: float = 1.2				## Пауза между жужжанием ро�
 const BUZZ_MAX: float = 2.4
 
 var kind: String = "echo"
+## Сирена (#172): пока > 0, состояние — FLEE от _flee_from, _decide молчит.
+var _forced_flee: float = 0.0
+var _flee_from: Vector2 = Vector2.ZERO
 var hp: float = MAX_HP
 var max_hp: float = MAX_HP
 var dmg: float = 24.0				## Урон по игроку за удар.
@@ -175,7 +178,7 @@ func _physics_process(delta: float) -> void:
 
 	# --- Растворение в глубине ------------------------------------------------
 	# Забывший про игрока фантом (не в погоне) уходит за пределы досягаемости.
-	if state != St.CHASE and _age > SPAWN_GRACE and dist > _despawn_limit():
+	if state != St.CHASE and _forced_flee <= 0.0 and _age > SPAWN_GRACE and dist > _despawn_limit():
 		alive = false
 		queue_free()
 		return
@@ -188,8 +191,14 @@ func _physics_process(delta: float) -> void:
 	var player_light: float = _player_light_value(player.global_position) if fears_light else 0.0
 
 	# --- Решения -------------------------------------------------------------
+	if _forced_flee > 0.0:
+		_forced_flee = maxf(0.0, _forced_flee - dt)
 	if stun > 0.0:
 		state = St.DORMANT
+	elif _forced_flee > 0.0:
+		# Сирена (#172): пока таймер жив, свет и приманка состояние не меняют.
+		state = St.FLEE
+		target_machine = null
 	else:
 		_decide(dt, dist, light)
 
@@ -199,7 +208,17 @@ func _physics_process(delta: float) -> void:
 	if state == St.CHASE:
 		target_pos = _chase_goal()
 	elif state == St.FLEE:
-		target_pos = global_position + (global_position - World.cell_to_world(World.world_to_cell(global_position))).normalized() * 90.0
+		if _flee_from != Vector2.ZERO:
+			var away: Vector2 = global_position - _flee_from
+			if away.length_squared() < 4.0:
+				away = Vector2(1.0, 0.0)
+			# Сирена прямо над тенью: горизонтали нет, пеший фантом так и стоит.
+			# Боковой шаг даёт ходьбе направление, рою он почти ничего не меняет.
+			if absf(away.x) < 8.0:
+				away.x = 16.0 if facing >= 0 else -16.0
+			target_pos = global_position + away.normalized() * 90.0
+		else:
+			target_pos = global_position + (global_position - World.cell_to_world(World.world_to_cell(global_position))).normalized() * 90.0
 	elif state == St.ROAM:
 		wander_t -= dt
 		if wander_t <= 0.0:
@@ -394,6 +413,9 @@ func _chase_goal() -> Vector2:
 ## Скорость по состоянию. Эхо и копатель медленнее на свету игрока
 ## (как было у эха), остальным свет безразличен.
 func _move_speed(player_light: float) -> float:
+	# Гон сирены быстрее обычной ходьбы: рой и тень должны заметно уходить.
+	if _forced_flee > 0.0:
+		return ECHO_SPEED * speed_mul * 1.1
 	if light_flee < INF:
 		var s: float = 150.0
 		if state == St.CHASE:
@@ -794,6 +816,22 @@ func apply_stun(t: float) -> void:
 	if net_puppet:   # СЕТЬ: оглушение считает хост
 		return
 	stun = maxf(stun, t)
+	# Стан сильнее сирены: пока стоим, гон не решает.
+	_forced_flee = 0.0
+	_flee_from = Vector2.ZERO
+
+
+## Сирена (#172): FLEE на t секунд от точки from, независимо от light_flee.
+## Рой и тень света не боятся — от сирены бегут так же. Пока таймер > 0,
+## _decide состояние не меняет. Стан и смерть — исключения (их проверяет _tick).
+func force_flee(t: float, from: Vector2 = Vector2.ZERO) -> void:
+	if net_puppet or not alive:
+		return
+	_forced_flee = maxf(_forced_flee, t)
+	if from != Vector2.ZERO:
+		_flee_from = from
+	state = St.FLEE
+	target_machine = null
 
 
 func take_damage(amount: float, from: Vector2) -> void:
@@ -808,6 +846,9 @@ func take_damage(amount: float, from: Vector2) -> void:
 	alert = 4.0
 	state = St.CHASE
 	target_pos = from
+	# Удар сбивает гон сирены: раненый снова охотится.
+	_forced_flee = 0.0
+	_flee_from = Vector2.ZERO
 	vel += (global_position - from).normalized() * 90.0
 	if hp <= 0.0:
 		alive = false
