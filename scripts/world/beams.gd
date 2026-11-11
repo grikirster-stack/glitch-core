@@ -44,8 +44,14 @@ const RAY: int = 7
 ## проходами и отдаёт смесь только со второго — поэтому одного мало.
 const MAX_PASSES: int = 8
 
-## Направления как у MachineBase.dir: 0 вправо, 1 вниз, 2 влево, 3 вверх.
-const DIR: Array[Vector2i] = [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]
+## Направления: 0 вправо, 1 вниз, 2 влево, 3 вверх, затем четыре диагонали.
+## 4 вправо-вниз, 5 влево-вниз, 6 влево-вверх, 7 вправо-вверх.
+## Шаг в соседнюю клетку — и в диагональную — стоит 1 клетку длины.
+const DIR: Array[Vector2i] = [
+	Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1),
+	Vector2i(1, 1), Vector2i(-1, 1), Vector2i(-1, -1), Vector2i(1, -1),
+]
+const DIR_N: int = 8
 
 ## Клетка → маска цвета (битовое ИЛИ всех лучей, прошедших клетку).
 ## Публичный вид — словарь; внутри прохода маска лежит в плоском массиве мира,
@@ -151,33 +157,29 @@ func _seg_sig(segs: Array) -> int:
 
 func _clear_flat(segs: Array) -> void:
 	var w: int = World.W
-	var dxs: PackedInt32Array = PackedInt32Array([1, 0, -1, 0])
-	var dys: PackedInt32Array = PackedInt32Array([0, 1, 0, -1])
 	for s in segs:
-		var dir: int = int(s["dir"])
-		var x: int = int(s["from"].x) + dxs[dir]
-		var y: int = int(s["from"].y) + dys[dir]
+		var step: Vector2i = DIR[int(s["dir"]) & 7]
+		var x: int = int(s["from"].x) + step.x
+		var y: int = int(s["from"].y) + step.y
 		for _i in int(s["air"]):
 			_flat[y * w + x] = 0
-			x += dxs[dir]
-			y += dys[dir]
+			x += step.x
+			y += step.y
 
 
 ## Клетки луча — прямые отрезки сегментов, не список индексов из горячего цикла.
 func _cells_from_segs(into: Dictionary, segs: Array) -> void:
 	into.clear()
-	var dxs: PackedInt32Array = PackedInt32Array([1, 0, -1, 0])
-	var dys: PackedInt32Array = PackedInt32Array([0, 1, 0, -1])
 	for s in segs:
-		var dir: int = int(s["dir"])
-		var x: int = int(s["from"].x) + dxs[dir]
-		var y: int = int(s["from"].y) + dys[dir]
+		var step: Vector2i = DIR[int(s["dir"]) & 7]
+		var x: int = int(s["from"].x) + step.x
+		var y: int = int(s["from"].y) + step.y
 		var col: int = int(s["color"])
 		for _i in int(s["air"]):
 			var c: Vector2i = Vector2i(x, y)
 			into[c] = int(into.get(c, 0)) | col
-			x += dxs[dir]
-			y += dys[dir]
+			x += step.x
+			y += step.y
 
 
 ## Подпись плоской карты: без сборки словаря на каждом проходе.
@@ -284,7 +286,7 @@ func _trace(next_segs: Array) -> void:
 				continue
 			q.append(m.cell.x)
 			q.append(m.cell.y)
-			q.append(int(e[0]) & 3)
+			q.append(int(e[0]) & 7)
 			q.append(int(e[1]) & 7)
 			q.append(length)
 			q.append(length)
@@ -294,8 +296,6 @@ func _trace(next_segs: Array) -> void:
 		if q.size() >= MAX_RAYS * RAY:
 			break
 	var ri: int = 0
-	var dxs: PackedInt32Array = PackedInt32Array([1, 0, -1, 0])
-	var dys: PackedInt32Array = PackedInt32Array([0, 1, 0, -1])
 	while ri < q.size() and steps < MAX_STEPS:
 		var x: int = q[ri]
 		var y: int = q[ri + 1]
@@ -308,8 +308,9 @@ func _trace(next_segs: Array) -> void:
 		if color == 0 or left <= 0:
 			continue
 
-		var sx: int = dxs[dir]
-		var sy: int = dys[dir]
+		var step: Vector2i = DIR[dir & 7]
+		var sx: int = step.x
+		var sy: int = step.y
 
 
 		var fx: int = x
@@ -323,6 +324,11 @@ func _trace(next_segs: Array) -> void:
 			if nx < 0 or ny < 0 or nx >= w or ny >= h:
 				break
 			var nidx: int = ny * w + nx
+			# Наискосок сквозь угол двух стен не идём: обе боковые клетки
+			# должны быть воздухом. Одна стена на углу — луч ещё проходит.
+			if sx != 0 and sy != 0 and _corner_blocked(x, y, sx, sy, w, h, solid, tiles):
+				_close_seg(next_segs, Vector2i(fx, fy), Vector2i(x, y), dir, color, seg_left, length, walked)
+				break
 			var occ: int = _occ[nidx]
 			if occ != 0:
 				_close_seg(next_segs, Vector2i(fx, fy), Vector2i(x, y), dir, color, seg_left, length, walked)
@@ -346,7 +352,7 @@ func _trace(next_segs: Array) -> void:
 							var span: int = maxi(1, out_left)
 							q.append(nx)
 							q.append(ny)
-							q.append(int(o[0]) & 3)
+							q.append(int(o[0]) & 7)
 							q.append(int(o[1]) & 7)
 							q.append(out_left)
 							q.append(span)
@@ -368,18 +374,30 @@ func _trace(next_segs: Array) -> void:
 
 ## Цвет, который упёрся в постройку: OR всех входов. Сообщаем только если карта
 ## реально сменилась — иначе маяк сбрасывал бы перезарядку на каждом кадре.
+## Диагональный шаг сквозь угол: обе боковые клетки твёрдые — щели нет.
+## Одна стена на углу луч не закрывает (как копка: касание угла — не стена).
+func _corner_blocked(x: int, y: int, sx: int, sy: int, w: int, h: int, solid: PackedByteArray, tiles: PackedByteArray) -> bool:
+	var ax: int = x + sx
+	var ay: int = y
+	var bx: int = x
+	var by: int = y + sy
+	if ax < 0 or ay < 0 or ax >= w or ay >= h:
+		return true
+	if bx < 0 or by < 0 or bx >= w or by >= h:
+		return true
+	return solid[tiles[ay * w + ax]] != 0 and solid[tiles[by * w + bx]] != 0
+
+
 func _deliver(segs: Array) -> void:
 	if _receivers.is_empty():
 		return
 	var hit: Dictionary = {}
-	var dxs: PackedInt32Array = PackedInt32Array([1, 0, -1, 0])
-	var dys: PackedInt32Array = PackedInt32Array([0, 1, 0, -1])
 	var w: int = World.W
 	var hgt: int = World.H
 	for s in segs:
-		var dir: int = int(s["dir"])
-		var x: int = int(s["to"].x) + dxs[dir]
-		var y: int = int(s["to"].y) + dys[dir]
+		var step: Vector2i = DIR[int(s["dir"]) & 7]
+		var x: int = int(s["to"].x) + step.x
+		var y: int = int(s["to"].y) + step.y
 		if x < 0 or y < 0 or x >= w or y >= hgt:
 			continue
 		var key: int = y * w + x
