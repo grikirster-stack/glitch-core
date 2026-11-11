@@ -35,7 +35,9 @@ const COL_W: float = 360.0
 const ACCENT: Color = Color(0.40, 0.95, 0.80)
 
 ## Откуда профиль (тесты подставляют временный путь до add_child).
-var profile_path: String = Profile.default_path()
+## Пусто — default_path() в _ready: сцена меню грузится до флага сценария,
+## и путь, взятый при разборе скрипта, указывал бы на профиль игрока (#160).
+var profile_path: String = ""
 var profile: Profile = null
 
 var nick_edit: LineEdit
@@ -74,6 +76,8 @@ func _ready() -> void:
 	_rng.randomize()
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if profile_path == "":
+		profile_path = Profile.default_path()
 	profile = Profile.load_or_create(profile_path)
 	theme = make_theme()
 	_build()

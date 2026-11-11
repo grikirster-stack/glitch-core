@@ -1790,8 +1790,11 @@ func move_body(pos: Vector2, motion: Vector2, size: Vector2, phantom: bool = fal
 #     GRATE_HP за GRATE_BREAK_TIME секунд (damage_grate — для любого урона).
 #   * Свет машин — публичные add_light_source/remove_light_source (прожектор).
 
-## Выстрел турели (для FX/HUD, #34): откуда и куда.
+## Выстрел турели (для FX/HUD, #34): откуда и куда. Имя не менять — на него
+## подписаны сеть и сценарии. Цвет дуги — отдельный сигнал маяка (#167).
 signal turret_fired(from: Vector2, to: Vector2)
+## Выстрел маяка под красным: дуга цвета луча. Турель этот сигнал не шлёт.
+signal pharos_fired(from: Vector2, to: Vector2, color: Color)
 ## Решётку сломали — вентиляция снова открыта.
 signal grate_broken(cell: Vector2i)
 

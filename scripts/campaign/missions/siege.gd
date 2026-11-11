@@ -50,15 +50,19 @@ func stages() -> Array:
 					"Сумерки подождут, пока мы готовимся. В наборе — турель, решётка и прожектор.",
 					"Решётка на вентиляцию у края базы закроет ближайший выход. Им придётся идти издалека."],
 			"goals": [
-				["Четвёртая турель под питанием", func() -> Vector2i: return Vector2i(_powered("Turret"), 4)],
-				["Решётка на вентиляции базы", func() -> Vector2i: return flag(World.is_vent_sealed(_vent))],
-				["Второй прожектор под питанием", func() -> Vector2i: return Vector2i(_powered("Floodlight"), 2)]],
+				["Четвёртая турель под питанием", func() -> Vector2i: return Vector2i(_powered("Turret"), 4),
+					IDs.I.TURRET, func() -> Vector2: return World.cell_to_world(World.beacon_cell)],
+				["Решётка на вентиляции базы", func() -> Vector2i: return flag(World.is_vent_sealed(_vent)),
+					IDs.I.VENT_GRATE, func() -> Vector2: return World.cell_to_world(_vent)],
+				["Второй прожектор под питанием", func() -> Vector2i: return Vector2i(_powered("Floodlight"), 2),
+					IDs.I.FLOODLIGHT, func() -> Vector2: return World.cell_to_world(World.beacon_cell)]],
 			"done": func() -> void: hold_time = -1.0},
 		{"title": "Осада", "hint": "Чините постройки: E с хламом в руке · Q — импульс · сталь и уголь — в сундуке «Запчасти»",
 			"say": ["Темнеет. Турели бьют сами — следите, чтобы у ТЭЦ был уголь.",
 					"Рой грызёт буры, тени высасывают генераторы, копатели роют глину. Держитесь до рассвета."],
 			"enter": _begin_night,
-			"goals": [["Дожить до рассвета", func() -> Vector2i: return flag(Game.day_number > _day0)]]},
+			"goals": [["Дожить до рассвета", func() -> Vector2i: return flag(Game.day_number > _day0),
+				IDs.I.TURRET, func() -> Vector2: return World.cell_to_world(World.beacon_cell)]]},
 	]
 
 

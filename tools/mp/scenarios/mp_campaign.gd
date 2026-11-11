@@ -4,7 +4,7 @@ extends "res://tools/mp/scenarios/mp_coop_base.gd"
 ##  * хост запускает «Осаду» до входа клиента (как из «Создать игру» → «Режим»): id главы
 ##    в Net.session — клиент получает его в приветствии, базу и состояние главы — в снимке;
 ##  * у клиента: глава-марионетка с этапом и задачами хоста, постройки базы (турели,
-##    глубинные буры), набор главы в инвентаре, сохранение закрыто, HUD — «ГЛАВА 4»;
+##    глубинные буры), набор главы в инвентаре, сохранение закрыто, HUD — карточка первой цели;
 ##  * хост готовит базу — у клиента этап «Осада»; рассвет — победа у обоих, экран итога
 ##    главы у клиента и отметка в его профиле.
 
@@ -71,8 +71,8 @@ func run_client(_i: int) -> void:
 	var hud: HUD = UI.hud
 	if hud != null:
 		hud._compute_tracker()
-		ok("клиент: HUD — глава 4 и задачи", hud.tracker_title.begins_with("ГЛАВА 4") and hud.mission_lines.size() == 2,
-				hud.tracker_title)
+		ok("клиент: HUD — карточка первой цели главы 4", hud.card_text != "" and hud.card_need == 4
+				and hud.card_icon == IDs.I.TURRET, "«%s» %d/%d" % [hud.card_text, hud.card_have, hud.card_need])
 	await barrier("seen")
 	ok("клиент: этап «Осада» от хоста", await wait_until(func() -> bool:
 		return m != null and is_instance_valid(m) and m.stage == 1 and String(m.stage_title) == "Осада", WAIT),
