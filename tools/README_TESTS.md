@@ -455,6 +455,13 @@ godot --headless --path . --script res://tools/save_test.gd
 прогон с окном за экраном (headless не рендерит), оба размера окна за один запуск:
 `godot --path . --audio-driver Dummy --windowed --position -10000,-10000 --resolution 1280x720 --script res://tools/inventory_shots.gd -- --prefix=after`.
 
+### Луч и горелка (ADR-005 § 4–5, #164)
+
+* `beam_burner` (`-- --scenario=beam_burner`) — горелка с углём бьёт красным на 24 клетки
+  (25-я пуста), свет на 10-й ≥ 1, стена на 8-й обрывает луч, через 45 с гаснет, сундук
+  рядом отдаёт уголь сам, `turn()` уводит луч. Печатает мкс `Beams.rebuild()` на 20
+  горелках (цель ≤ 300). Сохранение слота: топливо, направление и «горит» те же.
+
 ### Копка по лучу (ADR-005 § 3)
 
 * `mining_ray` (`-- --scenario=mining_ray`) — ЛКМ копает первую твёрдую клетку на луче от
