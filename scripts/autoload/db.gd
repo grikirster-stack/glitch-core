@@ -234,6 +234,8 @@ func _build_item_defs() -> void:
 	_add_item_def(IDs.I.LOOT_BAG, "Мешок", Color(0.45, 0.38, 0.30), "bag", 1, "")
 	# Свет (ADR-005, #164): горелка ставится руками, стак небольшой — это не расходник.
 	_add_item_def(IDs.I.BURNER, "Горелка", Color(0.55, 0.32, 0.22), "burner", 10, "machine:Burner")
+	# Маяк (ADR-005 § 4–5, #167): приёмник луча. Стак 5 — это башня, не расходник.
+	_add_item_def(IDs.I.PHAROS, "Маяк", Color(0.72, 0.55, 0.38), "pharos", 5, "machine:Pharos")
 
 	# Требования релей-ядра — из Balance (§ 4.7).
 	relay_req = Balance.RELAY_REQ.duplicate()
@@ -287,7 +289,7 @@ func _build_recipes() -> void:
 	# Итоговый список руками — таблица #171 (ADR-005 § 4). Время 0: руками сразу.
 	# Имени в строке нет — панель пишет имя предмета из словаря.
 	# Рецепт без предмета в IDs.I не добавляется: зеркало, смеситель, призма,
-	# коллектор, накопитель, маяк, сирена, линза, радужное ядро — C2–C5, E2, F1.
+	# коллектор, накопитель, сирена, линза, радужное ядро — C2–C5, E2, F1.
 	# По подбору (ADR § 7.1): слитки, стекло, светокристалл, горелка, сундук.
 	_recipe(IDs.I.COPPER_INGOT, 1, {IDs.I.COPPER_ORE: 2}, "hand", 0.0, "", "seen")
 	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 2}, "hand", 0.0, "", "seen")
@@ -299,15 +301,19 @@ func _build_recipes() -> void:
 	# На плавильне стены нет: иначе слиток уходит в стену, а не в сталь.
 	_recipe(IDs.I.STEEL_WALL, 4, {IDs.I.IRON_INGOT: 2, IDs.I.COAL: 1}, "hand", 0.0, "")
 	_recipe(IDs.I.VENT_GRATE, 1, {IDs.I.IRON_INGOT: 2}, "hand", 0.0, "")
+	# Маяк (#167): 2 железных слитка + стекло + кристалл, руками. Чертёж PHAROS.
+	_recipe(IDs.I.PHAROS, 1, {IDs.I.IRON_INGOT: 2, IDs.I.GLASS: 1, IDs.I.CRYSTAL: 1}, "hand", 0.0, "Маяк")
 
 	# Станки фабрики. #170 снимет сами машины; до тех пор цепочка «руда → релей»
 	# должна собираться. Пластины в ручной список #171 не входят.
+	# Сталь — раньше проката: иначе плавильня B съест слиток в пластину, и линия
+	# релея не выдаст 24 стальные пластины.
 	_recipe(IDs.I.COPPER_INGOT, 1, {IDs.I.COPPER_ORE: 1}, "smelter", 1.6, "")
 	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 1}, "smelter", 2.0, "")
 	_recipe(IDs.I.GLASS, 1, {IDs.I.SAND: 2}, "smelter", 2.2, "")
+	_recipe(IDs.I.STEEL_PLATE, 1, {IDs.I.IRON_INGOT: 2, IDs.I.COAL: 1}, "smelter", 3.5, "")
 	_recipe(IDs.I.COPPER_PLATE, 1, {IDs.I.COPPER_INGOT: 2}, "smelter", 2.0, "")
 	_recipe(IDs.I.IRON_PLATE, 1, {IDs.I.IRON_INGOT: 2}, "smelter", 2.0, "")
-	_recipe(IDs.I.STEEL_PLATE, 1, {IDs.I.IRON_INGOT: 2, IDs.I.COAL: 1}, "smelter", 3.5, "")
 	_recipe(IDs.I.CIRCUIT, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.CRYSTAL: 2}, "assembler", 3.0, "")
 	_recipe(IDs.I.POWER_CELL, 1, {IDs.I.IRON_PLATE: 1, IDs.I.CRYSTAL: 1}, "assembler", 3.0, "")
 	_recipe(IDs.I.BELT, 2, {IDs.I.IRON_PLATE: 1}, "assembler", 1.5, "")
@@ -1590,6 +1596,16 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 				_px(img, 12, y, c.darkened(0.35))
 			_px(img, 13, 7, Color("#FFD86E"))
 			_px(img, 14, 7, Color("#FFD86E"))
+		"pharos":
+			# Башня с линзой сверху: ребёнок отличает маяк от горелки по силуэту.
+			for y in range(8, 15):
+				for x in range(4, 12):
+					_px(img, x, y, c.darkened(0.2))
+			for y in range(3, 8):
+				for x in range(5, 11):
+					_px(img, x, y, Color("#FFD86E"))
+			_px(img, 7, 2, Color("#FFD86E"))
+			_px(img, 8, 2, Color("#FFD86E"))
 		"bag":
 			for y in range(5, 14):
 				var half: int = 5 - int(absf(float(y) - 10.0) * 0.5)

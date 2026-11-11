@@ -272,7 +272,11 @@ func run_client(i: int) -> void:
 			if int(r["out"]) == IDs.I.COPPER_INGOT:
 				rec = r
 				break
-		player.inv.add(IDs.I.COPPER_ORE, 4)
+		# Руду кладёт хост в прокси и шлёт INV. Свой add не доезжает до хоста и
+		# после кадра INV выглядит как несписанная руда.
+		var got_ore: bool = await wait_until(func() -> bool:
+			return player.inv.count_of(IDs.I.COPPER_ORE) >= 2, WAIT)
+		ok("крафт: руда с хоста дошла", got_ore, "руды %d" % player.inv.count_of(IDs.I.COPPER_ORE))
 		var ore0: int = player.inv.count_of(IDs.I.COPPER_ORE)
 		var ingot0: int = player.inv.count_of(IDs.I.COPPER_INGOT)
 		var rtt0: int = (InvOps.stats["rtt_ms"] as PackedFloat32Array).size()

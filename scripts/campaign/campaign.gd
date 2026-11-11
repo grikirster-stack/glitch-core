@@ -70,6 +70,8 @@ static func start(scene: Node, id: String) -> Mission:
 ## Отметить главу пройденной в профиле игрока (не в тестовом прогоне чужого профиля:
 ## Profile.default_path сам изолирован TestEnv).
 static func mark_done(id: String) -> void:
+	if not Profile.done_memory.has(id):
+		Profile.done_memory.append(id)
 	var p: Profile = Profile.load_or_create()
 	if p.campaign_done.has(id):
 		return
