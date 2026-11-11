@@ -38,6 +38,20 @@ const BEAM_LIGHT: float = 1.0
 const BEAM_LIGHT_WHITE: float = 1.5
 const FUEL: Dictionary = {IDs.I.COAL: 45.0, IDs.I.COPPER_ORE: 30.0, IDs.I.CRYSTAL: 60.0}
 
+# ------------------------------------------------------- Маяк (ADR-005 § 5, #167)
+## Красный жжёт как турель: 20 урона раз в 0.8 с, дальность 7 клеток, прямая
+## видимость. Жёлтый светит как прожектор (сила 2.0). Зелёный чинит +20 HP
+## раз в 3 с всем постройкам в 3 клетках.
+const PHAROS_HP: float = 100.0
+const PHAROS_RED_DAMAGE: float = 20.0
+const PHAROS_RED_PERIOD: float = 0.8
+const PHAROS_RANGE_TILES: float = 7.0
+const PHAROS_GREEN_PERIOD: float = 3.0
+const PHAROS_GREEN_HEAL: float = 20.0
+const PHAROS_GREEN_RADIUS: int = 3
+## Сила и радиус жёлтого — те же числа, что у прожектора (46 + 2·60 px, сила 2.0).
+const PHAROS_YELLOW_POWER: float = 2.0
+
 # ------------------------------------------------------- § 4.2 Автоматизация
 const DRILL_CYCLE: float = 2.0         ## с на единицу руды
 const DRILL_REACH: int = 16            ## клеток вниз

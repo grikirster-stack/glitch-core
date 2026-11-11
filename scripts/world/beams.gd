@@ -69,6 +69,9 @@ var _run: int = 0
 ## (beam_pass). Словарь машин в горячем цикле не трогаем.
 var _occ: PackedByteArray = PackedByteArray()
 var _occ_nodes: Array = []
+## Приёмники луча (есть beam_receive): маяк. Сообщаем им цвет после прохода,
+## только если карта реально сменилась.
+var _receivers: Array = []
 ## Источники луча: ищем один раз при постройке, а не по всем машинам мира.
 var _emitters: Array = []
 ## Сколько построек на карте пропускают луч. 0 — одного прохода хватает (C1).
@@ -125,6 +128,7 @@ func rebuild() -> int:
 	_cells_from_segs(next_cells, kept)
 	cells = next_cells
 	segments = kept
+	_deliver(kept)
 	last_rebuild_us = Time.get_ticks_usec() - t0
 	return last_rebuild_us
 
@@ -185,12 +189,15 @@ func _signature_flat(next_segs: Array) -> int:
 ## Постройка появилась или исчезла: обновить список источников.
 func note_machines() -> void:
 	_emitters.clear()
+	_receivers.clear()
 	_passers = 0
 	for m in World.machines.values():
 		if not is_instance_valid(m) or m.is_queued_for_deletion():
 			continue
 		if m.has_method("beam_emit"):
 			_emitters.append(m)
+		if m.has_method("beam_receive"):
+			_receivers.append(m)
 		# C2: зеркало и смеситель сами объявят beam_pass и поднимут _passers.
 	_fill_occ()
 	dirty = true
@@ -212,6 +219,7 @@ func _fill_occ() -> void:
 			continue
 		# C1: любая постройка гасит луч (beam_pass базы возвращает []).
 		# C2 запишет сюда код ≥ 2 и узел в _occ_nodes.
+		# Приёмник (маяк) тоже гасит: луч упирается в башню, сквозь неё не идёт.
 		_occ[c.y * World.W + c.x] = 1
 
 
@@ -310,6 +318,33 @@ func _trace(next_segs: Array) -> void:
 			_flat[nidx] = _flat[nidx] | color
 		if walked > 0 and left <= 0:
 			next_segs.append(_seg(fx, fy, x, y, dir, color, seg_left, length, walked))
+
+
+## Цвет, который упёрся в постройку: OR всех входов. Сообщаем только если карта
+## реально сменилась — иначе маяк сбрасывал бы перезарядку на каждом кадре.
+func _deliver(segs: Array) -> void:
+	if _receivers.is_empty():
+		return
+	var hit: Dictionary = {}
+	var dxs: PackedInt32Array = PackedInt32Array([1, 0, -1, 0])
+	var dys: PackedInt32Array = PackedInt32Array([0, 1, 0, -1])
+	var w: int = World.W
+	var hgt: int = World.H
+	for s in segs:
+		var dir: int = int(s["dir"])
+		var x: int = int(s["to"].x) + dxs[dir]
+		var y: int = int(s["to"].y) + dys[dir]
+		if x < 0 or y < 0 or x >= w or y >= hgt:
+			continue
+		var key: int = y * w + x
+		hit[key] = int(hit.get(key, 0)) | int(s["color"])
+	for m in _receivers:
+		if not is_instance_valid(m) or m.is_queued_for_deletion():
+			continue
+		var c: Vector2i = m.cell
+		if not World.in_bounds(c.x, c.y):
+			continue
+		m.beam_receive(int(hit.get(c.y * w + c.x, 0)))
 
 
 func _close_seg(segs: Array, from: Vector2i, to: Vector2i, dir: int, color: int, seg_left: int, length: int, air: int) -> void:

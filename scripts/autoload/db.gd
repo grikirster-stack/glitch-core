@@ -234,6 +234,8 @@ func _build_item_defs() -> void:
 	_add_item_def(IDs.I.LOOT_BAG, "Мешок", Color(0.45, 0.38, 0.30), "bag", 1, "")
 	# Свет (ADR-005, #164): горелка ставится руками, стак небольшой — это не расходник.
 	_add_item_def(IDs.I.BURNER, "Горелка", Color(0.55, 0.32, 0.22), "burner", 10, "machine:Burner")
+	# Маяк (ADR-005 § 4–5, #167): приёмник луча. Стак 5 — это башня, не расходник.
+	_add_item_def(IDs.I.PHAROS, "Маяк", Color(0.72, 0.55, 0.38), "pharos", 5, "machine:Pharos")
 
 	# Требования релей-ядра — из Balance (§ 4.7).
 	relay_req = Balance.RELAY_REQ.duplicate()
@@ -306,6 +308,8 @@ func _build_recipes() -> void:
 	_recipe(IDs.I.CHEST, 1, {IDs.I.IRON_PLATE: 4}, "hand", 2.5, "Сундук вручную")
 	# Горелка (ADR-005 § 4): 4 камня + 2 хлама, руками, сразу. Железа не требует.
 	_recipe(IDs.I.BURNER, 1, {IDs.I.STONE: 4, IDs.I.SCRAP: 2}, "hand", 0.0, "Горелка")
+	# Маяк (ADR-005 § 4): 2 железных слитка + стекло + кристалл, руками. Чертёж PHAROS.
+	_recipe(IDs.I.PHAROS, 1, {IDs.I.IRON_INGOT: 2, IDs.I.GLASS: 1, IDs.I.CRYSTAL: 1}, "hand", 0.0, "Маяк")
 
 	# --- Плавильня: вдвое больше слитков за ту же руду -----------------------
 	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 1}, "smelter", 2.0, "Выплавка железа")
@@ -1540,6 +1544,16 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 				_px(img, 12, y, c.darkened(0.35))
 			_px(img, 13, 7, Color("#FFD86E"))
 			_px(img, 14, 7, Color("#FFD86E"))
+		"pharos":
+			# Башня с линзой сверху: ребёнок отличает маяк от горелки по силуэту.
+			for y in range(8, 15):
+				for x in range(4, 12):
+					_px(img, x, y, c.darkened(0.2))
+			for y in range(3, 8):
+				for x in range(5, 11):
+					_px(img, x, y, Color("#FFD86E"))
+			_px(img, 7, 2, Color("#FFD86E"))
+			_px(img, 8, 2, Color("#FFD86E"))
 		"bag":
 			for y in range(5, 14):
 				var half: int = 5 - int(absf(float(y) - 10.0) * 0.5)
