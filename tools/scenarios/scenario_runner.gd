@@ -327,6 +327,9 @@ const REGISTRY: Dictionary = {
 	"campaign_light_late": {"file": "campaign_light_late.gd", "title": "главы «Свет» 3–4",
 		"timeout_ms": 180000,
 		"desc": "зеркало доводит луч до подвала, цвета сводят жёлтый в маяк; каждая глава ≤ 120 с"},
+	# Главы «Свет» 5–6 (#179). 1–4 — campaign_light.gd и campaign_light_late.gd.
+	"campaign_light_5": {"file": "campaign_light_5.gd", "title": "главы «Свет» 5–6", "timeout_ms": 180000,
+		"desc": "«Солнце» и «Радуга»: бот проходит каждую за ≤ 120 с; шесть глав подряд — когда 1–4 уже влиты"},
 	# --- Свет: горелка и луч (ADR-005, #164) ---
 	"beam_burner": {"file": "beam_burner.gd", "title": "горелка и луч", "timeout_ms": 90000,
 		"desc": "уголь даёт красный луч на 24 клетки, стена обрывает, 45 с гаснет, сундук кормит, поворот уводит луч; замер rebuild"},
