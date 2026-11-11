@@ -534,8 +534,8 @@ func _on_inv(sender: int, payload: PackedByteArray) -> void:
 		own.inv.slots[i] = ItemStack.new(int(e[0]), int(e[1])) if int(e[1]) > 0 else ItemStack.new()
 	# Хвост seen (#171): потраченное тоже открывает рецепт. Слоты не помечаем
 	# сами — иначе пустой подбор на клиенте открыл бы строку без сигнала хоста.
-	for sid in d.get("seen", []):
-		own.inv.mark_seen(int(sid))
+	for id in d.get("seen", []):
+		own.inv.mark_seen(int(id))
 	own.inv.changed.emit()
 	own.stats_changed.emit()
 
