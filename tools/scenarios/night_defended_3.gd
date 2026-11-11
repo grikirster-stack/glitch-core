@@ -12,7 +12,18 @@ func run() -> void:
 	var base: Dictionary = build_base(true)
 	ok("база с обороной поставлена: %d машин, маяков %d" % [base["machines"].size(), int(base["turrets"])],
 			bool(base["ok"]) and int(base["turrets"]) == 2)
+	var red: int = _red_beacons()
+	ok("оба маяка приняли красный", red == 2, "%d" % red)
 	var res: Dictionary = await siege_night(3, SPEED)
 	metric("night3_def_lost", float(res["lost"]), "машин потеряно за ночь 3 с 2 маяками и стеной")
 	ok("ночь 3 с 2 красными маяками и стеной: 0 потерь", int(res["lost"]) == 0, "%d" % int(res["lost"]))
 	finish()
+
+
+## Сколько поставленных маяков сейчас под красным и работают.
+func _red_beacons() -> int:
+	var n: int = 0
+	for m in World.machines.values():
+		if m.kind == "Pharos" and int(m.get("color")) == Beams.R and bool(m.get("active")):
+			n += 1
+	return n

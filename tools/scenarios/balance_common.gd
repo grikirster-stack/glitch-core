@@ -196,11 +196,6 @@ func build_base(defended: bool) -> Dictionary:
 	var row: int = World.beacon_cell.y
 	stand_in_corridor(0)
 	var plan: Array = [["Burner", 5], ["Chest", 7], ["Chest", 8], ["Burner", 10], ["Chest", 12]]
-	if defended:
-		plan.append(["Pharos", 6])
-		plan.append(["Mirror", 4])
-		plan.append(["Pharos", 13])
-		plan.append(["Mirror", 15])
 	var machines: Array = []
 	var turrets: int = 0
 	var all_ok: bool = true
@@ -222,17 +217,48 @@ func build_base(defended: bool) -> Dictionary:
 			for y in range(row - 3, row + 1):
 				if World.get_tile(x, y) == IDs.T.AIR and not World.machines.has(Vector2i(x, y)):
 					World.set_tile(x, y, IDs.T.STEEL_WALL)
-		# Красный: уголь в горелке у зеркала. Цвет маяка задаёт луч, не предмет.
-		_light_red(bx + 5, row)
-		_light_red(bx + 14, row)
+		# Красный маяк — на два ряда выше горелки. Вплотную луч не доходит:
+		# первая же клетка — постройка, сегмент пустой и в маяк не кладётся.
+		# Горелка смотрит вверх, зеркало «/» поворачивает луч вправо, маяк
+		# стоит через клетку воздуха.
+		if not _raise_red(bx + 5, row, machines):
+			all_ok = false
+		else:
+			turrets += 1
+		if not _raise_red(bx + 10, row, machines):
+			all_ok = false
+		else:
+			turrets += 1
+		if World.beams != null:
+			World.beams.note_machines()
+			World.beams.rebuild()
 	return {"ok": all_ok, "machines": machines, "turrets": turrets}
 
 
-## Горелка на угле светит красным в зеркало слева от маяка.
-func _light_red(burner_x: int, row: int) -> void:
+## Горелка вверх → зеркало «/» → маяк через клетку. false — не собралось.
+func _raise_red(burner_x: int, row: int, machines: Array) -> bool:
 	var b = World.machines.get(Vector2i(burner_x, row))
-	if b != null and b.has_method("add_fuel"):
-		b.add_fuel(IDs.I.COAL, 4)
+	if b == null or b.kind != "Burner":
+		return false
+	b.dir = 3
+	World.set_tile(burner_x, row - 1, IDs.T.AIR)
+	var mirror_c: Vector2i = Vector2i(burner_x, row - 2)
+	var gap: Vector2i = Vector2i(burner_x + 1, row - 2)
+	var pharos_c: Vector2i = Vector2i(burner_x + 2, row - 2)
+	for c in [mirror_c, gap, pharos_c]:
+		if not World.machines.has(c):
+			World.set_tile(c.x, c.y, IDs.T.AIR)
+	if not MachineBase.place_machine("Mirror", mirror_c):
+		return false
+	var mirror = World.machines.get(mirror_c)
+	mirror.dir = 0
+	if not MachineBase.place_machine("Pharos", pharos_c):
+		return false
+	for c in [mirror_c, pharos_c]:
+		var m: MachineBase = World.machines[c]
+		machines.append(m)
+		m.destroyed.connect(func(mb: MachineBase) -> void: _lost.append(mb.kind))
+	return true
 
 
 ## Ночь day у базы: герой стоит у релей-ядра и базу не защищает (не бьёт, не

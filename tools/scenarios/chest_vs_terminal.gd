@@ -54,7 +54,7 @@ func run() -> void:
 	release(KEY_E)
 	clear_input()
 	ok("сундук открыт по E", opened)
-	ok("терминал не перехватил E", _no_power() == 0, str(_notices))
+	ok("терминал не перехватил E", Game.tasks_done == 0 and _no_power() == 0, str(_notices))
 	UI.panel.close()
 	await wait(0.2)
 
@@ -64,12 +64,15 @@ func run() -> void:
 	stood = place_near(World.cell_to_world(t), term_spots)
 	ok("герой встал у терминала", stood)
 	await wait(0.3)
+	var done_before: int = Game.tasks_done
 	hold(KEY_E)
-	await wait(0.6)
+	var read: bool = await wait_until(func() -> bool: return Game.tasks_done > done_before, 4.0)
 	release(KEY_E)
 	clear_input()
 	ok("у терминала сундук не открылся", not (UI.panel.visible and UI.panel.chest == ch))
-	ok("терминал отвечает сам", _no_power() > 0, str(_notices))
+	# Питания нет (#170): терминал не говорит «нет питания», а читается удержанием E.
+	ok("терминал отвечает сам", read and Game.tasks_done == done_before + 1,
+			"%d → %d %s" % [done_before, Game.tasks_done, str(_notices)])
 	finish()
 
 

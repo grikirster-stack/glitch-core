@@ -83,10 +83,10 @@ func run() -> void:
 	ok("подсказка HUD — выполнить задание", hud.hint_text == HUD.HINT_TERMINAL, "«%s»" % hud.hint_text)
 	_notices.clear()
 	hold(KEY_E)
-	await wait(0.4)
+	var ticking: bool = await wait_until(func() -> bool: return player.task_progress > 0.05, 1.5)
 	release(KEY_E)
 	await wait(0.1)
-	ok("E по терминалу начинает отсчёт", player.task_progress > 0.0, "%.2f" % player.task_progress)
+	ok("E по терминалу начинает отсчёт", ticking, "%.2f" % player.task_progress)
 	ok("сундук при этом не открылся", not UI.panel.visible)
 
 	# Курсор на сундуке — снова сундук (цель под курсором главнее).
