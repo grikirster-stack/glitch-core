@@ -28,6 +28,7 @@
 | `endless_shot.gd` | кадр экрана победы с кнопкой «Остаться на планете»: окно за экраном, PNG `docs/img/shots/endless.png` |
 | `beacon_shot.gd` | кадр маяка под красным (#167): окно за экраном, PNG `docs/img/shots/beacon_red.png` |
 | `optics_shot.gd` | кадр зеркала и смесителя (#165): окно за экраном, PNG `docs/img/shots/optics.png` |
+| `beam_diagonal_shot.gd` | кадр диагонального луча в стену: окно за экраном, PNG `docs/img/shots/beam_diagonal.png` |
 | `net_test.gd` | сеть, уровень 1 (ADR-002, #86): кодек, таблица рукопожатия, петля «хост + 3 клиента» в одном процессе, хэш схемы (§ 7) |
 | `mp/` | сеть, уровень 2: харнесс `mp_runner.gd` и сценарии `mp_*` — хост и клиенты отдельными headless-процессами (§ 7) |
 
@@ -474,6 +475,14 @@ godot --headless --path . --script res://tools/save_test.gd
   призма делит белый на R/G/B и пропускает красный прямо, луч в выход смесителя
   гаснет, кольцо из 4 зеркал не зацикливает `rebuild()`. Печатает мкс `rebuild()`
   на 10 зеркалах и 3 смесителях.
+* `beam_diagonal` (`-- --scenario=beam_diagonal`) — восемь направлений, не свободный
+  угол. Шаг в диагональную клетку стоит 1 клетку длины (24, не длиннее прямой).
+  Стена на диагонали обрывает луч; угол двух стен закрыт, одна стена на углу — нет.
+  Зеркало dir 0..3 отражает как раньше; горизонтальное переводит прямой луч в
+  диагональ. Смеситель, призма и маяк на ортогональном луче не ломаются.
+
+Кадр `docs/img/shots/beam_diagonal.png` — `tools/beam_diagonal_shot.gd`, окно за экраном:
+`timeout 120 godot --path . --audio-driver Dummy --disable-vsync --fixed-fps 60 --windowed --position -10000,-10000 --resolution 1280x720 --script res://tools/beam_diagonal_shot.gd -- --seed=31337`.
 
 ### Маяк, часть 1 (ADR-005 § 5, #167)
 

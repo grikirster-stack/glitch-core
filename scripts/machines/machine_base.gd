@@ -52,8 +52,12 @@ var _output: Dictionary = {}
 var _output_count: int = 0
 ## Направление постройки: 0 — вправо, 1 — вниз, 2 — влево, 3 — вверх (как у конвейера).
 ## Поворачивается ПКМ или тапом, только если can_turn (ADR-005 § 4).
+## Горелка и зеркало ходят по восьми: 4–7 — диагонали (DIR в Beams). Остальные
+## машины по-прежнему на четвертях: turn() смотрит turn_steps.
 var dir: int = 0
 var can_turn: bool = false
+## Сколько положений у turn(). 4 — четверть оборота. 8 — ещё и диагонали, шаг 45°.
+var turn_steps: int = 4
 ## Неразборная постройка: её нельзя снять и вернуть в инвентарь (постройки
 ## кампании, тайники руин). Ставится кодом мира, не игроком.
 var permanent: bool = false
@@ -138,10 +142,11 @@ func _process(delta: float) -> void:
 		queue_redraw()
 
 
-## Повернуть на четверть оборота по часовой. Один вызов — один поворот; «один поворот
-## на нажатие» обеспечивает игрок (Player._do_place).
+## Один шаг по часовой: четверть оборота или 45°, если turn_steps = 8.
+## Один вызов — один поворот; «один поворот на нажатие» обеспечивает игрок.
 func turn() -> void:
-	dir = (dir + 1) % 4
+	var n: int = turn_steps if turn_steps > 1 else 4
+	dir = (dir + 1) % n
 	queue_redraw()
 	_on_turned()
 
@@ -474,7 +479,10 @@ func save_state() -> Dictionary:
 ## Восстановить состояние после place_machine. Неизвестные ключи игнорируются,
 ## отсутствующие оставляют значение, как у только что построенной машины.
 func load_state(d: Dictionary) -> void:
-	dir = int(d.get("dir", dir)) & 3
+	# Старый сейв хранит 0..3. Восемь положений — только у turn_steps = 8,
+	# и они тоже влезают в тот же int: отдельного поля нет.
+	var n: int = turn_steps if turn_steps > 1 else 4
+	dir = posmod(int(d.get("dir", dir)), n)
 	hp = float(d.get("hp", hp))
 	max_hp = float(d.get("max_hp", max_hp))
 	progress = float(d.get("progress", progress))
@@ -537,7 +545,10 @@ const NF_POWERED: int = 1
 const NF_ACTIVE: int = 2      ## power_active (генераторы)
 const NF_ENABLED: int = 4     ## рубильник генератора
 const NF_OVERLOAD: int = 8    ## генератор перегружен (браун-аут в радиусе)
-const NF_DIR_SHIFT: int = 4   ## dir — биты 4–5 байта флагов (0–3)
+const NF_DIR_SHIFT: int = 4   ## dir 0..3 — биты 4–5 байта флагов
+## Восемь положений в эти два бита не влезают (биты 2–3 — рубильник генератора).
+## Горелка кладёт dir в свободные биты своего байта пламени, зеркало — в свой
+## байт. База по-прежнему пишет только 0..3, длина пакетов других машин та же.
 
 
 func net_state() -> PackedByteArray:
@@ -545,7 +556,7 @@ func net_state() -> PackedByteArray:
 	b.resize(NET_BASE_BYTES)
 	b[0] = net_u8(hp / maxf(max_hp, 0.001))
 	b[1] = (NF_POWERED if powered else 0) | (NF_ACTIVE if power_active else 0)
-	b[1] |= (dir & 3) << NF_DIR_SHIFT
+	b[1] |= (dir & 3) << NF_DIR_SHIFT   ## 0..3; диагональ 4..7 дописывает наследник
 	b[2] = net_u8(efficiency)
 	b[3] = net_u8(progress)
 	return b
@@ -557,10 +568,13 @@ func apply_net_state(b: PackedByteArray) -> int:
 		return -1
 	hp = float(b[0]) / 255.0 * max_hp
 	power_active = (b[1] & NF_ACTIVE) != 0
-	var d: int = (b[1] >> NF_DIR_SHIFT) & 3
-	if d != dir:
-		dir = d
-		queue_redraw()
+	# Восемь положений базу не касаются: два бита здесь — только 0..3.
+	# Горелка и зеркало дочитывают dir сами, иначе диагональ затиралась бы.
+	if turn_steps <= 4:
+		var d: int = (b[1] >> NF_DIR_SHIFT) & 3
+		if d != dir:
+			dir = d
+			queue_redraw()
 	apply_power((b[1] & NF_POWERED) != 0, float(b[2]) / 255.0)
 	progress = float(b[3]) / 255.0
 	return NET_BASE_BYTES
