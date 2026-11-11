@@ -264,6 +264,6 @@ func _menu_and_net() -> void:
 	var hud: HUD = UI.hud
 	if hud != null:
 		hud._compute_tracker()
-		ok("HUD клиента: глава и задачи", hud.tracker_title.begins_with("ГЛАВА 4") and hud.mission_lines.size() == 2,
-				hud.tracker_title)
+		ok("HUD клиента: карточка первой цели главы 4", hud.card_text != "" and hud.card_need == 4
+				and hud.card_icon == IDs.I.TURRET, "«%s» %d/%d" % [hud.card_text, hud.card_have, hud.card_need])
 	mission = pup

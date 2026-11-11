@@ -175,14 +175,16 @@ func _t_layout(scene: Node) -> void:
 func _worst_state(hud: HUD) -> Dictionary:
 	var saved: Dictionary = {
 		"tt": hud.tracker_title, "td": hud.tracker_detail, "tut": hud.tutorial_text,
+		"ct": hud.card_text, "ch": hud.card_have, "cn": hud.card_need,
 		"ml": hud.mission_lines.duplicate(), "hint": hud.hint_text, "hh": hud._hint_hash,
 		"notes": hud.notes.duplicate(true), "cd": hud.night_countdown,
 	}
 	hud.tracker_title = "ЦЕЛЬ 2 · СВЕТ"
 	hud.tracker_detail = "Поставь горелку у входа в пещеру и зажги её углём — это длинная строка"
+	hud.card_text = "Запитай терминалы базы"
+	hud.card_have = 0
+	hud.card_need = 2
 	hud.tutorial_text = "возьми уголь и положи в топку"
-	var ml: Array[String] = ["• Собрать 5 меди", "• Поставить зеркало"]
-	hud.mission_lines = ml
 	hud.hint_text = "[E] — загрузить уголь в ТЭЦ · удерживать [E] — разобрать"
 	hud._hint_hash = hud.hint_text.hash()
 	hud.notes = [
@@ -197,6 +199,9 @@ func _worst_state(hud: HUD) -> Dictionary:
 func _restore_state(hud: HUD, saved: Dictionary) -> void:
 	hud.tracker_title = saved["tt"]
 	hud.tracker_detail = saved["td"]
+	hud.card_text = saved["ct"]
+	hud.card_have = saved["ch"]
+	hud.card_need = saved["cn"]
 	hud.tutorial_text = saved["tut"]
 	var ml: Array[String] = []
 	ml.assign(saved["ml"])
