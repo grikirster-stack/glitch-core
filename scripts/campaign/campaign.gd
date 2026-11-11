@@ -13,7 +13,8 @@ extends RefCounted
 const SEED: int = 31337
 const DIR: String = "res://scripts/campaign/missions/"
 ## Главы по порядку (id = имя файла в DIR).
-const CHAPTERS: Array[String] = ["dark_station", "conveyor", "mine", "siege", "signal"]
+const CHAPTERS: Array[String] = ["dark_station", "conveyor", "mine", "siege", "signal",
+		"mirror", "colors"]
 
 
 static func has(id: String) -> bool:
