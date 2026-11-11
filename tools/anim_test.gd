@@ -549,12 +549,23 @@ class Runner extends Node:
 		if _terminal_cell.x < 0:
 			_next(ST_INTERACT_CHECK)
 			return
-		# Стоим у терминала и держим взаимодействие (E).
+		# Стоим у терминала и держим взаимодействие (E). Пустой центр лагеря
+		# ядро не запускает (#175): терминал без питания запитаем ТЭЦ рядом.
 		_pin = true
 		_pin_pos = world.cell_to_world(_terminal_cell) + Vector2(0.0, -24.0)
 		player.global_position = _pin_pos
 		player.vel = Vector2.ZERO
 		player.task_progress = 0.0
+		if not game.is_powered(world.cell_to_world(_terminal_cell)):
+			var gc: Vector2i = _terminal_cell + Vector2i(2, 0)
+			if world.get_tile_v(gc) != IDs.T.AIR:
+				world.set_tile(gc.x, gc.y, IDs.T.AIR)
+			# class_name в --script ещё не класс: статику берём load, как ниже.
+			var mb: GDScript = load("res://scripts/machines/machine_base.gd")
+			if mb.place_machine("CoalGen", gc):
+				var gen = world.machines.get(gc)
+				if gen != null:
+					gen.add_fuel(4)
 		_task0 = float(player.task_progress)
 		_set_key(KEY_E, true)
 		_next(ST_INTERACT_CHECK, 0.5)
@@ -1046,14 +1057,21 @@ class Runner extends Node:
 
 
 	## Терминал задания — чтобы проверить рост task_progress. Терминал работает
-	## только под питанием (#29); если запитанного нет — релей-ядро (его отсчёт
-	## по E растёт всегда).
+	## только под питанием (#29). Пустой центр лагеря ядро больше не запускает
+	## (#175): запас — ближайший терминал, его запитает ТЭЦ из стартового набора.
 	func _find_terminal_cell() -> void:
 		for t in world.terminals:
 			if game.is_powered(world.cell_to_world(t)):
 				_terminal_cell = t
 				return
-		_terminal_cell = world.beacon_cell
+		var best: Vector2i = Vector2i(-1, -1)
+		var best_d: int = 9999
+		for t in world.terminals:
+			var d: int = absi(int(t.x) - world.beacon_cell.x)
+			if d < best_d:
+				best_d = d
+				best = t
+		_terminal_cell = best
 
 
 	## Убрать всех фантомов сцены.

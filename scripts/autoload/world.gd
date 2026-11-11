@@ -1356,10 +1356,12 @@ func _place_base(cx: int) -> void:
 	vents.append(Vector2i(cx - 13, base - 1))
 
 
-## Сундук лагеря высадки: справа от центра, не на клетке панели. Внутри —
+## Сундук лагеря высадки: левый край площадки. Справа от центра — коридор
+## сценариев (bx+1…bx+17): сундук там сносился бы вместе с полом и ронял ядро
+## под ноги. Терминал базы — cx+6, его E сундук не перехватывает. Внутри —
 ## стартовый набор и Радужное ядро (ADR-005 § 6.3). Разобрать нельзя.
 func _place_camp_chest(cx: int, base: int) -> void:
-	var cell: Vector2i = Vector2i(cx + 4, base - 1)
+	var cell: Vector2i = Vector2i(cx - 10, base - 1)
 	if get_tile(cell.x, cell.y) != IDs.T.AIR:
 		set_tile_raw(cell.x, cell.y, IDs.T.AIR)
 	if not MachineBase.place_machine("Chest", cell):

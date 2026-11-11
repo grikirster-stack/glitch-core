@@ -99,7 +99,7 @@ func run() -> void:
 	ok("вентиляция рядом → блоки у решётки", fx.active_name() == "vent")
 	# Слабое событие поверх сильного не перебивает его; сильное перебивает слабое.
 	Game.relay_active = true
-	Game.objective_changed.emit(3)
+	Game.objective_changed.emit(Game.OBJECTIVE_STAGES)
 	Game.relay_active = false
 	ok("сильное событие перебивает слабое", fx.active_name() == "relay_start")
 	Threat.vent_warning.emit(near)
@@ -164,7 +164,7 @@ func run() -> void:
 	var calm0n: int = fx.stat_calm
 	await _shot_before()
 	Game.relay_active = true
-	Game.objective_changed.emit(3)
+	Game.objective_changed.emit(Game.OBJECTIVE_STAGES)
 	Game.relay_active = false
 	ok("меньше глитча: релей — без шейдера, спокойная вспышка", not fx.glitch_active()
 			and fx.active() and fx.stat_calm == calm0n + 1 and fx.stat_fired == fired0

@@ -351,7 +351,10 @@ func _back_and_app_pause() -> void:
 	UI.app_paused()
 	ok("свернули приложение — пауза и сохранение в слот F5", UI.pause.visible and get_tree().paused
 			and Save.exists(Save.slot), Save.path_for(Save.slot))
+	# close() молчит, если «Назад» уже закрыл панель, а дерево всё ещё стоит:
+	# следующий сценарий в том же процессе тогда не двигается.
 	UI.pause.close()
+	get_tree().paused = false
 	Save.remove(Save.slot)
 	await get_tree().process_frame
 
