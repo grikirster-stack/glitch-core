@@ -198,9 +198,11 @@ func note_machines() -> void:
 
 func _fill_occ() -> void:
 	var n: int = World.W * World.H
-	if _occ.size() != n:
-		_occ = PackedByteArray()
-		_occ.resize(n)
+	# Новый массив, не fill поверх старого: generate() и смена сцены сносят
+	# машины через queue_free, а note_machines() видит уже пустой словарь.
+	# fill оставил бы клетки снятых построек — и луч обрывался на воздухе.
+	_occ = PackedByteArray()
+	_occ.resize(n)
 	_occ_nodes = [null, null]
 	for m in World.machines.values():
 		if not is_instance_valid(m) or m.is_queued_for_deletion():

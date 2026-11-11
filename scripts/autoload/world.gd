@@ -177,6 +177,9 @@ func generate(p_seed: int) -> void:
 	if beams != null:
 		beams.cells.clear()
 		beams.segments.clear()
+		# Словарь машин уже пуст, а плоская карта занятости — нет: иначе луч
+		# нового забега упирается в клетки построек прошлого мира.
+		beams.note_machines()
 		beams.mark_dirty()
 	_reset_light_chunks()
 	_light_max_radius = 0.0
