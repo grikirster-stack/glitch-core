@@ -646,7 +646,7 @@ func dig_target(p: Player, tap: Vector2, loose: bool) -> Dictionary:
 			return {"cell": World.world_to_cell(pp), "point": pp, "foe": true}
 	var c: Vector2i = World.world_to_cell(tap)
 	# От центра клетки героя, как у мыши: луч из точки ног цепляет пол.
-	var hit: Vector2i = World.first_solid_on_ray(World.cell_to_world(World.world_to_cell(from)), tap)
+	var hit: Vector2i = World.first_solid_on_ray(World.cell_to_world(World.world_to_cell(from)), tap, true, true)
 	if hit != NO_CELL and diggable(hit) and _in_reach(from, hit):
 		return _cell_target(hit)
 	if not loose:

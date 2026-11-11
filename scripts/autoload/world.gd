@@ -1443,9 +1443,10 @@ func is_solid_at(p: Vector2) -> bool:
 ## клетками луч не проходит (оба соседа по стороне перекрывают угол), но клетка, которую
 ## отрезок лишь задевает углом, луч не останавливает. Жидкости и воздух — пусто.
 ## machines_block — машины тоже твёрдые (копка; трассировка видимости фантомов и турели
-## их не считает). Нет такой — (-1, -1). Единая трассировка: копка мышью, тач, турель,
-## фантомы, дальше — луч света.
-func first_solid_on_ray(from: Vector2, to: Vector2, machines_block: bool = true) -> Vector2i:
+## их не считает). diggable — для копки: проходимый, но ломаемый тайл (ствол, ветка)
+## тоже преграда; видимости он не мешает. Нет такой — (-1, -1). Единая трассировка:
+## копка мышью, тач, турель, фантомы, дальше — луч света.
+func first_solid_on_ray(from: Vector2, to: Vector2, machines_block: bool = true, diggable: bool = false) -> Vector2i:
 	var a: Vector2i = world_to_cell(from)
 	var b: Vector2i = world_to_cell(to)
 	if a == b:
@@ -1492,21 +1493,24 @@ func first_solid_on_ray(from: Vector2, to: Vector2, machines_block: bool = true)
 			if not into_x and not into_y:
 				continue
 			if into_x and into_y:
-				var cx_hit: Vector2i = _solid_hit(side_x, machines_block)
+				var cx_hit: Vector2i = _solid_hit(side_x, machines_block, diggable)
 				if cx_hit.x >= 0:
 					return cx_hit
 				cell = side_y
 			else:
 				cell = side_x if into_x else side_y
-		var hit: Vector2i = _solid_hit(cell, machines_block)
+		var hit: Vector2i = _solid_hit(cell, machines_block, diggable)
 		if hit.x >= 0:
 			return hit
 	return Vector2i(-1, -1)
 
 
-func _solid_hit(c: Vector2i, machines_block: bool) -> Vector2i:
+func _solid_hit(c: Vector2i, machines_block: bool, diggable: bool = false) -> Vector2i:
 	var tid: int = tiles[c.y * W + c.x] if c.x >= 0 and c.x < W and c.y >= 0 and c.y < H else get_tile(c.x, c.y)
 	if _solid_tbl[tid] != 0 or (machines_block and machines.has(c)):
+		return c
+	# Копка: проходимый, но ломаемый тайл (ствол, ветка) тоже преграда на луче.
+	if diggable and tid != IDs.T.AIR and not DB.is_liquid(tid) and DB.tile_hard(tid) <= 100.0:
 		return c
 	return Vector2i(-1, -1)
 

@@ -413,7 +413,7 @@ func _empulse() -> void:
 func dig_target(mouse: Vector2) -> Vector2i:
 	# От центра клетки героя, как у турели и фантомов: луч из точки ног цепляет пол.
 	var origin: Vector2 = World.cell_to_world(World.world_to_cell(global_position))
-	var hit: Vector2i = World.first_solid_on_ray(origin, mouse)
+	var hit: Vector2i = World.first_solid_on_ray(origin, mouse, true, true)
 	if hit.x < 0 or not can_dig(hit):
 		return Vector2i(-1, -1)
 	if World.cell_to_world(hit).distance_to(global_position) > REACH:
