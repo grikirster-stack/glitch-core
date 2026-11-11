@@ -142,7 +142,11 @@ func _check_switch(origin: Vector2i) -> void:
 	ok("до рубильника копится красный", warmed and acc.color == Beams.R, "stored %.2f" % acc.stored)
 	var before: float = acc.stored
 	acc.set_mode(Accumulator.MODE_EMIT)
-	await wait(1.0)
+	# Запас тикает в _process. Ждём меньше секунды: прогрев даёт ~1 с, и
+	# ожидание в 1 с иногда съедает его до нуля (порог stored >= 1.0).
+	var t0: float = now_proc()
+	while now_proc() - t0 < 0.4:
+		await get_tree().process_frame
 	_flush()
 	ok("рубильник «отдавать» при входе отдаёт", acc.emitting()
 			and World.beams.color_at(acc_cell + Vector2i(1, 0)) == Beams.R,

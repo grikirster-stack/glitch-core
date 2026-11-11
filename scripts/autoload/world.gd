@@ -158,6 +158,12 @@ func generate(p_seed: int) -> void:
 		_build_defense_tables()
 	for m in machines.values():
 		if is_instance_valid(m):
+			# Снять с дерева сразу: queue_free оставляет _process до конца кадра,
+			# и сундук прошлого сценария тикает в клетке нового накопителя
+			# (сид 4242, шард 2/3). free() нельзя — свет ещё держит ссылку.
+			var parent: Node = m.get_parent()
+			if parent != null:
+				parent.remove_child(m)
 			m.queue_free()
 	machines.clear()
 	belts.clear()

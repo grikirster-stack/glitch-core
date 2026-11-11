@@ -94,10 +94,15 @@ var _seen: int = 0
 
 
 ## Beams зовёт перед проходом. Признак входа прошлого прохода остаётся на кадр.
+## Отдачу решаем здесь, не в _process: World перестраивает луч раньше машин,
+## и рубильник «отдавать» иначе светит только со следующего кадра.
 func beam_reset_inputs() -> void:
 	_fed_pass = _fed
 	_fed = false
 	_seen = 0
+	var on: bool = _should_emit()
+	if on != _emitting:
+		_emitting = on
 
 
 ## Луч не проходит наружу. Входная грань запоминается, выходная — нет.
@@ -138,6 +143,10 @@ func set_mode(next: int) -> void:
 	if m == mode:
 		return
 	mode = m
+	# Сразу, не в следующем _process: rebuild этого кадра уже читает emitting().
+	var on: bool = _should_emit()
+	if on != _emitting:
+		_emitting = on
 	_mark_beam()
 	queue_redraw()
 	Sfx.play("power", -10.0, 1.0 if mode == MODE_EMIT else 0.7)

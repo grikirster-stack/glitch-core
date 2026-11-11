@@ -556,6 +556,10 @@ func reset_world() -> void:
 
 
 func _reset_world() -> void:
+	# Ускорение прошлого сценария не должно течь дальше. balance_factory
+	# ставит time_scale 8 и снимает его в finish(); по таймауту finish не
+	# зовётся, и следующий сценарий живёт ускоренным.
+	Engine.time_scale = 1.0
 	var p: Player = scene.get("player")
 	# Фантомы прошлого сценария — долой.
 	for n in get_tree().get_nodes_in_group("phantom"):
