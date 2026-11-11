@@ -200,6 +200,10 @@ var _fog_tex: ImageTexture = null
 var _fog_dirty: bool = false
 var _fog_open: PackedByteArray = PackedByteArray()   # 1 — пиксель тумана открыт
 var _mouse: Vector2 = Vector2(-1.0, -1.0)
+## Клетка, которую копнёт ЛКМ (рамка), и клетка под курсором, которую копать нельзя (красный
+## крест), в экранных px; пустой Rect2i — нет. Рисуются слоем прицела.
+var _dig_rect: Rect2i = Rect2i()
+var _deny_rect: Rect2i = Rect2i()
 var _key: PackedInt32Array = PackedInt32Array()
 var _last_key: PackedInt32Array = PackedInt32Array()
 var _note_serial: int = 0
@@ -303,6 +307,7 @@ func _process(delta: float) -> void:
 	if mp != _mouse:
 		_mouse = mp
 		_cross.queue_redraw()
+	_update_dig_aim()
 	stat_us += Time.get_ticks_usec() - t0
 
 
@@ -937,10 +942,43 @@ func _draw_mark_layer() -> void:
 
 # ------------------------------------------------------------ ПРИЦЕЛ
 
+## Рамка цели копки и красный крест «сюда нельзя» (копка по лучу). На телефоне цель
+## обводит TouchControls, поэтому здесь — только для мыши.
+func _update_dig_aim() -> void:
+	var dig: Rect2i = Rect2i()
+	var deny: Rect2i = Rect2i()
+	if player != null and not UI.touch_on:
+		var xf: Transform2D = get_viewport().get_canvas_transform()
+		if player.dig_cell.x >= 0:
+			dig = _cell_screen_rect(xf, player.dig_cell)
+		if player.dig_denied_t > 0.0 and player.dig_denied_cell.x >= 0:
+			deny = _cell_screen_rect(xf, player.dig_denied_cell)
+	if dig != _dig_rect or deny != _deny_rect:
+		_dig_rect = dig
+		_deny_rect = deny
+		_cross.queue_redraw()
+
+
+static func _cell_screen_rect(xf: Transform2D, c: Vector2i) -> Rect2i:
+	var sr: Rect2 = xf * World.cell_rect(c)
+	return Rect2i(sr.position.round(), sr.size.round())
+
+
 func _draw_cross_layer() -> void:
 	stat_cross_redraws += 1
-	# Курсор — в px холста; слой рисует в логических, размер прицела не растёт с коэффициентом.
+	# Курсор и рамки — в px холста; слой рисует в логических, размер прицела не растёт с коэффициентом.
 	var k: float = 1.0 / UI.ui_scale
+	if _dig_rect.size != Vector2i.ZERO:
+		var r: Rect2 = Rect2(Vector2(_dig_rect.position) * k, Vector2(_dig_rect.size) * k).grow(-1.0 * k)
+		var w: float = 2.0 * k
+		_cross.draw_rect(Rect2(r.position, Vector2(r.size.x, w)), C_HAZARD)
+		_cross.draw_rect(Rect2(r.position.x, r.end.y - w, r.size.x, w), C_HAZARD)
+		_cross.draw_rect(Rect2(r.position, Vector2(w, r.size.y)), C_HAZARD)
+		_cross.draw_rect(Rect2(r.end.x - w, r.position.y, w, r.size.y), C_HAZARD)
+	if _deny_rect.size != Vector2i.ZERO:
+		var q: Rect2 = Rect2(Vector2(_deny_rect.position) * k, Vector2(_deny_rect.size) * k).grow(-3.0 * k)
+		_cross.draw_line(q.position, q.end, C_DANGER, 3.0 * k)
+		_cross.draw_line(Vector2(q.end.x, q.position.y), Vector2(q.position.x, q.end.y), C_DANGER, 3.0 * k)
 	var mp: Vector2 = _mouse * k
 	var cross: Color = Color(C_LINE, 0.75)
 	_cross.draw_line(mp - Vector2(7, 0) * k, mp - Vector2(3, 0) * k, cross, 1.5 * k)
