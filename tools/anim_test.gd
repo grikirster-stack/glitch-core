@@ -550,22 +550,12 @@ class Runner extends Node:
 			_next(ST_INTERACT_CHECK)
 			return
 		# Стоим у терминала и держим взаимодействие (E). Пустой центр лагеря
-		# ядро не запускает (#175): терминал без питания запитаем ТЭЦ рядом.
+		# ядро не запускает (#175). Питания нет (#170): терминал читается сразу.
 		_pin = true
 		_pin_pos = world.cell_to_world(_terminal_cell) + Vector2(0.0, -24.0)
 		player.global_position = _pin_pos
 		player.vel = Vector2.ZERO
 		player.task_progress = 0.0
-		if not game.is_powered(world.cell_to_world(_terminal_cell)):
-			var gc: Vector2i = _terminal_cell + Vector2i(2, 0)
-			if world.get_tile_v(gc) != IDs.T.AIR:
-				world.set_tile(gc.x, gc.y, IDs.T.AIR)
-			# class_name в --script ещё не класс: статику берём load, как ниже.
-			var mb: GDScript = load("res://scripts/machines/machine_base.gd")
-			if mb.place_machine("CoalGen", gc):
-				var gen = world.machines.get(gc)
-				if gen != null:
-					gen.add_fuel(4)
 		_task0 = float(player.task_progress)
 		_set_key(KEY_E, true)
 		_next(ST_INTERACT_CHECK, 0.5)
