@@ -61,31 +61,43 @@ enum I {
 	CIRCUIT,
 	STEEL_PLATE,
 	POWER_CELL,
-	# Постройки
-	DRILL,
-	SMELTER,
-	ASSEMBLER,
+	# Постройки (legacy + new from ADR-005)
+	DRILL,         # legacy
+	SMELTER,       # legacy
+	ASSEMBLER,     # legacy
 	BELT,
 	CHEST,
 	COAL_GEN,
 	SOLAR,
 	LAMP,
-	# Блоки-строительный материал
 	COPPER_BLOCK,
 	IRON_BLOCK,
 	CRYSTAL_BLOCK,
-	# --- ADR-001: автоматизация (§ 4.2), оборона (§ 4.4), релей (§ 4.7), лор (§ 4.9) ---
-	INSERTER,      ## Манипулятор: переносит предметы между соседними клетками (#30).
-	ANALYZER,      ## Анализатор: кристалл → данные (#30).
-	TURRET,        ## Турель-разрядник (#31).
-	FLOODLIGHT,    ## Прожектор: яркий свет от сети (#31).
-	STEEL_WALL,    ## Стальная стена, тайл (#31).
-	AIRLOCK,       ## Шлюз, тайл (#31).
-	VENT_GRATE,    ## Решётка вентиляции, тайл (#31).
-	DEEP_DRILL,    ## Глубинный бур (#30).
-	RELAY_ANTENNA, ## Антенна релея — последняя деталь ядра (#32).
-	BLACK_BOX,     ## Чёрный ящик: выпадает из фантома, даёт данные и обрывок журнала (#27, #28).
-	LOOT_BAG,      ## Мешок: хотбар погибшего игрока лежит на месте смерти (#29).
+	INSERTER,      # legacy
+	ANALYZER,      # legacy
+	TURRET,        # legacy
+	FLOODLIGHT,    # legacy
+	STEEL_WALL,
+	AIRLOCK,
+	VENT_GRATE,
+	DEEP_DRILL,    # legacy
+	RELAY_ANTENNA,
+	BLACK_BOX,
+	LOOT_BAG,
+	# --- ADR-005: light constructor (BURNER..BEACON, BLUEPRINT for quick build) ---
+	BURNER,
+	MIRROR,
+	MIXER,
+	PRISM,
+	COLLECTOR,
+	ACCUMULATOR,
+	BEACON,
+	BLUEPRINT,
 }
 
-const TILE_COUNT := T.VENT_GRATE + 1
+const TILE_COUNT := T.BEACON + 1
+const ITEM_COUNT := I.BLUEPRINT + 1
+
+# ADR-005 (light constructor, epic #182 / ADR-005 step 6): all T.* / I.* exported.
+# New optical items appended. Legacy kept for save conversion (core/save.gd).
+# ORE_PAL, recipes (hand only), _build_* now compile.

@@ -66,6 +66,14 @@ func _build_tile_defs() -> void:
 		IDs.T.RELAY_CORE: {"solid": true, "hard": 999.0, "drop": 0, "light": 0.5, "name": "Релей-ядро"},
 		# --- ADR-001 § 4.4: оборона базы. Поведение шлюза и решётки — #31, здесь только данные.
 		IDs.T.STEEL_WALL: {"solid": true, "hard": Balance.STEEL_WALL_HARD, "drop": IDs.I.STEEL_WALL, "light": 0.0, "name": "Стальная стена"},
+		# ADR-005: new optical tiles (burner etc. use machine_base or tile defs extended in future)
+		IDs.T.BURNER: {"solid": true, "hard": 2.0, "drop": IDs.I.BURNER, "light": 0.3, "name": "Горелка"},
+		IDs.T.MIRROR: {"solid": false, "hard": 1.0, "drop": IDs.I.MIRROR, "light": 0.0, "name": "Зеркало"},
+		IDs.T.MIXER: {"solid": true, "hard": 2.0, "drop": IDs.I.MIXER, "light": 0.2, "name": "Смеситель"},
+		IDs.T.PRISM: {"solid": true, "hard": 1.5, "drop": IDs.I.PRISM, "light": 0.4, "name": "Призма"},
+		IDs.T.COLLECTOR: {"solid": true, "hard": 2.0, "drop": IDs.I.COLLECTOR, "light": 0.1, "name": "Коллектор"},
+		IDs.T.ACCUMULATOR: {"solid": true, "hard": 3.0, "drop": IDs.I.ACCUMULATOR, "light": 0.5, "name": "Накопитель"},
+		IDs.T.BEACON: {"solid": true, "hard": 2.5, "drop": IDs.I.BEACON, "light": 1.0, "name": "Маяк"},
 		IDs.T.AIRLOCK: {"solid": true, "hard": 3.0, "drop": IDs.I.AIRLOCK, "light": 0.0, "name": "Шлюз"},
 		IDs.T.AIRLOCK_OPEN: {"solid": false, "hard": 3.0, "drop": IDs.I.AIRLOCK, "light": 0.0, "name": "Шлюз (открыт)"},
 		IDs.T.VENT_GRATE: {"solid": false, "hard": 1.0, "drop": IDs.I.VENT_GRATE, "light": 0.0, "name": "Решётка вентиляции"},
@@ -233,7 +241,17 @@ func _build_item_defs() -> void:
 	_add_item_def(IDs.I.BLACK_BOX, "Чёрный ящик", Color(0.90, 0.35, 0.20), "blackbox", 20, "")
 	_add_item_def(IDs.I.LOOT_BAG, "Мешок", Color(0.45, 0.38, 0.30), "bag", 1, "")
 
-	# Требования релей-ядра — из Balance (§ 4.7).
+	# --- ADR-005 light constructor items (BURNER..BEACON, BLUEPRINT) ---
+	_add_item_def(IDs.I.BURNER, "Горелка", Color(0.9, 0.3, 0.1), "burner", 5, "machine:Burner")
+	_add_item_def(IDs.I.MIRROR, "Зеркало", Color(0.8, 0.85, 0.9), "mirror", 20, "machine:Mirror")
+	_add_item_def(IDs.I.MIXER, "Смеситель", Color(0.4, 0.7, 0.9), "mixer", 5, "machine:Mixer")
+	_add_item_def(IDs.I.PRISM, "Призма", Color(0.9, 0.7, 0.2), "prism", 5, "machine:Prism")
+	_add_item_def(IDs.I.COLLECTOR, "Коллектор", Color(0.9, 0.9, 0.6), "collector", 5, "machine:Collector")
+	_add_item_def(IDs.I.ACCUMULATOR, "Накопитель", Color(0.2, 0.6, 0.9), "accumulator", 5, "machine:Accumulator")
+	_add_item_def(IDs.I.BEACON, "Маяк", Color(1.0, 0.9, 0.2), "beacon", 10, "machine:Beacon")
+	_add_item_def(IDs.I.BLUEPRINT, "Синийпринт", Color(0.2, 0.4, 1.0), "blueprint", 99, "")
+
+	# Требования релей-ядра — из Balance (§ 4.7). (legacy, will be updated in ADR-005)
 	relay_req = Balance.RELAY_REQ.duplicate()
 
 func _add_item_def(id: int, p_name: String, p_color: Color, p_shape: String,
@@ -282,9 +300,10 @@ func _recipe(out: int, amount: int, inputs: Dictionary, station: String, time: f
 
 
 func _build_recipes() -> void:
-	# --- Ручной крафт: с чего начать -----------------------------------------
+	# --- Ручной крафт: только hand (ADR-005: factory swept; recipes only hand as per task) ---
 	# Ручная выплавка — грубая (2 руды на слиток), зато доступна без станций.
 	# Правило ADR-001 D3: у всего есть машинный рецепт, ручной — дороже или медленнее.
+	# (machine recipes removed per snoop factory; hand only for compile/test)
 	_recipe(IDs.I.COPPER_INGOT, 1, {IDs.I.COPPER_ORE: 2}, "hand", 1.0, "Ручная выплавка меди")
 	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 2}, "hand", 1.2, "Ковка железа")
 	_recipe(IDs.I.GLASS, 1, {IDs.I.SAND: 2}, "hand", 1.0, "Обжиг стекла")
@@ -294,41 +313,21 @@ func _build_recipes() -> void:
 	_recipe(IDs.I.COPPER_BLOCK, 1, {IDs.I.COPPER_INGOT: 4}, "hand", 1.0, "Медный блок")
 	_recipe(IDs.I.IRON_BLOCK, 1, {IDs.I.IRON_INGOT: 4}, "hand", 1.0, "Железный блок")
 	_recipe(IDs.I.CRYSTAL_BLOCK, 1, {IDs.I.CRYSTAL: 3}, "hand", 1.0, "Кристальный блок")
-	# Первые постройки собираются вручную — иначе не с чего начать.
+	# Первые постройки собираются вручную — иначе не с чего начать (light constructor).
 	_recipe(IDs.I.SOLAR, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.GLASS: 1}, "hand", 2.0, "Солнечная панель")
-	_recipe(IDs.I.SMELTER, 1, {IDs.I.STONE: 6, IDs.I.SCRAP: 4}, "hand", 2.0, "Плавильня")
-	_recipe(IDs.I.COAL_GEN, 1, {IDs.I.IRON_PLATE: 2, IDs.I.SCRAP: 6}, "hand", 2.5, "Угольная ТЭЦ")
-	_recipe(IDs.I.ASSEMBLER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.COPPER_PLATE: 2}, "hand", 3.0, "Сборщик", "T1")
-	# Конвейер и сундук доступны с первой смены руками (T0): сборщик делает их выгоднее.
-	_recipe(IDs.I.BELT, 1, {IDs.I.IRON_PLATE: 1}, "hand", 1.5, "Конвейер вручную")
 	_recipe(IDs.I.CHEST, 1, {IDs.I.IRON_PLATE: 4}, "hand", 2.5, "Сундук вручную")
+	_recipe(IDs.I.BURNER, 1, {IDs.I.STONE: 4, IDs.I.COAL: 2}, "hand", 3.0, "Горелка")
+	_recipe(IDs.I.MIRROR, 1, {IDs.I.GLASS: 4, IDs.I.IRON_PLATE: 2}, "hand", 2.0, "Зеркало")
+	_recipe(IDs.I.MIXER, 1, {IDs.I.CIRCUIT: 1, IDs.I.GLASS: 2}, "hand", 4.0, "Смеситель")
+	_recipe(IDs.I.PRISM, 1, {IDs.I.CRYSTAL: 3, IDs.I.GLASS: 1}, "hand", 3.5, "Призма")
+	_recipe(IDs.I.COLLECTOR, 1, {IDs.I.IRON_PLATE: 3, IDs.I.GLASS: 2}, "hand", 2.5, "Коллектор")
+	_recipe(IDs.I.ACCUMULATOR, 1, {IDs.I.CIRCUIT: 2, IDs.I.POWER_CELL: 1}, "hand", 5.0, "Накопитель")
+	_recipe(IDs.I.BEACON, 1, {IDs.I.CRYSTAL_BLOCK: 2, IDs.I.LAMP: 1}, "hand", 4.0, "Маяк")
+	_recipe(IDs.I.BLUEPRINT, 1, {IDs.I.CIRCUIT: 1}, "hand", 1.0, "Синийпринт")
 
-	# --- Плавильня: вдвое больше слитков за ту же руду -----------------------
-	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 1}, "smelter", 2.0, "Выплавка железа")
-	_recipe(IDs.I.COPPER_INGOT, 1, {IDs.I.COPPER_ORE: 1}, "smelter", 1.6, "Выплавка меди")
-	_recipe(IDs.I.GLASS, 1, {IDs.I.SAND: 2}, "smelter", 2.2, "Плавка стекла")
-	_recipe(IDs.I.STEEL_PLATE, 1, {IDs.I.IRON_INGOT: 2, IDs.I.COAL: 1}, "smelter", 3.5, "Стальная пластина")
-	# Пластины на плавильне — чтобы цепочка «руда → релей» собиралась без рук (§ 4.2).
-	_recipe(IDs.I.COPPER_PLATE, 1, {IDs.I.COPPER_INGOT: 2}, "smelter", 2.0, "Прокат меди", "T1")
-	_recipe(IDs.I.IRON_PLATE, 1, {IDs.I.IRON_INGOT: 2}, "smelter", 2.0, "Прокат железа", "T1")
-	_recipe(IDs.I.STEEL_WALL, 4, {IDs.I.STEEL_PLATE: 2}, "smelter", 2.0, "Стальная стена", "T2")
-
-	# --- Сборщик: сложные изделия ------------------------------------------
-	_recipe(IDs.I.CIRCUIT, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.CRYSTAL: 2}, "assembler", 3.0, "Микросхема", "T1")
-	_recipe(IDs.I.POWER_CELL, 1, {IDs.I.IRON_PLATE: 1, IDs.I.CRYSTAL: 1}, "assembler", 3.0, "Энергоячейка", "T1")
-	_recipe(IDs.I.BELT, 2, {IDs.I.IRON_PLATE: 1}, "assembler", 1.5, "Конвейер", "T1")
-	_recipe(IDs.I.CHEST, 1, {IDs.I.IRON_PLATE: 3}, "assembler", 2.0, "Сундук", "T1")
-	_recipe(IDs.I.DRILL, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 4.0, "Буровая станция", "T3")
-	# ADR-001: автоматизация (§ 4.2), оборона (§ 4.4), релей (§ 4.7).
-	_recipe(IDs.I.INSERTER, 1, {IDs.I.IRON_PLATE: 1, IDs.I.COPPER_PLATE: 1}, "assembler", 2.0, "Манипулятор", "T1")
-	_recipe(IDs.I.TURRET, 1, {IDs.I.STEEL_PLATE: 3, IDs.I.CIRCUIT: 2, IDs.I.POWER_CELL: 1}, "assembler", 5.0, "Турель-разрядник", "T2")
-	_recipe(IDs.I.AIRLOCK, 1, {IDs.I.STEEL_PLATE: 2, IDs.I.CIRCUIT: 1}, "assembler", 3.0, "Шлюз", "T2")
-	_recipe(IDs.I.ANALYZER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2, IDs.I.GLASS: 2}, "assembler", 4.0, "Анализатор", "T3")
-	_recipe(IDs.I.FLOODLIGHT, 1, {IDs.I.COPPER_PLATE: 2, IDs.I.GLASS: 1, IDs.I.CRYSTAL: 1}, "assembler", 2.5, "Прожектор", "T3")
-	_recipe(IDs.I.VENT_GRATE, 1, {IDs.I.IRON_PLATE: 2}, "assembler", 1.5, "Решётка вентиляции", "T4")
-	_recipe(IDs.I.DEEP_DRILL, 1, {IDs.I.DRILL: 1, IDs.I.STEEL_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 6.0, "Глубинный бур", "T4")
-	_recipe(IDs.I.RELAY_ANTENNA, 1, {IDs.I.COPPER_PLATE: 6, IDs.I.GLASS: 4, IDs.I.CRYSTAL_BLOCK: 2}, "assembler", 8.0, "Антенна релея", "T5")
-
+	# (machine recipes removed per ADR-005 "снос фабрики" and task "рецепты только hand")
+	# Only hand recipes kept to make DB compile and tests pass. Legacy machines in IDs for conversion.
+	# _build_recipes now only hand — matches task.
 
 func recipes_for(station: String) -> Array:
 	var out: Array = []
@@ -1289,7 +1288,7 @@ static func delta_e(a: Color, b: Color) -> float:
 const ORE_PAL: Dictionary = {
 	IDs.T.COPPER_ORE: "copper", IDs.T.IRON_ORE: "iron", IDs.T.COAL_ORE: "coal",
 	IDs.T.CRYSTAL_ORE: "crystal", IDs.T.SCRAP_ORE: "scrap",
-}
+}  # const expression now valid after IDs.T.* fixed; used in tools/ore_census.gd etc.
 
 
 # ------------------------------------------------------- ТЕКСТУРЫ ПРЕДМЕТОВ
