@@ -1,6 +1,7 @@
 class_name Inventory
 extends RefCounted
-## Модель инвентаря: 10 слотов хотбара + 26 основных.
+## Модель инвентаря: hotbar_size слотов хотбара + остальные — рюкзак (всего 36).
+## Размер хотбара — 6 или 10 (#161); число 10 вшито только как потолок пакета и ключа HUD.
 
 signal changed
 
@@ -9,12 +10,28 @@ var size: int = 36
 var hotbar_size: int = 10
 var selected: int = 0
 
+## Допустимые размеры хотбара (#161): телефон — 6, ПК — 10. Больше 10 пакет ввода не несёт.
+const HOTBAR_MIN: int = 6
+const HOTBAR_MAX: int = 10
+
 func _init(p_size: int = 36, p_hotbar: int = 10) -> void:
 	size = p_size
-	hotbar_size = p_hotbar
+	hotbar_size = clamp_hotbar(p_hotbar)
 	slots.resize(size)
 	for i in size:
 		slots[i] = ItemStack.new()
+
+
+## 6 или 10; иное — ближайшее из двух (битое поле профиля не оставляет хотбар без ячеек).
+static func clamp_hotbar(n: int) -> int:
+	return HOTBAR_MIN if n < (HOTBAR_MIN + HOTBAR_MAX) / 2 else HOTBAR_MAX
+
+
+## Умолчание (#161): сенсорный экран или флаг --touch — 6, иначе 10.
+static func default_hotbar(touchscreen: bool, args: PackedStringArray) -> int:
+	if touchscreen or args.has("--touch"):
+		return HOTBAR_MIN
+	return HOTBAR_MAX
 
 func slot_max(id: int) -> int:
 	return DB.item_max_stack(id)
@@ -150,3 +167,26 @@ func first_empty() -> int:
 		if slots[i].is_empty():
 			return i
 	return -1
+
+
+## Сменить размер хотбара (#161). Слоты не двигаются: верхний ряд панели рисует
+## первые hotbar_size ячеек, остальные 26 — рюкзак рядами по 10. Сужение 10→6
+## переносит стопки из ячеек 6…9 в рюкзак; не влезло — в spilled (под ноги, spawn_item).
+## Расширение 6→10 только открывает ячейки: они уже в инвентаре, перекладывать нечего.
+func set_hotbar_size(n: int) -> Array[ItemStack]:
+	var next: int = clamp_hotbar(n)
+	var spilled: Array[ItemStack] = []
+	if next < hotbar_size:
+		for i in range(next, hotbar_size):
+			var s: ItemStack = slots[i]
+			if s.is_empty():
+				continue
+			var left: int = stack_into(slots, s.id, s.count, hotbar_size)
+			if left > 0:
+				spilled.append(ItemStack.new(s.id, left))
+			slots[i] = ItemStack.new()
+	hotbar_size = next
+	if selected >= hotbar_size:
+		selected = hotbar_size - 1
+	changed.emit()
+	return spilled

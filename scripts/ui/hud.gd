@@ -966,9 +966,14 @@ const HP_H: float = 24.0
 const EMP_H: float = 16.0
 ## Ширина полосы суток.
 const STRIP_W: float = 112.0
-## Ячейка хотбара по умолчанию (шаг, px) и число ячеек.
+## Ячейка хотбара: не больше SLOT_MAX, на телефоне (6 ячеек) — не меньше SLOT_TOUCH
+## и не больше SLOT_TOUCH_MAX. Число ячеек — inv.hotbar_size, не константа (#161).
 const SLOT_MAX: float = 46.0
+## Потолок ячеек в пакете и в ключе HUD: рисуется hotbar_size, ключ держит все 10.
 const SLOT_COUNT: int = 10
+## На 6 ячейках шаг = min(42 × 10 / hotbar_size, 64) — ячейка крупнее 42 px (#161).
+const SLOT_TOUCH: float = 42.0
+const SLOT_TOUCH_MAX: float = 64.0
 ## Низ хотбара над краем холста, px.
 const HOTBAR_BOTTOM: float = 32.0
 
@@ -1015,8 +1020,15 @@ func _ensure_layout() -> void:
 		_lay = _compute_layout()
 
 
+## Сколько ячеек хотбара рисовать (#161). Героя ещё нет — 10, как у Inventory по умолчанию.
+func _hotbar_count() -> int:
+	if player == null or player.inv == null:
+		return SLOT_COUNT
+	return clampi(player.inv.hotbar_size, 1, SLOT_COUNT)
+
+
 ## Подпись входов раскладки: размер, коэффициент, строки, число уведомлений, состав команды,
-## положение кнопок тач-управления.
+## положение кнопок тач-управления, размер хотбара.
 func _layout_sig() -> int:
 	var tc: Node = _touch()
 	var tsig: int = 0
@@ -1024,7 +1036,7 @@ func _layout_sig() -> int:
 		tsig = hash([tc.btn_center, tc.stick_center, tc.stick_radius])
 	return hash([size, UI.ui_scale, _state_hash, _hint_hash, _note_serial, notes.size(),
 			team_mates.size(), night_countdown, Game.day_number, Game.phase_name(), tsig,
-			player != null])
+			player != null, _hotbar_count()])
 
 
 ## Узел TouchControls, если сенсорное управление включено (иначе null).
@@ -1112,8 +1124,13 @@ func _compute_layout() -> Dictionary:
 	if tb.has("stick") and tb.has("e"):
 		lo = (tb["stick"] as Rect2).end.x + PAD
 		hi = (tb["e"] as Rect2).position.x - PAD
-	var slot: float = clampf(floorf((hi - lo) / float(SLOT_COUNT)), 16.0, SLOT_MAX)
-	var hb_w: float = slot * float(SLOT_COUNT) - 4.0
+	var n_slots: int = _hotbar_count()
+	var slot_cap: float = SLOT_MAX
+	# 6 ячеек — крупнее: min(42 × 10 / n, 64), и всё равно вписываемся в свободную полосу.
+	if n_slots < SLOT_COUNT:
+		slot_cap = minf(SLOT_TOUCH * float(SLOT_COUNT) / float(n_slots), SLOT_TOUCH_MAX)
+	var slot: float = clampf(floorf((hi - lo) / float(n_slots)), 16.0, slot_cap)
+	var hb_w: float = slot * float(n_slots) - 4.0
 	var hx: float = clampf(w * 0.5 - hb_w * 0.5, lo, maxf(lo, hi - hb_w))
 	var hy: float = h - HOTBAR_BOTTOM - (slot - 4.0)
 	L["slot"] = slot
@@ -1445,15 +1462,18 @@ func _text_outlined(font: Font, pos: Vector2, text: String, fsize: int, col: Col
 	draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, col)
 
 
-## Ячейка хотбара i (0…9) в логических px слоя UI (то, что рисует HUD).
+## Ячейка хотбара i в логических px слоя UI (то, что рисует HUD).
+## i за пределом hotbar_size — пустой прямоугольник: тап мимо хотбара ничего не выбирает.
 func hotbar_slot_logical(i: int) -> Rect2:
 	_ensure_layout()
+	if i < 0 or i >= _hotbar_count():
+		return Rect2()
 	var hb: Rect2 = _lay["hotbar"]
 	var slot: float = float(_lay["slot"])
 	return Rect2(hb.position.x + float(i) * slot, hb.position.y, slot - 4.0, slot - 4.0)
 
 
-## Ячейка хотбара i (0…9) на экране, px холста. Ею же попадает тап по хотбару
+## Ячейка хотбара i на экране, px холста. Ею же попадает тап по хотбару
 ## (TouchControls, #81): касания приходят в px холста, а не слоя UI.
 func hotbar_slot_rect(i: int) -> Rect2:
 	var r: Rect2 = hotbar_slot_logical(i)
@@ -1462,7 +1482,7 @@ func hotbar_slot_rect(i: int) -> Rect2:
 
 func _draw_hotbar(font: Font) -> void:
 	var fs: int = UI.FONT["small"]
-	for i in SLOT_COUNT:
+	for i in _hotbar_count():
 		var r: Rect2 = hotbar_slot_logical(i)
 		var sel: bool = (player.inv.selected == i)
 		draw_rect(r, C_PLATE)

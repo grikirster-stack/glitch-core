@@ -352,7 +352,8 @@ static func menu_toggle(btn: Button, p: Profile, path: String) -> Button:
 
 
 static func _toggle_text(on: bool) -> String:
-	return "Меньше глитча и мерцания: " + ("да" if on else "нет")
+	# Короче прежнего «Меньше глитча и мерцания»: в строке меню ещё размер интерфейса.
+	return "Глитч: " + ("меньше" if on else "обычно")
 
 
 static func set_calm(on: bool) -> void:

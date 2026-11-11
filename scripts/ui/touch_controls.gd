@@ -366,12 +366,14 @@ func control_at(pos: Vector2) -> String:
 	return ""
 
 
-## Ячейка хотбара под пальцем или -1.
+## Ячейка хотбара под пальцем или -1. Перебираем inv.hotbar_size, не вшитую десятку (#161):
+## пустое место за 6-й ячейкой — не хотбар.
 func hotbar_slot_at(pos: Vector2) -> int:
 	var hud: HUD = UI.hud
 	if hud == null:
 		return -1
-	for i in 10:
+	var n: int = hud._hotbar_count()
+	for i in n:
 		if hud.hotbar_slot_rect(i).grow(2.0).has_point(pos):
 			return i
 	return -1
