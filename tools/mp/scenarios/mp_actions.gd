@@ -139,6 +139,11 @@ func _mineable_near(pos: Vector2) -> Vector2i:
 			var d: float = World.cell_to_world(c).distance_to(pos)
 			if d > MAX_DIST or d < 14.0:
 				continue
+			# Копка идёт по лучу от центра клетки героя: клетка за соседом не копается.
+			var origin: Vector2 = World.cell_to_world(pc)
+			var hit: Vector2i = World.first_solid_on_ray(origin, World.cell_to_world(c), true, true)
+			if hit.x >= 0 and hit != c:
+				continue
 			var score: float = DB.tile_hard(t) * 100.0 - d
 			if score > best_score:
 				best_score = score

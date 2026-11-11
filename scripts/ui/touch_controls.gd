@@ -366,12 +366,14 @@ func control_at(pos: Vector2) -> String:
 	return ""
 
 
-## Ячейка хотбара под пальцем или -1.
+## Ячейка хотбара под пальцем или -1. Перебираем inv.hotbar_size, не вшитую десятку (#161):
+## пустое место за 6-й ячейкой — не хотбар.
 func hotbar_slot_at(pos: Vector2) -> int:
 	var hud: HUD = UI.hud
 	if hud == null:
 		return -1
-	for i in 10:
+	var n: int = hud._hotbar_count()
+	for i in n:
 		if hud.hotbar_slot_rect(i).grow(2.0).has_point(pos):
 			return i
 	return -1
@@ -636,9 +638,8 @@ func _update_aim(p: Player) -> void:
 
 
 ## Цель копки для тапа в мировой точке tap: {"cell", "point"[, "foe"]} или {} — копать
-## нечего. Фантом рядом с тапом — удар; твёрдая клетка под пальцем в радиусе — она;
-## иначе первая твёрдая по лучу от героя к пальцу; иначе (loose) копаемая соседка
-## не дальше AIM_SLOP от тапа — палец промахнулся на полклетки.
+## нечего. Фантом рядом с тапом — удар; иначе первая твёрдая по лучу от героя к пальцу;
+## иначе (loose) копаемая соседка не дальше AIM_SLOP от тапа — палец промахнулся на полклетки.
 func dig_target(p: Player, tap: Vector2, loose: bool) -> Dictionary:
 	var from: Vector2 = p.global_position
 	for ph in get_tree().get_nodes_in_group("phantom"):
@@ -646,10 +647,9 @@ func dig_target(p: Player, tap: Vector2, loose: bool) -> Dictionary:
 		if pp.distance_to(tap) <= PHANTOM_GRAB and pp.distance_to(from) <= Player.REACH:
 			return {"cell": World.world_to_cell(pp), "point": pp, "foe": true}
 	var c: Vector2i = World.world_to_cell(tap)
-	if diggable(c) and _in_reach(from, c):
-		return _cell_target(c)
-	var hit: Vector2i = _ray(from, tap, false)
-	if hit != NO_CELL:
+	# От центра клетки героя, как у мыши: луч из точки ног цепляет пол.
+	var hit: Vector2i = World.first_solid_on_ray(World.cell_to_world(World.world_to_cell(from)), tap, true, true)
+	if hit != NO_CELL and diggable(hit) and _in_reach(from, hit):
 		return _cell_target(hit)
 	if not loose:
 		return {}
@@ -678,7 +678,7 @@ func place_target(p: Player, tap: Vector2) -> Dictionary:
 		var m = World.machines.get(c)
 		if (m != null and m.can_turn) or p.can_place_at(c):
 			return _cell_target(c)
-	var free: Vector2i = _ray(from, tap, true, p)
+	var free: Vector2i = _ray(from, tap, p)
 	return _cell_target(free) if free != NO_CELL else {}
 
 
@@ -696,9 +696,9 @@ static func _cell_target(c: Vector2i) -> Dictionary:
 	return {"cell": c, "point": World.cell_to_world(c)}
 
 
-## Луч от героя к пальцу (не дальше радиуса). Копка: первая твёрдая клетка, если она в
-## радиусе. Постройка: последняя клетка, куда можно поставить, до первой занятой.
-func _ray(from: Vector2, to: Vector2, place: bool, p: Player = null) -> Vector2i:
+## Луч от героя к пальцу (не дальше радиуса) для постройки: последняя клетка, куда можно
+## поставить, до первой занятой. Копка идёт по World.first_solid_on_ray.
+func _ray(from: Vector2, to: Vector2, p: Player) -> Vector2i:
 	var d: Vector2 = to - from
 	var dist: float = d.length()
 	if dist < 0.01:
@@ -716,10 +716,6 @@ func _ray(from: Vector2, to: Vector2, place: bool, p: Player = null) -> Vector2i
 		prev = c
 		var tid: int = World.get_tile_v(c)
 		var solid: bool = tid != IDs.T.AIR and not DB.is_liquid(tid)
-		if not place:
-			if solid:   # крепче копаемого или за радиусом — сквозь не копаем
-				return c if diggable(c) and _in_reach(from, c) else NO_CELL
-			continue
 		if solid or World.machines.has(c):
 			break
 		if _in_reach(from, c) and p.can_place_at(c):

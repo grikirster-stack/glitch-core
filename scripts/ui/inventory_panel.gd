@@ -23,9 +23,9 @@ extends Control
 
 const PANEL: Vector2 = Vector2(820, 540)
 const SLOT: int = 38
-## Сетка инвентаря (#135): в ряду 10 ячеек — верхний ряд ровно хотбар (Inventory.hotbar_size,
-## клавиши 1…0), ниже рюкзак. Шаг чуть мельче SLOT, чтобы 10 колонок встали левее рецептов.
-const INV_COLS: int = 10
+## Сетка инвентаря (#135, #161): верхний ряд — хотбар (ровно inv.hotbar_size ячеек,
+## клавиши 1…0 или 1…6), ниже рюкзак рядами по 10. Шаг чуть мельче SLOT, чтобы
+## 10 колонок рюкзака встали левее рецептов.
 const INV_SLOT: int = 36
 ## Зазор между хотбаром и рюкзаком (в нём — разделитель), px.
 const HOTBAR_GAP: int = 6
@@ -258,11 +258,25 @@ func _inv_y() -> float:
 	return 258.0
 
 
-## Ячейка i инвентаря: верхний ряд — хотбар, рюкзак ниже на HOTBAR_GAP.
+## Колонок в верхнем ряду — ровно хотбар; рюкзак всегда по 10 (#161).
+func _hotbar_cols() -> int:
+	if player == null or player.inv == null:
+		return Inventory.HOTBAR_MAX
+	return clampi(player.inv.hotbar_size, 1, Inventory.HOTBAR_MAX)
+
+
+## Ячейка i инвентаря: верхний ряд — хотбар (hotbar_size ячеек), рюкзак ниже на HOTBAR_GAP
+## рядами по 10. Индекс слота не меняется: ячейки 6…9 при хотбаре 6 — уже рюкзак.
 func _inv_slot_rect(i: int) -> Rect2:
-	var row: int = int(i / INV_COLS)
+	var cols: int = _hotbar_cols()
+	var row: int = 0
+	var col: int = i
+	if i >= cols:
+		var k: int = i - cols
+		row = 1 + int(k / Inventory.HOTBAR_MAX)
+		col = k % Inventory.HOTBAR_MAX
 	var y: float = _inv_y() + 6 + row * INV_SLOT + (HOTBAR_GAP if row > 0 else 0)
-	return Rect2(_panel_pos() + Vector2(16 + (i % INV_COLS) * INV_SLOT, y), Vector2(INV_SLOT - 4, INV_SLOT - 4))
+	return Rect2(_panel_pos() + Vector2(16 + col * INV_SLOT, y), Vector2(INV_SLOT - 4, INV_SLOT - 4))
 
 
 func _goal_rect() -> Rect2:
@@ -478,11 +492,13 @@ func _button(r: Rect2, label: String, enabled: bool) -> void:
 func _draw_inventory(origin: Vector2) -> void:
 	_tag = "inv"
 	var inv_y: float = _inv_y()
+	var cols: int = _hotbar_cols()
+	var keys: String = "1…0" if cols >= Inventory.HOTBAR_MAX else "1…%d" % cols
 	var w: float = _text(origin + Vector2(16, inv_y - 6), "ВЫ", 40, UI.FONT["small"], C_HEAD)
-	_text(origin + Vector2(16 + w + 8, inv_y - 6), "верхний ряд — хотбар (1…0)", 300 - w, UI.FONT["small"], C_DIM)
-	# Разделитель хотбар | рюкзак — посередине зазора между рядами.
+	_text(origin + Vector2(16 + w + 8, inv_y - 6), "верхний ряд — хотбар (%s)" % keys, 300 - w, UI.FONT["small"], C_DIM)
+	# Разделитель хотбар | рюкзак — посередине зазора между рядами, по ширине рюкзака (10).
 	var a: Rect2 = _inv_slot_rect(0)
-	var b: Rect2 = _inv_slot_rect(INV_COLS * 2 - 1)
+	var b: Rect2 = _inv_slot_rect(cols + Inventory.HOTBAR_MAX - 1)
 	var ly: float = floorf((a.end.y + b.position.y) * 0.5) + 0.5
 	draw_line(Vector2(a.position.x, ly), Vector2(b.end.x, ly), Color(0.5, 0.8, 1.0, 0.25), 1.0)
 	for i in player.inv.size:

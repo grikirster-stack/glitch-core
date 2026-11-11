@@ -43,8 +43,10 @@ var nick_error_label: Label
 var seed_edit: LineEdit
 ## «Хардкор» — кнопка-переключатель (крупнее галочки под палец).
 var hardcore_box: Button
-## «Интерфейс: 100 %» (#159): размер интерфейса игры, в одной строке с «Меньше глитча».
+## «100 %» (#159): размер интерфейса игры, в одной строке с «Глитч» и «Хотбар».
 var ui_scale_button: Button
+## «Хотбар: 6 / 10» (#161): в той же строке, что «Интерфейс».
+var hotbar_button: Button
 var single_button: Button
 var net_buttons: Array[Button] = []
 var status_label: Label
@@ -257,33 +259,45 @@ func _build() -> void:
 	right.add_child(nick_error_label)
 
 	var seed_row: HBoxContainer = HBoxContainer.new()
-	seed_row.add_theme_constant_override("separation", 10)
+	seed_row.add_theme_constant_override("separation", 8)
+	seed_row.custom_minimum_size = Vector2(COL_W, 0)
 	right.add_child(seed_row)
 	seed_edit = LineEdit.new()
 	seed_edit.placeholder_text = "сид: случайный"
 	seed_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	seed_edit.custom_minimum_size = Vector2(0, BUTTON_H)
+	seed_edit.add_theme_constant_override("minimum_character_width", 4)
 	seed_row.add_child(seed_edit)
 	hardcore_box = _button("Хардкор: нет")
 	hardcore_box.toggle_mode = true
-	hardcore_box.custom_minimum_size = Vector2(150, BUTTON_H)
+	hardcore_box.custom_minimum_size = Vector2(0, BUTTON_H)
+	# Шрифт мельче основного: в строке ещё поле сида и «Ячеек» (#161), колонка 360 px.
+	hardcore_box.add_theme_font_size_override("font_size", UI.FONT["small"])
 	hardcore_box.toggled.connect(func(on: bool) -> void:
 			hardcore_box.text = "Хардкор: да" if on else "Хардкор: нет")
 	hardcore_box.tooltip_text = "Одна жизнь, без сохранений"
-	hardcore_box.custom_minimum_size = Vector2(0, BUTTON_H)
 	seed_row.add_child(hardcore_box)
-	# Доступность: «Меньше глитча» (ADR-003 V7, #108) и «Интерфейс» (#159) — одна строка,
+	# «Хотбар» (#161) — здесь, а не в строке «Глитч»: та и так 360 px на две кнопки A1.
+	hotbar_button = _button("")
+	hotbar_button.add_theme_font_size_override("font_size", UI.FONT["small"])
+	hotbar_button.custom_minimum_size = Vector2(0, BUTTON_H)
+	hotbar_button.tooltip_text = "Сколько ячеек в хотбаре: 6 крупнее на телефоне, 10 — на клавиатуре. Лишние вещи уходят в рюкзак"
+	hotbar_button.pressed.connect(_on_hotbar_pressed)
+	_refresh_hotbar_button()
+	seed_row.add_child(hotbar_button)
+	# Доступность: «Глитч» (ADR-003 V7, #108) и размер интерфейса (#159) — одна строка,
 	# чтобы колонка с «Продолжить» по-прежнему влезала в 720 по высоте.
 	var access_row: HBoxContainer = HBoxContainer.new()
 	access_row.add_theme_constant_override("separation", 10)
 	right.add_child(access_row)
 	var calm_button: Button = GlitchFx.menu_toggle(_button(""), profile, profile_path)
 	calm_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	calm_button.add_theme_font_size_override("font_size", UI.FONT["body"])
+	# Мельче основного: полная подпись «Меньше глитча и мерцания» и «100 %» в колонке 360 px.
+	calm_button.add_theme_font_size_override("font_size", UI.FONT["small"])
 	access_row.add_child(calm_button)
 	ui_scale_button = _button("")
-	ui_scale_button.add_theme_font_size_override("font_size", UI.FONT["body"])
-	ui_scale_button.custom_minimum_size = Vector2(170, BUTTON_H)
+	ui_scale_button.add_theme_font_size_override("font_size", UI.FONT["small"])
+	ui_scale_button.custom_minimum_size = Vector2(72, BUTTON_H)
 	ui_scale_button.tooltip_text = "Размер интерфейса игры: 100–250 %. Подпись и кнопки в забеге крупнее"
 	ui_scale_button.pressed.connect(_on_ui_scale_pressed)
 	_refresh_ui_scale_button()
@@ -338,7 +352,31 @@ func _build() -> void:
 
 
 func _refresh_ui_scale_button() -> void:
-	ui_scale_button.text = "Интерфейс: " + UI.scale_text(UI.ui_scale)
+	# Короче, чем «Интерфейс:»: в строке ещё «Хотбар» (#161), колонка — 360 px.
+	ui_scale_button.text = UI.scale_text(UI.ui_scale)
+
+
+func _refresh_hotbar_button() -> void:
+	hotbar_button.text = "Ячеек: %d" % _hotbar_now()
+
+
+## Размер хотбара для подписи: из профиля, иначе умолчание экрана (ещё не записано).
+func _hotbar_now() -> int:
+	if profile.hotbar > 0:
+		return Inventory.clamp_hotbar(profile.hotbar)
+	return Inventory.default_hotbar(DisplayServer.is_touchscreen_available(), OS.get_cmdline_user_args())
+
+
+## Тап по «Хотбар»: 6 ↔ 10, пишется в профиль. Уже идущий забег подхватывает размер сразу:
+## ячейки 7–10 уходят в рюкзак, не влезло — под ноги.
+func _on_hotbar_pressed() -> void:
+	var n: int = Inventory.HOTBAR_MAX if _hotbar_now() <= Inventory.HOTBAR_MIN else Inventory.HOTBAR_MIN
+	profile.hotbar = n
+	profile.save_to(profile_path)
+	var p: Player = get_tree().get_first_node_in_group("player") as Player
+	if p != null:
+		p.apply_hotbar_size(n)
+	_refresh_hotbar_button()
 
 
 ## Тап по «Интерфейс»: следующий коэффициент по кругу, применяется сразу и пишется в профиль.

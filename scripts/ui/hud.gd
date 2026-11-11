@@ -200,6 +200,10 @@ var _fog_tex: ImageTexture = null
 var _fog_dirty: bool = false
 var _fog_open: PackedByteArray = PackedByteArray()   # 1 — пиксель тумана открыт
 var _mouse: Vector2 = Vector2(-1.0, -1.0)
+## Клетка, которую копнёт ЛКМ (рамка), и клетка под курсором, которую копать нельзя (красный
+## крест), в экранных px; пустой Rect2i — нет. Рисуются слоем прицела.
+var _dig_rect: Rect2i = Rect2i()
+var _deny_rect: Rect2i = Rect2i()
 var _key: PackedInt32Array = PackedInt32Array()
 var _last_key: PackedInt32Array = PackedInt32Array()
 var _note_serial: int = 0
@@ -303,6 +307,7 @@ func _process(delta: float) -> void:
 	if mp != _mouse:
 		_mouse = mp
 		_cross.queue_redraw()
+	_update_dig_aim()
 	stat_us += Time.get_ticks_usec() - t0
 
 
@@ -922,10 +927,43 @@ func _draw_mark_layer() -> void:
 
 # ------------------------------------------------------------ ПРИЦЕЛ
 
+## Рамка цели копки и красный крест «сюда нельзя» (копка по лучу). На телефоне цель
+## обводит TouchControls, поэтому здесь — только для мыши.
+func _update_dig_aim() -> void:
+	var dig: Rect2i = Rect2i()
+	var deny: Rect2i = Rect2i()
+	if player != null and not UI.touch_on:
+		var xf: Transform2D = get_viewport().get_canvas_transform()
+		if player.dig_cell.x >= 0:
+			dig = _cell_screen_rect(xf, player.dig_cell)
+		if player.dig_denied_t > 0.0 and player.dig_denied_cell.x >= 0:
+			deny = _cell_screen_rect(xf, player.dig_denied_cell)
+	if dig != _dig_rect or deny != _deny_rect:
+		_dig_rect = dig
+		_deny_rect = deny
+		_cross.queue_redraw()
+
+
+static func _cell_screen_rect(xf: Transform2D, c: Vector2i) -> Rect2i:
+	var sr: Rect2 = xf * World.cell_rect(c)
+	return Rect2i(sr.position.round(), sr.size.round())
+
+
 func _draw_cross_layer() -> void:
 	stat_cross_redraws += 1
-	# Курсор — в px холста; слой рисует в логических, размер прицела не растёт с коэффициентом.
+	# Курсор и рамки — в px холста; слой рисует в логических, размер прицела не растёт с коэффициентом.
 	var k: float = 1.0 / UI.ui_scale
+	if _dig_rect.size != Vector2i.ZERO:
+		var r: Rect2 = Rect2(Vector2(_dig_rect.position) * k, Vector2(_dig_rect.size) * k).grow(-1.0 * k)
+		var w: float = 2.0 * k
+		_cross.draw_rect(Rect2(r.position, Vector2(r.size.x, w)), C_HAZARD)
+		_cross.draw_rect(Rect2(r.position.x, r.end.y - w, r.size.x, w), C_HAZARD)
+		_cross.draw_rect(Rect2(r.position, Vector2(w, r.size.y)), C_HAZARD)
+		_cross.draw_rect(Rect2(r.end.x - w, r.position.y, w, r.size.y), C_HAZARD)
+	if _deny_rect.size != Vector2i.ZERO:
+		var q: Rect2 = Rect2(Vector2(_deny_rect.position) * k, Vector2(_deny_rect.size) * k).grow(-3.0 * k)
+		_cross.draw_line(q.position, q.end, C_DANGER, 3.0 * k)
+		_cross.draw_line(Vector2(q.end.x, q.position.y), Vector2(q.position.x, q.end.y), C_DANGER, 3.0 * k)
 	var mp: Vector2 = _mouse * k
 	var cross: Color = Color(C_LINE, 0.75)
 	_cross.draw_line(mp - Vector2(7, 0) * k, mp - Vector2(3, 0) * k, cross, 1.5 * k)
@@ -951,9 +989,14 @@ const HP_H: float = 24.0
 const EMP_H: float = 16.0
 ## Ширина полосы суток.
 const STRIP_W: float = 112.0
-## Ячейка хотбара по умолчанию (шаг, px) и число ячеек.
+## Ячейка хотбара: не больше SLOT_MAX, на телефоне (6 ячеек) — не меньше SLOT_TOUCH
+## и не больше SLOT_TOUCH_MAX. Число ячеек — inv.hotbar_size, не константа (#161).
 const SLOT_MAX: float = 46.0
+## Потолок ячеек в пакете и в ключе HUD: рисуется hotbar_size, ключ держит все 10.
 const SLOT_COUNT: int = 10
+## На 6 ячейках шаг = min(42 × 10 / hotbar_size, 64) — ячейка крупнее 42 px (#161).
+const SLOT_TOUCH: float = 42.0
+const SLOT_TOUCH_MAX: float = 64.0
 ## Низ хотбара над краем холста, px.
 const HOTBAR_BOTTOM: float = 32.0
 
@@ -1000,8 +1043,15 @@ func _ensure_layout() -> void:
 		_lay = _compute_layout()
 
 
+## Сколько ячеек хотбара рисовать (#161). Героя ещё нет — 10, как у Inventory по умолчанию.
+func _hotbar_count() -> int:
+	if player == null or player.inv == null:
+		return SLOT_COUNT
+	return clampi(player.inv.hotbar_size, 1, SLOT_COUNT)
+
+
 ## Подпись входов раскладки: размер, коэффициент, строки, число уведомлений, состав команды,
-## положение кнопок тач-управления.
+## положение кнопок тач-управления, размер хотбара.
 func _layout_sig() -> int:
 	var tc: Node = _touch()
 	var tsig: int = 0
@@ -1009,7 +1059,7 @@ func _layout_sig() -> int:
 		tsig = hash([tc.btn_center, tc.stick_center, tc.stick_radius])
 	return hash([size, UI.ui_scale, _state_hash, _hint_hash, _note_serial, notes.size(),
 			team_mates.size(), night_countdown, Game.day_number, Game.phase_name(), tsig,
-			player != null])
+			player != null, _hotbar_count()])
 
 
 ## Узел TouchControls, если сенсорное управление включено (иначе null).
@@ -1097,8 +1147,13 @@ func _compute_layout() -> Dictionary:
 	if tb.has("stick") and tb.has("e"):
 		lo = (tb["stick"] as Rect2).end.x + PAD
 		hi = (tb["e"] as Rect2).position.x - PAD
-	var slot: float = clampf(floorf((hi - lo) / float(SLOT_COUNT)), 16.0, SLOT_MAX)
-	var hb_w: float = slot * float(SLOT_COUNT) - 4.0
+	var n_slots: int = _hotbar_count()
+	var slot_cap: float = SLOT_MAX
+	# 6 ячеек — крупнее: min(42 × 10 / n, 64), и всё равно вписываемся в свободную полосу.
+	if n_slots < SLOT_COUNT:
+		slot_cap = minf(SLOT_TOUCH * float(SLOT_COUNT) / float(n_slots), SLOT_TOUCH_MAX)
+	var slot: float = clampf(floorf((hi - lo) / float(n_slots)), 16.0, slot_cap)
+	var hb_w: float = slot * float(n_slots) - 4.0
 	var hx: float = clampf(w * 0.5 - hb_w * 0.5, lo, maxf(lo, hi - hb_w))
 	var hy: float = h - HOTBAR_BOTTOM - (slot - 4.0)
 	L["slot"] = slot
@@ -1430,15 +1485,18 @@ func _text_outlined(font: Font, pos: Vector2, text: String, fsize: int, col: Col
 	draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, col)
 
 
-## Ячейка хотбара i (0…9) в логических px слоя UI (то, что рисует HUD).
+## Ячейка хотбара i в логических px слоя UI (то, что рисует HUD).
+## i за пределом hotbar_size — пустой прямоугольник: тап мимо хотбара ничего не выбирает.
 func hotbar_slot_logical(i: int) -> Rect2:
 	_ensure_layout()
+	if i < 0 or i >= _hotbar_count():
+		return Rect2()
 	var hb: Rect2 = _lay["hotbar"]
 	var slot: float = float(_lay["slot"])
 	return Rect2(hb.position.x + float(i) * slot, hb.position.y, slot - 4.0, slot - 4.0)
 
 
-## Ячейка хотбара i (0…9) на экране, px холста. Ею же попадает тап по хотбару
+## Ячейка хотбара i на экране, px холста. Ею же попадает тап по хотбару
 ## (TouchControls, #81): касания приходят в px холста, а не слоя UI.
 func hotbar_slot_rect(i: int) -> Rect2:
 	var r: Rect2 = hotbar_slot_logical(i)
@@ -1447,7 +1505,7 @@ func hotbar_slot_rect(i: int) -> Rect2:
 
 func _draw_hotbar(font: Font) -> void:
 	var fs: int = UI.FONT["small"]
-	for i in SLOT_COUNT:
+	for i in _hotbar_count():
 		var r: Rect2 = hotbar_slot_logical(i)
 		var sel: bool = (player.inv.selected == i)
 		draw_rect(r, C_PLATE)

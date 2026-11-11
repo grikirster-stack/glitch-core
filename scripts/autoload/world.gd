@@ -1475,6 +1475,118 @@ func is_solid_at(p: Vector2) -> bool:
 	return is_solid_cell(world_to_cell(p))
 
 
+## Первая твёрдая клетка на отрезке from → to (мировые px), считая конечную; стартовая
+## клетка не проверяется — луч выходит из неё. Обход по клеткам (DDA): ни один угол не
+## пропускается. Касание только угла — не попадание: сквозь щель между двумя твёрдыми
+## клетками луч не проходит (оба соседа по стороне перекрывают угол), но клетка, которую
+## отрезок лишь задевает углом, луч не останавливает. Жидкости и воздух — пусто.
+## machines_block — машины тоже твёрдые (копка; трассировка видимости фантомов и турели
+## их не считает). diggable — для копки: проходимый, но ломаемый тайл (ствол, ветка)
+## тоже преграда; видимости он не мешает. Нет такой — (-1, -1). Единая трассировка:
+## копка мышью, тач, турель, фантомы, дальше — луч света.
+func first_solid_on_ray(from: Vector2, to: Vector2, machines_block: bool = true, diggable: bool = false) -> Vector2i:
+	var a: Vector2i = world_to_cell(from)
+	var b: Vector2i = world_to_cell(to)
+	if a == b:
+		return Vector2i(-1, -1)
+	var d: Vector2 = (to - from) / float(TILE)
+	var fx: float = from.x / float(TILE)
+	var fy: float = from.y / float(TILE)
+	var sx: int = 1 if d.x > 0.0 else -1
+	var sy: int = 1 if d.y > 0.0 else -1
+	var inf: float = 1.0e30
+	var dtx: float = absf(1.0 / d.x) if d.x != 0.0 else inf
+	var dty: float = absf(1.0 / d.y) if d.y != 0.0 else inf
+	var tx: float = inf
+	var ty: float = inf
+	if d.x != 0.0:
+		tx = (float(a.x + (1 if sx > 0 else 0)) - fx) / d.x
+	if d.y != 0.0:
+		ty = (float(a.y + (1 if sy > 0 else 0)) - fy) / d.y
+	var cx: int = a.x
+	var cy: int = a.y
+	var steps: int = absi(b.x - a.x) + absi(b.y - a.y)
+	for _i in range(steps):
+		# Равенство границ — отрезок проходит ровно через угол сетки. Обычный DDA в этот
+		# шаг заходит в одну клетку и пропускает соседа; проверяем обоих. Касание только
+		# угла — не попадание, вход в обе клетки — стена, если хотя бы одна твёрдая.
+		var corner: bool = is_equal_approx(tx, ty)
+		var ox: int = cx
+		var oy: int = cy
+		if corner or tx < ty:
+			cx += sx
+			tx += dtx
+		if corner or ty < tx:
+			cy += sy
+			ty += dty
+		var cell: Vector2i = Vector2i(cx, cy)
+		if corner:
+			# Соседи по сторонам от угла, не диагональная клетка шага. Внутрь ни одной —
+			# касание угла, не попадание. Внутрь обеих — щель закрыта, если хотя бы одна
+			# твёрдая. Иначе — та, куда луч вошёл.
+			var side_x: Vector2i = Vector2i(ox + sx, oy)
+			var side_y: Vector2i = Vector2i(ox, oy + sy)
+			var into_x: bool = _segment_enters_cell(from, to, side_x)
+			var into_y: bool = _segment_enters_cell(from, to, side_y)
+			if not into_x and not into_y:
+				continue
+			if into_x and into_y:
+				var cx_hit: Vector2i = _solid_hit(side_x, machines_block, diggable)
+				if cx_hit.x >= 0:
+					return cx_hit
+				cell = side_y
+			else:
+				cell = side_x if into_x else side_y
+		var hit: Vector2i = _solid_hit(cell, machines_block, diggable)
+		if hit.x >= 0:
+			return hit
+	return Vector2i(-1, -1)
+
+
+func _solid_hit(c: Vector2i, machines_block: bool, diggable: bool = false) -> Vector2i:
+	var tid: int = tiles[c.y * W + c.x] if c.x >= 0 and c.x < W and c.y >= 0 and c.y < H else get_tile(c.x, c.y)
+	if _solid_tbl[tid] != 0 or (machines_block and machines.has(c)):
+		return c
+	# Копка: проходимый, но ломаемый тайл (ствол, ветка) тоже преграда на луче.
+	if diggable and tid != IDs.T.AIR and not DB.is_liquid(tid) and DB.tile_hard(tid) <= 100.0:
+		return c
+	return Vector2i(-1, -1)
+
+
+## Отрезок заходит внутрь клетки, а не только касается угла. Граница клетки — часть клетки:
+## конец луча на грани считается попаданием.
+func _segment_enters_cell(from: Vector2, to: Vector2, c: Vector2i) -> bool:
+	var x0: float = float(c.x * TILE)
+	var y0: float = float(c.y * TILE)
+	var x1: float = x0 + float(TILE)
+	var y1: float = y0 + float(TILE)
+	var dx: float = to.x - from.x
+	var dy: float = to.y - from.y
+	var t0: float = 0.0
+	var t1: float = 1.0
+	if absf(dx) < 0.000001:
+		if from.x < x0 or from.x > x1:
+			return false
+	else:
+		var inv: float = 1.0 / dx
+		var ta: float = (x0 - from.x) * inv
+		var tb: float = (x1 - from.x) * inv
+		t0 = maxf(t0, minf(ta, tb))
+		t1 = minf(t1, maxf(ta, tb))
+	if absf(dy) < 0.000001:
+		if from.y < y0 or from.y > y1:
+			return false
+	else:
+		var invy: float = 1.0 / dy
+		var ta2: float = (y0 - from.y) * invy
+		var tb2: float = (y1 - from.y) * invy
+		t0 = maxf(t0, minf(ta2, tb2))
+		t1 = minf(t1, maxf(ta2, tb2))
+	# Строгое неравенство: касание только угла (t0 == t1) — не вход внутрь.
+	# Допуск — погрешность float на границе клетки, не ширина клетки.
+	return t0 < t1 + 0.000001 and t1 >= -0.000001 and t0 <= 1.000001
+
+
 func world_to_cell(p: Vector2) -> Vector2i:
 	return Vector2i(int(floor(p.x / TILE)), int(floor(p.y / TILE)))
 
