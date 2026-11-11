@@ -1,10 +1,12 @@
 extends Node
-## Директор угрозы (ADR-001, § 4.5). Заменяет main.gd::_update_waves.
+## Директор угрозы (ADR-001 § 4.5, ADR-005 § 6.1–6.2). Заменяет main.gd::_update_waves.
 ##
-## Ночь (и удержание сигнала релея) получает бюджет очков угрозы:
-##   T   = смена + 0.5·работающих генераторов + 0.02·ламп игрока + 4·релей
-##   B   = 3 + 2·T                      — очков на ночь
-##   cap = min(2 + смена, 10), при релее RELAY_HOLD_CAP — единиц одновременно
+## Ночь (и удержание сигнала релея) получает бюджет очков угрозы от готовности базы:
+##   T   = min(смена, 3) + 0.5·горящих горелок + 1.0·маяков под лучом
+##         + 0.25·накопителей + 4·релей
+##   B   = 1 + 2·T                      — очков на ночь
+##   cap = min(1 + T, 10), при релее RELAY_HOLD_CAP — единиц одновременно
+## Ночи 1–2 (QUIET_NIGHTS) тихие: бюджет не больше 2, живых не больше 1, только эхо.
 ##   интервал = clamp(7 − 0.5·T, 2.5, 7) с между появлениями
 ## На бюджет в начале ночи составляется состав (plan_roster): эхо вперемешку
 ## с открытыми к этой ночи типами, дорогие — пока хватает очков. Стая роя
@@ -23,7 +25,7 @@ extends Node
 ##
 ## Сеть (ADR-002 § 4.7, D9; MP-F, #92) — только на хосте, N — герои на связи:
 ##   B_N = B · (1 + MP_BUDGET_PER_PLAYER·(N − 1))       — N на начало ночи
-##   cap_N = min(cap + MP_CAP_PER_PLAYER·(N − 1), MAX_PHANTOMS)   — N текущее
+##   cap_N = min(cap(T) + MP_CAP_PER_PLAYER·(N − 1), MAX_PHANTOMS)   — N текущее
 ##   интервал_N = clamp((7 − 0.5·T) / (1 + MP_INTERVAL_PER_PLAYER·(N − 1)), MP_SPAWN_INTERVAL_MIN, 7)
 ## Спавн — у героя с наименьшим числом преследователей (ничья — дальний от базы).
 ## Чёрные ящики вскрываются из инвентаря любого героя. При N = 1 всё как в ADR-001.
@@ -39,9 +41,6 @@ const SPECIALS: Array[String] = ["doppel", "burrower", "shade", "swarm"]
 ## Гул вентиляций в сумерках — громкость ниже, чем у телеграфа.
 const DUSK_HUM_DB: float = -20.0
 const TELEGRAPH_HUM_DB: float = -14.0
-## Как часто пересчитываем «лампы игрока» для T, с.
-const LIGHT_RECOUNT: float = 2.0
-
 var active: bool = false            ## идёт ли сейчас ночь/удержание сигнала
 var night_day: int = 0              ## номер смены текущей ночи
 var budget: float = 0.0             ## бюджет ночи (для HUD/отладки)
@@ -53,9 +52,6 @@ var pending: Array = []             ## телеграфы: {cell, kind, t, hum}
 var _relay_seen: bool = false
 var _pack_seq: int = 0
 var _dusk_hums: Array = []          ## ручки гула сумерек
-var _player_lights: int = 0
-var _light_t: float = 0.0
-var _lights_size: int = -1
 var _inv_bound: Object = null       ## инвентарь, к которому подключены
 var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
@@ -77,7 +73,6 @@ func reset() -> void:
 	spawn_timer = 0.0
 	spawned_total = 0
 	_relay_seen = false
-	_lights_size = -1
 	night_players = 1
 
 
@@ -102,24 +97,37 @@ func scripted() -> bool:
 
 # ------------------------------------------------------------------ ФОРМУЛЫ
 
-## Уровень угрозы T по формуле § 4.5.
+## Уровень угрозы T (ADR-005 § 6.2). Смена не выше THREAT_DAY_CAP.
 func threat_level() -> float:
-	return float(Game.day_number) \
-			+ Balance.THREAT_PER_GENERATOR * float(active_generators()) \
-			+ Balance.THREAT_PER_LIGHT * float(player_lights()) \
+	return minf(float(Game.day_number), float(Balance.THREAT_DAY_CAP)) \
+			+ Balance.THREAT_PER_BURNER * float(burners_lit()) \
+			+ Balance.THREAT_PER_PHAROS * float(pharos_lit()) \
+			+ Balance.THREAT_PER_ACCUM * float(accumulators()) \
 			+ (Balance.THREAT_RELAY if Game.relay_active else 0.0)
 
 
-## Очков на ночь.
-static func night_budget(t: float) -> float:
-	return Balance.NIGHT_BUDGET_BASE + Balance.NIGHT_BUDGET_PER_T * t
+## Тихая ночь: первые QUIET_NIGHTS, пока не держим сигнал.
+static func quiet_night(night: int, relay: bool) -> bool:
+	return night <= Balance.QUIET_NIGHTS and not relay
 
 
-## Сколько единиц угрозы держим одновременно.
-static func cap_for(day: int, relay: bool) -> int:
+## Очков на ночь. Ночи 1–2 — не больше QUIET_BUDGET_CAP.
+static func night_budget(t: float, night: int = 0, relay: bool = false) -> float:
+	var b: float = Balance.NIGHT_BUDGET_BASE + Balance.NIGHT_BUDGET_PER_T * t
+	if quiet_night(night, relay):
+		return minf(b, Balance.QUIET_BUDGET_CAP)
+	return b
+
+
+## Сколько единиц угрозы держим одновременно. T — уровень угрозы этой ночи.
+## Ночи 1–2 — не больше QUIET_ALIVE_CAP. При релее — RELAY_HOLD_CAP.
+static func cap_for(day: int, relay: bool, t: float = -1.0) -> int:
 	if relay:
 		return Balance.RELAY_HOLD_CAP
-	return mini(Balance.CAP_BASE + day, Balance.CAP_MAX)
+	if quiet_night(day, false):
+		return Balance.QUIET_ALIVE_CAP
+	var level: float = t if t >= 0.0 else float(mini(day, Balance.THREAT_DAY_CAP))
+	return mini(Balance.CAP_BASE + int(floor(level)), Balance.CAP_MAX)
 
 
 ## Пауза между появлениями.
@@ -128,12 +136,30 @@ static func interval_for(t: float) -> float:
 			Balance.SPAWN_INTERVAL_MIN, Balance.SPAWN_INTERVAL_MAX)
 
 
-## Открыт ли тип к этой ночи. Двойник — с ночи from_night или на удержании сигнала.
+## Открыт ли тип к этой ночи (ADR-005 § 6.1). Эхо — всегда. Рой — если горят
+## две и больше горелки. Тень — если есть накопитель или сундук с топливом
+## (горелка с запасом тоже считается). Копатель — со смены 4 и если в мире есть
+## стальная стена. Двойник — в свободной игре со смены 6, в миссии никогда;
+## на удержании сигнала — как раньше, сразу.
 static func kind_open(kind: String, night: int, relay: bool) -> bool:
-	var spec: Dictionary = Balance.PHANTOMS[kind]
-	if night >= int(spec["from_night"]):
+	if kind == "echo":
 		return true
-	return relay and kind == "doppel"
+	if quiet_night(night, relay):
+		return false
+	if relay and kind == "doppel":
+		return true
+	if Game.in_mission() and kind == "doppel":
+		return false
+	match kind:
+		"swarm":
+			return _count_burners() >= 2
+		"shade":
+			return _count_accumulators() > 0 or _fuel_stored()
+		"burrower":
+			return night >= int(Balance.PHANTOMS["burrower"]["from_night"]) and _steel_wall()
+		"doppel":
+			return night >= int(Balance.PHANTOMS["doppel"]["from_night"])
+	return false
 
 
 ## Состав ночи на бюджет: по кругу «эхо → открытые дорогие типы → эхо»,
@@ -167,36 +193,90 @@ static func plan_roster(points: float, night: int, relay: bool, doppel_taken: in
 	return out
 
 
-## Работающие генераторы (для T).
-func active_generators() -> int:
+## Горящие горелки (для T). Маяка (#167) ещё нет — pharos_lit() смотрит kind
+## «Pharos» и метод lit(); пока блока нет, вклад 0.
+func burners_lit() -> int:
+	return _count_burners()
+
+
+func pharos_lit() -> int:
+	return _count_pharos()
+
+
+func accumulators() -> int:
+	return _count_accumulators()
+
+
+static func _count_burners() -> int:
 	var n: int = 0
+	for m in World.machines.values():
+		if is_instance_valid(m) and String(m.get("kind")) == "Burner" \
+				and m.has_method("burning") and bool(m.call("burning")):
+			n += 1
+	return n
+
+
+static func _count_pharos() -> int:
+	var n: int = 0
+	for m in World.machines.values():
+		if is_instance_valid(m) and String(m.get("kind")) == "Pharos" and _pharos_under_beam(m):
+			n += 1
+	return n
+
+
+static func _count_accumulators() -> int:
+	var n: int = 0
+	for m in World.machines.values():
+		if is_instance_valid(m) and String(m.get("kind")) == "Accumulator":
+			n += 1
+	return n
+
+
+## Маяк «под лучом»: метод lit() есть — он решает; иначе не горит (крючок #167).
+static func _pharos_under_beam(m: Object) -> bool:
+	if m.has_method("lit"):
+		return bool(m.call("lit"))
+	return false
+
+
+## Есть ли у базы топливо, которое тень может съесть: сундук с топливом или
+## горелка с запасом в топке (горящая единица не считается запасом). Тайники
+## руин далеко от ядра не в счёт — иначе тень открыта с первой секунды мира.
+const FUEL_BASE_RADIUS: int = 24
+
+static func _fuel_stored() -> bool:
+	var origin: Vector2i = World.beacon_cell
 	for m in World.machines.values():
 		if not is_instance_valid(m):
 			continue
-		var r = m.get("power_radius")
-		if (r is float or r is int) and float(r) > 0.0 and bool(m.get("power_active")):
-			n += 1
-	return n
+		var cell: Vector2i = m.cell
+		if absi(cell.x - origin.x) > FUEL_BASE_RADIUS or absi(cell.y - origin.y) > FUEL_BASE_RADIUS:
+			continue
+		var k: String = String(m.get("kind"))
+		if k == "Chest" and _chest_has_fuel(m):
+			return true
+		if k == "Burner" and m.has_method("fuel_units") and int(m.call("fuel_units")) > 0:
+			return true
+	return false
 
 
-## Лампы игрока (для T): светокристаллы и прожекторы. Руда-кристалл и
-## статичные огни станции не в счёт. Пересчёт — при смене реестра света
-## или раз в LIGHT_RECOUNT с.
-func player_lights() -> int:
-	if World.lights.size() == _lights_size and _light_t > 0.0:
-		return _player_lights
-	_lights_size = World.lights.size()
-	_light_t = LIGHT_RECOUNT
-	var n: int = 0
-	for e in World.lights:
-		var c: Vector2i = World.world_to_cell(e["pos"])
-		if World.get_tile_v(c) == IDs.T.LIGHT_CRYSTAL:
-			n += 1
-	for m in World.machines.values():
-		if is_instance_valid(m) and String(m.get("kind")) == "Floodlight":
-			n += 1
-	_player_lights = n
-	return n
+static func _chest_has_fuel(m: Object) -> bool:
+	for s in m.slots:
+		if not s.is_empty() and Balance.FUEL.has(int(s.id)):
+			return true
+	return false
+
+
+## В мире есть стальная стена — копателю есть что рыть. По строкам: один
+## find() по всему миру — это кадр, а открытие вида спрашивают на состав ночи.
+static func _steel_wall() -> bool:
+	var row: int = World.W
+	var id: int = IDs.T.STEEL_WALL
+	for y in World.H:
+		var slice: PackedByteArray = World.tiles.slice(y * row, y * row + row)
+		if slice.find(id) >= 0:
+			return true
+	return false
 
 
 ## Живые единицы угрозы: каждый фантом — одна, стая роя — одна на всю стаю.
@@ -230,7 +310,6 @@ func _doppels_alive() -> int:
 ## Один шаг директора. _process зовёт его сам вне сценариев; сценарий может
 ## звать вручную (с любым dt), чтобы прогнать ночь быстрее реального времени.
 func tick(delta: float) -> void:
-	_light_t -= delta
 	Game.phantoms_alive = get_tree().get_nodes_in_group("phantom").size()
 	_tick_pending(delta)
 	if scripted():   # КАМПАНИЯ: волны ведёт глава (Mission.wave), телеграфы — здесь
@@ -254,7 +333,7 @@ func tick(delta: float) -> void:
 	spawn_timer -= delta
 	if spawn_timer > 0.0 or roster.is_empty():
 		return
-	if units_alive() + pending.size() >= cap_for_n(night_day, Game.relay_active, players_online()):
+	if units_alive() + pending.size() >= cap_for_n(night_day, Game.relay_active, players_online(), threat_level()):
 		return
 	spawn_timer = interval_for_n(threat_level(), players_online())
 	var kind: String = roster.pop_front()
@@ -270,7 +349,7 @@ func _begin_night() -> void:
 	Game.wave += 1
 	_relay_seen = Game.relay_active
 	night_players = players_online()
-	budget = night_budget_n(threat_level(), night_players)
+	budget = night_budget_n(threat_level(), night_players, night_day, Game.relay_active)
 	roster = plan_roster(budget, night_day, Game.relay_active, _doppels_alive())
 	# Эхо — первым (разведка), остальное вперемешку.
 	var head: Array[String] = []
@@ -593,7 +672,6 @@ func load_state(d: Dictionary) -> void:
 	_pack_seq = int(d.get("pack_seq", 0))
 	if d.has("rng_state"):
 		_rng.state = int(d["rng_state"])
-	_lights_size = -1
 	Game.phantoms_alive = 0
 
 
@@ -622,17 +700,17 @@ static func budget_mul(n: int) -> float:
 	return 1.0 + Balance.MP_BUDGET_PER_PLAYER * float(n - 1)
 
 
-static func night_budget_n(t: float, n: int) -> float:
+static func night_budget_n(t: float, n: int, night: int = 0, relay: bool = false) -> float:
 	if n <= 1:
-		return night_budget(t)
-	return night_budget(t) * budget_mul(n)
+		return night_budget(t, night, relay)
+	return night_budget(t, night, relay) * budget_mul(n)
 
 
 ## cap + MP_CAP_PER_PLAYER·(N − 1), не выше MAX_PHANTOMS (предел freeze_probe, #27).
-static func cap_for_n(day: int, relay: bool, n: int) -> int:
+static func cap_for_n(day: int, relay: bool, n: int, t: float = -1.0) -> int:
 	if n <= 1:
-		return cap_for(day, relay)
-	return mini(cap_for(day, relay) + Balance.MP_CAP_PER_PLAYER * (n - 1), Balance.MAX_PHANTOMS)
+		return cap_for(day, relay, t)
+	return mini(cap_for(day, relay, t) + Balance.MP_CAP_PER_PLAYER * (n - 1), Balance.MAX_PHANTOMS)
 
 
 ## (7 − 0.5·T) / (1 + MP_INTERVAL_PER_PLAYER·(N − 1)), в пределах MP_SPAWN_INTERVAL_MIN…7 с.

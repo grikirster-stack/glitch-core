@@ -18,7 +18,7 @@ const DAY_LENGTH: float = Balance.DAY_LENGTH
 const RELAY_TIME: float = Balance.RELAY_TIME
 
 var state: int = State.PLAYING
-var time_of_day: float = Balance.START_TIME ## доля цикла: 0.04 — рассвет, 0.66 — ночь
+var time_of_day: float = Balance.START_TIME ## доля цикла: старт на рассвете (NIGHT_END)
 var day_number: int = 1
 var tasks_total: int = 0
 var tasks_done: int = 0

@@ -738,7 +738,9 @@ godot --path . --script res://tools/freeze_probe.gd -- --probe --windowed --seed
   сами значения переменных, а не дорожки анимаций.
 * Фантомы зоны #27 (типы, директор угрозы, спавн из вентиляций) проверяются
   сценариями `swarm_targets_drill`, `shade_drains_gen`, `burrower_digs_dirt`,
-  `doppel_freezes_under_gaze`, `threat_budget`, `vent_spawn`. Замер шагов
+  `doppel_freezes_under_gaze`, `threat_budget`, `vent_spawn`. Угроза по мощности
+  базы (ADR-005 § 6.2, #173) — `night_autopilot`: три уровня базы по 90 с ночи
+  и секунды до первой ночи. Замер шагов
   фантома по типу: `phantom_probe.gd -- --kind=swarm` (echo по умолчанию).
 * Релей и финал (#32): `objective_stages` (этапы цели 1 → 4), `relay` (180 с,
   отсчёт ускоряется через `Game.relay_speed`, победа и эпилог на экране),

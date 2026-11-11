@@ -16,7 +16,7 @@ const SPEED: float = 3.0
 
 
 func run() -> void:
-	Game.time_of_day = 0.30
+	Game.time_of_day = Balance.START_TIME
 	await wait_game(0.3)
 	var spot: Vector2i = dark_surface_spot(40, 160)
 	ok("тёмное место на поверхности вдали от базы", spot.x >= 0, str(spot))

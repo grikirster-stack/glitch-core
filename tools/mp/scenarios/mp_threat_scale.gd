@@ -1,9 +1,11 @@
 extends "res://tools/mp/scenarios/mp_threat_base.gd"
 ## mp_threat_scale (ADR-002 § 4.7, D9; MP-F, #92): угроза растёт с числом игроков.
 ##
-## Таблица § 4.7 (формулы Threat.*_n): бюджет, cap и интервал при N = 1…4 — ночь 1
-## (T = 1.5), ночь 4 (T = 5), релей; cap не выше MAX_PHANTOMS, интервал не меньше
-## MP_SPAWN_INTERVAL_MIN; при N = 1 — ровно формулы ADR-001.
+## Таблица множителей сети (формулы Threat.*_n, ADR-002 § 4.7): бюджет, cap и
+## интервал при N = 1…4. T ночи — по ADR-005 § 6.2, пустая база: ночь 1 тихая
+## (T = 1, бюджет 2, cap 1), ночь 4 (T = 3, бюджет 7, cap 4). Релей — cap 10.
+## cap не выше MAX_PHANTOMS, интервал не меньше MP_SPAWN_INTERVAL_MIN;
+## при N = 1 — ровно формулы одиночной игры.
 ## Вживую: клиенты входят по одному — N = 1, 2, 3, 4 героев на связи; директор
 ## начинает ночь — бюджет × (1 + 0.5·(N − 1)), N ночи запомнен, пауза до следующего
 ## фантома — интервал_N. Вчетвером: спавн — у героя с наименьшим числом
@@ -11,12 +13,13 @@ extends "res://tools/mp/scenarios/mp_threat_base.gd"
 ## инвентаре товарища вскрыт хостом; шлюз открывается товарищу, а не только хосту.
 
 const EPS: float = 0.0001
-## Таблица § 4.7: N → [B ночь 1, cap ночь 1, интервал ночь 1 (округл. 0.1), B ночь 4, cap ночь 4, cap релей].
+## N → [B ночь 1 (T=1, тихая), cap ночь 1, интервал ночь 1 (округл. 0.1),
+## B ночь 4 (T=3), cap ночь 4, cap релей]. Множители сети прежние.
 const TABLE: Dictionary = {
-	1: [6.0, 3, 6.3, 13.0, 6, 10],
-	2: [9.0, 5, 4.6, 19.5, 8, 12],
-	3: [12.0, 7, 3.7, 26.0, 10, 14],
-	4: [15.0, 9, 3.0, 32.5, 12, 16],
+	1: [2.0, 1, 6.5, 7.0, 4, 10],
+	2: [3.0, 3, 4.8, 10.5, 6, 12],
+	3: [4.0, 5, 3.8, 14.0, 8, 14],
+	4: [5.0, 7, 3.1, 17.5, 10, 16],
 }
 
 
@@ -52,11 +55,11 @@ func _table() -> void:
 	var note: Array = []
 	for n in TABLE:
 		var row: Array = TABLE[n]
-		var b1: float = Threat.night_budget_n(1.5, n)
-		var c1: int = Threat.cap_for_n(1, false, n)
-		var i1: float = Threat.interval_for_n(1.5, n)
-		var b4: float = Threat.night_budget_n(5.0, n)
-		var c4: int = Threat.cap_for_n(4, false, n)
+		var b1: float = Threat.night_budget_n(1.0, n, 1, false)
+		var c1: int = Threat.cap_for_n(1, false, n, 1.0)
+		var i1: float = Threat.interval_for_n(1.0, n)
+		var b4: float = Threat.night_budget_n(3.0, n, 4, false)
+		var c4: int = Threat.cap_for_n(4, false, n, 3.0)
 		var cr: int = Threat.cap_for_n(1, true, n)
 		var good: bool = absf(b1 - float(row[0])) < EPS and c1 == int(row[1]) \
 				and absf(snappedf(i1, 0.1) - float(row[2])) < EPS and absf(b4 - float(row[3])) < EPS \
@@ -65,15 +68,15 @@ func _table() -> void:
 		note.append("N%d: %.1f/%d/%.2f с, %.1f/%d, релей %d" % [n, b1, c1, i1, b4, c4, cr])
 		print("  | %d | %.1f | %d | %.2f с | %.1f | %d | %d |" % [n, b1, c1, i1, b4, c4, cr])
 	ok("таблица § 4.7: бюджет, cap, интервал при N = 1…4", all_ok, "; ".join(note))
-	# N = 1 — ровно ADR-001 (и вне таблицы: большой T, релей).
+	# N = 1 — ровно одиночные формулы (и вне таблицы: большой T, релей).
 	var same: bool = true
-	for t in [0.0, 1.5, 5.0, 9.0, 20.0]:
-		same = same and Threat.night_budget_n(t, 1) == Threat.night_budget(t) \
+	for t in [0.0, 1.0, 3.0, 9.0, 20.0]:
+		same = same and Threat.night_budget_n(t, 1, 4, false) == Threat.night_budget(t, 4, false) \
 				and Threat.interval_for_n(t, 1) == Threat.interval_for(t)
 	for d in [1, 4, 8, 12]:
 		same = same and Threat.cap_for_n(d, false, 1) == Threat.cap_for(d, false) \
 				and Threat.cap_for_n(d, true, 1) == Threat.cap_for(d, true)
-	ok("N = 1: формулы ADR-001 без изменений (интервал не меньше %.1f с)" % Balance.SPAWN_INTERVAL_MIN,
+	ok("N = 1: формулы одиночной игры без множителей (интервал не меньше %.1f с)" % Balance.SPAWN_INTERVAL_MIN,
 			same and Threat.interval_for_n(20.0, 1) == Balance.SPAWN_INTERVAL_MIN)
 	ok("cap не выше MAX_PHANTOMS = %d (релей, 5 игроков; ночь 12, 4 игрока)" % Balance.MAX_PHANTOMS,
 			Threat.cap_for_n(1, true, 5) == Balance.MAX_PHANTOMS and Threat.cap_for_n(12, false, 4) == Balance.MAX_PHANTOMS)
@@ -89,13 +92,14 @@ func _night(n: int) -> void:
 	Game.time_of_day = Balance.NIGHT_START + 0.01
 	Threat.tick(0.016)
 	var t: float = Threat.threat_level()
-	var want_b: float = Threat.night_budget(t) * (1.0 + Balance.MP_BUDGET_PER_PLAYER * float(n - 1))
+	var want_b: float = Threat.night_budget(t, Game.day_number, false) \
+			* (1.0 + Balance.MP_BUDGET_PER_PLAYER * float(n - 1))
 	ok("N = %d: ночь началась, бюджет × %.1f" % [n, 1.0 + 0.5 * (n - 1)], Threat.active
 			and Threat.night_players == n and absf(Threat.budget - want_b) < EPS,
 			"T %.2f, бюджет %.2f (ждали %.2f), состав %d" % [t, Threat.budget, want_b, Threat.roster.size()])
-	var cap: int = Threat.cap_for_n(Threat.night_day, false, Threat.players_online())
-	ok("N = %d: cap = min(%d + 2·%d, 16) = %d" % [n, Threat.cap_for(Threat.night_day, false), n - 1, cap],
-			cap == mini(Threat.cap_for(Threat.night_day, false) + 2 * (n - 1), Balance.MAX_PHANTOMS))
+	var cap: int = Threat.cap_for_n(Threat.night_day, false, Threat.players_online(), t)
+	ok("N = %d: cap = min(%d + 2·%d, 16) = %d" % [n, Threat.cap_for(Threat.night_day, false, t), n - 1, cap],
+			cap == mini(Threat.cap_for(Threat.night_day, false, t) + 2 * (n - 1), Balance.MAX_PHANTOMS))
 	# Следующий выход: пауза — интервал_N.
 	Threat.spawn_timer = 0.0
 	var before: int = Threat.roster.size()
