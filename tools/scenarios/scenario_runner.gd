@@ -405,6 +405,15 @@ const REGISTRY: Dictionary = {
 	# --- Свет: зеркало, смеситель, призма (ADR-005, #165) ---
 	"beam_optics": {"file": "beam_optics.gd", "title": "зеркало, смеситель, призма", "timeout_ms": 90000,
 		"desc": "зеркало поворачивает луч (24−2), смеситель складывает цвета и даёт белый 32−2, призма делит белый, кольцо не зацикливается; замер rebuild"},
+	# --- Свет: маяк, часть 2 (ADR-005 § 5, #168) ---
+	"pharos_blue": {"file": "pharos_blue.gd", "title": "маяк под синим", "timeout_ms": 60000,
+		"desc": "кристалл → эхо в 3 клетках идёт вдвое медленнее и раз в 3 с не бьёт 1 с; мкс slow_factor_at"},
+	"pharos_dome": {"file": "pharos_dome.gd", "title": "маяк под голубым", "timeout_ms": 30000,
+		"desc": "смесь G+B: горелка под куполом не теряет HP, купол гасит 100 и через 10 с снова есть"},
+	"pharos_lure": {"file": "pharos_lure.gd", "title": "маяк под пурпурным", "timeout_ms": 40000,
+		"desc": "смесь R+B: рой в 20 клетках за 15 с у маяка, не у горелки; маяк 200 HP"},
+	"pharos_white": {"file": "pharos_white.gd", "title": "маяк под белым", "timeout_ms": 30000,
+		"desc": "смесь R+G+B: 10 клеток руды в радиусе 8 разведаны за 2 с, камень нет; мкс reveal_cells"},
 }
 
 var scene: Node = null

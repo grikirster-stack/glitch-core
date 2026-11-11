@@ -27,6 +27,7 @@
 | `ore_census.gd` | перепись руды для баланса (ADR-005): клеток и жил каждой руды, размеры жил, руда и камень в столбце бура 16/40: `godot --headless --path . -- --ore-census --seed=31337`. `--days=N` — ещё N рассветов без разведки (отрастание в тумане, #174) |
 | `endless_shot.gd` | кадр экрана победы с кнопкой «Остаться на планете»: окно за экраном, PNG `docs/img/shots/endless.png` |
 | `beacon_shot.gd` | кадр маяка под красным (#167): окно за экраном, PNG `docs/img/shots/beacon_red.png` |
+| `beacon_white_shot.gd` | кадр маяка под белым (#168): окно за экраном, PNG `docs/img/shots/beacon_white.png` |
 | `optics_shot.gd` | кадр зеркала и смесителя (#165): окно за экраном, PNG `docs/img/shots/optics.png` |
 | `net_test.gd` | сеть, уровень 1 (ADR-002, #86): кодек, таблица рукопожатия, петля «хост + 3 клиента» в одном процессе, хэш схемы (§ 7) |
 | `mp/` | сеть, уровень 2: харнесс `mp_runner.gd` и сценарии `mp_*` — хост и клиенты отдельными headless-процессами (§ 7) |
@@ -494,6 +495,24 @@ godot --headless --path . --script res://tools/save_test.gd
 
 Кадр `docs/img/shots/beacon_red.png` — `tools/beacon_shot.gd`, окно за экраном:
 `timeout 120 godot --path . --audio-driver Dummy --disable-vsync --windowed --position -10000,-10000 --resolution 1280x720 --script res://tools/beacon_shot.gd -- --seed=31337`.
+
+### Маяк, часть 2 (ADR-005 § 5, #168)
+
+Сценарии (`-- --scenario=pharos_blue,pharos_dome,pharos_lure,pharos_white`):
+
+* `pharos_blue` — горелка с кристаллом. Эхо в 3 клетках проходит 10 клеток за время
+  × 2 ± 10 % от обычного и раз в 3 с получает 1 с стана. Печатает мкс `slow_factor_at`
+  на 16 фантомов.
+* `pharos_dome` — зелёный и синий через смеситель. Горелка в 2 клетках не теряет HP
+  от 5 ударов эха (24): купол принимает 100 и гаснет, через 10 с снова с 100.
+* `pharos_lure` — красный и синий через смеситель. Рой в 20 клетках за 15 с у маяка,
+  не у горелки в 5 клетках. Под пурпурным у маяка 200 HP, смена цвета возвращает 100.
+* `pharos_white` — три горелки в смеситель. 10 клеток руды в радиусе 8 становятся
+  `is_explored` за 2 с, камень и руда за радиусом — нет. Печатает мкс `reveal_cells`
+  на 50 клетках.
+
+Кадр `docs/img/shots/beacon_white.png` — `tools/beacon_white_shot.gd`, окно за экраном:
+`timeout 120 godot --path . --audio-driver Dummy --disable-vsync --windowed --position -10000,-10000 --resolution 1280x720 --script res://tools/beacon_white_shot.gd -- --seed=31337`.
 
 ### Копка по лучу (ADR-005 § 3)
 

@@ -51,6 +51,21 @@ const PHAROS_GREEN_HEAL: float = 20.0
 const PHAROS_GREEN_RADIUS: int = 3
 ## Сила и радиус жёлтого — те же числа, что у прожектора (46 + 2·60 px, сила 2.0).
 const PHAROS_YELLOW_POWER: float = 2.0
+## Синий морозит: в 4 клетках скорость × 0.5, 1 с без удара из каждых 3.
+const PHAROS_BLUE_RADIUS: int = 4
+const PHAROS_BLUE_SLOW: float = 0.5
+const PHAROS_BLUE_STUN: float = 1.0
+const PHAROS_BLUE_STUN_PERIOD: float = 3.0
+## Голубой купол: 3 клетки, 100 урона, потом 10 с тишины и снова 100.
+const PHAROS_DOME_RADIUS: int = 3
+const PHAROS_DOME_HP: float = 100.0
+const PHAROS_DOME_DOWN: float = 10.0
+## Пурпурный зовёт рой и тень на 640 px; сам маяк под ним крепче.
+const PHAROS_LURE_PX: float = 640.0
+const PHAROS_LURE_HP: float = 200.0
+## Белый показывает руду в 8 клетках (квадрат Чебышёва), раз в секунду.
+const PHAROS_WHITE_RADIUS: int = 8
+const PHAROS_WHITE_PERIOD: float = 1.0
 
 # ------------------------------------------------------- § 4.2 Автоматизация
 const DRILL_CYCLE: float = 2.0         ## с на единицу руды
