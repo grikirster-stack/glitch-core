@@ -550,6 +550,8 @@ const ET_CHEST: String = "chest"                ## сундук и тайник�
 const ET_REPAIR: String = "repair"              ## хлам в руке, машина повреждена
 const ET_LOAD: String = "load"                  ## предмет в руке подходит станку
 const ET_DISMANTLE: String = "dismantle"        ## разбор постройки (удержание E)
+const ET_SIREN: String = "siren"                ## сирена: E при полном заряде гонит рой
+const ET_LENS: String = "lens"                  ## линза в руке у маяка — вставить
 
 ## Сколько секунд держать E над постройкой, чтобы разобрать её (DISMANTLE).
 const DISMANTLE_HOLD: float = 0.9
@@ -584,7 +586,7 @@ func interact_target(powered: Callable = Callable()) -> Dictionary:
 		elif td < best_d:
 			best_d = td
 			best = tt
-	var bt: Dictionary = _target_at(World.beacon_cell, pos, false, powered)
+	var bt: Dictionary = _target_at(Game.core_cell, pos, false, powered)
 	if not bt.is_empty() and Vector2(bt["pos"]).distance_to(pos) < best_d:
 		best_d = Vector2(bt["pos"]).distance_to(pos)
 		best = bt
@@ -680,22 +682,26 @@ func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable,
 			tg["kind"] = ET_BURNER
 		elif m is Accumulator and d < E_MACHINE:
 			tg["kind"] = ET_ACCUMULATOR
+		elif m is Siren and d < E_MACHINE:
+			tg["kind"] = ET_SIREN
+		elif m is Pharos and not sel.is_empty() and sel.id == IDs.I.LENS and d < E_MACHINE \
+				and not bool(m.get("lens")):
+			tg["kind"] = ET_LENS
 		elif m is Chest and d < E_MACHINE and not _chest_empty(m):
 			tg["kind"] = ET_CHEST
 		elif not sel.is_empty() and d <= E_STATION and not (m is Chest or m is Burner) \
 				and m.input_accepts(sel.id):
 			tg["kind"] = ET_LOAD
+		elif m is RainbowCore and d < E_BEACON:
+			# Запуск ядра важнее разбора: пустая рука у ядра держит E 3 с.
+			tg["kind"] = ET_BEACON
 		elif allow_dismantle and d < E_MACHINE and sel.is_empty() and _can_dismantle(m):
 			tg["kind"] = ET_DISMANTLE
 			tg["item"] = MachineBase.machine_item_id(m.kind)
 		else:
 			return {}
 		return tg
-	if c == World.beacon_cell:
-		var bp: Vector2 = World.cell_to_world(c)
-		if bp.distance_to(pos) < E_BEACON:
-			return {"kind": ET_BEACON, "cell": c, "node": null, "pos": bp}
-		return {}
+	# Пустая клетка лагеря ядро не запускает: запуск — только у постройки RainbowCore.
 	if World.terminals.has(c):
 		var tp: Vector2 = World.cell_to_world(c)
 		if tp.distance_to(pos) >= E_TERMINAL:
@@ -735,11 +741,15 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 			task_progress += dt / 3.0
 			if task_progress >= 1.0:
 				task_progress = 0.0
-				Game.try_finish(self)   # вклад деталей — из своего инвентаря (MP-I, #94)
-		ET_BURNER, ET_ACCUMULATOR:
+				Game.try_finish(self)   # запуск ядра: семь дуг, иначе перечень (#175)
+		ET_BURNER, ET_ACCUMULATOR, ET_SIREN:
 			# Горелка: топливо — топка, пустая рука — рубильник (#164);
-			# накопитель: рубильник «копить / отдавать» (#166).
+			# накопитель: рубильник «копить / отдавать» (#166);
+			# сирена: E при полном заряде гонит фантомов (#172).
 			tg["node"].interact(self)
+		ET_LENS:
+			if fresh:
+				tg["node"].insert_lens(self)
 		ET_CHEST:
 			# Сундук — через сетевую обёртку: у прокси окно открывает владелец (MP-G).
 			_open_chest(tg["node"])
@@ -789,14 +799,23 @@ func _dismantle_node(tg: Dictionary, kind: String) -> MachineBase:
 
 ## Разобрать постройку: предмет вернётся в инвентарь (нет места — под ноги).
 func _dismantle(m: MachineBase) -> void:
+	var had_lens: bool = m is Pharos and bool(m.get("lens"))
 	var item: int = m.dismantle()
 	if item == IDs.I.NONE:
 		return
 	var left: int = inv.add(item, 1)
 	if left > 0:
 		spawn_item(item, left, global_position)
+	# Линза маяка (#172) возвращается вместе с башней, не остаётся в корпусе.
+	if had_lens:
+		var lens_left: int = inv.add(IDs.I.LENS, 1)
+		if lens_left > 0:
+			spawn_item(IDs.I.LENS, lens_left, global_position)
 	_sfx_here("pickup", -10.0, 1.1)
-	_notify("Разобрано: %s" % DB.item_name(item), Color(0.8, 0.9, 0.75))
+	var back: String = DB.item_name(item)
+	if had_lens:
+		back += " и линза"
+	_notify("Разобрано: %s" % back, Color(0.8, 0.9, 0.75))
 
 
 ## Терминал отработал (#169): глава журнала этого места, следующий чертёж

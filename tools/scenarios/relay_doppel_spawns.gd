@@ -20,10 +20,13 @@ func run() -> void:
 	Game.time_of_day = Balance.START_TIME   # день: ночь двойника не откроет
 	Game.day_number = 1
 	Threat.reset()
-	for id in Game.relay_req.keys():
-		player.inv.add(int(id), int(Game.relay_req[id]))
-	ok("релей запущен", Game.try_finish())
-	ok("этап 3 — удержать сигнал", Game.objective_stage == 3, Game.objective_text())
+	var cell: Vector2i = World.beacon_cell + Vector2i(2, 0)
+	World.set_tile(cell.x, cell.y, IDs.T.AIR)
+	MachineBase.place_machine("RainbowCore", cell)
+	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M, Beams.W]:
+		Game.core_feed(c)
+	ok("ядро запущено", Game.try_finish())
+	ok("этап 4 — удержать сигнал", Game.objective_stage == 4, Game.objective_text())
 	ok("cap на удержании — %d" % Balance.RELAY_HOLD_CAP,
 			Threat.cap_for(Game.day_number, true) == Balance.RELAY_HOLD_CAP)
 
@@ -42,7 +45,7 @@ func run() -> void:
 			break
 	print("    директор: T=%.2f бюджет %.1f, состав %s, вышло %d" %
 			[Threat.threat_level(), Threat.budget, str(Threat.roster), Threat.spawned_total])
-	ok("двойник вышел за первые %d с этапа 4" % int(DOPPEL_WINDOW), doppel_at >= 0.0,
+	ok("двойник вышел за первые %d с удержания" % int(DOPPEL_WINDOW), doppel_at >= 0.0,
 			"%.2f с" % doppel_at)
 	ok("двойник один", peak_doppels <= 1, str(peak_doppels))
 	var d: Node = _first("doppel")

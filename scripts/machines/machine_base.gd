@@ -7,7 +7,7 @@ extends Node2D
 
 ## Машины, чья отрисовка зависит от времени (пламя горелки):
 ## им нужна перерисовка каждый кадр.
-const TIME_ANIMATED: Array[String] = ["Burner"]
+const TIME_ANIMATED: Array[String] = ["Burner", "Siren", "RainbowCore"]
 ## Шанс, что разрушенная машина оставит свой предмет (§ 4.4).
 const DESTROY_DROP_CHANCE: float = 0.5
 ## Сколько осколков разлетается при разрушении.
@@ -69,6 +69,12 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 			m = Collector.new()
 		"Accumulator":
 			m = Accumulator.new()
+		# --- Сирена (ADR-005 § 7.2, #172). Второй маяк не заводим. ---
+		"Siren":
+			m = Siren.new()
+		# --- Радужное ядро (ADR-005 § 6.3, #175) ---
+		"RainbowCore":
+			m = RainbowCore.new()
 		_:
 			# Старый сейв: бур, лента, ТЭЦ и прочие снятые машины (#170).
 			return false

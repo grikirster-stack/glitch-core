@@ -43,27 +43,31 @@ func _frames(hud: HUD, n: int) -> void:
 # ------------------------------------------------------------ ТРЕКЕР
 
 func _tracker(hud: HUD) -> void:
-	ok("этап 0 — карточка «Запитай терминалы базы»", hud.tracker_stage == 1
-			and hud.card_text == "Запитай терминалы базы" and hud.card_have == 0 and hud.card_need == 2,
+	ok("этап 1 — карточка «Поставь ядро»", hud.tracker_stage == 1
+			and hud.card_text == "Поставь ядро" and hud.card_have == 0 and hud.card_need == 1,
 			"«%s» %d/%d" % [hud.card_text, hud.card_have, hud.card_need])
-	ok("этап 1: маркер ведёт к терминалу", hud.card_at != Vector2.INF, str(hud.card_at))
+	ok("этап 1: маркер ведёт к сундуку лагеря", hud.card_at.distance_to(
+			World.cell_to_world(World.camp_chest_cell)) < 2.0, str(hud.card_at))
 	ok("текст карточки не длиннее 6 слов", hud.card_text.split(" ", false).size() <= 6, "«%s»" % hud.card_text)
 	var r0: int = hud.stat_redraws
+	var cell: Vector2i = World.beacon_cell + Vector2i(2, 0)
+	World.set_tile(cell.x, cell.y, IDs.T.AIR)
+	MachineBase.place_machine("RainbowCore", cell)
 	Game.set_objective_stage(2)
 	await _frames(hud, 2)
-	ok("смена этапа → карточка «Сдай …» сразу", hud.tracker_stage == 2
-			and hud.card_text.begins_with("Сдай") and hud.card_icon >= 0 and hud.card_need > 1,
+	ok("смена этапа → карточка «Зажги семь дуг» сразу", hud.tracker_stage == 2
+			and hud.card_text == "Зажги семь дуг" and hud.card_icon == IDs.I.RAINBOW_CORE and hud.card_need == 7,
 			"«%s» иконка %d, %d/%d" % [hud.card_text, hud.card_icon, hud.card_have, hud.card_need])
 	ok("смена этапа → HUD перерисован", hud.stat_redraws > r0, "%d → %d" % [r0, hud.stat_redraws])
-	ok("этап 2: маркер на релей-ядре", hud.card_at.distance_to(World.cell_to_world(World.beacon_cell)) < 2.0,
+	ok("этап 2: маркер на ядре", hud.card_at.distance_to(World.cell_to_world(Game.core_cell)) < 2.0,
 			str(hud.card_at))
-	ok("этап 2: строка замера сети про детали", hud.tracker_detail.contains("детали 0/%d" % Game.relay_req.size()),
+	ok("этап 2: строка замера — дуги 0/7", hud.tracker_detail.begins_with("дуги 0/7"),
 			"«%s»" % hud.tracker_detail)
 	Game.relay_timer = 125.0
 	Game.relay_active = true
-	Game.set_objective_stage(3)
+	Game.set_objective_stage(4)
 	await _frames(hud, 2)
-	ok("этап 3: «Держись у ядра», счётчик до эвакуации", hud.card_text == "Держись у ядра"
+	ok("этап 4: «Держись у ядра», счётчик до эвакуации", hud.card_text == "Держись у ядра"
 			and hud.card_have == int(Balance.RELAY_TIME) - 125 and hud.card_need == int(Balance.RELAY_TIME),
 			"«%s» %d / %d" % [hud.card_text, hud.card_have, hud.card_need])
 	Game.relay_timer = 0.0
@@ -71,7 +75,7 @@ func _tracker(hud: HUD) -> void:
 	Game.set_objective_stage(0)
 	await _frames(hud, 2)
 	ok("этап сброшен → снова карточка этапа 1", hud.tracker_stage == 1
-			and hud.card_text == "Запитай терминалы базы", "«%s»" % hud.card_text)
+			and hud.card_text == "Поставь ядро", "«%s»" % hud.card_text)
 	_card_words(hud)
 
 

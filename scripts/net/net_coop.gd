@@ -139,7 +139,7 @@ static func restore_hero(p: Player, e: Dictionary) -> void:
 		if p.net_role == Player.NetRole.PROXY:
 			Net.send_on(2, NetCodec.Msg.COOP, NetCodec.encode_coop_death(-1.0, false), p.peer_id)
 	else:
-		p.respawn_at(World.spawn_point)
+		p.respawn_at(Game.respawn_point())
 
 
 # ------------------------------------------------------------------ СМЕРТЬ (D11)
@@ -217,12 +217,12 @@ func _process(delta: float) -> void:
 		due[h] = float(due[h]) - delta
 		if float(due[h]) <= 0.0:
 			due.erase(h)
-			_respawn(h, "Капсула на базе. Мешок с вещами остался на месте гибели.")
+			_respawn(h, _respawn_text())
 
 
-## Респаун на базе без сдвига часов (D11).
+## Респаун у ядра хозяина (нет ядра — капсула лагеря) без сдвига часов (D11).
 func _respawn(h: Player, text: String) -> void:
-	h.respawn_at(World.spawn_point)
+	h.respawn_at(Game.respawn_point())
 	if h == _own():
 		var es: EndScreen = main.get("end_screen")
 		if es != null:
@@ -231,6 +231,12 @@ func _respawn(h: Player, text: String) -> void:
 
 
 ## Вайп — правило одиночной (main._respawn): все на базе, часы к рассвету.
+func _respawn_text() -> String:
+	if Game.core_placed():
+		return "У ядра. Мешок с вещами остался на месте гибели."
+	return "Капсула на базе. Мешок с вещами остался на месте гибели."
+
+
 func _wipe_respawn() -> void:
 	wipe_left = -1.0
 	for h in Game.players:
@@ -302,7 +308,9 @@ func _on_coop(sender: int, payload: PackedByteArray) -> void:
 			if es != null:
 				es.show_net_death(Lore.epitaph(), float(d["delay"]), bool(d["wipe"]))
 		NetCodec.CoopEv.RELAY:
-			Game.net_apply_relay(d["have"], d["req"])
+			Game.net_apply_relay(d.get("have", {}), d.get("req", {}))
+		NetCodec.CoopEv.CORE:
+			Game.net_apply_core(int(d.get("arcs", 0)), d.get("cell", Vector2i(-1, -1)))
 		NetCodec.CoopEv.STATS:
 			var team: Array = d["team"]
 			Game.stats_mined = int(team[0])

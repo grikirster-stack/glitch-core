@@ -52,7 +52,11 @@ var terminals: Array[Vector2i] = []
 ## базы — главы 0–1, терминал i-й руины — глава Lore.BASE_TERMINALS + i (#29).
 var terminal_chapters: Dictionary = {}
 var vents: Array[Vector2i] = []
+## Клетка лагеря высадки (центр площадки). Ядро сюда больше не ставится тайлом:
+## оно лежит в сундуке лагеря и ставится игроком куда угодно (#175).
 var beacon_cell: Vector2i = Vector2i.ZERO
+## Сундук лагеря: кирка нет, светокристаллы, уголь и стартовое ядро.
+var camp_chest_cell: Vector2i = Vector2i(-1, -1)
 var spawn_point: Vector2 = Vector2.ZERO
 var lights: Array[Dictionary] = []
 var machines: Dictionary = {}       # Vector2i -> Node (машина)
@@ -1187,6 +1191,23 @@ class SkyWreck extends Node2D:
 				Color(0.8, 0.9, 1.0, lit))
 
 
+## Линза в сундуке тайника. Уже есть — не дублируем. Нет места — вытесняем
+## первый слот: гарантированный предмет важнее случайного груза.
+func _ensure_lens(chest: Chest) -> void:
+	if chest == null:
+		return
+	for s in chest.slots:
+		if not s.is_empty() and s.id == IDs.I.LENS:
+			return
+	for s in chest.slots:
+		if s.is_empty():
+			s.id = IDs.I.LENS
+			s.count = 1
+			return
+	chest.slots[0].id = IDs.I.LENS
+	chest.slots[0].count = 1
+
+
 func _clear_sky_cache() -> void:
 	var wreck = sky_cache.get("wreck")
 	if wreck != null and is_instance_valid(wreck):
@@ -1308,6 +1329,9 @@ func _place_sky_cache() -> void:
 		sky_cells.append(cell)
 		for e in sky_cache_loot():
 			chest.receive_item(int(e[0]), int(e[1]))
+		# Линза всегда в тайнике (#172): лестница в небо без неё не зачем.
+		# Первый слот — её, даже если случайный груз занял сундук целиком.
+		_ensure_lens(chest)
 	var wreck: SkyWreck = SkyWreck.new()
 	var lo: Vector2i = Vector2i(x0, fy - 3)
 	var hi: Vector2i = Vector2i(x0, fy + 2)
@@ -1332,16 +1356,17 @@ func _place_sky_cache() -> void:
 
 
 func _place_base(cx: int) -> void:
-	## Открытая станция на расчищенной площадке: стальной пол, панели, лампы, терминалы, релей.
+	## Открытая станция на расчищенной площадке: стальной пол, панели, лампы, терминалы.
+	## Ядро — предмет в сундуке лагеря, не тайл в центре (ADR-005 § 6.3, #175).
 	var base: int = surface[cx]
 	# Пол платформы
 	for x in range(cx - 12, cx + 13):
 		set_tile_raw(x, base, IDs.T.STEEL)
 		set_tile_raw(x, base + 1, IDs.T.STEEL)
-	# Ряд построек (по одному тайлу, игрок ходит между ними)
-	# Релей-ядро в центре
+	# Центр лагеря пуст: сюда встанет ядро, если игрок его поставит.
 	beacon_cell = Vector2i(cx, base - 1)
-	set_tile_raw(cx, base - 1, IDs.T.RELAY_CORE)
+	set_tile_raw(cx, base - 1, IDs.T.AIR)
+	_place_camp_chest(cx, base)
 	# Терминалы
 	for i in 2:
 		var tx: int = cx - 6 + i * 12
@@ -1356,6 +1381,24 @@ func _place_base(cx: int) -> void:
 		set_tile_raw(int(px), base - 1, IDs.T.PANEL)
 	# Вентиляция у базы
 	vents.append(Vector2i(cx - 13, base - 1))
+
+
+## Сундук лагеря высадки: левый край площадки. Справа от центра — коридор
+## сценариев (bx+1…bx+17): сундук там сносился бы вместе с полом и ронял ядро
+## под ноги. Терминал базы — cx+6, его E сундук не перехватывает. Внутри —
+## стартовый набор и Радужное ядро (ADR-005 § 6.3). Разобрать нельзя.
+func _place_camp_chest(cx: int, base: int) -> void:
+	var cell: Vector2i = Vector2i(cx - 10, base - 1)
+	if get_tile(cell.x, cell.y) != IDs.T.AIR:
+		set_tile_raw(cell.x, cell.y, IDs.T.AIR)
+	if not MachineBase.place_machine("Chest", cell):
+		return
+	var chest: Chest = machines[cell]
+	chest.permanent = true
+	chest.receive_item(IDs.I.LAMP, 3)
+	chest.receive_item(IDs.I.COAL, 8)
+	chest.receive_item(IDs.I.RAINBOW_CORE, 1)
+	camp_chest_cell = cell
 
 
 # ------------------------------------------------------------ ВОДА
@@ -2456,7 +2499,7 @@ func _rebuild_lights() -> void:
 		_light_add_static(v, 26.0, 0.35)
 	for c in terminals:
 		_light_add_static(c, 40.0, 0.4)
-	_light_add_static(beacon_cell, 70.0, 0.6)
+	# Свет лагеря — от светокристаллов. Ядро светит само, когда его поставят.
 	_relight_sources()
 
 
@@ -2842,10 +2885,10 @@ func slow_factor_at(pos: Vector2) -> float:
 	var factor: float = 1.0
 	if not pharos_blue.is_empty():
 		var c: Vector2i = world_to_cell(pos)
-		var r: int = Balance.PHAROS_BLUE_RADIUS
 		for m in pharos_blue:
 			if not is_instance_valid(m):
 				continue
+			var r: int = int(m.blue_radius()) if m.has_method("blue_radius") else Balance.PHAROS_BLUE_RADIUS
 			var mc: Vector2i = m.cell
 			if maxi(absi(c.x - mc.x), absi(c.y - mc.y)) <= r:
 				factor = Balance.PHAROS_BLUE_SLOW
@@ -2857,12 +2900,12 @@ func slow_factor_at(pos: Vector2) -> float:
 ## Купол, который накрывает клетку постройки, или null. Голубой маяк в
 ## PHAROS_DOME_RADIUS клетках (манхэттен), и только пока купол не погашен.
 func dome_at(cell: Vector2i):
-	var r: int = Balance.PHAROS_DOME_RADIUS
 	for m in pharos_dome:
 		if not is_instance_valid(m):
 			continue
 		if not bool(m.get("dome_up")):
 			continue
+		var r: int = int(m.dome_radius()) if m.has_method("dome_radius") else Balance.PHAROS_DOME_RADIUS
 		var mc: Vector2i = m.cell
 		if absi(cell.x - mc.x) + absi(cell.y - mc.y) <= r:
 			return m
@@ -2873,14 +2916,19 @@ func dome_at(cell: Vector2i):
 ## а не к горелкам (ADR-005 § 5).
 func lure_at(pos: Vector2, radius: float):
 	var best = null
-	var best_d: float = radius
+	var best_d: float = INF
 	for m in pharos_lure:
 		if not is_instance_valid(m):
 			continue
+		# Линза зовёт на 2 клетки дальше своего маяка, не чужого.
+		var reach: float = radius
+		if m.has_method("lure_px"):
+			reach = float(m.lure_px())
 		var d: float = pos.distance_to(m.global_position)
-		if d < best_d:
-			best_d = d
-			best = m
+		if d >= reach or d >= best_d:
+			continue
+		best_d = d
+		best = m
 	return best
 
 
@@ -2921,6 +2969,7 @@ func save_state() -> Dictionary:
 		"terminal_chapters": terminal_chapters.duplicate(),
 		"vents": Array(vents),
 		"beacon_cell": beacon_cell,
+		"camp_chest_cell": camp_chest_cell,
 		"spawn_point": spawn_point,
 		"ruin_signs": signs,
 		# Оборона (#31): шлюзы и решётки с их HP (реестры, которые ведёт set_tile).
@@ -2994,6 +3043,7 @@ func load_state(d: Dictionary) -> bool:
 	for v in d.get("vents", []):
 		vents.append(v)
 	beacon_cell = d.get("beacon_cell", beacon_cell)
+	camp_chest_cell = d.get("camp_chest_cell", camp_chest_cell)
 	spawn_point = d.get("spawn_point", spawn_point)
 	var signs: Array = d.get("ruin_signs", [])
 	for i in mini(signs.size(), ruin_caches.size()):

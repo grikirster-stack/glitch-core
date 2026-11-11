@@ -241,6 +241,11 @@ func _build_item_defs() -> void:
 	# Солнце и запас (ADR-005 § 4, #166). Солнечная панель — legacy (#170).
 	_add_item_def(IDs.I.COLLECTOR, "Коллектор", Color(0.95, 0.86, 0.42), "collector", 10, "machine:Collector")
 	_add_item_def(IDs.I.ACCUMULATOR, "Накопитель", Color(0.55, 0.62, 0.72), "accumulator", 5, "machine:Accumulator")
+	# Сирена и линза (ADR-005 § 7.2, #172). Сирена — блок, линза — предмет в руке.
+	_add_item_def(IDs.I.SIREN, "Сирена", Color(0.85, 0.45, 0.18), "siren", 5, "machine:Siren")
+	_add_item_def(IDs.I.LENS, "Линза", Color(0.82, 0.92, 1.0), "lens", 5, "")
+	# Радужное ядро (ADR-005 § 6.3, #175): одно в сундуке лагеря, дальше — чертёж.
+	_add_item_def(IDs.I.RAINBOW_CORE, "Радужное ядро", Color(0.22, 0.24, 0.30), "rainbow_core", 5, "machine:RainbowCore")
 
 	# Требования релей-ядра — из Balance (§ 4.7).
 	relay_req = Balance.RELAY_REQ.duplicate()
@@ -307,6 +312,8 @@ func _build_recipes() -> void:
 	_recipe(IDs.I.CHEST, 1, {IDs.I.COPPER_INGOT: 4}, "hand", 0.0, "", "seen")
 	# Маяк — чертёж (#167). Цена из таблицы #171, руками, имя из словаря.
 	_recipe(IDs.I.PHAROS, 1, {IDs.I.IRON_INGOT: 2, IDs.I.GLASS: 1, IDs.I.CRYSTAL: 1}, "hand", 0.0, "")
+	# Второе ядро — чертёж 9 (BLUEPRINT_ORDER). Первое лежит в сундуке лагеря.
+	_recipe(IDs.I.RAINBOW_CORE, 1, {IDs.I.IRON_INGOT: 4, IDs.I.CRYSTAL: 3}, "hand", 0.0, "")
 	# Стена и решётка — чертёж (#169). Цена — из таблицы #171, только руками.
 	# На плавильне стены нет: первый подходящий рецепт съел бы сталь линии
 	# в стену, и релей оставался бы без 24 пластин.
@@ -319,6 +326,9 @@ func _build_recipes() -> void:
 	# Коллектор и накопитель (#166) — чертежи COLLECTOR и ACCUMULATOR, не подбор.
 	_recipe(IDs.I.COLLECTOR, 1, {IDs.I.COPPER_INGOT: 1, IDs.I.GLASS: 1}, "hand", 0.0, "")
 	_recipe(IDs.I.ACCUMULATOR, 1, {IDs.I.IRON_INGOT: 2, IDs.I.CRYSTAL: 1}, "hand", 0.0, "")
+	# Сирена — чертёж 7, линза — чертёж 8 (#172). Руками сразу, без станка.
+	_recipe(IDs.I.SIREN, 1, {IDs.I.COPPER_INGOT: 2, IDs.I.CRYSTAL: 1, IDs.I.GLASS: 1}, "hand", 0.0, "")
+	_recipe(IDs.I.LENS, 1, {IDs.I.GLASS: 3, IDs.I.CRYSTAL: 2}, "hand", 0.0, "")
 	# Фабрика снята (#170): плавильня, верстак, пластины, микросхемы, ТЭЦ,
 	# панели, буры, ленты, шлюз и блоки больше не крафтятся. Id остаются.
 
@@ -1582,6 +1592,21 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 				_px(img, 12, y, c.darkened(0.35))
 			_px(img, 13, 7, Color("#FFD86E"))
 			_px(img, 14, 7, Color("#FFD86E"))
+		"rainbow_core":
+			# Тёмный куб и семь дуг по верху — тот же силуэт, что у постройки в мире.
+			for y in range(5, 14):
+				for x in range(3, 13):
+					_px(img, x, y, Color(0.16, 0.17, 0.20))
+			for y in range(6, 13):
+				for x in range(4, 12):
+					_px(img, x, y, Color(0.10, 0.11, 0.14))
+			var arcs: Array[Color] = [
+				Color("#FFD86E"), Color(1.0, 1.0, 0.43), Color("#7FE6D2"), Color(0.44, 1.0, 1.0),
+				Color("#6FF5E0"), Color(1.0, 0.85, 1.0), Color.WHITE,
+			]
+			for i in arcs.size():
+				_px(img, 3 + i, 3, arcs[i])
+				_px(img, 3 + i, 4, arcs[i].darkened(0.25))
 		"pharos":
 			# Башня с линзой сверху: ребёнок отличает маяк от горелки по силуэту.
 			for y in range(8, 15):
@@ -1614,6 +1639,38 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 			for y in range(6, 10):
 				_px(img, 12, y, Color(1.0, 1.0, 0.55))
 				_px(img, 13, y, Color(1.0, 0.95, 0.45))
+		"siren":
+			# Короб и рупор сверху: ребёнок отличает сирену от маяка по воронке.
+			for y in range(7, 15):
+				for x in range(4, 12):
+					_px(img, x, y, c.darkened(0.2))
+			for y in range(4, 8):
+				for x in range(5, 11):
+					_px(img, x, y, c)
+			for y in range(2, 5):
+				for x in range(6, 10):
+					_px(img, x, y, Color("#FFD86E"))
+			_px(img, 7, 1, Color("#FFD86E"))
+			_px(img, 8, 1, Color("#FFD86E"))
+			_px(img, 12, 10, Color(0.3, 0.95, 0.55))
+		"lens":
+			# Круглое стекло в ободке: блеск — белая точка, не квадрат маяка.
+			for y in range(3, 13):
+				for x in range(3, 13):
+					var dx: int = x - 8
+					var dy: int = y - 8
+					if dx * dx + dy * dy > 22:
+						continue
+					_px(img, x, y, c.darkened(0.15))
+			for y in range(5, 11):
+				for x in range(5, 11):
+					var dx: int = x - 8
+					var dy: int = y - 8
+					if dx * dx + dy * dy > 10:
+						continue
+					_px(img, x, y, Color(0.75, 0.92, 1.0, 0.85))
+			_px(img, 6, 6, Color(1.0, 1.0, 1.0))
+			_px(img, 7, 6, Color(1.0, 1.0, 1.0))
 		"prism":
 			# Треугольник в корпусе: белый входит, три цвета выходят.
 			for y in range(3, 13):

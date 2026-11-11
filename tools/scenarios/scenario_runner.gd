@@ -61,8 +61,13 @@ const REGISTRY: Dictionary = {
 	},
 	"relay": {
 		"file": "relay.gd",
-		"title": "релей",
-		"desc": "выдать детали, удерживать E, этап 3, отсчёт 180 с (ускорен), победа и эпилог",
+		"title": "ядро",
+		"desc": "семь дуг, удерживать E, этап 4, отсчёт 180 с (ускорен), победа и эпилог",
+	},
+	"rainbow_core": {
+		"file": "rainbow_core.gd",
+		"title": "радужное ядро",
+		"desc": "ядро в 200 клетках от лагеря, смерть, возрождение у ядра; семь дуг за ≤ 120 с",
 	},
 	"night": {
 		"file": "night.gd",
@@ -207,7 +212,7 @@ const REGISTRY: Dictionary = {
 	"objective_stages": {
 		"file": "objective_stages.gd",
 		"title": "этапы цели",
-		"desc": "терминалы базы → этап 2, T5 → этап 3, запуск релея → этап 4",
+		"desc": "ядро → этап 2, семь дуг → этап 3, запуск → этап 4",
 	},
 	"relay_doppel_spawns": {
 		"file": "relay_doppel_spawns.gd",
@@ -344,6 +349,13 @@ const REGISTRY: Dictionary = {
 		"desc": "смесь R+B: рой в 20 клетках за 15 с у маяка, не у горелки; маяк 200 HP"},
 	"pharos_white": {"file": "pharos_white.gd", "title": "маяк под белым", "timeout_ms": 30000,
 		"desc": "смесь R+G+B: 10 клеток руды в радиусе 8 разведаны за 2 с, камень нет; мкс reveal_cells"},
+	# --- Сирена и линза (ADR-005 § 7.2, #172) ---
+	"siren": {"file": "siren.gd", "title": "сирена", "timeout_ms": 90000,
+		"desc": "рой из 5 и тень в 6 клетках: под лучом 60 с, E гонит в FLEE на 10 с, без луча заряд стоит"},
+	"lens": {"file": "lens.gd", "title": "линза в маяке", "timeout_ms": 30000,
+		"desc": "без линзы маяк не бьёт эхо на 9 клетках, с линзой бьёт; разбор возвращает линзу"},
+	"sky_secret_lens": {"file": "sky_secret_lens.gd", "title": "линза в небесном тайнике",
+		"desc": "линза лежит в сундуке тайника на сидах 31337, 4242 и 12345"},
 }
 
 var scene: Node = null

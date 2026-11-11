@@ -10,7 +10,7 @@ extends ScenarioBase
 ##  * каждая подпись внутри своей рамки и внутри панели;
 ##  * никакие две подписи не налезают друг на друга (кроме подсказки поверх);
 ##  * подсказка целиком на экране.
-## Счётчик деталей релея с панели снят (#169) — его рамки больше нет.
+## Счётчик деталей релея с панели снят (#169). На его месте — семь дуг (#175).
 
 const SIZES: Array = [Vector2(1280, 720), Vector2(960, 540)]
 
@@ -42,8 +42,8 @@ func run() -> void:
 	UI.open_chest(best)
 	await wait(0.2)
 	ok("панель открыта у тайника", panel.visible and panel.chest == best)
-	ok("счётчик деталей релея с панели снят", not panel.has_method("_goal_cells")
-			and not panel.has_method("_draw_goal"))
+	ok("на панели семь дуг, счётчика деталей нет", panel.has_method("_draw_goal")
+			and not panel.has_method("_goal_cells"))
 
 	for sz in SIZES:
 		panel.size = sz

@@ -166,6 +166,10 @@ func _process(delta: float) -> void:
 	# Купол маяка пульсирует, пока жив: без этого квадрат встанет колом.
 	if not World.pharos_dome.is_empty():
 		_dirty = true
+	# Столб запуска и семь дуг ядра — постоянный рисунок, не вспышка.
+	if Game.relay_active or (Game.core_placed() and (Game.core_arcs & 0x7F) == 0x7F):
+		_dirty = true
+	_sync_column()
 	if animating:
 		_dirty = true
 	else:
@@ -294,11 +298,11 @@ func _camera_changed(cam: Camera2D) -> bool:
 	return false
 
 
-## Виден ли релей (пульс которого анимируется по времени) в кадре.
+## Видно ли активное ядро (пульс семи дуг анимируется по времени).
 func _beacon_visible(cam: Camera2D) -> bool:
-	if cam == null:
+	if cam == null or not Game.core_placed():
 		return false
-	return _view_rect(cam).has_point(World.cell_to_world(World.beacon_cell))
+	return _view_rect(cam).has_point(World.cell_to_world(Game.core_cell))
 
 
 ## Прямоугольник мира, видимый камерой. Пустой Rect2 — камеры нет.
@@ -426,10 +430,12 @@ func _draw() -> void:
 
 	# Питание снято (#170): колец радиуса больше нет.
 
-	# --- Релей ----------------------------------------------------------------
-	var bp: Vector2 = World.cell_to_world(World.beacon_cell)
-	var pulse: float = 0.5 + 0.5 * sin(float(Time.get_ticks_msec()) * 0.003)
-	draw_arc(bp, 10.0 + pulse * 3.0, 0.0, TAU, 28, Color(0.3, 0.95, 1.0, 0.5), 2.0)
+	# --- Ядро: пульс, когда горят все семь дуг --------------------------------
+	if Game.core_placed() and (Game.core_arcs & 0x7F) == 0x7F:
+		var bp: Vector2 = World.cell_to_world(Game.core_cell)
+		var pulse: float = 0.5 + 0.5 * sin(float(Time.get_ticks_msec()) * 0.003)
+		draw_arc(bp, 18.0 + pulse * 4.0, 0.0, TAU, 28, Color(1.0, 1.0, 1.0, 0.55), 2.0)
+	_draw_column(view)
 
 	# --- Частицы --------------------------------------------------------------
 	for c in chips:
@@ -450,6 +456,7 @@ func _draw() -> void:
 
 	# --- Лучи света (#164): постоянный список сегментов, не вспышка дуги ------
 	_draw_beams(view)
+	_draw_core_arcs()
 	_draw_domes(view)
 
 	# --- Дуги турели ----------------------------------------------------------
@@ -465,6 +472,22 @@ func _draw() -> void:
 		var t2: float = float(s["t"]) / 0.22
 		var col2: Color = Color(1, 1, 1, 1.0 - t2)
 		draw_arc(Vector2(s["pos"]), 14.0 + t2 * 8.0, -0.9 + t2 * 1.8, 0.9 + t2 * 1.8, 12, col2, 3.0)
+
+
+## Семь дуг над кубом, поверх луча: иначе луч закрывает столбики.
+func _draw_core_arcs() -> void:
+	if not Game.core_placed():
+		return
+	var bp: Vector2 = World.cell_to_world(Game.core_cell)
+	var lit: int = Game.core_arcs & 0x7F
+	var plate: Rect2 = Rect2(bp.x - 12.0, bp.y - 14.0, 24.0, 8.0)
+	draw_rect(plate, Color(0.08, 0.09, 0.12, 0.92))
+	for i in Game.CORE_ARC_COLOR.size():
+		var col: Color = Color(0.42, 0.44, 0.48, 0.9)
+		if (lit & (1 << i)) != 0:
+			col = Beams.COLOR[Game.CORE_ARC_COLOR[i]]
+		var x: float = bp.x - 10.0 + float(i) * 3.0
+		draw_rect(Rect2(x, bp.y - 12.0, 2.0, 5.0), col)
 
 
 ## Линия луча по центрам клеток: 4 px, яркая у источника и тусклая к концу.
@@ -501,6 +524,41 @@ func _draw_beams(view: Rect2) -> void:
 		draw_line(a, mid, Color(col.r, col.g, col.b, head), 4.0)
 		draw_line(mid, b, Color(col.r, col.g, col.b, tail), 4.0)
 	beam_draw_us = Time.get_ticks_usec() - t0
+
+
+## Белый столб запуска (#175): от ядра до верха мира, 6 px, пока идёт удержание.
+## Свет 1,5 по клеткам столба — отдельные источники, как у луча.
+var _column_lights: Array = []
+var _column_on: bool = false
+
+
+func _sync_column() -> void:
+	var want: bool = Game.relay_active and Game.core_placed()
+	if want == _column_on:
+		return
+	_column_on = want
+	for e in _column_lights:
+		World.remove_light_source(e)
+	_column_lights.clear()
+	if not want:
+		return
+	var x: int = Game.core_cell.x
+	var y0: int = Game.core_cell.y
+	for y in range(0, y0 + 1):
+		var c: Vector2i = Vector2i(x, y)
+		if not World.in_bounds(c.x, c.y):
+			continue
+		_column_lights.append(World.add_light_source(World.cell_to_world(c), 24.0, 1.5))
+
+
+func _draw_column(view: Rect2) -> void:
+	if not Game.relay_active or not Game.core_placed():
+		return
+	var from: Vector2 = World.cell_to_world(Vector2i(Game.core_cell.x, 0))
+	var to: Vector2 = World.cell_to_world(Game.core_cell)
+	if view.size != Vector2.ZERO and not view.grow(32.0).intersects(Rect2(from, to - from).abs()):
+		return
+	draw_line(from, to, Color(1.0, 1.0, 1.0, 0.85), 6.0)
 
 
 ## Голубой купол (#168): полупрозрачный квадрат 7×7 клеток вокруг маяка.

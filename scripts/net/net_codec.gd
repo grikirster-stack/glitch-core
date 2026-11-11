@@ -612,11 +612,12 @@ static func presses_bump(presses: int, i: int) -> int:
 
 
 # ------------------------------------------------------------------ ГЛОБАЛЬНОЕ (1 Гц)
-## time f32 · смена u16 · состояние u8 · данные u16 (заглушка 0, #169: счётчик снят,
-## длина не меняется без бампа PROTO) · этап u8 · релей u8 + f32 ·
-## задания 2×u8 · угроза u8 + f32 · браун-аут u8 · hash мира u32 · game_time f32. 31 Б.
+## time f32 · смена u16 · состояние u8 · данные u16 (заглушка 0, #169: счётчик снят)
+## · этап u8 · релей u8 + f32 · задания 2×u8 · угроза u8 + f32 · браун-аут u8 ·
+## hash мира u32 · game_time f32 · дуги ядра u8 · клетка ядра u32 (idx, нет ядра —
+## 0xFFFFFFFF). 36 Б (#175, PROTO 15).
 
-const GLOBAL_BYTES: int = 31
+const GLOBAL_BYTES: int = 36
 
 
 static func encode_global(d: Dictionary) -> PackedByteArray:
@@ -636,6 +637,12 @@ static func encode_global(d: Dictionary) -> PackedByteArray:
 	out.encode_u8(22, 1 if bool(d.get("brownout", false)) else 0)
 	out.encode_u32(23, int(d.get("hash", 0)) & 0xFFFFFFFF)
 	out.encode_float(27, float(d.get("game_time", 0.0)))
+	out.encode_u8(31, int(d.get("core_arcs", 0)) & 0x7F)
+	var cc: Vector2i = d.get("core_cell", Vector2i(-1, -1))
+	var idx: int = 0xFFFFFFFF
+	if cc.x >= 0 and cc.y >= 0:
+		idx = cell_idx(cc)
+	out.encode_u32(32, idx)
 	return out
 
 
@@ -649,6 +656,7 @@ static func decode_global(b: PackedByteArray) -> Dictionary:
 		"tasks_total": b.decode_u8(16), "threat": b.decode_u8(17),
 		"threat_budget": b.decode_float(18), "brownout": b.decode_u8(22) != 0,
 		"hash": b.decode_u32(23), "game_time": b.decode_float(27),
+		"core_arcs": b.decode_u8(31) & 0x7F, "core_cell": _cell_or_none(b.decode_u32(32)),
 	}
 
 
@@ -965,7 +973,8 @@ static func schema_sample() -> PackedByteArray:
 
 ## Звуки EVENT.SOUND: id u8 — индекс здесь. Только дописывать в конец (иначе — PROTO).
 const SOUNDS: Array = ["mine", "break", "place", "pickup", "craft", "place_machine", "hit",
-		"alarm", "power", "step", "vent_hum", "turret_zap", "swarm", "doppel_whisper", "brownout"]
+		"alarm", "power", "step", "vent_hum", "turret_zap", "swarm", "doppel_whisper", "brownout",
+		"siren"]
 
 ## Виды EVENT.FX (аргумент — в скобках). Только дописывать в конец.
 enum Fx {
@@ -1132,6 +1141,13 @@ static func idx_cell(i: int) -> Vector2i:
 	return Vector2i(i % WORLD_W_CELLS, i / WORLD_W_CELLS)
 
 
+## Клетка из u32 или (−1, −1), если ядра нет.
+static func _cell_or_none(i: int) -> Vector2i:
+	if i == 0xFFFFFFFF or i < 0:
+		return Vector2i(-1, -1)
+	return idx_cell(i)
+
+
 ## Аргументы команды по её виду (поля словаря — в скобках):
 ##   MOVE, SPLIT — откуда u8 (from, Box) · слот u8 (fslot) · куда u8 (to) · слот u8 (tslot,
 ##       SLOT_AUTO — сам) · ожидаемый предмет u8 (id) · n u16 · флаги u8 (MOVE_SWAP) ·
@@ -1288,11 +1304,13 @@ static func inv_schema_sample() -> PackedByteArray:
 ##     забега, --hardcore) · u8 флаги (COOP_WIPE — погибла вся команда).
 ##   RELAY (хост → всем, канал 0): вклад деталей в релей-ядро и требование релея от N
 ##     (#139) — u8 n · n × (u8 id, u16 сдано, u16 нужно); 0 — нет в словаре.
+##   CORE (хост → всем, канал 0, #175): дуги ядра u8 · клетка активного ядра u32
+##     (idx, нет ядра — 0xFFFFFFFF). Дописан в конец CoopEv (PROTO 17).
 ##   STATS (хост → всем, канал 0, при конце забега): итоги команды 4 × u32 (добыто,
 ##     изготовлено, фантомов, смертей) · u8 n · n × (str8 ник, u16 смертей).
 
 ## События COOP. Только дописывать в конец.
-enum CoopEv { NONE, DEATH, RELAY, STATS }
+enum CoopEv { NONE, DEATH, RELAY, STATS, CORE }
 const COOP_WIPE: int = 1
 
 
@@ -1305,7 +1323,7 @@ static func encode_coop_death(delay: float, wipe: bool) -> PackedByteArray:
 
 
 ## have — {id: count} вклада в ядро, req — {id: count} требования (Game.relay_req). По
-## возрастанию id: байты не зависят от порядка ключей.
+## возрастанию id: байты не зависят от порядка ключей. Глава и сеть (#139).
 static func encode_coop_relay(have: Dictionary, req: Dictionary = {}) -> PackedByteArray:
 	var s: StreamPeerBuffer = StreamPeerBuffer.new()
 	s.put_u8(CoopEv.RELAY)
@@ -1323,6 +1341,18 @@ static func encode_coop_relay(have: Dictionary, req: Dictionary = {}) -> PackedB
 	return s.data_array
 
 
+## Дуги (7 бит) и клетка активного ядра. Нет ядра — 0xFFFFFFFF (#175).
+static func encode_coop_core(arcs: int, cell: Vector2i) -> PackedByteArray:
+	var s: StreamPeerBuffer = StreamPeerBuffer.new()
+	s.put_u8(CoopEv.CORE)
+	s.put_u8(arcs & 0x7F)
+	var idx: int = 0xFFFFFFFF
+	if cell.x >= 0 and cell.y >= 0:
+		idx = cell_idx(cell)
+	s.put_u32(idx)
+	return s.data_array
+
+
 ## team — [добыто, изготовлено, фантомов, смертей]; players — [[ник, смертей], …].
 static func encode_coop_stats(team: Array, players: Array) -> PackedByteArray:
 	var s: StreamPeerBuffer = StreamPeerBuffer.new()
@@ -1337,7 +1367,8 @@ static func encode_coop_stats(team: Array, players: Array) -> PackedByteArray:
 	return s.data_array
 
 
-## {kind: DEATH, delay, wipe} · {kind: RELAY, have, req} · {kind: STATS, team, players} · {} у битого.
+## {kind: DEATH, delay, wipe} · {kind: RELAY, have, req} · {kind: CORE, arcs, cell}
+## · {kind: STATS, team, players} · {} у битого.
 static func decode_coop(b: PackedByteArray) -> Dictionary:
 	var s: StreamPeerBuffer = _reader(b)
 	if s.get_available_bytes() < 1:
@@ -1368,6 +1399,11 @@ static func decode_coop(b: PackedByteArray) -> Dictionary:
 					req[id] = r
 			d["have"] = have
 			d["req"] = req
+		CoopEv.CORE:
+			if s.get_available_bytes() != 5:
+				return {}
+			d["arcs"] = s.get_u8() & 0x7F
+			d["cell"] = _cell_or_none(s.get_u32())
 		CoopEv.STATS:
 			if s.get_available_bytes() < 17:
 				return {}
@@ -1396,8 +1432,9 @@ static func coop_schema_sample() -> PackedByteArray:
 	var parts: Array = [
 		encode_coop_death(15.0, false),
 		encode_coop_death(-1.0, true),
-		encode_coop_relay({9: 24, 3: 48}),
-		encode_coop_relay({9: 24}, {3: 60, 9: 30, 12: 2}),
+		encode_coop_relay({9: 24, 3: 48}, {9: 30, 3: 60}),
+		encode_coop_core(0x7F, Vector2i(320, 90)),
+		encode_coop_core(0x15, Vector2i(-1, -1)),
 		encode_coop_stats([120, 30, 7, 2], [["Аня", 1], ["Борис", 0]]),
 	]
 	for p in parts:

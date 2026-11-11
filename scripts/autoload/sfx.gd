@@ -39,6 +39,7 @@ const LAZY: Dictionary = {
 	"turret_zap": RATE,
 	"swarm": RATE,
 	"doppel_whisper": RATE,
+	"siren": RATE,
 }
 ## Зацикленные звуки (петля по всей длине буфера).
 const LOOPED: Dictionary = {"vent_hum": true}
@@ -226,6 +227,8 @@ func synth(id: String) -> PackedFloat32Array:
 			return _syn_swarm()
 		"doppel_whisper":
 			return _syn_doppel_whisper()
+		"siren":
+			return _syn_siren()
 	return PackedFloat32Array()
 
 
@@ -401,6 +404,22 @@ func _syn_vent_hum() -> PackedFloat32Array:
 		var s2: float = s * s
 		var hum: float = s * 0.5 + (1.0 - 2.0 * s2) * 0.25 + s * (3.0 - 4.0 * s2) * 0.12
 		data[i] = hum * k_hum + lp * k_air
+	return data
+
+
+## Сирена (#172): два тона, вверх-вниз, как тревога у базы. Короткий, не петля.
+func _syn_siren() -> PackedFloat32Array:
+	var n: int = int(0.7 * RATE)
+	var data: PackedFloat32Array = PackedFloat32Array()
+	data.resize(n)
+	var phase: float = 0.0
+	for i in n:
+		var t: float = float(i) / float(n)
+		var wob: float = 0.5 + 0.5 * sin(t * TAU * 3.0)
+		var f: float = lerpf(520.0, 880.0, wob)
+		phase += TAU * f / float(RATE)
+		var env: float = minf(1.0, t * 12.0) * (1.0 - t * 0.35)
+		data[i] = sin(phase) * 0.42 * env
 	return data
 
 

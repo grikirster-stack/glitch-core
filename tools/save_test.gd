@@ -191,7 +191,7 @@ class Runner extends Node:
 		_ok("решётка запечатала вентиляцию с прежним HP", _grate.x < 0 or (world.is_vent_sealed(_grate)
 				and float(world.vents_sealed[_grate]) < float(Balance.GRATE_HP)),
 				"HP %s" % str(world.vents_sealed.get(_grate)))
-		_ok("этап релея вернулся", int(game.objective_stage) == 3 and bool(game.relay_active)
+		_ok("этап релея вернулся", int(game.objective_stage) == 4 and bool(game.relay_active)
 				and is_equal_approx(float(game.relay_timer), float(_snap["game"]["relay_timer"])))
 		var wreck = world.sky_cache.get("wreck")
 		_ok("небесный тайник: открыт, ссылка на сундук", wreck == null or (bool(wreck.opened)
@@ -444,7 +444,7 @@ class Runner extends Node:
 		_ok("старый файл с research/tech грузится", ok_l, save_s.last_error)
 		_ok("research проигнорирован, чертежей нет", ok_l and game.blueprints.is_empty(), str(game.blueprints))
 		_ok("журнал из старого файла восстановлен", ok_l and tech.read_chapters == [0, 2], str(tech.read_chapters))
-		_ok("старый этап 4 сжат в 3", ok_l and game.objective_stage == 3, str(game.objective_stage))
+		_ok("этап 4 из файла на месте", ok_l and game.objective_stage == 4, str(game.objective_stage))
 		save_s.remove(SLOT + "_legacy")
 		_legacy_factory_case()
 

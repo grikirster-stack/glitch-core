@@ -118,7 +118,7 @@ func run() -> void:
 	ok("решётка вернулась с прежним HP", grate.x < 0 or (World.is_vent_sealed(grate)
 			and World.vents_sealed[grate] == snap["world"]["vents_sealed"][grate]),
 			"HP %s" % str(World.vents_sealed.get(grate)))
-	ok("этап релея вернулся", Game.relay_active and Game.objective_stage == 3,
+	ok("этап релея вернулся", Game.relay_active and Game.objective_stage == 4,
 			"этап %d, %.1f с" % [Game.objective_stage, Game.relay_timer])
 	for sec in ["world", "machines", "items", "player", "game", "tech", "threat"]:
 		ok("«%s» как при F5" % sec, var_to_bytes(after[sec]) == var_to_bytes(snap[sec]))

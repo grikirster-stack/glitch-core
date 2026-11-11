@@ -537,12 +537,28 @@ func _station_line(_station: String) -> Array:
 	return ["Наведи — что нужно. Клик — сделать.", C_DIM]
 
 
+## Семь дуг ядра под рецептами: горящая — цветом, тёмная — серым квадратом.
+func _draw_goal(origin: Vector2) -> void:
+	if Game.in_mission():
+		return
+	var y: float = origin.y + 496.0
+	var lit: int = Game.core_arcs & 0x7F
+	var label: String = "Дуги %d/7" % Game.core_arc_count()
+	_text(Vector2(origin.x + 16.0, y), label, 80.0, UI.FONT["small"], Color(C_DIM, 0.9))
+	for i in 7:
+		var col: Color = Color(0.35, 0.37, 0.40)
+		if (lit & (1 << i)) != 0:
+			col = Beams.COLOR[Game.CORE_ARC_COLOR[i]]
+		draw_rect(Rect2(origin.x + 96.0 + float(i) * 14.0, y - 10.0, 10.0, 10.0), col)
+
+
 func _draw_bottom(origin: Vector2) -> void:
 	_tag = "bottom"
 	var now: int = Time.get_ticks_msec()
 	if now < _toast_until and last_feedback != "":
 		var a: float = 1.0
 		_text(origin + Vector2(16, 513), last_feedback, PANEL.x - 32, UI.FONT["small"], Color(_toast_col, a))
+	_draw_goal(origin)
 	var parts: Array = []
 	if not held.is_empty():
 		parts = ["В руке: %s ×%d" % [DB.item_name(held.id), held.count], "ЛКМ по ячейке — положить",

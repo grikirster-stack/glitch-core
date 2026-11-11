@@ -103,7 +103,7 @@ var hint_text: String = ""
 # ------------------------------------------- ТЕКСТЫ ПОДСКАЗОК (читают сценарии)
 const HINT_TERMINAL: String = "[E] — выполнить задание (удерживать)"
 const HINT_TERMINAL_NO_POWER: String = "Терминал: нет питания — поставьте рядом ТЭЦ"
-const HINT_BEACON: String = "[E] — активировать релей-ядро (удерживать)"
+const HINT_BEACON: String = "[E] — запустить ядро (удерживать 3 с)"
 const HINT_CHEST: String = "[E] — открыть сундук"
 const HINT_GEN_COAL: String = "[E] — загрузить уголь в ТЭЦ"
 const HINT_GEN_SWITCH: String = "[E] — рубильник ТЭЦ (вкл/выкл) · уголь в руке + [E] — топка"
@@ -130,6 +130,9 @@ const HINT_LOAD: String = "[E] — загрузить в постройку"
 const HINT_DISMANTLE: String = "[E] (удерживать) — разобрать"
 ## Хвост подсказки: к своему действию E машины добавляется разбор.
 const HINT_DISMANTLE_TAIL: String = " · удерживать [E] — разобрать"
+## Сирена (#172): не больше шести слов — ребёнок читает кнопку, не абзац.
+const HINT_SIREN: String = "[E] — включить сирену"
+const HINT_LENS: String = "[E] — вставить линзу"
 
 ## Цепочка обучения: шаги по порядку, TUT_DONE — пройдена (строка скрыта).
 enum Tut { DIG, CRAFT, PLACE, POWER, TERMINAL, DONE }
@@ -447,6 +450,10 @@ func _compute_hint(_pos: Vector2) -> String:
 		return burner_hint(tg["node"])
 	if kind == player.ET_ACCUMULATOR:
 		return HINT_ACCUMULATOR + _dismantle_tail(tg["node"])
+	if kind == player.ET_SIREN:
+		return HINT_SIREN
+	if kind == player.ET_LENS:
+		return HINT_LENS
 	if kind == player.ET_TERMINAL:
 		return HINT_TERMINAL
 	if kind == player.ET_BEACON:
@@ -540,45 +547,21 @@ func _compute_tracker() -> void:
 	var icon: int = Game.objective_icon()
 	match st:
 		1:
-			var tot: int = 0
-			var okc: int = 0
-			for c in World.terminal_chapters:
-				if int(World.terminal_chapters[c]) >= Lore.BASE_TERMINALS:
-					continue      # главы 1–2 — терминалы базы, остальные — руины
-				tot += 1
-				if not World.terminals.has(c) or _terminal_powered(c):
-					okc += 1
-			have = okc
-			need = maxi(1, tot)
-			words = "Запитай терминалы базы"
-			tracker_detail = "терминалы %d/%d" % [okc, tot]
+			have = 0
+			need = 1
+			words = "Поставь ядро"
+			tracker_detail = "ядра нет · сундук лагеря"
 		2:
-			var have_all: int = 0
-			var miss: String = ""
-			var miss_have: int = 0
-			var miss_need: int = 1
-			var miss_id: int = -1
-			for id in Game.relay_req:
-				var n: int = int(Game.relay_req[id])
-				var h: int = Game.relay_count(id) + (player.inv.count_of(id) if player != null else 0)
-				if h >= n:
-					have_all += 1
-				elif miss_id < 0:
-					miss = " · %s %d/%d" % [DB.item_name(id), h, n]
-					miss_have = h
-					miss_need = n
-					miss_id = int(id)
-			if miss_id >= 0:
-				have = miss_have
-				need = miss_need
-				icon = miss_id
-				words = "Сдай %s" % DB.item_name(miss_id)
-			else:
-				have = have_all
-				need = maxi(1, Game.relay_req.size())
-				words = "Собери релей-ядро"
-			# Строка для замера сети (mp_relay_scale); на карточку не идёт.
-			tracker_detail = "детали %d/%d%s · [E] у ядра" % [have_all, Game.relay_req.size(), miss]
+			have = Game.core_arc_count()
+			need = 7
+			words = "Зажги семь дуг"
+			var miss: String = ", ".join(Game.core_missing_names())
+			tracker_detail = "дуги %d/7%s · [E] у ядра" % [have, (" · нет " + miss) if miss != "" else ""]
+		3:
+			have = Game.core_arc_count()
+			need = 7
+			words = "Запусти ядро"
+			tracker_detail = "семь дуг · [E] 3 с у ядра"
 		_:
 			var left: int = int(ceil(Game.relay_timer))
 			have = maxi(0, int(Balance.RELAY_TIME) - left)
@@ -858,9 +841,10 @@ func _draw_map_layer() -> void:
 			c.draw_rect(Rect2(vp - Vector2(2, 2), Vector2(5, 5)), C_DANGER)
 	stat_map_vents = nv
 	stat_map_grates = ng
-	# Релей
-	var bp: Vector2 = r.position + Vector2(World.beacon_cell.x * sx, World.beacon_cell.y * sy)
-	c.draw_rect(Rect2(bp - Vector2(3, 3), Vector2(6, 6)), C_BIO)
+	# Активное ядро (нет ядра — точка не рисуется: лагерь и так виден рельефом).
+	if Game.core_placed():
+		var bp: Vector2 = r.position + Vector2(Game.core_cell.x * sx, Game.core_cell.y * sy)
+		c.draw_rect(Rect2(bp - Vector2(3, 3), Vector2(6, 6)), C_BIO)
 	# Маячки товарищей (MP-J, § 4.7): только по правилу — рядом или в зоне питания.
 	for i in range(0, _team_dots.size(), 3):
 		var tp: Vector2 = r.position + Vector2(_team_dots[i], _team_dots[i + 1])
@@ -1556,7 +1540,7 @@ func _draw_card(font: Font) -> void:
 				"%d / %d" % [card_have, card_need], fb, C_BIO.lerp(C_LINE, 0.25))
 
 
-## Пиктограмма этапа, когда у цели нет предмета: антенна, шестерня, молния — квадратами.
+## Пиктограмма этапа, когда у цели нет предмета: куб с дугами, молния — квадратами.
 func _draw_stage_glyph(r: Rect2, stage: int) -> void:
 	var c: Color = C_BIO.lerp(C_LINE, 0.2)
 	var s: float = 6.0

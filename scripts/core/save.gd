@@ -169,6 +169,7 @@ static func apply(d: Dictionary) -> bool:
 	# без снятых машин клетки не трогает: повторная загрузка остаётся равной.
 	if not refund.is_empty():
 		_convert_world_tiles()
+	_migrate_relay_tiles()
 	_place_items(d.get("items", []))
 	var p = Game.player
 	if p != null and is_instance_valid(p) and d.has("player"):
@@ -267,6 +268,21 @@ static func _place_machines(list: Array, refund: Array = []) -> void:
 		var wreck = World.sky_cache.get("wreck")
 		if wreck != null and is_instance_valid(wreck):
 			wreck.chest = sky_chest
+
+
+## Старое сохранение: тайл RELAY_CORE — это уже не ядро. На его месте встаёт
+## постройка RainbowCore, дуги с нуля (вклад деталей старого релея не переносится).
+static func _migrate_relay_tiles() -> void:
+	var n: int = World.W * World.H
+	if World.tiles.size() != n:
+		return
+	for i in n:
+		if int(World.tiles[i]) != IDs.T.RELAY_CORE:
+			continue
+		var c: Vector2i = Vector2i(i % World.W, int(i / World.W))
+		World.set_tile(c.x, c.y, IDs.T.AIR)
+		if not World.machines.has(c):
+			MachineBase.place_machine("RainbowCore", c)
 
 
 static func _place_items(list: Array) -> void:
@@ -617,8 +633,7 @@ static func gather_join() -> Dictionary:
 	d.erase("player")
 	d.erase("players")   # MP-I (#94): чужие инвентари клиенту не нужны
 	d.erase("session")
-	# Требование релея от N (#139) — только во входе: файл сохранения его не пишет,
-	# хост пересчитывает по героям на связи.
+	# Требование релея от N (#139) — только во входе: файл его не пишет.
 	(d["game"] as Dictionary)["relay_req"] = Game.relay_req.duplicate()
 	if Game.in_mission():   # ADR-004: глава кампании — клиенту марионеткой (Campaign.net_apply)
 		d["mission"] = Game.mission.state()

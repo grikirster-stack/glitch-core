@@ -1,12 +1,11 @@
 extends "res://tools/mp/scenarios/mp_coop_base.gd"
-## mp_relay_coop (ADR-002 § 4.7 «Релей вчетвером»; решение #99; MP-I, #94).
+## mp_relay_coop (ADR-002 § 4.7; #175). Свободная сеть запускает ядро семью дугами,
+## не вкладом деталей (вклад остался у главы «Сигнал»).
 ##
-##  * вклад деталей: у Ани половина relay_req, у Бориса — остальное; Аня держит E у ядра —
-##    сдаёт своё (у всех Game.relay_have то же, COOP RELAY), отсчёт не пошёл; Борис держит
-##    E — набрано всё, отсчёт пошёл;
+##  * хост ставит ядро, шесть дуг — E не запускает; седьмая — кадр CORE, отсчёт пошёл;
 ##  * зона удержания (только в сети): все дальше MP_RELAY_HOLD_RADIUS_TILES от ядра —
 ##    отсчёт стоит (не сбрасывается), «Сигнал без присмотра» у всех; Борис вернулся —
-##    отсчёт идёт.
+##    отсчёт идёт. Радиус меряется от Game.core_cell.
 
 const WAIT: float = 6.0
 const HOLD_E: float = 3.6        ## удержание E у ядра — 3 с, с запасом
@@ -23,40 +22,26 @@ func run_host() -> void:
 	if p0 == null or p1 == null:
 		finish()
 		return
-	ok("хост у ядра", stand_next_to_beacon())
+	var cell: Vector2i = _place_core()
+	ok("ядро поставлено", cell.x >= 0 and Game.core_cell == cell, str(cell))
+	if cell.x < 0:
+		finish()
+		return
+	ok("хост у ядра", stand_next_to_cell(cell))
 	var at_core: Vector2 = player.global_position
-	ok("Аня у ядра", await teleport_proxy(p0, at_core))
-	ok("Борис у ядра", await teleport_proxy(p1, at_core))
-	# Детали: у Ани — половина каждой, у Бориса — остальное (стартовые пластины — долой).
-	var half: Dictionary = {}
-	for id in Game.relay_req:
-		var need: int = int(Game.relay_req[id])
-		for p in [p0, p1, player]:
-			p.inv.remove_id(int(id), p.inv.count_of(int(id)))
-		half[id] = need / 2
-		if need / 2 > 0:
-			p0.inv.add(int(id), need / 2)
-		p1.inv.add(int(id), need - need / 2)
+	ok("Аня у ядра", await teleport_proxy(p0, at_core + Vector2(16, 0)))
+	ok("Борис у ядра", await teleport_proxy(p1, at_core + Vector2(-16, 0)))
+	_feed(6)
+	share_put("arcs", Game.core_arcs)
 	await wait(0.3)
 	await barrier("give")
-
-	# --- Аня сдаёт половину.
-	var got: bool = await wait_until(func() -> bool: return not Game.relay_have.is_empty(), HOLD_E + 3.0)
-	await wait(0.3)
-	var exact: bool = true
-	for id in Game.relay_req:
-		if Game.relay_count(int(id)) != int(half[id]) or p0.inv.count_of(int(id)) != 0:
-			exact = false
-	ok("Аня сдала в ядро свою половину — из своего инвентаря", got and exact, str(Game.relay_have))
-	ok("набрано не всё — отсчёт не пошёл", not Game.relay_active)
-	ok("у хоста и Бориса детали на месте", p1.inv.count_of(IDs.I.IRON_PLATE) == int(Game.relay_req[IDs.I.IRON_PLATE]) - int(half[IDs.I.IRON_PLATE]))
-	share_put("half", Game.relay_have.duplicate())
+	ok("шесть дуг — отсчёт не пошёл", Game.core_arc_count() == 6 and not Game.relay_active, str(Game.core_arcs))
 	await barrier("c0_done")
 
-	# --- Борис докладывает — отсчёт пошёл.
-	var started: bool = await wait_until(func() -> bool: return Game.relay_active, HOLD_E + 3.0)
-	ok("Борис доложил остальное — релей запущен", started and Game.relay_have.is_empty())
-	ok("у Бориса детали ушли в ядро", p1.inv.count_of(IDs.I.IRON_PLATE) == 0)
+	# --- Седьмая дуга — отсчёт пошёл. E у ядра то же самое, что core_launch.
+	Game.core_feed(Beams.W)
+	var started: bool = Game.try_finish(player)
+	ok("семь дуг — ядро запущено", started and Game.relay_active and Game.core_arcs == 0x7F)
 	ok("отсчёт — %d с" % int(Balance.RELAY_TIME), absf(Game.relay_timer - Balance.RELAY_TIME) < 2.0,
 			"%.1f" % Game.relay_timer)
 	await barrier("started")
@@ -66,7 +51,7 @@ func run_host() -> void:
 	await wait(1.0)
 	ok("все у ядра — отсчёт идёт", a - Game.relay_timer > 0.5 and not Game.relay_unattended,
 			"%.2f → %.2f" % [a, Game.relay_timer])
-	var sx: int = World.beacon_cell.x
+	var sx: int = Game.core_cell.x
 	var far: Vector2 = surface_stand(sx + int(Balance.MP_RELAY_HOLD_RADIUS_TILES) + 14)
 	notes.clear()
 	player.global_position = surface_stand(sx - int(Balance.MP_RELAY_HOLD_RADIUS_TILES) - 14)
@@ -82,7 +67,7 @@ func run_host() -> void:
 	ok("хост: «Сигнал без присмотра»", notes_with("Сигнал без присмотра") == 1, str(notes))
 	await barrier("away")
 	await barrier("c_away")
-	await teleport_proxy(p1, at_core)
+	await teleport_proxy(p1, at_core + Vector2(-16, 0))
 	await wait(0.4)
 	var c: float = Game.relay_timer
 	await wait(1.0)
@@ -98,21 +83,14 @@ func run_host() -> void:
 func run_client(i: int) -> void:
 	await barrier("in")
 	await barrier("give")
-	if i == 0:
-		hold(KEY_E)
-		await wait(HOLD_E)
-		release(KEY_E)
+	var arcs = share_get("arcs")
+	ok("c%d: шесть дуг видны (COOP CORE)" % i, await wait_until(func() -> bool:
+		return arcs is int and Game.core_arcs == int(arcs) and Game.core_arc_count() == 6, WAIT),
+			str(Game.core_arcs))
 	await barrier("c0_done")
-	var half = share_get("half")
-	ok("c%d: вклад Ани виден у клиента (COOP RELAY)" % i, await wait_until(func() -> bool:
-		return half is Dictionary and Game.relay_have == half, WAIT), "%s / %s" % [str(Game.relay_have), str(half)])
-	if i == 1:
-		hold(KEY_E)
-		await wait(HOLD_E)
-		release(KEY_E)
 	await barrier("started")
-	ok("c%d: релей запущен, вклад обнулён" % i, await wait_until(func() -> bool:
-		return Game.relay_active and Game.relay_have.is_empty(), WAIT))
+	ok("c%d: ядро запущено, семь дуг" % i, await wait_until(func() -> bool:
+		return Game.relay_active and Game.core_arcs == 0x7F, WAIT), str(Game.core_arcs))
 	await barrier("away")
 	ok("c%d: у ядра никого — «без присмотра», отсчёт стоит" % i, await wait_until(func() -> bool:
 		return Game.relay_unattended, WAIT))
@@ -125,3 +103,29 @@ func run_client(i: int) -> void:
 	ok("c%d: Борис у ядра — отсчёт идёт" % i, await wait_until(func() -> bool:
 		return not Game.relay_unattended, WAIT))
 	finish()
+
+
+func _place_core() -> Vector2i:
+	var cell: Vector2i = World.beacon_cell + Vector2i(2, 0)
+	World.set_tile(cell.x, cell.y, IDs.T.AIR)
+	if not MachineBase.place_machine("RainbowCore", cell):
+		return Vector2i(-1, -1)
+	return cell
+
+
+func _feed(n: int) -> void:
+	var colors: Array = [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M]
+	for i in mini(n, colors.size()):
+		Game.core_feed(colors[i])
+
+
+func stand_next_to_cell(cell: Vector2i) -> bool:
+	var base: int = cell.y + 1
+	for dx in [1, -1, 2, -2]:
+		var px: int = cell.x + int(dx)
+		if not World.is_solid_cell(Vector2i(px, base)):
+			World.set_tile(px, base, IDs.T.STEEL)
+		player.global_position = Vector2(float(px * World.TILE) + 8.0, float(base * World.TILE) - 11.0)
+		player.vel = Vector2.ZERO
+		return true
+	return false

@@ -31,8 +31,18 @@ var phantoms_alive: int = 0
 var game_time: float = 0.0
 var player = null                      ## Ссылка на игрока (без типа — цикла зависимостей).
 var relay_req: Dictionary = {}
+## Вклад деталей в ядро (глава «Сигнал», сеть #139). Свободная игра его не требует:
+## там запуск — семь дуг. Старый файл без словаря читается как пустой вклад.
+var relay_have: Dictionary = {}
 var relay_active: bool = false
 var relay_timer: float = 0.0
+## Семь дуг Радужного ядра (ADR-005 § 6.3, #175): бит i — цвет 1 << i зажжён.
+## Живут в забеге, не в блоке: ядро сняли — дуги не гаснут.
+var core_arcs: int = 0
+## Клетка активного ядра. (-1, -1) — ядра нет, возрождение у капсулы лагеря.
+var core_cell: Vector2i = Vector2i(-1, -1)
+## Все поставленные ядра, последнее — активное.
+var core_cells: Array[Vector2i] = []
 var stats_mined: int = 0
 var stats_crafted: int = 0
 var stats_kills: int = 0
@@ -67,6 +77,9 @@ func reset_run() -> void:
 	game_time = 0.0
 	relay_active = false
 	relay_timer = 0.0
+	core_arcs = 0
+	core_cell = Vector2i(-1, -1)
+	core_cells = []
 	stats_mined = 0
 	stats_crafted = 0
 	stats_kills = 0
@@ -79,8 +92,8 @@ func reset_run() -> void:
 	# --- Цель и релей (#32)
 	relay_speed = 1.0
 	_objective_t = 0.0
-	relay_have = {}                 # вклад деталей в ядро (MP-I, #94)
 	relay_req = DB.relay_req.duplicate()   # требование от N (#139) — с одиночного
+	relay_have = {}
 	relay_unattended = false
 	signal_sent = false             # бесконечная игра (#174)
 	signal_sends = 0
@@ -295,36 +308,36 @@ func is_powered(_p: Vector2) -> bool:
 	return true
 
 
-# ------------------------------------------------- ЦЕЛЬ И РЕЛЕЙ (ADR-001 § 4.7, #32)
-## Три этапа цели (временно, #169: «собрать данные» снят вместе с деревом;
-## F1 перепишет этапы окончательно). Этап выводится из состояния забега раз в
+# ------------------------------------------------- ЦЕЛЬ И ЯДРО (ADR-005 § 6.3, #175)
+## Четыре этапа свободной игры. Этап выводится из состояния забега раз в
 ## OBJECTIVE_CHECK_INTERVAL и только растёт:
-##   1. Запитать станцию — оба терминала базы прочитаны (читаются они только
-##      под питанием); главы 1–2 дают сами терминалы, релей отзывается.
-##   2. Собрать релей — E у ядра (держать 3 с) сдаёт из инвентаря героя то, чего
-##      ядру ещё не хватает (relay_have, ADR-002 § 4.7, MP-I #94 — во всех режимах);
-##      набрано всё — отсчёт пошёл. С полным набором — как раньше, одним удержанием.
-##   3. Удержать сигнал — Balance.RELAY_TIME с; директор угрозы в режиме релея
+##   1. Поставить ядро — постройки RainbowCore ещё нет.
+##   2. Зажечь семь дуг — луч чистого цвета в клетку ядра ставит бит core_arcs.
+##   3. Запустить ядро — E 3 с у активного ядра, если горят все семь.
+##   4. Удержать сигнал — Balance.RELAY_TIME с; директор угрозы в режиме релея
 ##      (cap RELAY_HOLD_CAP, двойник — сразу после разведчика). Победа → эпилог Lore.
-## Этап можно перескочить (детали из тайников): сигнал objective_changed тогда
-## уходит один раз — сразу с новым номером.
-## Старое сохранение с этапом 4 («удержать») при загрузке сжимается в 3.
+## Терминалы базы в этапах не участвуют: это журнал и подарок (D2, #169).
+## Старое сохранение с этапом > 4 сжимается в 4.
 
-const OBJECTIVE_STAGES: int = 3
+const OBJECTIVE_STAGES: int = 4
 const OBJECTIVE_CHECK_INTERVAL: float = 0.25
 ## Названия этапов для HUD и инвентаря (индекс — номер этапа).
-const OBJECTIVE_TITLES: Array = ["", "ЗАПИТАТЬ СТАНЦИЮ", "СОБРАТЬ РЕЛЕЙ", "УДЕРЖАТЬ СИГНАЛ"]
+const OBJECTIVE_TITLES: Array = ["", "ПОСТАВЬ ЯДРО", "ЗАЖГИ СЕМЬ ДУГ", "ЗАПУСТИ ЯДРО", "УДЕРЖИ СИГНАЛ"]
+## Имена семи дуг: индекс — бит core_arcs, значение — маска Beams.
+const CORE_ARC_COLOR: Array[int] = [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M, Beams.W]
+## Все семь дуг горят.
+const CORE_ARCS_FULL: int = 0x7F
 ## Отметки отсчёта (секунд до конца), на которых игроку напоминают, сколько держаться.
 const RELAY_REMINDERS: Array = [150, 120, 90, 60, 30, 10]
 const RELAY_COLOR: Color = Color(0.4, 1.0, 0.8)
 
-## Ускорение отсчёта релея — для тестов (сценарий relay). В игре всегда 1.
+## Ускорение отсчёта удержания — для тестов (сценарий relay). В игре всегда 1.
 var relay_speed: float = 1.0
 var _objective_t: float = 0.0
-## Вклад деталей в релей-ядро: id → сколько уже сдано (MP-I, #94). Пишется в сохранение.
-var relay_have: Dictionary = {}
 ## Сеть: отсчёт стоит — у ядра нет живого не спрятавшегося героя (§ 4.7, «зона удержания»).
 var relay_unattended: bool = false
+## Кот уже выходил в это удержание (#176). Сбрасывается вместе с отсчётом.
+var _core_cat_hatched: bool = false
 ## Сигнал уже уходил на орбиту (ADR-005 § 6.4, #174): игрок остался на планете.
 ## Пишется в сохранение и в глобальный пакет. Повторный запуск ядра возможен.
 var signal_sent: bool = false
@@ -357,73 +370,66 @@ func in_mission() -> bool:
 	return mission != null and is_instance_valid(mission)
 
 
-## Этап, до которого игрок дошёл: первый невыполненный, релей запущен — третий.
+## Этап, до которого игрок дошёл: ядра нет — 1, дуг не семь — 2, не запущено — 3.
 func objective_target() -> int:
 	if relay_active or state == State.WON:
-		return 3
-	if not base_terminals_done():
+		return 4
+	if not core_placed():
 		return 1
-	return 2
+	if (core_arcs & CORE_ARCS_FULL) != CORE_ARCS_FULL:
+		return 2
+	return 3
 
 
-## Оба терминала базы отработали (главы 1–2 у Lore — терминалы базы).
-## Отработавший терминал уходит из World.terminals, но остаётся в terminal_chapters.
-func base_terminals_done() -> bool:
+## Стоит ли хоть одно ядро (активная клетка жива).
+func core_placed() -> bool:
+	return core_cell.x >= 0 and World.machines.get(core_cell) is RainbowCore
+
+
+## Сколько дуг уже горит (0..7).
+func core_arc_count() -> int:
 	var n: int = 0
-	for c in World.terminal_chapters.keys():
-		if int(World.terminal_chapters[c]) >= Lore.BASE_TERMINALS:
-			continue
-		if World.terminals.has(c):
-			return false
-		n += 1
-	return n > 0
+	var bits: int = core_arcs & CORE_ARCS_FULL
+	while bits != 0:
+		n += bits & 1
+		bits >>= 1
+	return n
 
 
-## Картинка этапа для карточки «Сейчас»: IDs.I или −1 (тогда HUD рисует пиктограмму).
-## В главе картинку даёт цель главы. Этап 3 — антенна релея; этапы 1–2 без предмета.
+## Имя цвета дуги (маска Beams) или «?» у чужого бита.
+func core_color_name(color: int) -> String:
+	if color > 0 and color < Beams.NAME.size():
+		return Beams.NAME[color]
+	return "?"
+
+
+## Имена цветов, которых ещё нет среди семи дуг.
+func core_missing_names() -> Array:
+	var out: Array = []
+	for i in CORE_ARC_COLOR.size():
+		if (core_arcs & (1 << i)) == 0:
+			out.append(core_color_name(CORE_ARC_COLOR[i]))
+	return out
+
+
+## Картинка этапа для карточки «Сейчас»: ядро, пока оно есть в предметах.
+## В главе картинку даёт цель главы.
 func objective_icon() -> int:
 	if in_mission():
 		return -1
-	var s: int = clampi(objective_stage, 1, OBJECTIVE_STAGES)
-	if relay_active:
-		s = OBJECTIVE_STAGES
-	if s == 3:
-		return IDs.I.RELAY_ANTENNA
-	return -1
+	return IDs.I.RAINBOW_CORE
 
 
-## Куда вести маркер карточки. Этап 3 и удержание — релей-ядро; этап 1 — ближайший
-## непрочитанный терминал базы. Нет точки — Vector2.INF. В главе точку даёт цель.
+## Куда вести маркер карточки. Ядро стоит — к нему; нет — к сундуку лагеря.
+## Нет точки — Vector2.INF. В главе точку даёт цель.
 func objective_at() -> Vector2:
 	if in_mission():
 		return Vector2.INF
-	var s: int = clampi(objective_stage, 1, OBJECTIVE_STAGES)
-	if relay_active:
-		s = OBJECTIVE_STAGES
-	# Этап 2 — собрать релей у ядра; этап 3 — удержать сигнал там же.
-	if s == 2 or s == 3:
-		return World.cell_to_world(World.beacon_cell)
-	if s == 1:
-		return _nearest_unread_terminal()
+	if core_placed():
+		return World.cell_to_world(core_cell)
+	if World.camp_chest_cell.x >= 0:
+		return World.cell_to_world(World.camp_chest_cell)
 	return Vector2.INF
-
-
-## Ближайший к герою терминал базы, который ещё не прочитан (главы 1–2).
-func _nearest_unread_terminal() -> Vector2:
-	var best: Vector2 = Vector2.INF
-	var best_d: float = INF
-	var origin: Vector2 = player.global_position if player != null else World.cell_to_world(World.beacon_cell)
-	for c in World.terminal_chapters.keys():
-		if int(World.terminal_chapters[c]) >= Lore.BASE_TERMINALS:
-			continue
-		if not World.terminals.has(c):
-			continue
-		var p: Vector2 = World.cell_to_world(c)
-		var d: float = origin.distance_squared_to(p)
-		if d < best_d:
-			best_d = d
-			best = p
-	return best
 
 
 ## Строка этапа для HUD/инвентаря: «ЦЕЛЬ 2/3: СОБРАТЬ РЕЛЕЙ», на удержании — с отсчётом.
@@ -437,20 +443,24 @@ func objective_text() -> String:
 
 func _enter_stage(s: int) -> void:
 	set_objective_stage(s)
-	var bp: Vector2 = World.cell_to_world(World.beacon_cell)
+	var bp: Vector2 = _core_pos()
 	match s:
 		1:
-			notify("Цель 1/3: запитать станцию — оба терминала базы под питанием.", Color(0.5, 0.95, 0.8))
+			notify("Цель 1/4: поставь Радужное ядро. Оно в сундуке лагеря.", Color(0.5, 0.95, 0.8))
 		2:
-			notify("Станция ожила: релей отзывается. Цель 2/3: собрать релей-ядро.", RELAY_COLOR)
+			notify("Ядро стоит. Цель 2/4: зажги семь дуг — по лучу каждого цвета.", RELAY_COLOR)
+			UI.flash_ring(bp, RELAY_COLOR)
+		3:
+			notify("Семь дуг горят. Цель 3/4: удерживай E у ядра 3 с.", RELAY_COLOR)
 			UI.flash_ring(bp, RELAY_COLOR)
 			Sfx.play("power", -8.0)
-		3:
-			notify("Цель 3/3: удержать сигнал %d с. Они идут." % int(RELAY_TIME), RELAY_COLOR)
+		4:
+			notify("Цель 4/4: удержать сигнал %d с. Они идут." % int(RELAY_TIME), RELAY_COLOR)
 			UI.flash_ring(bp, RELAY_COLOR)
 
 
 func _tick_relay(dt: float) -> void:
+	_hatch_cat_if_night()
 	if not _relay_hold_ok():   # СЕТЬ (ADR-002 § 4.7): у ядра никого — отсчёт стоит
 		return
 	var before: float = relay_timer
@@ -471,6 +481,16 @@ func _tick_relay(dt: float) -> void:
 		set_state(State.WON)
 
 
+## Первая ночь удержания: кот выходит из активного ядра. Поведение — #176.
+func _hatch_cat_if_night() -> void:
+	if _core_cat_hatched or not is_night() or not core_placed():
+		return
+	_core_cat_hatched = true
+	var core = World.machines.get(core_cell)
+	if core != null and core.has_method("cat_hatch"):
+		core.cat_hatch()
+
+
 ## Итоги забега для Lore.epilogue(): смены, убитые фантомы, смерти, время.
 ## signal_sends > 1 — повторное удержание, эпилог помечает «вторая передача».
 func epilogue_stats() -> Dictionary:
@@ -489,10 +509,18 @@ func continue_run() -> void:
 	notify("Остаёмся. Смена %d · сигнал отправлен." % day_number, Color(0.4, 1.0, 0.8))
 
 
-## Попытка запустить релей-ядро: сначала вклад деталей героя hero (по умолчанию —
-## Game.player), потом запуск, если набрано всё. Возвращает true, если запуск прошёл.
+## Попытка запустить ядро (E 3 с). Свободная игра — семь дуг. Глава и сеть
+## сначала сдают детали (relay_req), потом запускают, если набрано всё.
+## hero — кто держит E. true — отсчёт пошёл.
 func try_finish(hero = null) -> bool:
-	if not Net.is_authority():   # СЕТЬ (ADR-002): релей запускает хост
+	if in_mission():
+		return _try_finish_parts(hero)
+	return core_launch()
+
+
+## Глава «Сигнал» и сеть: вклад деталей, затем запуск. Свободную игру не трогает.
+func _try_finish_parts(hero = null) -> bool:
+	if not Net.is_authority():
 		return false
 	if hero == null:
 		hero = player
@@ -515,7 +543,7 @@ func try_finish(hero = null) -> bool:
 	relay_timer = RELAY_TIME
 	notify("РЕЛЕЙ ЗАПУЩЕН! Держитесь %d секунд." % int(RELAY_TIME), RELAY_COLOR)
 	Sfx.play("power", -2.0)
-	update_objective()          # этап 3 — сразу, а не через 0.25 с
+	update_objective()
 	return true
 
 
@@ -524,8 +552,7 @@ func relay_count(id: int) -> int:
 	return int(relay_have.get(id, 0))
 
 
-## Вклад деталей (ADR-002 § 4.7, MP-I #94): из инвентаря героя — то, чего ядру ещё не
-## хватает. Итог — строки «Предмет ×N» сданного (пусто — нечего было сдать).
+## Вклад деталей из инвентаря героя — то, чего ядру ещё не хватает.
 func relay_deposit(hero) -> Array:
 	var given: Array = []
 	if not Net.is_authority() or hero == null or relay_active:
@@ -543,8 +570,7 @@ func relay_deposit(hero) -> Array:
 	return given
 
 
-## Уведомление релея: в одиночной — как раньше (Game.notify). В сети: team — всем с
-## ником героя, иначе — лично ему (у прокси — владельцу).
+## Уведомление вклада: в одиночной — Game.notify. В сети — команде или лично.
 func _relay_say(hero, text: String, color: Color, team: bool) -> void:
 	if not Net.is_online():
 		notify(text, color)
@@ -552,6 +578,123 @@ func _relay_say(hero, text: String, color: Color, team: bool) -> void:
 		NetCoop.team_notify("%s: %s" % [String(hero.nick), text], color)
 	else:
 		hero._notify(text, color)
+
+
+## Запуск ядра: семь дуг, ядро стоит, отсчёт ещё не идёт. Иначе — перечень
+## недостающих цветов. true — отсчёт пошёл.
+func core_launch() -> bool:
+	if not Net.is_authority():   # СЕТЬ (ADR-002): ядро запускает хост
+		return false
+	if relay_active or not core_placed():
+		return false
+	if (core_arcs & CORE_ARCS_FULL) != CORE_ARCS_FULL:
+		var missing: Array = core_missing_names()
+		notify("Не хватает дуг: " + ", ".join(missing), Color(1.0, 0.6, 0.4))
+		return false
+	relay_active = true
+	relay_timer = RELAY_TIME
+	_core_cat_hatched = false
+	notify("ЯДРО ЗАПУЩЕНО! Держитесь %d секунд." % int(RELAY_TIME), RELAY_COLOR)
+	Sfx.play("power", -2.0)
+	UI.flash_ring(_core_pos(), Color.WHITE)
+	_net_core_changed()
+	update_objective()          # этап 4 — сразу, а не через 0.25 с
+	return true
+
+
+## Луч чистого цвета попал в ядро. Бит ставится один раз, дуга не гаснет.
+func core_feed(color: int) -> void:
+	if not Net.is_authority():
+		return
+	var bit: int = _arc_bit(color)
+	if bit == 0 or (core_arcs & bit) != 0:
+		return
+	core_arcs |= bit
+	var n: int = core_arc_count()
+	notify("Дуга «%s» зажглась (%d/7)" % [core_color_name(color), n], Beams.COLOR[color])
+	UI.flash_ring(_core_pos(), Beams.COLOR[color])
+	_net_core_changed()
+	update_objective()
+
+
+## Бит дуги по маске цвета. 0 — это не один из семи чистых.
+func _arc_bit(color: int) -> int:
+	var i: int = CORE_ARC_COLOR.find(color)
+	if i < 0:
+		return 0
+	return 1 << i
+
+
+## Поставили ядро: последнее становится активным. Дуги не трогаем.
+func core_note_placed(c: Vector2i) -> void:
+	if not Net.is_authority():
+		return
+	core_cells.erase(c)
+	core_cells.append(c)
+	core_cell = c
+	_net_core_changed()
+	update_objective()
+
+
+## Сняли ядро. Активным становится другое, если есть.
+func core_note_removed(c: Vector2i) -> void:
+	if not Net.is_authority():
+		return
+	core_cells.erase(c)
+	if core_cell != c:
+		return
+	core_cell = core_cells[core_cells.size() - 1] if not core_cells.is_empty() else Vector2i(-1, -1)
+	_net_core_changed()
+
+
+## Мировая точка активного ядра (нет ядра — центр лагеря).
+func _core_pos() -> Vector2:
+	if core_cell.x >= 0:
+		return World.cell_to_world(core_cell)
+	return World.cell_to_world(World.beacon_cell)
+
+
+## Куда встаёт герой после смерти: клетка над ядром, если свободна, иначе
+## ближайшая свободная. Нет ядра — капсула лагеря.
+func respawn_point() -> Vector2:
+	if not core_placed():
+		return World.spawn_point
+	var above: Vector2i = core_cell + Vector2i(0, -1)
+	if _stand_free(above):
+		return _stand_pos(above)
+	var best: Vector2i = Vector2i(-1, -1)
+	var best_d: int = 1 << 30
+	for r in range(1, 8):
+		for dy in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if maxi(absi(dx), absi(dy)) != r:
+					continue
+				var c: Vector2i = core_cell + Vector2i(dx, dy)
+				if not _stand_free(c):
+					continue
+				var d: int = absi(dx) + absi(dy)
+				if d < best_d:
+					best_d = d
+					best = c
+		if best.x >= 0:
+			break
+	if best.x < 0:
+		return World.spawn_point
+	return _stand_pos(best)
+
+
+## Герой (12×22) помещается в клетке, не в стене и не в постройке.
+func _stand_free(c: Vector2i) -> bool:
+	if not World.in_bounds(c.x, c.y):
+		return false
+	if World.machines.has(c):
+		return false
+	var p: Vector2 = _stand_pos(c)
+	return not World.rect_solid(Rect2(p - Player.SIZE * 0.5, Player.SIZE))
+
+
+func _stand_pos(c: Vector2i) -> Vector2:
+	return World.cell_to_world(c) + Vector2(0.0, -4.0)
 
 
 # ------------------------------------------------- СОХРАНЕНИЕ (#37)
@@ -563,7 +706,8 @@ const SAVE_FIELDS: Array[String] = [
 	"game_time", "relay_active", "relay_timer", "stats_mined", "stats_crafted",
 	"stats_kills", "stats_deaths", "objective_stage",
 	"relay_speed",                       # цель и релей (#32)
-	"relay_have",                        # вклад деталей в релей (MP-I, #94)
+	"relay_have",                        # вклад деталей (глава и сеть, #94)
+	"core_arcs", "core_cell",            # дуги и активное ядро (#175)
 	"signal_sent", "signal_sends",       # бесконечная игра (#174)
 	"blueprints",                        # чертежи команды (ADR-005 § 7.1, #169)
 ]
@@ -573,8 +717,9 @@ func save_state() -> Dictionary:
 	var d: Dictionary = {}
 	for f in SAVE_FIELDS:
 		d[f] = get(f)
-	d["relay_have"] = relay_have.duplicate()   # снимок, а не ссылка на живой словарь
+	d["relay_have"] = relay_have.duplicate()
 	d["blueprints"] = blueprints.duplicate()
+	d["core_cell"] = core_cell
 	return d
 
 
@@ -583,18 +728,21 @@ func load_state(d: Dictionary) -> void:
 	for f in SAVE_FIELDS:
 		if d.has(f):
 			set(f, d[f])
-	if not d.has("relay_have"):     # файл до MP-I (#94): вклада ещё не было
+	if not d.has("relay_have"):
 		relay_have = {}
 	relay_have = relay_have.duplicate()
+	if d.has("core_cell"):
+		core_cell = d["core_cell"]
+	core_arcs = int(d.get("core_arcs", core_arcs)) & 0x7F
 	# Поле "research" старых сохранений игнорируется: счётчик данных снят (#169).
 	if d.has("blueprints"):
 		blueprints = PackedStringArray(d["blueprints"])
 	else:
 		blueprints = PackedStringArray()
-	# Старый этап 4 («удержать сигнал») — теперь третий. Этап 2 «собрать данные»
-	# снят: после запитанной станции сразу сборка релея, если он ещё не запущен.
-	if objective_stage > OBJECTIVE_STAGES or (objective_stage == 2 and relay_active):
+	# Старый этап > 4 сжимается в удержание.
+	if objective_stage > OBJECTIVE_STAGES:
 		objective_stage = OBJECTIVE_STAGES
+	_rebuild_cores()
 	# Требование от N (#139): клиент берёт хостово из снимка входа, хост и одиночная
 	# считают сами (не ниже загруженного вклада).
 	if Net.is_client():
@@ -657,8 +805,8 @@ func _net_client_process(delta: float) -> void:
 
 
 ## Хост: глобальное состояние для NetCodec.encode_global (hash кладёт NetWorld).
-## Поле research в пакете — заглушка 0: длина global не меняется без бампа PROTO.
-## Чертежи в пакет не кладём — битовая маска ждёт очереди PROTO (эпик #182).
+## Поле research в пакете — заглушка 0. Чертежи в пакет не кладём — битовая маска
+## ждёт очереди PROTO (эпик #182). Дуги и клетка ядра — хвост global (#175, PROTO 15).
 func net_global() -> Dictionary:
 	return {"time": time_of_day, "day": day_number, "state": state, "research": 0,
 			"stage": objective_stage, "relay_active": relay_active, "relay_timer": relay_timer,
@@ -666,7 +814,8 @@ func net_global() -> Dictionary:
 			# бит 1 — сигнал уже отправлен (#174): отдельного поля в пакете нет, PROTO не растёт
 			"threat": (1 if Threat.active else 0) | (2 if signal_sent else 0),
 			"threat_budget": Threat.budget,
-			"brownout": false, "game_time": game_time}
+			"brownout": false, "game_time": game_time,
+			"core_arcs": core_arcs & CORE_ARCS_FULL, "core_cell": core_cell}
 
 
 ## Клиент: глобальный пакет хоста. Рассвет и этап цели — с теми же уведомлениями,
@@ -690,6 +839,10 @@ func net_apply_global(d: Dictionary) -> void:
 		task_completed.emit(tasks_total, tasks_done)
 	relay_active = bool(d["relay_active"])
 	relay_timer = float(d["relay_timer"])
+	if d.has("core_arcs"):
+		core_arcs = int(d["core_arcs"]) & CORE_ARCS_FULL
+	if d.has("core_cell"):
+		core_cell = d["core_cell"]
 	var stage: int = int(d["stage"])
 	if stage > objective_stage:
 		_enter_stage(stage)
@@ -727,7 +880,7 @@ func _relay_hold_ok() -> bool:
 
 ## Есть ли у ядра живой не спрятавшийся герой на связи.
 func relay_attended() -> bool:
-	var bp: Vector2 = World.cell_to_world(World.beacon_cell)
+	var bp: Vector2 = _core_pos()
 	var r: float = Balance.MP_RELAY_HOLD_RADIUS_TILES * float(World.TILE)
 	for h in players:
 		if is_instance_valid(h) and h.is_inside_tree() and h.net_targetable() \
@@ -736,17 +889,29 @@ func relay_attended() -> bool:
 	return false
 
 
-## Хост: вклад в ядро или требование изменились — всем (канал 0, после снимка — по порядку).
+## Хост: вклад деталей или требование изменились — кадр RELAY, как до ядра (#139).
 func _net_relay_changed() -> void:
 	if Net.is_host():
 		Net.send_on(0, NetCodec.Msg.COOP, NetCodec.encode_coop_relay(relay_have, relay_req))
 
 
-## Клиент: вклад в ядро и требование с хоста (#139: требование от N считает хост).
+## Клиент: вклад и требование с хоста.
 func net_apply_relay(have: Dictionary, req: Dictionary) -> void:
 	relay_have = have.duplicate()
 	if not req.is_empty() and req != relay_req:
 		relay_req = req.duplicate()
+
+
+## Хост: дуги или клетка ядра изменились — кадр CORE (#175).
+func _net_core_changed() -> void:
+	if Net.is_host():
+		Net.send_on(0, NetCodec.Msg.COOP, NetCodec.encode_coop_core(core_arcs, core_cell))
+
+
+## Клиент: дуги и клетка активного ядра с хоста.
+func net_apply_core(arcs: int, cell: Vector2i) -> void:
+	core_arcs = arcs & CORE_ARCS_FULL
+	core_cell = cell
 
 
 # --- Требование релея от N (#139; ADR-002 § 4.7 «Релей вчетвером»).
@@ -776,6 +941,18 @@ func relay_req_for(n: int) -> Dictionary:
 ## Героев в сессии (в одиночной — 1).
 func hero_count() -> int:
 	return maxi(players.size(), 1)
+
+
+## После загрузки: какие ядра реально стоят. Активное из файла, если оно живо.
+func _rebuild_cores() -> void:
+	core_cells = []
+	for c in World.machines.keys():
+		if World.machines[c] is RainbowCore:
+			core_cells.append(c)
+	if core_cell.x >= 0 and not (World.machines.get(core_cell) is RainbowCore):
+		core_cell = core_cells[core_cells.size() - 1] if not core_cells.is_empty() else Vector2i(-1, -1)
+	elif core_cell.x < 0 and not core_cells.is_empty():
+		core_cell = core_cells[core_cells.size() - 1]
 
 
 ## Хост и одиночная: пересчитать требование по числу героев. Изменилось — клиентам
