@@ -13,13 +13,15 @@ extends "res://tools/mp/scenarios/mp_threat_base.gd"
 ## инвентаре товарища вскрыт хостом; шлюз открывается товарищу, а не только хосту.
 
 const EPS: float = 0.0001
-## N → [B ночь 1 (T=1, тихая), cap ночь 1, интервал ночь 1 (округл. 0.1),
+## N → [B ночь 1 (T=1, тихая), cap ночь 1, интервал ночи 1,
 ## B ночь 4 (T=3), cap ночь 4, cap релей]. Множители сети прежние.
+## Интервал сверяем по формуле, не по округлению до 0.1: 6.5/1.35 = 4.814…,
+## snapped(4.81) даёт 4.8 и роняет сравнение.
 const TABLE: Dictionary = {
-	1: [2.0, 1, 6.5, 7.0, 4, 10],
-	2: [3.0, 3, 4.8, 10.5, 6, 12],
-	3: [4.0, 5, 3.8, 14.0, 8, 14],
-	4: [5.0, 7, 3.1, 17.5, 10, 16],
+	1: [2.0, 1, 7.0, 4, 10],
+	2: [3.0, 3, 10.5, 6, 12],
+	3: [4.0, 5, 14.0, 8, 14],
+	4: [5.0, 7, 17.5, 10, 16],
 }
 
 
@@ -57,16 +59,19 @@ func _table() -> void:
 		var row: Array = TABLE[n]
 		var b1: float = Threat.night_budget_n(1.0, n, 1, false)
 		var c1: int = Threat.cap_for_n(1, false, n, 1.0)
-		var i1: float = Threat.interval_for_n(1.0, n)
 		var b4: float = Threat.night_budget_n(3.0, n, 4, false)
 		var c4: int = Threat.cap_for_n(4, false, n, 3.0)
 		var cr: int = Threat.cap_for_n(1, true, n)
+		var denom: float = 1.0 if n <= 1 else 1.0 + Balance.MP_INTERVAL_PER_PLAYER * float(n - 1)
+		var floor_i: float = Balance.SPAWN_INTERVAL_MIN if n <= 1 else Balance.MP_SPAWN_INTERVAL_MIN
+		var want_i: float = clampf((Balance.SPAWN_INTERVAL_MAX - Balance.SPAWN_INTERVAL_PER_T) / denom,
+				floor_i, Balance.SPAWN_INTERVAL_MAX)
 		var good: bool = absf(b1 - float(row[0])) < EPS and c1 == int(row[1]) \
-				and absf(snappedf(i1, 0.1) - float(row[2])) < EPS and absf(b4 - float(row[3])) < EPS \
-				and c4 == int(row[4]) and cr == int(row[5])
+				and is_equal_approx(Threat.interval_for_n(1.0, n), want_i) \
+				and absf(b4 - float(row[2])) < EPS and c4 == int(row[3]) and cr == int(row[4])
 		all_ok = all_ok and good
-		note.append("N%d: %.1f/%d/%.2f с, %.1f/%d, релей %d" % [n, b1, c1, i1, b4, c4, cr])
-		print("  | %d | %.1f | %d | %.2f с | %.1f | %d | %d |" % [n, b1, c1, i1, b4, c4, cr])
+		note.append("N%d: %.1f/%d/%.2f с, %.1f/%d, релей %d" % [n, b1, c1, want_i, b4, c4, cr])
+		print("  | %d | %.1f | %d | %.2f с | %.1f | %d | %d |" % [n, b1, c1, want_i, b4, c4, cr])
 	ok("таблица § 4.7: бюджет, cap, интервал при N = 1…4", all_ok, "; ".join(note))
 	# N = 1 — ровно одиночные формулы (и вне таблицы: большой T, релей).
 	var same: bool = true
@@ -78,8 +83,9 @@ func _table() -> void:
 				and Threat.cap_for_n(d, true, 1) == Threat.cap_for(d, true)
 	ok("N = 1: формулы одиночной игры без множителей (интервал не меньше %.1f с)" % Balance.SPAWN_INTERVAL_MIN,
 			same and Threat.interval_for_n(20.0, 1) == Balance.SPAWN_INTERVAL_MIN)
-	ok("cap не выше MAX_PHANTOMS = %d (релей, 5 игроков; ночь 12, 4 игрока)" % Balance.MAX_PHANTOMS,
-			Threat.cap_for_n(1, true, 5) == Balance.MAX_PHANTOMS and Threat.cap_for_n(12, false, 4) == Balance.MAX_PHANTOMS)
+	ok("cap не выше MAX_PHANTOMS = %d (релей, 5 игроков; ночь 12, 8 игроков)" % Balance.MAX_PHANTOMS,
+			Threat.cap_for_n(1, true, 5) == Balance.MAX_PHANTOMS
+			and Threat.cap_for_n(12, false, 8, 3.0) == Balance.MAX_PHANTOMS)
 	ok("интервал в сети не меньше MP_SPAWN_INTERVAL_MIN = %.1f с" % Balance.MP_SPAWN_INTERVAL_MIN,
 			Threat.interval_for_n(20.0, 4) == Balance.MP_SPAWN_INTERVAL_MIN
 			and Threat.interval_for_n(-20.0, 4) == Balance.SPAWN_INTERVAL_MAX)

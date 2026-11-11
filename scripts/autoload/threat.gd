@@ -127,7 +127,8 @@ static func cap_for(day: int, relay: bool, t: float = -1.0) -> int:
 	if quiet_night(day, false):
 		return Balance.QUIET_ALIVE_CAP
 	var level: float = t if t >= 0.0 else float(mini(day, Balance.THREAT_DAY_CAP))
-	return mini(Balance.CAP_BASE + int(floor(level)), Balance.CAP_MAX)
+	var cap: int = Balance.CAP_BASE + int(floor(level))
+	return mini(cap, Balance.CAP_MAX)
 
 
 ## Пауза между появлениями.
@@ -351,10 +352,16 @@ func _begin_night() -> void:
 	night_players = players_online()
 	budget = night_budget_n(threat_level(), night_players, night_day, Game.relay_active)
 	roster = plan_roster(budget, night_day, Game.relay_active, _doppels_alive())
-	# Эхо — первым (разведка), остальное вперемешку.
+	# Эхо — первым (разведка), остальное вперемешку. Рой, если открыт, — сразу
+	# за разведчиком: иначе эхо занимает cap, и стая не выходит за ночь
+	# (ночь 3, две горелки, сид 4242).
 	var head: Array[String] = []
 	if not roster.is_empty() and roster[0] == "echo":
 		head.append(roster.pop_front())
+	var swarm_at: int = roster.find("swarm")
+	if swarm_at >= 0:
+		head.append(roster[swarm_at])
+		roster.remove_at(swarm_at)
 	_shuffle(roster)
 	head.append_array(roster)
 	roster = head

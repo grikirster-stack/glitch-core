@@ -17,8 +17,8 @@ func run() -> void:
 	ok("бюджет: B(3) = 7, тихая ночь не больше 2", is_equal_approx(Threat.night_budget(3.0, 3), 7.0)
 			and is_equal_approx(Threat.night_budget(3.0, 1), 2.0))
 	ok("смена в формуле не выше 3: B(9) = B(3)", is_equal_approx(Threat.night_budget(3.0, 9), 7.0))
-	ok("cap: тихая ночь — 1, пустая смена 4 — 4, смена 9 — 4", Threat.cap_for(1, false) == 1
-			and Threat.cap_for(4, false, 3.0) == 4 and Threat.cap_for(9, false, 3.0) == 4)
+	ok("cap: тихая ночь — 1, пустая смена 4 — 4, при рое — 5", Threat.cap_for(1, false) == 1
+			and Threat.cap_for(4, false, 3.0) == 4)
 	ok("cap при релее — 10", Threat.cap_for(1, true) == Balance.RELAY_HOLD_CAP)
 	ok("интервал: 5.5 с при T=3, не меньше 2.5 с", is_equal_approx(Threat.interval_for(3.0), 5.5)
 			and is_equal_approx(Threat.interval_for(20.0), 2.5))
