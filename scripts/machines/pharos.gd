@@ -1,33 +1,51 @@
 class_name Pharos
 extends MachineBase
-## Маяк (ADR-005 § 5, #167): единственная башня. Что делает — зависит от цвета
-## луча, который в него попал. Часть 1: красный жжёт, жёлтый светит, зелёный чинит.
+## Маяк (ADR-005 § 5, #167, #168): единственная башня. Что делает — зависит
+## от цвета луча, который в него попал.
 ##
 ## Луч поглощает с любой грани (beam_pass → []). Цвет сообщает Beams.rebuild
 ## через beam_receive: OR всех входов. Питание не нужно — работает, пока луч
-## горит. Синий, голубой, пурпурный и белый — заглушки до C5 (#168).
-## Жёлтый приходит смесью. Сценарий подаёт цвет лучом-входом напрямую,
-## крафт жёлтого топлива не делаем.
+## горит. Смеси (жёлтый, голубой, пурпурный, белый) приходят смесителем,
+## не отдельным топливом.
+##
+## Красный жжёт, зелёный чинит, жёлтый светит. Синий морозит, голубой держит
+## купол, пурпурный зовёт рой и тень, белый показывает руду сквозь породу.
 
 const RANGE_PX: float = Balance.PHAROS_RANGE_TILES * 16.0
 ## Линза чуть выше центра корпуса: отсюда бьёт дуга.
 const MUZZLE: Vector2 = Vector2(0.0, -6.0)
+## Руда, которую белый показывает сквозь породу. Камень и земля — нет.
+const ORES: Array[int] = [
+	IDs.T.COAL_ORE, IDs.T.COPPER_ORE, IDs.T.IRON_ORE,
+	IDs.T.CRYSTAL_ORE, IDs.T.SCRAP_ORE, IDs.T.LIGHT_CRYSTAL,
+]
 
 ## Цвет луча, который попал на последнем перестроении. 0 — луча нет.
 var color: int = 0
-## Красный стреляет, жёлтый светит, зелёный чинит. Остальные маски молчат.
+## Есть луч — маяк работает. Какой эффект — решает match по цвету.
 var active: bool = false
 ## Выстрелов за жизнь — для сценариев.
 var shots: int = 0
 ## Сколько раз починил соседа — для сценариев.
 var heals: int = 0
+## Клеток руды, открытых белым — для сценариев.
+var revealed: int = 0
+## Купол голубого: сколько урона ещё примет, прежде чем погаснуть.
+var dome_hp: float = Balance.PHAROS_DOME_HP
+## Купол сейчас держит. false — погашен, ждёт PHAROS_DOME_DOWN.
+var dome_up: bool = false
 var target: Node2D = null
 
 var _cooldown: float = Balance.PHAROS_RED_PERIOD
 var _scan_t: float = 0.0
 var _heal_t: float = 0.0
+var _frost_t: float = 0.0
+var _white_t: float = 0.0
+var _dome_down: float = 0.0
 var _light: Dictionary = {}
 var _lit: bool = false
+## В каком списке мира стоим: 0 нет, Beams.B / C / M.
+var _listed: int = 0
 
 
 func _init() -> void:
@@ -40,19 +58,27 @@ func _init() -> void:
 
 func _process(delta: float) -> void:
 	super(delta)
-	if not Net.is_authority():   # СЕТЬ (ADR-002): считает хост, клиент рисует по net_state
+	# Клиент не считает урон и стан, но белый открывает руду у себя:
+	# explored по сети не едет, цвет маяка — едет.
+	if not Net.is_authority():
+		if active and color == Beams.W:
+			_tick_white(delta)
 		return
 	if not active:
 		return
 	match color:
 		Beams.R:
 			_tick_red(delta)
-		Beams.Y:
-			pass
 		Beams.G:
 			_tick_green(delta)
-		_:
-			pass   # C5 (#168): синий, голубой, пурпурный, белый
+		Beams.B:
+			_tick_blue(delta)
+		Beams.C:
+			_tick_dome(delta)
+		Beams.W:
+			_tick_white(delta)
+		Beams.Y, Beams.M:
+			pass
 
 
 ## Луч поглощается: маяк — конец линии, не труба.
@@ -69,16 +95,79 @@ func beam_receive(mask: int) -> void:
 	active = color != 0
 	_cooldown = Balance.PHAROS_RED_PERIOD if color == Beams.R else 0.0
 	_heal_t = 0.0
+	_frost_t = 0.0
+	_white_t = 0.0
 	_scan_t = 0.0
+	_apply_color()
 	_sync_light()
 	queue_redraw()
 
 
 ## Под зелёным маяк не ломается. Другие цвета — как у обычной машины.
+## Свой купол маяк не накрывает: удар по башне идёт в её HP.
 func take_damage(amount: float) -> void:
 	if color == Beams.G and active:
 		return
 	super(amount)
+
+
+## Списки мира и прочность под цвет. Пурпурный временно 200 HP; смена цвета
+## возвращает 100, текущее HP не выше нового максимума.
+func _apply_color() -> void:
+	_unlist()
+	if not active:
+		dome_up = false
+		_cap_hp(Balance.PHAROS_HP)
+		return
+	match color:
+		Beams.B:
+			_list_as(Beams.B)
+		Beams.C:
+			_list_as(Beams.C)
+			dome_hp = Balance.PHAROS_DOME_HP
+			dome_up = true
+			_dome_down = 0.0
+		Beams.M:
+			_list_as(Beams.M)
+			max_hp = Balance.PHAROS_LURE_HP
+			if hp <= Balance.PHAROS_HP + 0.01:
+				hp = Balance.PHAROS_LURE_HP
+			return
+	_cap_hp(Balance.PHAROS_HP)
+
+
+func _cap_hp(cap: float) -> void:
+	max_hp = cap
+	hp = minf(hp, max_hp)
+
+
+func _list_as(which: int) -> void:
+	var bag: Array = _bag(which)
+	if bag == null:
+		return
+	if not bag.has(self):
+		bag.append(self)
+	_listed = which
+
+
+func _unlist() -> void:
+	if _listed == 0:
+		return
+	var bag: Array = _bag(_listed)
+	if bag != null:
+		bag.erase(self)
+	_listed = 0
+	dome_up = false
+
+
+func _bag(which: int) -> Array:
+	if which == Beams.B:
+		return World.pharos_blue
+	if which == Beams.C:
+		return World.pharos_dome
+	if which == Beams.M:
+		return World.pharos_lure
+	return []
 
 
 # ---------------------------------------------------------------- КРАСНЫЙ
@@ -172,6 +261,87 @@ func relight() -> void:
 	_sync_light()
 
 
+# ---------------------------------------------------------------- СИНИЙ
+
+## Раз в 3 с фантомы в радиусе не бьют 1 с. Скорость режет World.slow_factor_at.
+func _tick_blue(delta: float) -> void:
+	_frost_t -= delta
+	if _frost_t > 0.0:
+		return
+	_frost_t = Balance.PHAROS_BLUE_STUN_PERIOD
+	var r: int = Balance.PHAROS_BLUE_RADIUS
+	var frost: Color = Beams.COLOR[Beams.B]
+	for p in get_tree().get_nodes_in_group("phantom"):
+		if not is_instance_valid(p) or not bool(p.get("alive")):
+			continue
+		var pc: Vector2i = World.world_to_cell(p.global_position)
+		if maxi(absi(pc.x - cell.x), absi(pc.y - cell.y)) > r:
+			continue
+		if p.has_method("apply_stun"):
+			p.apply_stun(Balance.PHAROS_BLUE_STUN)
+		UI.spawn_chip(pc, frost)
+
+
+# --------------------------------------------------------------- ГОЛУБОЙ
+
+func _tick_dome(delta: float) -> void:
+	if dome_up:
+		return
+	_dome_down -= delta
+	if _dome_down > 0.0:
+		return
+	dome_hp = Balance.PHAROS_DOME_HP
+	dome_up = true
+	queue_redraw()
+
+
+## Удар по постройке под куполом. 100 урона гасит купол на 10 с.
+func absorb_dome(amount: float) -> void:
+	if not dome_up or amount <= 0.0:
+		return
+	dome_hp = maxf(0.0, dome_hp - amount)
+	UI.spawn_chip(cell, Beams.COLOR[Beams.C])
+	if dome_hp <= 0.0:
+		dome_up = false
+		_dome_down = Balance.PHAROS_DOME_DOWN
+	queue_redraw()
+
+
+# ---------------------------------------------------------------- БЕЛЫЙ
+
+## Раз в секунду открывает неразведанную руду в радиусе 8. Камень не трогает.
+func _tick_white(delta: float) -> void:
+	_white_t -= delta
+	if _white_t > 0.0:
+		return
+	_white_t = Balance.PHAROS_WHITE_PERIOD
+	var cells: Array = _ore_hidden()
+	if cells.is_empty():
+		return
+	var n: int = World.reveal_cells(cells)
+	revealed += n
+	if n > 0:
+		UI.spawn_chip(cell, Beams.COLOR[Beams.W])
+
+
+func _ore_hidden() -> Array:
+	var out: Array = []
+	var r: int = Balance.PHAROS_WHITE_RADIUS
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			if maxi(absi(dx), absi(dy)) > r:
+				continue
+			var c: Vector2i = cell + Vector2i(dx, dy)
+			if not World.in_bounds(c.x, c.y):
+				continue
+			if World.is_explored(c):
+				continue
+			if not ORES.has(World.get_tile_v(c)):
+				continue
+			out.append(c)
+	return out
+
+
 # ---------------------------------------------------------------- ЗЕЛЁНЫЙ
 
 func _tick_green(delta: float) -> void:
@@ -198,10 +368,12 @@ func _tick_green(delta: float) -> void:
 
 
 func _on_destroyed() -> void:
+	_unlist()
 	_drop_light()
 
 
 func _exit_tree() -> void:
+	_unlist()
 	_drop_light()
 
 
@@ -228,6 +400,12 @@ func _draw() -> void:
 		draw_rect(Rect2(-8.0, -12.0, 16.0, 6.0), Color(lens.r, lens.g, lens.b, 0.18))
 	elif active and color == Beams.G:
 		draw_rect(Rect2(-3.0, -7.0, 2.0, 1.0), lens.lightened(0.3))
+	elif active and color == Beams.B:
+		draw_rect(Rect2(-6.0, -11.0, 2.0, 2.0), lens)
+		draw_rect(Rect2(4.0, -11.0, 2.0, 2.0), lens)
+	elif active and color == Beams.W:
+		# Белая искра над линзой: руда рядом уже видна.
+		draw_rect(Rect2(-1.0, -11.0, 2.0, 2.0), Color.WHITE)
 
 
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
@@ -236,8 +414,14 @@ func save_state() -> Dictionary:
 	d["color"] = color
 	d["shots"] = shots
 	d["heals"] = heals
+	d["revealed"] = revealed
+	d["dome_hp"] = dome_hp
+	d["dome_up"] = dome_up
 	d["cooldown"] = _cooldown
 	d["heal_t"] = _heal_t
+	d["frost_t"] = _frost_t
+	d["white_t"] = _white_t
+	d["dome_down"] = _dome_down
 	return d
 
 
@@ -247,10 +431,18 @@ func load_state(d: Dictionary) -> void:
 	active = color != 0
 	shots = int(d.get("shots", shots))
 	heals = int(d.get("heals", heals))
+	revealed = int(d.get("revealed", revealed))
+	dome_hp = float(d.get("dome_hp", dome_hp))
 	_cooldown = float(d.get("cooldown", _cooldown))
 	_heal_t = float(d.get("heal_t", _heal_t))
+	_frost_t = float(d.get("frost_t", _frost_t))
+	_white_t = float(d.get("white_t", _white_t))
+	_dome_down = float(d.get("dome_down", _dome_down))
 	target = null
 	_scan_t = 0.0
+	_apply_color()
+	if color == Beams.C and active:
+		dome_up = bool(d.get("dome_up", true))
 	relight()
 	queue_redraw()
 
@@ -272,6 +464,9 @@ func apply_net_state(b: PackedByteArray) -> int:
 	if next != color:
 		color = next
 		active = color != 0
+		# Клиент собирает свои списки из цвета: купол рисуется здесь,
+		# белый открывает руду без пакета explored.
+		_apply_color()
 		_sync_light()
 		queue_redraw()
 	return o + 1

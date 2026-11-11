@@ -232,6 +232,10 @@ func _physics_process(delta: float) -> void:
 	var speed: float = _move_speed(player_light)
 	if stun > 0.0 or frozen:
 		speed = 0.0
+	else:
+		# Синий маяк (#168): в радиусе мороза скорость падает вдвое. Стан
+		# уже обнулил скорость выше — мороз его не перебивает.
+		speed *= World.slow_factor_at(global_position)
 
 	repath -= dt
 	var dir: Vector2 = Vector2.ZERO
@@ -328,6 +332,13 @@ func _decide(dt: float, dist: float, light: float) -> void:
 		state = St.FLEE
 		target_machine = null
 		return
+	# Пурпурный маяк (#168) зовёт рой и тень раньше горелки и бура.
+	if kind == "swarm" or kind == "shade":
+		var lure = World.lure_at(global_position, Balance.PHAROS_LURE_PX)
+		if lure != null:
+			target_machine = lure
+			state = St.CHASE
+			return
 	match kind:
 		"swarm":
 			_seek_machine(dt, Balance.SWARM_SEEK_PX)
@@ -485,6 +496,11 @@ func _is_prey(m: Node) -> bool:
 	if not (m is MachineBase):
 		return false
 	var mb: MachineBase = m
+	if kind == "swarm" or kind == "shade":
+		# Маяк под пурпурным — добыча и роя, и тени. Топлива у него нет:
+		# тень бьёт его как машину, а не ест топку.
+		if mb.kind == "Pharos" and int(mb.get("color")) == Beams.M and bool(mb.get("active")):
+			return true
 	if kind == "swarm":
 		return (mb.kind == "Drill" or mb.kind == "Assembler") and mb.powered
 	if kind == "shade":
@@ -526,7 +542,8 @@ func _shade_tick(dt: float) -> void:
 		if sol.enabled:
 			sol.set_enabled(false)
 	else:
-		# Прожектор (#31) не выключить и не осушить — его тень бьёт.
+		# Прожектор (#31) и пурпурный маяк (#168) не выключить и не осушить —
+		# тень бьёт их как машину. У маяка топки нет.
 		_machine_attack(dt)
 
 
