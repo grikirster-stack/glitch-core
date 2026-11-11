@@ -264,7 +264,8 @@ static func near_machine(p: Player, kind: String) -> MachineBase:
 ## Панель считает то же со своими кэшами и подписями; здесь — проверка команды клиента.
 static func craft_check(p: Player, rec: Dictionary) -> Dictionary:
 	var station: String = String(rec["station"])
-	if not DB.recipe_unlocked(rec):
+	# who = прокси клиента: подбор смотрит его рюкзак, не героя хоста.
+	if not DB.recipe_unlocked(rec, p):
 		return {"code": "locked", "near": null,
 				"reason": "Нет чертежа: «%s» — в терминале." % DB.item_name(int(rec.get("out", 0)))}
 	var near: MachineBase = null
