@@ -559,6 +559,7 @@ const ET_TERMINAL_OFF: String = "terminal_off"  ## без питания: E да
 const ET_BEACON: String = "beacon"              ## релей-ядро: держать E
 const ET_GENERATOR: String = "generator"        ## уголь в руке — топка, иначе — рубильник
 const ET_BURNER: String = "burner"              ## топливо в руке — топка, пустая — рубильник
+const ET_ACCUMULATOR: String = "accumulator"    ## рубильник накопителя: копить / отдавать
 const ET_INSERTER: String = "inserter"          ## предмет в руке — фильтр, пустая рука — сброс
 const ET_CHEST: String = "chest"                ## сундук и тайники руин / небесный тайник
 const ET_REPAIR: String = "repair"              ## хлам в руке, машина повреждена
@@ -697,6 +698,8 @@ func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable,
 			tg["kind"] = ET_GENERATOR
 		elif m is Burner and d < E_MACHINE:
 			tg["kind"] = ET_BURNER
+		elif m is Accumulator and d < E_MACHINE:
+			tg["kind"] = ET_ACCUMULATOR
 		elif m is Inserter and (d < E_MACHINE or (aimed and d <= REACH)):
 			tg["kind"] = ET_INSERTER
 		elif m is Chest and d < E_MACHINE and not _chest_empty(m):
@@ -759,9 +762,10 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 			if task_progress >= 1.0:
 				task_progress = 0.0
 				Game.try_finish(self)   # вклад деталей — из своего инвентаря (MP-I, #94)
-		ET_GENERATOR, ET_INSERTER, ET_BURNER:
+		ET_GENERATOR, ET_INSERTER, ET_BURNER, ET_ACCUMULATOR:
 			# ТЭЦ: уголь — топка, иначе рубильник (#25); манипулятор: фильтр/сброс (#30);
-			# горелка: топливо — топка, пустая рука — рубильник (#164).
+			# горелка: топливо — топка, пустая рука — рубильник (#164);
+			# накопитель: рубильник «копить / отдавать» (#166).
 			tg["node"].interact(self)
 		ET_CHEST:
 			# Сундук — через сетевую обёртку: у прокси окно открывает владелец (MP-G).
