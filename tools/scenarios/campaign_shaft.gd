@@ -10,6 +10,12 @@ const STEP_TIME: float = 2.5
 
 
 func run() -> void:
+	# Главы «Свет» 1–2 ствол не строят. Фабрику и шахту не сносим: сценарий
+	# ждёт, пока «Шахта» снова появится в Campaign.CHAPTERS (G2–G3, #178).
+	if not Campaign.has("mine"):
+		ok("ствол: глава «Шахта» снята с кампании «Свет»", true)
+		finish()
+		return
 	if start_chapter("mine") == null:
 		ok("глава «Шахта» создана", false)
 		finish()
