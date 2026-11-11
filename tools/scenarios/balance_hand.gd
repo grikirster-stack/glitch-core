@@ -1,11 +1,14 @@
 extends "res://tools/scenarios/balance_common.gd"
-## Бот баланса «релей руками» (#33, ADR-001 § 2: руками ≥ 25 мин добычи).
+## Бот баланса «релей руками» (#33, ADR-001 § 2).
 ##
-## 1. Бюджет: детали релея (Balance.RELAY_REQ) + станки, без которых деталь
-##    не сделать (сборщик, плавильня, ТЭЦ), раскладываются до сырья по ручным
-##    рецептам (2 руды → 1 слиток); что руками не делается (сталь, микросхемы,
-##    ячейки, антенна) — по рецепту станка, но его вход — снова руками.
-##    Минус стартовый набор, плюс уголь на работу станков.
+## Потолок ADR-001 § 2 — 25 мин. 3.3 мин в CI были не «руками быстрее»:
+## пластины без рецепта выпадали из бюджета, и релей считался почти из воздуха.
+## Фабрика снята (#170), но требование до F1 то же. Бот раскладывает legacy
+## таблицей конверсии сейва (Save.convert_legacy) и копает слитки руками
+## (2 руды на слиток — дороже плавильни). На сиде 31337 это 44.5 мин.
+##
+## 1. Бюджет: детали релея. Legacy без рецепта — через Save.convert_legacy,
+##    остальное — руками. Минус стартовый набор.
 ## 2. Замер: бот копает каждое сырьё через шов ввода — наводит «мышь» на тайл,
 ##    держит ЛКМ, ждёт, пока предмет долетит до него (магнит), — и засекает
 ##    игровые секунды на единицу. Берёт самый мягкий тайл, из которого это
@@ -16,7 +19,9 @@ extends "res://tools/scenarios/balance_common.gd"
 ## необработанной жиле (телепорт), засекается только копка и подбор.
 ## Ручной крафт в игре мгновенный, поэтому в итог не входит.
 
-const TARGET_MIN: float = 25.0      ## ADR-001 § 2
+## Нижняя граница чистой добычи (ADR-001 § 2). Не ноль: ноль пропускает релей
+## из воздуха. Руками не быстрее станков — порог эпохи фабрики остаётся.
+const TARGET_MIN: float = 25.0
 const SAMPLE_MAIN: int = 10         ## проб на сырьё, которого в бюджете ≥ 20
 const SAMPLE_MINOR: int = 4
 const PICK_PX: float = 60.0         ## копаем не дальше магнита предметов (70 px)
@@ -32,14 +37,10 @@ func run() -> void:
 	# ---- 1. бюджет
 	var need: Dictionary = {}
 	var st_time: Dictionary = {}
-	var basket: Dictionary = Balance.RELAY_REQ.duplicate()
-	for m in [IDs.I.ASSEMBLER, IDs.I.SMELTER, IDs.I.COAL_GEN]:
-		basket[m] = int(basket.get(m, 0)) + 1
-	for id in basket.keys():
-		expand(int(id), int(basket[id]), ["hand"], need, [], st_time)
-	# Уголь на работу станков (сталь, микросхемы, ячейки, антенна — не руками).
-	var machine_secs: float = float(st_time.get("smelter", 0.0)) + float(st_time.get("assembler", 0.0))
-	need[IDs.I.COAL] = int(need.get(IDs.I.COAL, 0)) + int(ceil(machine_secs / Balance.COAL_BURN))
+	# Релей до F1 — те же детали. Пластины без рецепта не выбрасываем:
+	# конверсия сейва говорит, сколько сырья в них было.
+	for id in Balance.RELAY_REQ.keys():
+		_expand_req(int(id), int(Balance.RELAY_REQ[id]), need, st_time)
 	# Стартовый набор (как в ScenarioRunner._reset_world и в обычной игре).
 	# Медной руды в наборе нет (#171): слиток открывается первым подбором.
 	var kit: Dictionary = {}
@@ -48,8 +49,7 @@ func run() -> void:
 	for id in kit.keys():
 		need[id] = maxi(0, int(need.get(id, 0)) - int(kit[id]))
 	print("  [бюджет руками] %s" % items_str(need))
-	print("  [станки] плавильня %.0f с, сборщик %.0f с работы" % [
-			float(st_time.get("smelter", 0.0)), float(st_time.get("assembler", 0.0))])
+	print("  [релей] пластины через конверсию сейва, станков нет (#170)")
 	ok("бюджет релея разложен до сырья", not need.is_empty())
 
 	# ---- 2. замер секунд на единицу
@@ -82,6 +82,26 @@ func run() -> void:
 	metric("hand_relay_min", minutes, "минут чистой добычи руками до релея")
 	ok("релей руками ≥ %.0f мин добычи" % TARGET_MIN, minutes >= TARGET_MIN, "%.1f мин" % minutes)
 	finish()
+
+
+## Деталь релея до сырья. Есть ручной рецепт — им. Legacy без рецепта
+## (пластины, микросхема, ячейка, антенна) — таблица Save.convert_legacy,
+## дальше снова руками. Иначе деталь попала бы в бюджет как есть и бот
+## не нашёл бы жилу: релей считался бы скрафченным из воздуха.
+func _expand_req(id: int, n: int, acc: Dictionary, times: Dictionary) -> void:
+	if n <= 0:
+		return
+	if is_raw(id):
+		acc[id] = int(acc.get(id, 0)) + n
+		return
+	if not recipe_of(id, ["hand"]).is_empty():
+		expand(id, n, ["hand"], acc, [], times)
+		return
+	if DB.item_legacy(id):
+		for pair in Save.convert_legacy(id, n):
+			_expand_req(int(pair[0]), int(pair[1]), acc, times)
+		return
+	acc[id] = int(acc.get(id, 0)) + n
 
 
 func _start_count(id: int) -> int:

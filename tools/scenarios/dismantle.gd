@@ -23,15 +23,15 @@ func run() -> void:
 	# не было ни релея, ни терминала, ни тайников руин.
 	_platform(row, bx - 36, bx - 18)
 
-	# ---- Бур: подсказка, короткое нажатие, удержание -----------------------------
+	# ---- Зеркало: подсказка, короткое нажатие, удержание ------------------------
 	var cell: Vector2i = Vector2i(bx - 34, row)
-	ok("бур поставлен", MachineBase.place_machine("Drill", cell), str(cell))
+	ok("зеркало поставлено", MachineBase.place_machine("Mirror", cell), str(cell))
 	var drill = World.machines.get(cell)
 	if drill == null:
 		finish()
 		return
-	var item: int = MachineBase.machine_item_id("Drill")
-	ok("у бура есть предмет в базе", item != IDs.I.NONE, str(item))
+	var item: int = MachineBase.machine_item_id("Mirror")
+	ok("у зеркала есть предмет в базе", item != IDs.I.NONE, str(item))
 	_stand(cell)
 	player.inv.selected = _empty_slot()
 	aim(World.cell_to_world(cell))
@@ -40,7 +40,7 @@ func run() -> void:
 	ok("подсказка — разбор постройки",
 			hud.hint_text == "%s: %s" % [HUD.HINT_DISMANTLE, DB.item_name(item)],
 			"«%s»" % hud.hint_text)
-	ok("рамка HUD — на буре", _mark_on(hud, drill.global_position), str(hud.mark_rect))
+	ok("рамка HUD — на зеркале", _mark_on(hud, drill.global_position), str(hud.mark_rect))
 
 	var n0: int = player.inv.count_of(item)
 	hold(KEY_E)
@@ -62,7 +62,7 @@ func run() -> void:
 
 	# ---- Неразборная постройка (кампания, тайники руин) --------------------------
 	var pcell: Vector2i = Vector2i(bx - 31, row)
-	ok("постройка поставлена", MachineBase.place_machine("Drill", pcell), str(pcell))
+	ok("постройка поставлена", MachineBase.place_machine("Mirror", pcell), str(pcell))
 	var perm = World.machines.get(pcell)
 	if perm == null:
 		finish()
@@ -128,56 +128,33 @@ func run() -> void:
 		UI.panel.close()
 	await wait(0.2)
 
-	# ---- Манипулятор: своё действие E (фильтр) не мешает разбору ----------------
-	var icell: Vector2i = Vector2i(bx - 22, row)
-	ok("манипулятор поставлен", MachineBase.place_machine("Inserter", icell), str(icell))
-	var ins = World.machines.get(icell)
-	if ins == null:
-		finish()
-		return
-	var iitem: int = MachineBase.machine_item_id("Inserter")
-	_stand(icell)
-	player.inv.selected = _empty_slot()
-	aim(World.cell_to_world(icell))
-	await wait(0.4)
-	ok("цель E у манипулятора — он сам", _target_kind() == Player.ET_INSERTER, _target_kind())
-	ok("у манипулятора — подсказка E (фильтр) с хвостом про разбор",
-			hud.hint_text == HUD.HINT_INSERTER + HUD.HINT_DISMANTLE_TAIL, "«%s»" % hud.hint_text)
-	hold(KEY_E)
-	await wait(1.3)
-	release(KEY_E)
-	await wait(0.2)
-	ok("манипулятор разобран", not World.machines.has(icell))
-	ok("манипулятор вернулся в рюкзак", player.inv.count_of(iitem) == 1,
-			"%d" % player.inv.count_of(iitem))
-
-	# ---- ТЭЦ: короткое E — рубильник, удержание — разбор -----------------------
-	var gcell: Vector2i = Vector2i(bx - 19, row)
-	ok("ТЭЦ поставлена", MachineBase.place_machine("CoalGen", gcell), str(gcell))
-	var gen = World.machines.get(gcell) as CoalGen
+	# ---- Горелка: короткое E — рубильник, удержание — разбор -------------------
+	var gcell: Vector2i = Vector2i(bx - 22, row)
+	ok("горелка поставлена", MachineBase.place_machine("Burner", gcell), str(gcell))
+	var gen = World.machines.get(gcell)
 	if gen == null:
 		finish()
 		return
-	var gitem: int = MachineBase.machine_item_id("CoalGen")
+	var gitem: int = MachineBase.machine_item_id("Burner")
 	_stand(gcell)
 	player.inv.selected = _empty_slot()
 	aim(World.cell_to_world(gcell))
 	await wait(0.4)
-	ok("у ТЭЦ — подсказка рубильника с хвостом про разбор",
-			hud.hint_text == HUD.HINT_GEN_SWITCH + HUD.HINT_DISMANTLE_TAIL, "«%s»" % hud.hint_text)
+	ok("у горелки — подсказка рубильника с хвостом про разбор",
+			hud.hint_text == HUD.HINT_BURNER_SWITCH + HUD.HINT_DISMANTLE_TAIL, "«%s»" % hud.hint_text)
 	hold(KEY_E)
 	await wait(0.3)
 	release(KEY_E)
 	await wait(0.2)
-	ok("короткое E у ТЭЦ — рубильник, а не разбор",
+	ok("короткое E у горелки — рубильник, а не разбор",
 			not gen.enabled and World.machines.has(gcell), "enabled=%s" % str(gen.enabled))
 	player.inv.selected = _empty_slot()
 	hold(KEY_E)
 	await wait(1.3)
 	release(KEY_E)
 	await wait(0.2)
-	ok("ТЭЦ разобрана удержанием", not World.machines.has(gcell))
-	ok("ТЭЦ вернулась в рюкзак", player.inv.count_of(gitem) == 1,
+	ok("горелка разобрана удержанием", not World.machines.has(gcell))
+	ok("горелка вернулась в рюкзак", player.inv.count_of(gitem) == 1,
 			"%d" % player.inv.count_of(gitem))
 	finish()
 

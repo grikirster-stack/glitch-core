@@ -556,22 +556,12 @@ class Runner extends Node:
 			_next(ST_INTERACT_CHECK)
 			return
 		# Стоим у терминала и держим взаимодействие (E). Пустой центр лагеря
-		# ядро не запускает (#175): терминал без питания запитаем ТЭЦ рядом.
+		# ядро не запускает (#175). Питания нет (#170): терминал читается сразу.
 		_pin = true
 		_pin_pos = world.cell_to_world(_terminal_cell) + Vector2(0.0, -24.0)
 		player.global_position = _pin_pos
 		player.vel = Vector2.ZERO
 		player.task_progress = 0.0
-		if not game.is_powered(world.cell_to_world(_terminal_cell)):
-			var gc: Vector2i = _terminal_cell + Vector2i(2, 0)
-			if world.get_tile_v(gc) != IDs.T.AIR:
-				world.set_tile(gc.x, gc.y, IDs.T.AIR)
-			# class_name в --script ещё не класс: статику берём load, как ниже.
-			var mb: GDScript = load("res://scripts/machines/machine_base.gd")
-			if mb.place_machine("CoalGen", gc):
-				var gen = world.machines.get(gc)
-				if gen != null:
-					gen.add_fuel(4)
 		_task0 = float(player.task_progress)
 		_set_key(KEY_E, true)
 		_next(ST_INTERACT_CHECK, 0.5)
@@ -689,69 +679,45 @@ class Runner extends Node:
 		_ok("лимит живых копий фантома соблюдён", alive <= PHANTOM_LIMIT,
 				"в сцене %d, лимит %d" % [alive, PHANTOM_LIMIT])
 		_free_phantoms()
-		# Расчищаем площадку и ставим: ТЭЦ, плавильня, конвейер.
+		# Расчищаем площадку и ставим горелку и сундук. Фабрики нет (#170).
 		var base: Vector2i = Vector2i(560, 70)
 		for x in range(base.x - 1, base.x + 7):
 			for y in range(base.y - 1, base.y + 3):
 				world.set_tile(x, y, IDs.T.AIR)
 		var gen_cell: Vector2i = base
-		var smelt_cell: Vector2i = base + Vector2i(2, 0)
-		var belt_cell: Vector2i = base + Vector2i(5, 0)
-		# Статику постройки тоже берём из рантайма (см. шапку файла).
+		var chest_cell: Vector2i = base + Vector2i(2, 0)
 		var mb: GDScript = load("res://scripts/machines/machine_base.gd")
-		mb.place_machine("CoalGen", gen_cell)
-		mb.place_machine("Smelter", smelt_cell)
-		mb.place_machine("Belt", belt_cell)
+		mb.place_machine("Burner", gen_cell)
+		mb.place_machine("Chest", chest_cell)
 		_gen = world.machines.get(gen_cell)
-		_smelter = world.machines.get(smelt_cell)
-		_belt = world.belts.get(belt_cell)
-		_placed = [{"cell": gen_cell, "node": _gen}, {"cell": smelt_cell, "node": _smelter},
-				{"cell": belt_cell, "node": _belt}]
-		_ok("ТЭЦ поставлена", _gen != null)
-		_ok("плавильня поставлена", _smelter != null)
-		_ok("конвейер поставлен", _belt != null)
-		if _gen:
-			_gen.add_fuel(3)
-		_next(ST_MAC_POWER, 1.2)
+		_smelter = world.machines.get(chest_cell)
+		_belt = null
+		_placed = [{"cell": gen_cell, "node": _gen}, {"cell": chest_cell, "node": _smelter}]
+		_ok("горелка поставлена", _gen != null)
+		_ok("сундук поставлен", _smelter != null)
+		_ok("бур не ставится", not mb.place_machine("Drill", base + Vector2i(4, 0)))
+		if _gen and _gen.has_method("add_fuel"):
+			var ids: GDScript = load("res://scripts/core/ids.gd")
+			_gen.add_fuel(int(ids.I.COAL), 2)
+		_next(ST_MAC_POWER, 0.4)
 
 
 	func _s_machines_power() -> void:
-		if _gen == null or _smelter == null:
+		if _gen == null:
 			_next(ST_MAC_PROGRESS)
 			return
-		_ok("ТЭЦ запитана", bool(_gen.power_active), "fuel=%.1f" % float(_gen.fuel))
-		_ok("ТЭЦ питает станцию", bool(game.is_powered(world.cell_to_world(_smelter.cell))),
-				"радиус %d тайлов" % int(_gen.power_radius))
-		_ok("станция под питанием", bool(_smelter.powered))
-		# ТЭЦ — источник питания, а не потребитель: свой флаг powered она не
-		# запрашивает (issue #4 — индекс источников питания).
-		_ok("ТЭЦ не запрашивает питание сама", not bool(_gen.powered),
-				"powered=%s" % str(bool(_gen.powered)))
-		if _smelter:
-			_smelter.receive_item(IDs.I.COPPER_ORE, 2)
-		_progress_max = 0.0
-		_next(ST_MAC_PROGRESS, 1.2)
+		_ok("горелка горит", float(_gen.burn_left) > 0.0, "пламя %.1f" % float(_gen.burn_left))
+		_ok("терминал читается без ТЭЦ", bool(game.call("is_powered", player.global_position)))
+		_ok("сундук не питается током", _smelter == null or not _smelter.get("powered"))
+		_next(ST_MAC_PROGRESS, 0.3)
 
 
 	func _s_machines_progress() -> void:
-		if _smelter == null:
-			_next(ST_MAC_BELT)
-			return
-		_ok("прогресс станции растёт", _progress_max > 0.0,
-				"макс. progress=%.3f" % _progress_max)
-		if _belt:
-			_belt.add_item(IDs.I.COPPER_ORE, 1)
-			_belt_pos0 = _belt_max_pos()
-		_next(ST_MAC_BELT, 0.6)
+		_ok("пламя горелки ещё живо", _gen != null and float(_gen.burn_left) > 0.0)
+		_next(ST_MAC_BELT, 0.2)
 
 
 	func _s_machines_belt() -> void:
-		if _belt == null:
-			_next(ST_FX_SPAWN)
-			return
-		var pos: float = _belt_max_pos()
-		_ok("предмет едет по конвейеру", pos > _belt_pos0 + 0.05,
-				"pos %.3f -> %.3f, предметов %d" % [_belt_pos0, pos, _belt.items.size()])
 		if _gen:
 			_gen.anim = 1.0
 		_next(ST_FX_SPAWN, 0.8)
@@ -889,10 +855,8 @@ class Runner extends Node:
 			values["rebuilds"] = float(_phantom.rebuilds)
 		if _gen != null and is_instance_valid(_gen):
 			values["machine_anim"] = float(_gen.anim)
-		if _smelter != null and is_instance_valid(_smelter):
-			values["machine_progress"] = float(_smelter.progress)
-		if _belt != null and is_instance_valid(_belt) and _belt.items.size() > 0:
-			values["belt_pos"] = float(_belt.items[0]["pos"])
+		if _gen != null and is_instance_valid(_gen):
+			values["burn_left"] = float(_gen.burn_left)
 		var bad: Array = []
 		var huge: Array = []
 		for k in values.keys():
@@ -907,8 +871,8 @@ class Runner extends Node:
 
 
 	func _finish() -> void:
-		_cleanup()
 		done = true
+		_cleanup()
 
 
 	func _cleanup() -> void:
@@ -926,8 +890,6 @@ class Runner extends Node:
 			var cell: Vector2i = p["cell"]
 			var node: Node = p["node"]
 			if node != null and is_instance_valid(node):
-				if world.belts.has(cell):
-					world.belts.erase(cell)
 				world.machines.erase(cell)
 				node.queue_free()
 		_placed.clear()
@@ -959,16 +921,6 @@ class Runner extends Node:
 		if player == null:
 			return
 		player.test_input = {"keys": {}, "mouse": Vector2.ZERO, "mouse_buttons": {}}
-
-
-	## Самая дальняя позиция предмета на конвейере.
-	func _belt_max_pos() -> float:
-		var out: float = 0.0
-		if _belt == null or not is_instance_valid(_belt):
-			return out
-		for it in _belt.items:
-			out = maxf(out, float(it["pos"]))
-		return out
 
 
 	## Пульс релея — та же формула, что в world_fx._draw.
@@ -1080,22 +1032,13 @@ class Runner extends Node:
 		return false
 
 
-	## Терминал задания — чтобы проверить рост task_progress. Терминал работает
-	## только под питанием (#29). Пустой центр лагеря ядро больше не запускает
-	## (#175): запас — ближайший терминал, его запитает ТЭЦ из стартового набора.
+	## Терминал задания. Питания нет (#170): читается любой.
+	## Пустой центр лагеря ядро больше не запускает (#175).
 	func _find_terminal_cell() -> void:
 		for t in world.terminals:
-			if game.is_powered(world.cell_to_world(t)):
-				_terminal_cell = t
-				return
-		var best: Vector2i = Vector2i(-1, -1)
-		var best_d: int = 9999
-		for t in world.terminals:
-			var d: int = absi(int(t.x) - world.beacon_cell.x)
-			if d < best_d:
-				best_d = d
-				best = t
-		_terminal_cell = best
+			_terminal_cell = t
+			return
+		_terminal_cell = world.beacon_cell
 
 
 	## Убрать всех фантомов сцены.

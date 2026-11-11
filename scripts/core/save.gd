@@ -25,12 +25,15 @@ extends RefCounted
 ## Загрузка того же сида не пересоздаёт мир: тайлы кладутся поверх, постройки
 ## и предметы ставятся заново. Другой сид — сначала World.generate(сид).
 ## Неизвестные поля игнорируются: новая машина грузится хотя бы с базовыми
-## полями, файл старой версии — с тем, что в нём есть. Свет прожекторов
-## возвращается сразу после раскладки питания (Floodlight.relight).
+## полями, файл старой версии — с тем, что в нём есть. Фабрика снята (#170):
+## старые предметы превращаются в слитки до раскладки, снятые машины — в
+## предметы сундука лагеря.
 
 ## Версия формата. Поднимать, когда старый файл уже нельзя прочитать как есть.
 ## 2 — сетевая игра (ADR-002 § 4.9, MP-I #94): у хоста ещё session и players по uid;
 ## раздел player остался, поэтому версия 1 читается как раньше (одиночная).
+## Фабрика снята внутри версии 2 (#170): конверсия по предметам и типам машин,
+## номер файла не поднимаем — иначе сломается проверка «версия 2».
 const VERSION: int = 2
 const MAGIC: String = "GCSV"
 const HEADER_SIZE: int = 12
@@ -160,19 +163,24 @@ static func apply(d: Dictionary) -> bool:
 	if not World.load_state(d.get("world", {})):
 		last_error = "сетка мира в файле повреждена"
 		return false
-	_place_machines(d.get("machines", []))
+	var refund: Array = []
+	_place_machines(d.get("machines", []), refund)
+	# Шлюз и блоки — камень только если файл ещё из фабрики. Свежий сейв
+	# без снятых машин клетки не трогает: повторная загрузка остаётся равной.
+	if not refund.is_empty():
+		_convert_world_tiles()
 	_migrate_relay_tiles()
 	_place_items(d.get("items", []))
 	var p = Game.player
 	if p != null and is_instance_valid(p) and d.has("player"):
 		p.load_state(d["player"])
+		_convert_player(p)
 	_net_apply(d)   # СЕТЬ (ADR-002 § 4.9): у хоста — герои по uid, остальные ждут в Net.parked
+	_convert_parked()
 	Game.load_state(d.get("game", {}))
 	Tech.load_state(d.get("tech", {}))
 	Threat.load_state(d.get("threat", {}))
-	# Питание — сразу, не через 0.25 с: машины с первого кадра в том же режиме.
-	Game.update_power_budget()
-	# Свет машин (прожекторы, #31) — по новому питанию, через World.add_light_source.
+	_stash_refund(refund)
 	for m in World.machines.values():
 		if m.has_method("relight"):
 			m.relight()
@@ -204,7 +212,8 @@ static func _clear_world_nodes() -> void:
 				m.get_parent().remove_child(m)
 			m.queue_free()
 	World.machines.clear()
-	World.belts.clear()
+	if "belts" in World:
+		World.belts.clear()
 	for c in World.ruin_caches:
 		c["chest"] = null
 	for e in _item_nodes():
@@ -213,13 +222,24 @@ static func _clear_world_nodes() -> void:
 
 
 ## Поставить постройки из файла. Неизвестный тип пропускается (файл новее игры).
-static func _place_machines(list: Array) -> void:
+## Снятая фабрика (#170) не ставится: её предмет копится в refund и потом
+## ложится в сундук лагеря, чтобы ничего не пропало.
+static func _place_machines(list: Array, refund: Array = []) -> void:
+	var belts: int = 0
 	for md in list:
 		if not (md is Dictionary):
 			continue
 		var c: Vector2i = md.get("cell", Vector2i(-1, -1))
 		var kind: String = String(md.get("kind", ""))
 		if not World.in_bounds(c.x, c.y):
+			continue
+		if kind == "Belt":
+			belts += 1
+			continue
+		var legacy: Array = machine_refund(kind)
+		if not legacy.is_empty():
+			for pair in legacy:
+				refund.append(pair)
 			continue
 		# place_machine ставит только в воздух; под машиной мог оказаться другой
 		# тайл (вода натекла в клетку постройки) — на время постановки воздух.
@@ -233,6 +253,9 @@ static func _place_machines(list: Array) -> void:
 			push_warning("Save: постройка «%s» в %s не поставлена" % [kind, str(c)])
 			continue
 		World.machines[c].load_state(md)
+	# Лента: один слиток за две штуки на весь файл, не на каждую клетку.
+	if belts > 0:
+		refund.append([IDs.I.IRON_INGOT, (belts + 1) / 2])
 	# Тайники руин — снова ссылки на свои сундуки.
 	for rc in World.ruin_caches:
 		var ch = World.machines.get(rc["cell"])
@@ -267,10 +290,18 @@ static func _place_items(list: Array) -> void:
 		if not (it is Dictionary):
 			continue
 		var e: ItemEntity = ItemEntity.new()
-		e.item_id = int(it.get("id", IDs.I.NONE))
-		e.count = int(it.get("count", 1))
+		var conv: Array = convert_legacy(int(it.get("id", IDs.I.NONE)), int(it.get("count", 1)))
+		e.item_id = int(conv[0][0])
+		e.count = int(conv[0][1])
+		for extra in range(1, conv.size()):
+			var more: ItemEntity = ItemEntity.new()
+			more.item_id = int(conv[extra][0])
+			more.count = int(conv[extra][1])
+			more.despawn = bool(it.get("despawn", true))
+			more.global_position = it.get("pos", Vector2.ZERO) + Vector2(4.0 * extra, 0.0)
+			World.add_world_node(more)
 		e.despawn = bool(it.get("despawn", true))
-		e.bag = Array(it.get("bag", [])).duplicate(true)
+		e.bag = _convert_stack_list(Array(it.get("bag", [])))
 		e.bag_owner = int(it.get("bag_owner", 0))
 		e.global_position = it.get("pos", Vector2.ZERO)
 		World.add_world_node(e)
@@ -291,6 +322,214 @@ static func close_windows() -> void:
 		UI.panel.close()
 	if UI.journal != null and UI.journal.visible:
 		UI.journal.close()
+
+
+# ------------------------------------------------------------------ СТАРЫЙ МИР (#170)
+
+## Фабрика и питание сняты. Один старый предмет → несколько новых [[id, count]].
+## Не-legacy возвращается как есть. Лента: 1 железный слиток за 2 штуки, вверх.
+static func convert_legacy(id: int, count: int) -> Array:
+	if count <= 0:
+		return []
+	if id == IDs.I.NONE:
+		return [[id, count]]
+	if not DB.item_legacy(id):
+		return [[id, count]]
+	var out: Array = []
+	match id:
+		IDs.I.COAL_GEN:
+			_add_pairs(out, [[IDs.I.BURNER, 1], [IDs.I.SCRAP, 2]], count)
+		IDs.I.SOLAR:
+			_add_pairs(out, [[IDs.I.COLLECTOR, 1]], count)
+		IDs.I.TURRET, IDs.I.FLOODLIGHT:
+			_add_pairs(out, [[IDs.I.PHAROS, 1]], count)
+		IDs.I.DRILL, IDs.I.DEEP_DRILL, IDs.I.ASSEMBLER, IDs.I.ANALYZER, IDs.I.INSERTER:
+			_add_pairs(out, [[IDs.I.IRON_INGOT, 4]], count)
+		IDs.I.BELT:
+			_add_pairs(out, [[IDs.I.IRON_INGOT, 1]], (count + 1) / 2)
+		IDs.I.SMELTER:
+			_add_pairs(out, [[IDs.I.STONE, 6]], count)
+		IDs.I.IRON_PLATE:
+			_add_pairs(out, [[IDs.I.IRON_INGOT, 2]], count)
+		IDs.I.COPPER_PLATE:
+			_add_pairs(out, [[IDs.I.COPPER_INGOT, 2]], count)
+		IDs.I.STEEL_PLATE:
+			_add_pairs(out, [[IDs.I.IRON_INGOT, 2], [IDs.I.COAL, 1]], count)
+		IDs.I.CIRCUIT:
+			_add_pairs(out, [[IDs.I.COPPER_INGOT, 1], [IDs.I.CRYSTAL, 2]], count)
+		IDs.I.POWER_CELL:
+			_add_pairs(out, [[IDs.I.IRON_INGOT, 1], [IDs.I.CRYSTAL, 1]], count)
+		IDs.I.RELAY_ANTENNA:
+			# Как в задаче: 6 медных слитков + 4 стекла + 6 кристаллов.
+			_add_pairs(out, [[IDs.I.COPPER_INGOT, 6], [IDs.I.GLASS, 4], [IDs.I.CRYSTAL, 6]], count)
+		IDs.I.AIRLOCK:
+			# 2 стальные пластины + 1 микросхема.
+			_add_pairs(out, [[IDs.I.IRON_INGOT, 4], [IDs.I.COAL, 2],
+					[IDs.I.COPPER_INGOT, 1], [IDs.I.CRYSTAL, 2]], count)
+		IDs.I.COPPER_BLOCK:
+			_add_pairs(out, [[IDs.I.COPPER_INGOT, 4]], count)
+		IDs.I.IRON_BLOCK:
+			_add_pairs(out, [[IDs.I.IRON_INGOT, 4]], count)
+		IDs.I.CRYSTAL_BLOCK:
+			_add_pairs(out, [[IDs.I.CRYSTAL, 3]], count)
+		_:
+			out.append([id, count])
+	return out
+
+
+static func _add_pairs(out: Array, pairs: Array, times: int) -> void:
+	for pair in pairs:
+		out.append([int(pair[0]), int(pair[1]) * times])
+
+
+## Снятая машина в файле → предмет, который потом ляжет в сундук лагеря.
+static func machine_refund(kind: String) -> Array:
+	match kind:
+		"CoalGen":
+			return convert_legacy(IDs.I.COAL_GEN, 1)
+		"Solar":
+			return convert_legacy(IDs.I.SOLAR, 1)
+		"Turret":
+			return convert_legacy(IDs.I.TURRET, 1)
+		"Floodlight":
+			return convert_legacy(IDs.I.FLOODLIGHT, 1)
+		"Drill":
+			return convert_legacy(IDs.I.DRILL, 1)
+		"DeepDrill":
+			return convert_legacy(IDs.I.DEEP_DRILL, 1)
+		"Assembler":
+			return convert_legacy(IDs.I.ASSEMBLER, 1)
+		"Analyzer":
+			return convert_legacy(IDs.I.ANALYZER, 1)
+		"Inserter":
+			return convert_legacy(IDs.I.INSERTER, 1)
+		"Smelter":
+			return convert_legacy(IDs.I.SMELTER, 1)
+		"Belt":
+			return convert_legacy(IDs.I.BELT, 1)
+		_:
+			return []
+
+
+## Шлюз и блоки в мире → камень. Предметы шлюза уже сняты с place.
+static func _convert_world_tiles() -> void:
+	var n: int = World.tiles.size()
+	for i in n:
+		var id: int = World.tiles[i]
+		if id == IDs.T.AIRLOCK or id == IDs.T.AIRLOCK_OPEN \
+				or id == IDs.T.COPPER_BLOCK or id == IDs.T.IRON_BLOCK \
+				or id == IDs.T.CRYSTAL_BLOCK:
+			var x: int = i % World.W
+			var y: int = i / World.W
+			World.set_tile(x, y, IDs.T.STONE)
+
+
+static func _convert_player(p) -> void:
+	if p == null or not is_instance_valid(p):
+		return
+	var inv = p.get("inv")
+	if inv != null and inv.has_method("slots"):
+		pass
+	if inv != null:
+		_convert_inventory(inv)
+	var bag = p.get("bag")
+	if bag is Array:
+		p.bag = _convert_stack_list(bag)
+
+
+static func _convert_inventory(inv) -> void:
+	var slots = inv.slots
+	var extra: Array = []
+	for i in slots.size():
+		var s = slots[i]
+		if s == null or s.is_empty():
+			continue
+		# Свежий сейв не трогаем: иначе слоты сдвигаются на каждой загрузке.
+		if not DB.item_legacy(int(s.id)):
+			continue
+		var conv: Array = convert_legacy(int(s.id), int(s.count))
+		if conv.is_empty():
+			s.id = IDs.I.NONE
+			s.count = 0
+			continue
+		s.id = int(conv[0][0])
+		s.count = int(conv[0][1])
+		for k in range(1, conv.size()):
+			extra.append(conv[k])
+	for pair in extra:
+		var left: int = inv.add(int(pair[0]), int(pair[1]))
+		if left > 0 and Game.player != null:
+			Game.player.spawn_item(int(pair[0]), left, Game.player.global_position)
+
+
+static func _convert_stack_list(list: Array) -> Array:
+	var out: Array = []
+	for e in list:
+		if e is Array and e.size() >= 2:
+			for pair in convert_legacy(int(e[0]), int(e[1])):
+				out.append(pair)
+		elif e is Dictionary:
+			var d: Dictionary = e.duplicate()
+			var conv: Array = convert_legacy(int(d.get("id", 0)), int(d.get("count", 0)))
+			if not conv.is_empty():
+				d["id"] = int(conv[0][0])
+				d["count"] = int(conv[0][1])
+				out.append(d)
+				for k in range(1, conv.size()):
+					var more: Dictionary = d.duplicate()
+					more["id"] = int(conv[k][0])
+					more["count"] = int(conv[k][1])
+					out.append(more)
+	return out
+
+
+static func _convert_parked() -> void:
+	if not Net.has_method("parked") and not ("parked" in Net):
+		return
+	var parked = Net.get("parked")
+	if not (parked is Dictionary):
+		return
+	for uid in parked.keys():
+		var rec = parked[uid]
+		if rec is Dictionary and rec.get("inv") is Array:
+			rec["inv"] = _convert_stack_list(rec["inv"])
+
+
+## Предметы снятых машин — в первый сундук базы, иначе у капсулы на землю.
+static func _stash_refund(refund: Array) -> void:
+	if refund.is_empty():
+		return
+	var chest: Chest = _camp_chest()
+	var drop_at: Vector2 = World.cell_to_world(World.beacon_cell) + Vector2(0.0, 20.0)
+	for pair in refund:
+		var id: int = int(pair[0])
+		var n: int = int(pair[1])
+		if n <= 0:
+			continue
+		if chest != null:
+			var left: int = chest.receive_item(id, n)
+			if left > 0:
+				MachineBase.new().spawn_item(id, left, drop_at)
+		else:
+			var e: ItemEntity = ItemEntity.new()
+			e.item_id = id
+			e.count = n
+			e.global_position = drop_at
+			World.add_world_node(e)
+
+
+static func _camp_chest() -> Chest:
+	var best: Chest = null
+	var best_d: int = 1 << 30
+	var b: Vector2i = World.beacon_cell
+	for c in World.machines.keys():
+		var m = World.machines[c]
+		if m is Chest:
+			var d: int = absi(c.x - b.x) + absi(c.y - b.y)
+			if d < best_d:
+				best_d = d
+				best = m
+	return best
 
 
 # ------------------------------------------------------------------ ФАЙЛ

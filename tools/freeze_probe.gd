@@ -36,7 +36,7 @@ const SCENARIOS: Array = [
 	{"name": "Копание 200 тайлов", "kind": "mine", "frames": 100},
 	{"name": "Фантомы (предел копий)", "kind": "phantoms", "frames": 90},
 	{"name": "16 фантомов пяти типов в погоне", "kind": "kinds", "frames": 240},
-	{"name": "Цепочка из 60 конвейеров", "kind": "belts", "frames": 90},
+	{"name": "60 горелок", "kind": "burners", "frames": 90},
 	{"name": "Эффекты на пределе лимитов", "kind": "fx", "frames": 90},
 	{"name": "200 построек подряд", "kind": "build", "frames": 60},
 	{"name": "Цикл день→ночь с волнами", "kind": "daynight", "frames": 180},
@@ -423,10 +423,10 @@ func _scenario_setup(kind: String) -> void:
 			player.set("invuln", 1.0e9)
 			_st["made"] = _spawn_mixed_phantoms()
 			_st["note"] = "фантомов в сцене: %d (типы: %s)" % [_alive_phantoms(), _kinds_note()]
-		"belts":
-			var saved: Array = _build_belt_chain(60)
+		"burners":
+			var saved: Array = _build_burner_row(60)
 			_st["orig"] = saved
-			_st["note"] = "конвейеров поставлено: %d" % world.belts.size()
+			_st["note"] = "горелок поставлено: %d" % saved.size()
 		"fx":
 			_st["note"] = "лимиты WorldFX: частиц %d, колец %d, взмахов %d" \
 					% [_fx_limit("MAX_CHIPS"), _fx_limit("MAX_RINGS"), _fx_limit("MAX_SLASHES")]
@@ -491,7 +491,7 @@ func _scenario_cleanup(kind: String) -> void:
 			_free_phantoms()
 			player.global_position = _st.get("ppos", player.global_position)
 			player.set("invuln", 0.0)
-		"belts":
+		"burners":
 			_remove_machines_at(_st.get("orig", []))
 			_restore_tiles(_st.get("orig", []))
 		"build":
@@ -665,21 +665,21 @@ func _free_phantoms() -> void:
 			p.queue_free()
 
 
-## Цепочка конвейеров с предметами. Возвращает список «клетка → старый тайл».
-func _build_belt_chain(count: int) -> Array:
+## Ряд горелок с углём. Ленты сняты (#170). Возвращает «клетка → старый тайл».
+func _build_burner_row(count: int) -> Array:
 	var saved: Array = []
 	var mb: GDScript = load("res://scripts/machines/machine_base.gd")
+	var ids: Script = load("res://scripts/core/ids.gd")
 	var x0: int = 40
 	var y0: int = 100
 	for i in count:
 		var cell: Vector2i = Vector2i(x0 + i, y0)
 		saved.append({"cell": cell, "tile": world.get_tile(cell.x, cell.y)})
 		world.set_tile(cell.x, cell.y, IDs.T.AIR)
-		mb.place_machine("Belt", cell)
-		var b: Node = world.belts.get(cell)
-		if b:
-			b.set("dir", 0)
-			b.call("add_item", 1, 1)
+		if mb.place_machine("Burner", cell):
+			var b: Node = world.machines.get(cell)
+			if b != null and b.has_method("add_fuel"):
+				b.call("add_fuel", ids.I.COAL, 2)
 	return saved
 
 
@@ -708,8 +708,6 @@ func _remove_machines_at(saved: Array) -> void:
 		var node: Node = world.machines.get(cell)
 		if node != null and is_instance_valid(node):
 			world.machines.erase(cell)
-			if world.belts.has(cell):
-				world.belts.erase(cell)
 			node.queue_free()
 
 

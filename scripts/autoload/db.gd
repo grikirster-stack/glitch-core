@@ -158,7 +158,7 @@ func is_liquid(id: int) -> bool:
 # ---------------------------------------------------------------- ПРЕДМЕТЫ
 
 func _item(p_name: String, p_color: Color, p_shape: String, p_stack: int = 99,
-		p_place: String = "", p_fuel: int = 0) -> void:
+		p_place: String = "", p_fuel: int = 0, p_legacy: bool = false) -> void:
 	# Заглушка NONE уже лежит под ключом 0, поэтому первый предмет = 1.
 	var id: int = item_defs.size()
 	item_defs[id] = {
@@ -169,6 +169,7 @@ func _item(p_name: String, p_color: Color, p_shape: String, p_stack: int = 99,
 		"stack": p_stack,
 		"place": p_place,
 		"fuel": p_fuel,
+		"legacy": p_legacy,
 	}
 
 
@@ -190,24 +191,25 @@ func _build_item_defs() -> void:
 	_item("Железный слиток", Color(0.87, 0.90, 0.94), "ingot")
 	_item("Стекло", Color(0.62, 0.85, 0.91), "glass")
 
-	_item("Медная пластина", Color(0.90, 0.58, 0.33), "plate")
-	_item("Железная пластина", Color(0.90, 0.93, 0.97), "plate")
-	_item("Микросхема", Color(0.29, 0.75, 0.42), "circuit")
-	_item("Стальная пластина", Color(0.62, 0.67, 0.74), "plate")
-	_item("Энергоячейка", Color(0.35, 0.80, 0.95), "cell")
+	_item("Медная пластина", Color(0.90, 0.58, 0.33), "plate", 99, "", 0, true)
+	_item("Железная пластина", Color(0.90, 0.93, 0.97), "plate", 99, "", 0, true)
+	_item("Микросхема", Color(0.29, 0.75, 0.42), "circuit", 99, "", 0, true)
+	_item("Стальная пластина", Color(0.62, 0.67, 0.74), "plate", 99, "", 0, true)
+	_item("Энергоячейка", Color(0.35, 0.80, 0.95), "cell", 99, "", 0, true)
 
-	_item("Буровая станция", Color(0.55, 0.58, 0.63), "drill", 5, "machine:Drill")
-	_item("Плавильня", Color(0.72, 0.42, 0.28), "smelter", 5, "machine:Smelter")
-	_item("Верстак", Color(0.45, 0.62, 0.78), "assembler", 3, "machine:Assembler")
-	_item("Конвейер", Color(0.75, 0.60, 0.25), "belt", 30, "machine:Belt")
+	# Фабрика (#170): place пустой, legacy — при загрузке превращаются в слитки.
+	_item("Буровая станция", Color(0.55, 0.58, 0.63), "drill", 5, "", 0, true)
+	_item("Плавильня", Color(0.72, 0.42, 0.28), "smelter", 5, "", 0, true)
+	_item("Верстак", Color(0.45, 0.62, 0.78), "assembler", 3, "", 0, true)
+	_item("Конвейер", Color(0.75, 0.60, 0.25), "belt", 30, "", 0, true)
 	_item("Сундук", Color(0.55, 0.36, 0.20), "chest", 10, "machine:Chest")
-	_item("Угольная ТЭЦ", Color(0.35, 0.35, 0.40), "gen", 5, "machine:CoalGen")
-	_item("Солнечная панель", Color(0.25, 0.40, 0.72), "solar", 5, "machine:Solar")
+	_item("Угольная ТЭЦ", Color(0.35, 0.35, 0.40), "gen", 5, "", 0, true)
+	_item("Солнечная панель", Color(0.25, 0.40, 0.72), "solar", 5, "", 0, true)
 	_item("Светокристалл", Color(1.0, 0.91, 0.64), "lamp", 20, "tile:%d" % IDs.T.LIGHT_CRYSTAL)
 
-	_item("Медный блок", Color(0.80, 0.46, 0.26), "block", 99, "tile:%d" % IDs.T.COPPER_BLOCK)
-	_item("Железный блок", Color(0.85, 0.88, 0.92), "block", 99, "tile:%d" % IDs.T.IRON_BLOCK)
-	_item("Кристальный блок", PAL["crystal_d"].lerp(PAL["crystal"], 0.4), "block", 99, "tile:%d" % IDs.T.CRYSTAL_BLOCK)
+	_item("Медный блок", Color(0.80, 0.46, 0.26), "block", 99, "", 0, true)
+	_item("Железный блок", Color(0.85, 0.88, 0.92), "block", 99, "", 0, true)
+	_item("Кристальный блок", PAL["crystal_d"].lerp(PAL["crystal"], 0.4), "block", 99, "", 0, true)
 
 	# Дополнительные строительные блоки, доступные сразу.
 	_add_item_def(IDs.I.STONE, "Камень", Color(0.44, 0.46, 0.50), "block", 99, "tile:%d" % IDs.T.STONE)
@@ -215,21 +217,17 @@ func _build_item_defs() -> void:
 	_add_item_def(IDs.I.LOG, "Волокно стебля", PAL["fl3"].darkened(0.08), "log", 99, "tile:%d" % IDs.T.LOG)
 
 	# --- ADR-001 (#24): новые предметы по явным id, чтобы порядок _item() выше не сдвигался.
-	# Машины ставятся через MachineBase.place_machine — свои ветки в match добавят
-	# #30 (манипулятор, анализатор, глубинный бур) и #31 (турель, прожектор).
-	# До этого постройка отвечает «Сюда нельзя поставить».
-	# Автоматизация (§ 4.2)
-	_add_item_def(IDs.I.INSERTER, "Рука", Color(0.80, 0.62, 0.30), "inserter", 30, "machine:Inserter")
-	_add_item_def(IDs.I.ANALYZER, "Анализатор", Color(0.40, 0.75, 0.70), "analyzer", 3, "machine:Analyzer")
-	_add_item_def(IDs.I.DEEP_DRILL, "Глубинный бур", Color(0.40, 0.44, 0.52), "deep_drill", 3, "machine:DeepDrill")
-	# Оборона (§ 4.4)
-	_add_item_def(IDs.I.TURRET, "Турель-разрядник", Color(0.55, 0.60, 0.70), "turret", 5, "machine:Turret")
-	_add_item_def(IDs.I.FLOODLIGHT, "Прожектор", Color(0.95, 0.90, 0.60), "floodlight", 10, "machine:Floodlight")
+	# Фабрика снята (#170): place пустой, legacy=true. Id не сдвигаются.
+	_add_item_def(IDs.I.INSERTER, "Рука", Color(0.80, 0.62, 0.30), "inserter", 30, "", 0, true)
+	_add_item_def(IDs.I.ANALYZER, "Анализатор", Color(0.40, 0.75, 0.70), "analyzer", 3, "", 0, true)
+	_add_item_def(IDs.I.DEEP_DRILL, "Глубинный бур", Color(0.40, 0.44, 0.52), "deep_drill", 3, "", 0, true)
+	_add_item_def(IDs.I.TURRET, "Турель-разрядник", Color(0.55, 0.60, 0.70), "turret", 5, "", 0, true)
+	_add_item_def(IDs.I.FLOODLIGHT, "Прожектор", Color(0.95, 0.90, 0.60), "floodlight", 10, "", 0, true)
 	_add_item_def(IDs.I.STEEL_WALL, "Стальная стена", Color(0.58, 0.62, 0.68), "wall", 99, "tile:%d" % IDs.T.STEEL_WALL)
-	_add_item_def(IDs.I.AIRLOCK, "Шлюз", Color(0.85, 0.70, 0.20), "airlock", 10, "tile:%d" % IDs.T.AIRLOCK)
+	_add_item_def(IDs.I.AIRLOCK, "Шлюз", Color(0.85, 0.70, 0.20), "airlock", 10, "", 0, true)
 	_add_item_def(IDs.I.VENT_GRATE, "Решётка", Color(0.50, 0.55, 0.60), "grate", 20, "tile:%d" % IDs.T.VENT_GRATE)
-	# Релей и лор (§ 4.7, § 4.9) — не ставятся, только носятся.
-	_add_item_def(IDs.I.RELAY_ANTENNA, "Антенна релея", Color(0.35, 0.95, 0.80), "antenna", 1, "")
+	# Релей до F1: антенна остаётся предметом, но не ставится и не крафтится.
+	_add_item_def(IDs.I.RELAY_ANTENNA, "Антенна релея", Color(0.35, 0.95, 0.80), "antenna", 1, "", 0, true)
 	_add_item_def(IDs.I.BLACK_BOX, "Чёрный ящик", Color(0.90, 0.35, 0.20), "blackbox", 20, "")
 	_add_item_def(IDs.I.LOOT_BAG, "Мешок", Color(0.45, 0.38, 0.30), "bag", 1, "")
 	# Свет (ADR-005, #164): горелка ставится руками, стак небольшой — это не расходник.
@@ -240,7 +238,7 @@ func _build_item_defs() -> void:
 	_add_item_def(IDs.I.MIRROR, "Зеркало", Color(0.72, 0.78, 0.86), "mirror", 20, "machine:Mirror")
 	_add_item_def(IDs.I.MIXER, "Смеситель", Color(0.45, 0.55, 0.62), "mixer", 10, "machine:Mixer")
 	_add_item_def(IDs.I.PRISM, "Призма", Color(0.75, 0.88, 0.95), "prism", 20, "machine:Prism")
-	# Солнце и запас (ADR-005 § 4, #166). Солнечная панель остаётся до D1.
+	# Солнце и запас (ADR-005 § 4, #166). Солнечная панель — legacy (#170).
 	_add_item_def(IDs.I.COLLECTOR, "Коллектор", Color(0.95, 0.86, 0.42), "collector", 10, "machine:Collector")
 	_add_item_def(IDs.I.ACCUMULATOR, "Накопитель", Color(0.55, 0.62, 0.72), "accumulator", 5, "machine:Accumulator")
 	# Сирена и линза (ADR-005 § 7.2, #172). Сирена — блок, линза — предмет в руке.
@@ -253,10 +251,10 @@ func _build_item_defs() -> void:
 	relay_req = Balance.RELAY_REQ.duplicate()
 
 func _add_item_def(id: int, p_name: String, p_color: Color, p_shape: String,
-		p_stack: int, p_place: String, p_fuel: int = 0) -> void:
+		p_stack: int, p_place: String, p_fuel: int = 0, p_legacy: bool = false) -> void:
 	item_defs[id] = {
 		"id": id, "name": p_name, "color": p_color, "shape": p_shape,
-		"stack": p_stack, "place": p_place, "fuel": p_fuel,
+		"stack": p_stack, "place": p_place, "fuel": p_fuel, "legacy": p_legacy,
 	}
 
 
@@ -274,6 +272,10 @@ func item_max_stack(id: int) -> int:
 
 func item_place(id: int) -> String:
 	return String(item_def(id).get("place", ""))
+
+
+func item_legacy(id: int) -> bool:
+	return bool(item_def(id).get("legacy", false))
 
 
 func item_fuel(id: int) -> int:
@@ -327,39 +329,8 @@ func _build_recipes() -> void:
 	# Сирена — чертёж 7, линза — чертёж 8 (#172). Руками сразу, без станка.
 	_recipe(IDs.I.SIREN, 1, {IDs.I.COPPER_INGOT: 2, IDs.I.CRYSTAL: 1, IDs.I.GLASS: 1}, "hand", 0.0, "")
 	_recipe(IDs.I.LENS, 1, {IDs.I.GLASS: 3, IDs.I.CRYSTAL: 2}, "hand", 0.0, "")
-
-
-	# Станки фабрики. #170 снимет сами машины; до тех пор цепочка «руда → релей»
-	# должна собираться. Пластины в ручной список #171 не входят.
-	# Сталь раньше проката: плавильня берёт первый подходящий рецепт, иначе
-	# слиток уходит в пластину и линия релея не выдаёт 24 стальные пластины.
-	_recipe(IDs.I.COPPER_INGOT, 1, {IDs.I.COPPER_ORE: 1}, "smelter", 1.6, "")
-	_recipe(IDs.I.IRON_INGOT, 1, {IDs.I.IRON_ORE: 1}, "smelter", 2.0, "")
-	_recipe(IDs.I.GLASS, 1, {IDs.I.SAND: 2}, "smelter", 2.2, "")
-	_recipe(IDs.I.STEEL_PLATE, 1, {IDs.I.IRON_INGOT: 2, IDs.I.COAL: 1}, "smelter", 3.5, "")
-	_recipe(IDs.I.COPPER_PLATE, 1, {IDs.I.COPPER_INGOT: 2}, "smelter", 2.0, "")
-	_recipe(IDs.I.IRON_PLATE, 1, {IDs.I.IRON_INGOT: 2}, "smelter", 2.0, "")
-	_recipe(IDs.I.CIRCUIT, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.CRYSTAL: 2}, "assembler", 3.0, "")
-	_recipe(IDs.I.POWER_CELL, 1, {IDs.I.IRON_PLATE: 1, IDs.I.CRYSTAL: 1}, "assembler", 3.0, "")
-	_recipe(IDs.I.BELT, 2, {IDs.I.IRON_PLATE: 1}, "assembler", 1.5, "")
-	_recipe(IDs.I.DRILL, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 4.0, "")
-	_recipe(IDs.I.INSERTER, 1, {IDs.I.IRON_PLATE: 1, IDs.I.COPPER_PLATE: 1}, "assembler", 2.0, "")
-	_recipe(IDs.I.TURRET, 1, {IDs.I.STEEL_PLATE: 3, IDs.I.CIRCUIT: 2, IDs.I.POWER_CELL: 1}, "assembler", 5.0, "")
-	_recipe(IDs.I.AIRLOCK, 1, {IDs.I.STEEL_PLATE: 2, IDs.I.CIRCUIT: 1}, "assembler", 3.0, "")
-	_recipe(IDs.I.ANALYZER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.CIRCUIT: 2, IDs.I.GLASS: 2}, "assembler", 4.0, "")
-	_recipe(IDs.I.FLOODLIGHT, 1, {IDs.I.COPPER_PLATE: 2, IDs.I.GLASS: 1, IDs.I.CRYSTAL: 1}, "assembler", 2.5, "")
-	_recipe(IDs.I.DEEP_DRILL, 1, {IDs.I.DRILL: 1, IDs.I.STEEL_PLATE: 4, IDs.I.CIRCUIT: 2}, "assembler", 6.0, "")
-	_recipe(IDs.I.RELAY_ANTENNA, 1, {IDs.I.COPPER_PLATE: 6, IDs.I.GLASS: 4, IDs.I.CRYSTAL_BLOCK: 2}, "assembler", 8.0, "")
-	# Первые станки всё ещё руками: иначе не с чего начать, пока #170 не снял фабрику.
-	# Подбор прячет строку, пока ингредиента не было в рюкзаке.
-	_recipe(IDs.I.SOLAR, 1, {IDs.I.COPPER_PLATE: 1, IDs.I.GLASS: 1}, "hand", 0.0, "", "seen")
-	_recipe(IDs.I.SMELTER, 1, {IDs.I.STONE: 6, IDs.I.SCRAP: 4}, "hand", 0.0, "", "seen")
-	_recipe(IDs.I.COAL_GEN, 1, {IDs.I.IRON_PLATE: 2, IDs.I.SCRAP: 6}, "hand", 0.0, "", "seen")
-	_recipe(IDs.I.ASSEMBLER, 1, {IDs.I.IRON_PLATE: 4, IDs.I.COPPER_PLATE: 2}, "hand", 0.0, "", "seen")
-	_recipe(IDs.I.BELT, 1, {IDs.I.IRON_PLATE: 1}, "hand", 0.0, "", "seen")
-	_recipe(IDs.I.COPPER_BLOCK, 1, {IDs.I.COPPER_INGOT: 4}, "hand", 0.0, "", "seen")
-	_recipe(IDs.I.IRON_BLOCK, 1, {IDs.I.IRON_INGOT: 4}, "hand", 0.0, "", "seen")
-	_recipe(IDs.I.CRYSTAL_BLOCK, 1, {IDs.I.CRYSTAL: 3}, "hand", 0.0, "", "seen")
+	# Фабрика снята (#170): плавильня, верстак, пластины, микросхемы, ТЭЦ,
+	# панели, буры, ленты, шлюз и блоки больше не крафтятся. Id остаются.
 
 
 func recipes_for(station: String) -> Array:
@@ -371,7 +342,7 @@ func recipes_for(station: String) -> Array:
 
 
 ## Виден ли рецепт герою who (null — свой). Чертёж (#169) и подбор (#171):
-## закрытое панель не рисует. Станки фабрики без reveal "seen" видны сразу.
+## закрытое панель не рисует.
 func recipe_unlocked(r: Dictionary, who = null) -> bool:
 	var out_id: int = int(r.get("out", -1))
 	if Game.blueprint_name(out_id) != "" and not Game.has_blueprint(out_id):
