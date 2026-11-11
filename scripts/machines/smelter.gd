@@ -18,8 +18,8 @@ func _init() -> void:
 	z_index = 3
 
 
-## Нужен ли предмет хоть одному ОТКРЫТОМУ рецепту (#57): вход запертого
-## рецепта станок не берёт — иначе он застревает внутри до открытия узла.
+## Нужен ли предмет хоть одному открытому рецепту (#169): вход рецепта без
+## чертежа станок не берёт — иначе он застревает внутри до чертежа.
 func input_accepts(item_id: int) -> bool:
 	for r in DB.recipes_for("smelter"):
 		if r["in"].has(item_id) and DB.recipe_unlocked(r):
@@ -65,7 +65,7 @@ func _process(delta: float) -> void:
 
 func _find_recipe() -> Dictionary:
 	for r in DB.recipes_for("smelter"):
-		if not DB.recipe_unlocked(r):    ## запертый деревом технологий (#28)
+		if not DB.recipe_unlocked(r):    ## нет чертежа на выход (#169)
 			continue
 		var ok: bool = true
 		for k in r["in"].keys():

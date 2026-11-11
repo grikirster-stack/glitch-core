@@ -23,7 +23,7 @@ func run() -> void:
 	for id in Game.relay_req.keys():
 		player.inv.add(int(id), int(Game.relay_req[id]))
 	ok("релей запущен", Game.try_finish())
-	ok("этап 4 — удержать сигнал", Game.objective_stage == 4, Game.objective_text())
+	ok("этап 3 — удержать сигнал", Game.objective_stage == 3, Game.objective_text())
 	ok("cap на удержании — %d" % Balance.RELAY_HOLD_CAP,
 			Threat.cap_for(Game.day_number, true) == Balance.RELAY_HOLD_CAP)
 

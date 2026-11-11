@@ -12,7 +12,7 @@ func _init() -> void:
 	z_index = 3
 
 
-## Нужен ли предмет хоть одному ОТКРЫТОМУ рецепту (#57) — как у плавильни.
+## Нужен ли предмет хоть одному открытому рецепту (#169) — как у плавильни.
 func input_accepts(item_id: int) -> bool:
 	for r in DB.recipes_for("assembler"):
 		if r["in"].has(item_id) and DB.recipe_unlocked(r):
@@ -59,7 +59,7 @@ func _process(delta: float) -> void:
 
 func _find_recipe() -> Dictionary:
 	for r in DB.recipes_for("assembler"):
-		if not DB.recipe_unlocked(r):    ## запертый деревом технологий (#28)
+		if not DB.recipe_unlocked(r):    ## нет чертежа на выход (#169)
 			continue
 		var ok: bool = true
 		for k in r["in"].keys():

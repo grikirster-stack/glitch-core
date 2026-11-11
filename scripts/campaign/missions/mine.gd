@@ -1,13 +1,13 @@
 extends Mission
 ## Глава 3 «Шахта»: к западу от базы — ствол до пещеры, внизу штольня с двумя
 ## глубинными бурами на одной ТЭЦ. Учит: спуск и подъём по стволу, бюджет мощности
-## и перегруз сети, глубинный бур, ручную добычу кристаллов, анализатор (кристалл → данные).
+## и перегруз сети, глубинный бур, ручную добычу кристаллов, анализатор (кристалл сгорает).
 
 const ORE: int = 20
 const CRYSTALS: int = 6
 
 var b: Dictionary = {}
-var _research0: int = 0
+var _burned0: int = 0
 
 
 func _init() -> void:
@@ -21,7 +21,6 @@ func _init() -> void:
 
 func build() -> void:
 	b = CampaignBase.build(CampaignBase.Tier.MINE)
-	CampaignBase.unlock_to("T4")
 	(b["mine_supply"] as Chest).receive_item(IDs.I.COAL_GEN, 1)
 	(b["mine_supply"] as Chest).receive_item(IDs.I.COAL, 12)
 	var bx: int = World.beacon_cell.x
@@ -47,12 +46,12 @@ func stages() -> Array:
 			"goals": [["Руды в сундуке добычи", func() -> Vector2i:
 				return Vector2i(chest_has(b["mine_chest"], IDs.I.IRON_ORE) + chest_has(b["mine_chest"], IDs.I.COPPER_ORE), ORE)]]},
 		{"title": "Кристаллы", "hint": "Светящиеся ниши в стенах ствола · ЛКМ — копать (кристалл твёрдый, держите дольше)",
-			"say": ["В стенах ствола — ниши с кристаллами глитча, они светятся. Кристалл — это данные, если знать, как читать."],
+			"say": ["В стенах ствола — ниши с кристаллами глитча, они светятся."],
 			"goals": [["Кристаллов с собой", func() -> Vector2i: return Vector2i(heroes_have(IDs.I.CRYSTAL), CRYSTALS)]]},
 		{"title": "Анализатор", "hint": "Анализатор — справа от релей-ядра · E с кристаллами в руке — загрузить",
-			"say": ["Наверх, к релею. Справа от ядра — анализатор: он превращает кристаллы в данные для исследований."],
-			"enter": func() -> void: _research0 = Game.research,
-			"goals": [["Данные с анализатора", func() -> Vector2i: return Vector2i(Game.research - _research0, 1)]]},
+			"say": ["Наверх, к релею. Справа от ядра — анализатор: кристалл в нём сгорает. Чертежи теперь дают терминалы."],
+			"enter": func() -> void: _burned0 = int(b["analyzer"].produced),
+			"goals": [["Кристалл сожжён анализатором", func() -> Vector2i: return Vector2i(int(b["analyzer"].produced) - _burned0, 1)]]},
 	]
 
 

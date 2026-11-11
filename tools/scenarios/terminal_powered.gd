@@ -1,7 +1,8 @@
 extends "res://tools/scenarios/terminal.gd"
-## Терминал под питанием (ADR-001 § 4.6, #29): ТЭЦ с углём рядом с терминалом
-## базы → удерживать E → +5 данных, глава 1 журнала, терминал отработал.
-## Затем то же у терминала руины: он есть (баг генерации руин) и выдаёт свою главу.
+## Терминал под питанием (ADR-001 § 4.6, #29; чертежи #169): ТЭЦ с углём рядом
+## с терминалом базы → удерживать E → глава журнала, следующий чертёж и подарок
+## на пол. Порядок чертежей не зависит от того, какой терминал прочитан первым:
+## база, потом руина — те же два чертежа, что и наоборот.
 
 
 func run() -> void:
@@ -35,7 +36,8 @@ func _read_powered(t: Vector2i, chapter: int) -> void:
 	if not await stand_at_terminal(t):
 		return
 	var done_before: int = Game.tasks_done
-	var data_before: int = Game.research
+	var bp_before: int = Game.blueprints.size()
+	var want: String = Game.next_blueprint_name()
 	hold(KEY_E)
 	await wait(0.6)
 	ok("прогресс задания растёт", player.task_progress > 0.05, "%.2f" % player.task_progress)
@@ -45,12 +47,28 @@ func _read_powered(t: Vector2i, chapter: int) -> void:
 	await wait(0.1)
 	ok("зажатая E после терминала не открыла сундук", not UI.blocking())
 	ok("задание засчитано", done, "%d → %d" % [done_before, Game.tasks_done])
-	ok("+%d данных" % Balance.TERMINAL_DATA, Game.research - data_before == Balance.TERMINAL_DATA,
-			"%d → %d" % [data_before, Game.research])
+	ok("выдан следующий чертёж «%s»" % want, want != "" and Game.blueprints.size() == bp_before + 1
+			and String(Game.blueprints[bp_before]) == want, str(Game.blueprints))
+	ok("подарок терминала на полу", _gift_on_ground(World.terminal_gift(chapter)))
 	ok("глава %d «%s» прочитана" % [chapter + 1, Lore.chapter_title(chapter)], Tech.is_chapter_read(chapter),
 			str(Tech.read_chapters))
 	ok("терминал отработал", World.get_tile_v(t) == IDs.T.PANEL and not World.terminals.has(t),
 			str(World.get_tile_v(t)))
+
+
+## Подарок этой главы лежит на полу (id и число из World.terminal_gift).
+func _gift_on_ground(gift: Array) -> bool:
+	if gift.is_empty():
+		return false
+	for e in gift:
+		var id: int = int(e[0])
+		var n: int = 0
+		for c in scene.get_children():
+			if c is ItemEntity and c.item_id == id:
+				n += c.count
+		if n < int(e[1]):
+			return false
+	return true
 
 
 ## Свободная клетка на твёрдом полу в радиусе питания ТЭЦ от терминала.

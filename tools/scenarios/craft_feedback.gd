@@ -6,7 +6,7 @@ extends ScenarioBase
 ##    «есть 0 / нужно 2» и причину «Не хватает: …».
 ## 2. Клик по нему: ничего не скрафчено, строка обратной связи называет нехватку,
 ##    строка рецепта вспыхивает красным.
-## 3. Запертый рецепт: причина — узел и вкладка «Исследования».
+## 3. Рецепт без чертежа в списке не рисуется (#169).
 ## 4. Вкладка плавильни без плавильни рядом: причина — станок.
 ## 5. Успешный ручной крафт: «Скрафчено: …», вспышка зелёная.
 ## 6. Плавильня рядом: «Загружено в плавильню», сырьё ушло в станок.
@@ -48,14 +48,14 @@ func run() -> void:
 			and panel.last_feedback.contains("Медная руда"), panel.last_feedback)
 	ok("строка рецепта вспыхнула красным", not panel._flash_ok and panel._flash_rec == copper)
 
-	# ---- 3. Запертый рецепт ---------------------------------------------------------
+	# ---- 3. Рецепт без чертежа скрыт; сборщик открыт сразу -------------------------
+	var wall: Dictionary = _find(DB.recipes_for("smelter"), IDs.I.STEEL_WALL)
+	ok("стальная стена без чертежа не в списке панели", wall.is_empty() or not panel._recipes("smelter").has(wall))
 	for id in asm["in"].keys():
 		player.inv.add(int(id), int(asm["in"][id]))
 	var arow: Rect2 = _row_of(hand, asm)
 	await _click(arow.position + Vector2(60, 12))
-	ok("запертый сборщик не скрафчен", player.inv.count_of(IDs.I.ASSEMBLER) == 0)
-	ok("причина: узел и вкладка «Исследования»", panel.last_feedback.contains("T1")
-			and panel.last_feedback.contains("Исследования"), panel.last_feedback)
+	ok("сборщик скрафчен без дерева технологий", player.inv.count_of(IDs.I.ASSEMBLER) == 1)
 	panel.scroll = 0
 
 	# ---- 4. Плавильня: станка рядом нет --------------------------------------------

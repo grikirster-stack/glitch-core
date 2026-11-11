@@ -39,7 +39,7 @@ func run() -> void:
 	for e in [[IDs.I.IRON_PLATE, 99], [IDs.I.STEEL_PLATE, 7], [IDs.I.COPPER_ORE, 99], [IDs.I.CRYSTAL, 3],
 			[IDs.I.IRON_INGOT, 1]]:
 		player.inv.add(int(e[0]), int(e[1]))
-	Game.research = 7
+	Game.give_next_blueprint()
 	UI.open_chest(best)
 	await wait(0.2)
 	ok("панель открыта у тайника", panel.visible and panel.chest == best)
@@ -48,7 +48,7 @@ func run() -> void:
 
 	for sz in SIZES:
 		panel.size = sz
-		for tab in 4:
+		for tab in InventoryPanel.TABS.size():
 			panel.station_tab = tab
 			panel.scroll = 0
 			for hover in _hovers():
@@ -89,11 +89,8 @@ func run() -> void:
 ## карточки), ячейка цели, ячейка сундука, правый нижний угол инвентаря.
 func _hovers() -> Array:
 	var out: Array = [Vector2(-1, -1)]
-	if panel.station_tab == InventoryPanel.RESEARCH_TAB:
-		out.append(panel._card_button_rect(4).get_center())
-	else:
-		out.append(panel._recipe_row_rect(0).position + Vector2(60, 12))
-		out.append(panel._recipe_row_rect(InventoryPanel.RECIPE_ROWS - 1).end - Vector2(20, 8))
+	out.append(panel._recipe_row_rect(0).position + Vector2(60, 12))
+	out.append(panel._recipe_row_rect(InventoryPanel.RECIPE_ROWS - 1).end - Vector2(20, 8))
 	var cells: Array = panel._goal_cells()
 	if not cells.is_empty():
 		out.append((cells[cells.size() - 1]["rect"] as Rect2).get_center())

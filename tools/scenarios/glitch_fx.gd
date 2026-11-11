@@ -52,18 +52,18 @@ func run() -> void:
 			"%d → %d (макс %d)" % [n0, get_tree().get_node_count(), n_max])
 
 	var bp: Vector2 = World.cell_to_world(World.beacon_cell)
-	# --- 2. Старт релея (этап 4) — блоки у излучателя.
+	# --- 2. Старт релея (этап 3) — блоки у излучателя.
 	await _shot_before()
-	Game.objective_changed.emit(4)
+	Game.objective_changed.emit(3)
 	ok("релей запущен → блоки у релея", fx.glitch_active() and fx.active_name() == "relay_start",
 			fx.active_name())
 	await _shot_after("glitch_relay", bp)
 	await _expect_off("relay_start")
 
-	# Отметка отсчёта удержания — «приём сигнала». Этап 4 ставим заранее: иначе
+	# Отметка отсчёта удержания — «приём сигнала». Этап 3 ставим заранее: иначе
 	# Game сам перейдёт на него (relay_active) и «релей запущен» перебьёт сигнал.
 	var stage0: int = Game.objective_stage
-	Game.objective_stage = 4
+	Game.objective_stage = 3
 	Game.relay_active = true
 	Game.relay_timer = 30.5
 	fx._wake()

@@ -36,6 +36,7 @@ func run() -> void:
 		(World.belts[c] as Belt).dir = 0
 	gen.add_fuel(CoalGen.FUEL_MAX_UNITS)
 	src.receive_item(IDs.I.COPPER_ORE, 30)
+	Game.give_next_blueprint()   # чертёж в файл: после F9 панель должна показать тот же рецепт
 	# Оборона (#31): шлюз у фабрики, решётка на вентиляции. Релей (#32): сигнал держится.
 	var lock: Vector2i = c0 + Vector2i(7, 1)
 	World.set_tile(lock.x, lock.y, IDs.T.AIRLOCK)
@@ -85,7 +86,7 @@ func run() -> void:
 		World.set_tile(x, base + 3, IDs.T.AIR)
 	player.inv.add(IDs.I.STONE, 50)
 	player.global_position += Vector2(200.0, -40.0)
-	Game.research += 25
+	Game.blueprints = PackedStringArray()
 	var tur: MachineBase = World.machines.get(c0 + Vector2i(1, 2))
 	if tur != null:
 		tur.destroy()
@@ -113,7 +114,7 @@ func run() -> void:
 	ok("решётка вернулась с прежним HP", grate.x < 0 or (World.is_vent_sealed(grate)
 			and World.vents_sealed[grate] == snap["world"]["vents_sealed"][grate]),
 			"HP %s" % str(World.vents_sealed.get(grate)))
-	ok("этап релея вернулся", Game.relay_active and Game.objective_stage == 4,
+	ok("этап релея вернулся", Game.relay_active and Game.objective_stage == 3,
 			"этап %d, %.1f с" % [Game.objective_stage, Game.relay_timer])
 	for sec in ["world", "machines", "items", "player", "game", "tech", "threat"]:
 		ok("«%s» как при F5" % sec, var_to_bytes(after[sec]) == var_to_bytes(snap[sec]))
@@ -126,6 +127,17 @@ func run() -> void:
 	got = await wait_until(func() -> bool: return _count(dst, IDs.I.COPPER_INGOT) > ingots0, 20.0)
 	ok("после загрузки фабрика продолжает плавить", got,
 			"слитков %d → %d" % [ingots0, _count(dst, IDs.I.COPPER_INGOT)])
+	ok("чертёж из сохранения на месте", Game.has_blueprint(IDs.I.STEEL_WALL), str(Game.blueprints))
+	var panel: InventoryPanel = UI.panel
+	panel.open(player)
+	panel.station_tab = 1
+	panel._cache_size = -1
+	var shown: bool = false
+	for r in panel._recipes("smelter"):
+		if int(r["out"]) == IDs.I.STEEL_WALL:
+			shown = true
+	ok("после загрузки панель показывает рецепт чертежа", shown)
+	panel.close()
 	_cleanup(slot0)
 
 

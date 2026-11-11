@@ -69,18 +69,18 @@ func run_host() -> void:
 	player.vel = Vector2.ZERO
 	await wait(0.4)
 	var done0: int = Game.tasks_done
-	var data0: int = Game.research
+	var bp0: int = Game.blueprints.size()
 	notes.clear()
 	await barrier("term")
 	hold(KEY_E)
 	await wait_until(func() -> bool: return Game.tasks_done > done0, 8.0)
 	await wait(1.0)
 	release(KEY_E)
-	ok("терминал прочитан один раз на команду: задание +1, данных +%d" % Balance.TERMINAL_DATA,
-			Game.tasks_done == done0 + 1 and Game.research == data0 + Balance.TERMINAL_DATA,
-			"задания %d → %d, данные %d → %d" % [done0, Game.tasks_done, data0, Game.research])
+	ok("терминал прочитан один раз на команду: задание +1 и чертёж",
+			Game.tasks_done == done0 + 1 and Game.blueprints.size() == bp0 + 1,
+			"задания %d → %d, чертежи %s" % [done0, Game.tasks_done, str(Game.blueprints)])
 	ok("терминал отработал", not World.terminals.has(term))
-	ok("хост: всем — кто прочёл", notes_with("прочитан, +%d данных" % Balance.TERMINAL_DATA) == 1, str(notes))
+	ok("хост: всем — кто прочёл", notes_with("прочитан") == 1, str(notes))
 	await barrier("read")
 	finish()
 
@@ -163,5 +163,5 @@ func run_client(_i: int) -> void:
 	ok("c0: задание засчитано один раз (глобальный пакет)", Game.tasks_done == done0 + 1,
 			"%d → %d" % [done0, Game.tasks_done])
 	ok("c0: всем — кто прочёл терминал", await wait_until(func() -> bool:
-		return notes_with("прочитан, +%d данных" % Balance.TERMINAL_DATA) == 1, WAIT), str(notes))
+		return notes_with("прочитан") == 1, WAIT), str(notes))
 	finish()

@@ -770,7 +770,8 @@ func _dismantle(m: MachineBase) -> void:
 	_notify("Разобрано: %s" % DB.item_name(item), Color(0.8, 0.9, 0.75))
 
 
-## Терминал отработал: +данные (Game.complete_task), глава журнала этого места.
+## Терминал отработал (#169): глава журнала этого места, следующий чертёж
+## (если они ещё не кончились) и подарок на пол перед терминалом.
 func _read_terminal(t: Vector2i) -> void:
 	var chapter: int = int(World.terminal_chapters.get(t, -1))
 	World.terminals.erase(t)
@@ -779,8 +780,33 @@ func _read_terminal(t: Vector2i) -> void:
 	Game.complete_task()
 	if chapter >= 0:
 		Tech.read_chapter(chapter)
+	var bp: int = Game.give_next_blueprint()
+	var gift: Array = World.terminal_gift(chapter) if chapter >= 0 else []
+	var drop_at: Vector2 = global_position + Vector2(0.0, -10.0)
+	for e in gift:
+		spawn_item(int(e[0]), int(e[1]), drop_at)
 	_sfx_here("craft", -6.0)
-	_net_terminal_read(chapter)   # СЕТЬ (ADR-002 § 4.7): терминал — один раз на команду
+	_announce_terminal(chapter, bp, gift)
+	_net_terminal_read(chapter, bp)   # СЕТЬ (ADR-002 § 4.7): терминал — один раз на команду
+
+
+## Уведомление терминала: место, глава, чертёж (если выдан) и подарок.
+## Чертёж — с иконкой выхода и кольцом, как открытие предмета.
+func _announce_terminal(chapter: int, blueprint_id: int, gift: Array) -> void:
+	var place: String = Lore.chapter_place(chapter) if chapter >= 0 else ""
+	var where: String = "Терминал «%s»" % place if place != "" else "Терминал"
+	if blueprint_id >= 0:
+		var label: String = Game.blueprint_label(Game.blueprint_name(blueprint_id))
+		Game.notify("Чертёж: %s" % label, Color(0.45, 0.9, 1.0))
+		UI.flash_ring(World.cell_to_world(World.world_to_cell(global_position)), Color(0.45, 0.9, 1.0))
+		Game.notify("%s: глава журнала, чертёж и подарок." % where, Color(0.4, 0.95, 0.6))
+	else:
+		Game.notify("%s: глава журнала и подарок." % where, Color(0.4, 0.95, 0.6))
+	if not gift.is_empty():
+		var parts: PackedStringArray = PackedStringArray()
+		for e in gift:
+			parts.append("%s ×%d" % [DB.item_name(int(e[0])), int(e[1])])
+		Game.notify("Подарок: " + ", ".join(parts), Color(0.85, 0.8, 0.45))
 
 
 ## Ремонт хламом: +Balance.REPAIR_PER_SCRAP HP машине-цели E (ET_REPAIR) за
@@ -1333,15 +1359,16 @@ func _net_vent_busy(v: Vector2i) -> bool:
 	return false
 
 
-## Терминал прочитан (хост): всем — кто прочёл и где. Данные и глава — один раз на
-## команду: терминал ушёл из World.terminals, второй дочитывающий его уже не найдёт.
-func _net_terminal_read(chapter: int) -> void:
+## Терминал прочитан (хост): всем — кто прочёл и где. Глава, чертёж и подарок —
+## один раз на команду: терминал ушёл из World.terminals, второй его уже не найдёт.
+## Сам чертёж клиенту ещё не уходит (маска в global ждёт очереди PROTO, #182).
+func _net_terminal_read(chapter: int, blueprint_id: int) -> void:
 	if not Net.is_host():
 		return
 	var place: String = Lore.chapter_place(chapter) if chapter >= 0 else ""
 	var what: String = "терминал «%s»" % place if place != "" else "терминал"
-	NetCoop.team_notify("%s: %s прочитан, +%d данных." % [nick, what, Balance.TERMINAL_DATA],
-			Color(0.4, 0.95, 0.6))
+	var got: String = "глава журнала, чертёж и подарок" if blueprint_id >= 0 else "глава журнала и подарок"
+	NetCoop.team_notify("%s: %s прочитан — %s." % [nick, what, got], Color(0.4, 0.95, 0.6))
 
 
 ## Мешок с хотбаром погибшего — MP_BAG_OWNER_LOCK с поднимает только владелец (по uid).

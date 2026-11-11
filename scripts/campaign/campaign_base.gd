@@ -65,15 +65,6 @@ static func read_base_terminals() -> void:
 		Game.tasks_done += 1
 
 
-## Открыть узлы дерева до node включительно (без списания данных и уведомлений).
-static func unlock_to(node: String) -> void:
-	for n in Tech.ORDER:
-		if not Tech.unlocked.has(n):
-			Tech.unlocked.append(n)
-		if n == node:
-			return
-
-
 # ------------------------------------------------------------------ ПОСТРОЙКИ
 
 ## Поставить постройку в клетку (клетку освобождает). opts: dir (конвейер,

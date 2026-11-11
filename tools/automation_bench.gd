@@ -74,10 +74,9 @@ func _setup() -> void:
 	var player = _scene.get("player")
 	if player:
 		player.invuln = 1.0e9
-	# T1 — для проката пластин и микросхем во второй линии.
-	var tech = root.get_node("Tech")
-	_game.research += int(tech.cost("T1"))
-	tech.unlock("T1")
+	# Чертежи стальной стены и решётки — если линия их варит (#169).
+	while _game.next_blueprint_name() != "":
+		_game.give_next_blueprint()
 	var origin: Vector2i = Vector2i(20, _world.beacon_cell.y + 8)
 	for x in range(origin.x - 2, origin.x + 64):
 		for y in range(origin.y - 2, origin.y + 42):

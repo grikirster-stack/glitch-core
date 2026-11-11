@@ -48,8 +48,8 @@ var _site_x: Dictionary = {}
 func run() -> void:
 	player.invuln = 1.0e9
 	Game.time_of_day = 0.30
-	Game.research = 999
-	Tech.unlock("T1")
+	while Game.next_blueprint_name() != "":
+		Game.give_next_blueprint()
 
 	# ---- бюджет: металл линиям, остальное — хвосту
 	var machine: Array = ["smelter", "assembler"]
@@ -392,9 +392,6 @@ func _take_out(id: int, n: int) -> int:
 
 ## Разложить детали хвоста по сборщикам: a2 — энергоячейки, a1 — остальное.
 func _feed_tail(tail: Dictionary) -> void:
-	# Хвост открывает антенну (T5): исследования здесь не меряются.
-	for node in ["T2", "T3", "T4", "T5"]:
-		Tech.unlock(node)
 	for id in Balance.RELAY_REQ.keys():
 		var r: Dictionary = recipe_of(int(id), ["assembler"])
 		if r.is_empty() or String(r["station"]) != "assembler":

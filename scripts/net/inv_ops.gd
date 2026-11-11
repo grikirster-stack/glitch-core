@@ -18,8 +18,9 @@ extends Node
 ## Сундук по E у прокси (Player._open_chest) — host_open(): хост подписывает владельца
 ## на сундук и шлёт CHEST с флагом «открыть»; клиент открывает окно у себя. Изменения
 ## сундука от лент и манипуляторов приходят подписчикам опросом POLL_SEC.
-## Исследования, главы и обрывки — общие (D10): хост рассылает TECH всем (канал 0) по
-## сигналам Tech; клиент открывает узел командой UNLOCK (Tech.unlock у клиента зовёт её).
+## Главы и обрывки — общие (D10): хост рассылает TECH всем (канал 0) по сигналам
+## Tech. Дерево снято (#169): команда UNLOCK больше ничего не открывает. Чертежи
+## в пакет ещё не кладутся — битовая маска ждёт очереди PROTO (эпик #182).
 ##
 ## Узел живёт под main.gd (секция «СЕТЬ: ИНВЕНТАРИ»); без сети не нужен — одиночная зовёт
 ## только статические функции.
@@ -68,7 +69,6 @@ func start(p_main: Node) -> void:
 	Net.on(NetCodec.Msg.TECH, _on_tech)
 	Net.peer_left.connect(_on_peer_left)
 	Net.session_ended.connect(_on_session_ended)
-	Tech.node_unlocked.connect(_on_node_unlocked)
 	Tech.chapter_read.connect(_on_chapter_read)
 	Tech.fragment_found.connect(_on_fragment_found)
 
@@ -266,7 +266,7 @@ static func craft_check(p: Player, rec: Dictionary) -> Dictionary:
 	var station: String = String(rec["station"])
 	if not DB.recipe_unlocked(rec):
 		return {"code": "locked", "near": null,
-				"reason": "Заперто: нужен узел %s — вкладка «Исследования»." % Tech.title(String(rec.get("tech", "T0")))}
+				"reason": "Нет чертежа: «%s» — в терминале." % DB.item_name(int(rec.get("out", 0)))}
 	var near: MachineBase = null
 	if station != "hand":
 		near = near_machine(p, "Smelter" if station == "smelter" else "Assembler")
@@ -316,18 +316,9 @@ static func do_craft(p: Player, rec: Dictionary, near: MachineBase) -> Dictionar
 	return out
 
 
-# ------------------------------------------------------------------ ИССЛЕДОВАНИЯ
-
-## Открыть узел дерева: одиночная и хост — Tech.unlock; клиент — команда UNLOCK хосту
-## (итог придёт TECH всем и CMD_RESULT нажавшему), сразу — false.
-static func unlock(node: String, cb: Callable = Callable()) -> bool:
-	if not Net.is_client():
-		return Tech.unlock(node)
-	var i: int = Tech.ORDER.find(node)
-	if i < 0:
-		return false
-	send(Op.UNLOCK, {"node": i}, cb)
-	return false
+# ------------------------------------------------------------------ ЧЕРТЕЖИ (#169)
+## Дерево снято. Команда UNLOCK в протоколе остаётся (длина кадра не меняется без
+## бампа PROTO): хост отвечает «узлов больше нет». Новых открытий она не делает.
 
 
 # ------------------------------------------------------------------ КЛИЕНТ: КОМАНДЫ
@@ -410,7 +401,7 @@ func _on_tech(sender: int, payload: PackedByteArray) -> void:
 	var d: Dictionary = NetCodec.decode_tech(payload)
 	if d.is_empty():
 		return
-	Game.research = int(d["research"])
+	# d["research"] — заглушка старого пакета TECH: счётчик данных снят (#169).
 	Tech.net_apply(int(d["kind"]), int(d["arg"]), String(d["text"]))
 
 
@@ -509,16 +500,8 @@ func _exec(p: Player, peer: int, op: int, a: Dictionary) -> Dictionary:
 			p.inv.selected = s
 			return {"ok": true, "text": "", "chest": null}
 		Op.UNLOCK:
-			var i: int = int(a["node"])
-			if i < 0 or i >= Tech.ORDER.size():
-				res["text"] = "Нет такого узла."
-				return res
-			var node: String = String(Tech.ORDER[i])
-			if Tech.is_unlocked(node):
-				return {"ok": true, "text": "", "chest": null}
-			if Tech.unlock(node):
-				return {"ok": true, "text": "Открыто: %s — новые рецепты в крафте." % Tech.title(node), "chest": null}
-			res["text"] = Tech.lock_reason(node) + "."
+			# Дерево снято (#169). Отказ словами — старый клиент не открывает узел молча.
+			res["text"] = "Узлов больше нет: чертёж выдаёт терминал."
 			return res
 		Op.CLOSE:
 			_unsubscribe(peer)
@@ -724,18 +707,13 @@ func _process(delta: float) -> void:
 			_push_chest(c)
 
 
-## Хост: исследования, главы и обрывки — всем клиентам (канал 0).
-func _on_node_unlocked(node: String) -> void:
-	if Net.is_host():
-		Net.send_on(0, NetCodec.Msg.TECH, NetCodec.encode_tech(NetCodec.TechEv.UNLOCK, Game.research,
-				Tech.ORDER.find(node)))
-
-
+## Хост: главы и обрывки — всем клиентам (канал 0). Поле «данные» пакета — 0:
+## счётчик снят, длина TECH не меняется без бампа PROTO (#169, очередь эпика #182).
 func _on_chapter_read(i: int) -> void:
 	if Net.is_host():
-		Net.send_on(0, NetCodec.Msg.TECH, NetCodec.encode_tech(NetCodec.TechEv.CHAPTER, Game.research, i))
+		Net.send_on(0, NetCodec.Msg.TECH, NetCodec.encode_tech(NetCodec.TechEv.CHAPTER, 0, i))
 
 
 func _on_fragment_found(text: String) -> void:
 	if Net.is_host():
-		Net.send_on(0, NetCodec.Msg.TECH, NetCodec.encode_tech(NetCodec.TechEv.FRAGMENT, Game.research, 0, text))
+		Net.send_on(0, NetCodec.Msg.TECH, NetCodec.encode_tech(NetCodec.TechEv.FRAGMENT, 0, 0, text))
