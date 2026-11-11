@@ -1,12 +1,12 @@
 extends ScenarioBase
 ## Подсказки HUD (issue #7): HUD больше не перебирает все постройки мира, но
-## подсказка ТЭЦ (топка / рубильник, #34) / «открыть сундук» по-прежнему появляется
-## сразу, как герой подошёл, и пропадает сразу, как отошёл.
+## подсказка горелки (топка / рубильник, #164) / «открыть сундук» по-прежнему
+## появляется сразу, как герой подошёл, и пропадает сразу, как отошёл.
 ##
-## В коридоре базы ставим ТЭЦ и сундук, вокруг — ещё 200 построек вдали (как
-## большая фабрика). Герой идёт вправо мимо обеих построек и обратно; каждый
-## кадр сверяем подсказку HUD с ожидаемой по расстоянию. Допуск — 2 кадра
-## (HUD и сценарий обновляются в разном порядке внутри кадра).
+## В коридоре базы ставим горелку и сундук, вокруг — ещё 200 построек вдали.
+## Герой идёт вправо мимо обеих построек и обратно; каждый кадр сверяем
+## подсказку HUD с ожидаемой по расстоянию. Допуск — 2 кадра (HUD и сценарий
+## обновляются в разном порядке внутри кадра). ТЭЦ снята (#170).
 
 const DIST: float = 40.0
 const HINT_CHEST: String = HUD.HINT_CHEST
@@ -54,7 +54,7 @@ func run() -> void:
 	var right_x: float = chest.global_position.x + DIST + 4.0
 	await _walk(stats, gen, chest, func() -> bool: return player.global_position.x > right_x, 6.0)
 	release_all()
-	# Обратно: влево мимо сундука и ТЭЦ.
+	# Обратно: влево мимо сундука и горелки.
 	hold(KEY_A)
 	var left_x: float = gen.global_position.x - DIST - 4.0
 	await _walk(stats, gen, chest, func() -> bool: return player.global_position.x < left_x, 6.0)
@@ -67,7 +67,7 @@ func run() -> void:
 	ok("подсказка сундука появлялась у сундука", seen.has(HINT_CHEST))
 	ok("подсказка появляется и пропадает сразу", int(stats["max_lag"]) <= MAX_LAG_FRAMES,
 			"наибольшее отставание %d кадр(а)" % int(stats["max_lag"]))
-	# ADR-003 V6: рамка интерактива — вокруг ТЭЦ/сундука, пока горит их подсказка,
+	# ADR-003 V6: рамка интерактива — вокруг горелки/сундука, пока горит их подсказка,
 	# и нет рамки, когда подсказки нет.
 	ok("рамка интерактива — вокруг горелки/сундука и только при подсказке",
 			int(stats["mark_ok"]) > 0 and int(stats["mark_bad"]) == 0,
@@ -94,13 +94,13 @@ func _walk(stats: Dictionary, gen: Node2D, chest: Node2D, done_cond: Callable, t
 			stats["max_lag"] = maxi(int(stats["max_lag"]), int(stats["lag"]))
 
 
-## Рамка интерактива (V6): при подсказке ТЭЦ/сундука — вокруг этой постройки на
+## Рамка интерактива (V6): при подсказке горелки/сундука — вокруг этой постройки на
 ## экране (допуск 8 px: камера и HUD обновляются в разном порядке внутри кадра),
 ## без подсказки — рамки нет. Подсказку терминала не проверяем (рамка — от питания).
 func _check_mark(stats: Dictionary, want: String, gen: Node2D, chest: Node2D) -> void:
 	var hud: HUD = UI.hud
 	var tgt: Node2D = null
-	if want == hud.generator_hint(gen):
+	if want == hud.burner_hint(gen):
 		tgt = gen
 	elif want == HINT_CHEST:
 		tgt = chest
@@ -114,9 +114,8 @@ func _check_mark(stats: Dictionary, want: String, gen: Node2D, chest: Node2D) ->
 
 ## Какая подсказка должна быть сейчас — по расстояниям, по правилу цели E
 ## (#116): ближайший к герою объект в своём радиусе (терминал 42, релей 56,
-## ТЭЦ и сундук 40); терминал без питания — только если строго ближе всего
-## остального. Курсор сценарий не наводит. Коридор базы может задевать терминал —
-## тогда ждём подсказку терминала (с учётом питания, #34).
+## горелка и сундук 40). Курсор сценарий не наводит. Коридор базы может
+## задевать терминал — тогда ждём подсказку терминала. Питания нет (#170).
 func _want(gen: Node2D, chest: Node2D) -> String:
 	var p: Vector2 = player.global_position
 	var best: String = ""
@@ -142,7 +141,7 @@ func _want(gen: Node2D, chest: Node2D) -> String:
 	var gd: float = gen.global_position.distance_to(p)
 	if gd < DIST and gd < best_d:
 		best_d = gd
-		best = UI.hud.generator_hint(gen)
+		best = UI.hud.burner_hint(gen)
 	var cd: float = chest.global_position.distance_to(p)
 	if cd < DIST and cd < best_d:
 		best_d = cd
