@@ -19,7 +19,7 @@ class_name SfxTest
 
 # --------------------------------------------------------------- КОНСТАНТЫ
 ## Новые звуки зоны PR-M.
-const NEW_SOUNDS: Array = ["vent_hum", "turret_zap", "swarm", "doppel_whisper", "brownout"]
+const NEW_SOUNDS: Array = ["vent_hum", "turret_zap", "swarm", "doppel_whisper", "brownout", "siren"]
 ## Звуки, которые были до PR-M, — не должны пропасть.
 const OLD_SOUNDS: Array = ["mine", "break", "place", "pickup", "craft", "place_machine",
 		"hit", "alarm", "power", "step"]

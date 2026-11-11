@@ -564,6 +564,8 @@ const ET_CHEST: String = "chest"                ## сундук и тайник�
 const ET_REPAIR: String = "repair"              ## хлам в руке, машина повреждена
 const ET_LOAD: String = "load"                  ## предмет в руке подходит станку
 const ET_DISMANTLE: String = "dismantle"        ## разбор постройки (удержание E)
+const ET_SIREN: String = "siren"                ## сирена: E при полном заряде гонит рой
+const ET_LENS: String = "lens"                  ## линза в руке у маяка — вставить
 
 ## Сколько секунд держать E над постройкой, чтобы разобрать её (DISMANTLE).
 const DISMANTLE_HOLD: float = 0.9
@@ -697,6 +699,11 @@ func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable,
 			tg["kind"] = ET_GENERATOR
 		elif m is Burner and d < E_MACHINE:
 			tg["kind"] = ET_BURNER
+		elif m is Siren and d < E_MACHINE:
+			tg["kind"] = ET_SIREN
+		elif m is Pharos and not sel.is_empty() and sel.id == IDs.I.LENS and d < E_MACHINE \
+				and not bool(m.get("lens")):
+			tg["kind"] = ET_LENS
 		elif m is Inserter and (d < E_MACHINE or (aimed and d <= REACH)):
 			tg["kind"] = ET_INSERTER
 		elif m is Chest and d < E_MACHINE and not _chest_empty(m):
@@ -759,10 +766,14 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 			if task_progress >= 1.0:
 				task_progress = 0.0
 				Game.try_finish(self)   # вклад деталей — из своего инвентаря (MP-I, #94)
-		ET_GENERATOR, ET_INSERTER, ET_BURNER:
+		ET_GENERATOR, ET_INSERTER, ET_BURNER, ET_SIREN:
 			# ТЭЦ: уголь — топка, иначе рубильник (#25); манипулятор: фильтр/сброс (#30);
-			# горелка: топливо — топка, пустая рука — рубильник (#164).
+			# горелка: топливо — топка, пустая рука — рубильник (#164);
+			# сирена: E при полном заряде гонит фантомов (#172).
 			tg["node"].interact(self)
+		ET_LENS:
+			if fresh:
+				tg["node"].insert_lens(self)
 		ET_CHEST:
 			# Сундук — через сетевую обёртку: у прокси окно открывает владелец (MP-G).
 			_open_chest(tg["node"])
@@ -812,14 +823,23 @@ func _dismantle_node(tg: Dictionary, kind: String) -> MachineBase:
 
 ## Разобрать постройку: предмет вернётся в инвентарь (нет места — под ноги).
 func _dismantle(m: MachineBase) -> void:
+	var had_lens: bool = m is Pharos and bool(m.get("lens"))
 	var item: int = m.dismantle()
 	if item == IDs.I.NONE:
 		return
 	var left: int = inv.add(item, 1)
 	if left > 0:
 		spawn_item(item, left, global_position)
+	# Линза маяка (#172) возвращается вместе с башней, не остаётся в корпусе.
+	if had_lens:
+		var lens_left: int = inv.add(IDs.I.LENS, 1)
+		if lens_left > 0:
+			spawn_item(IDs.I.LENS, lens_left, global_position)
 	_sfx_here("pickup", -10.0, 1.1)
-	_notify("Разобрано: %s" % DB.item_name(item), Color(0.8, 0.9, 0.75))
+	var back: String = DB.item_name(item)
+	if had_lens:
+		back += " и линза"
+	_notify("Разобрано: %s" % back, Color(0.8, 0.9, 0.75))
 
 
 ## Терминал отработал (#169): глава журнала этого места, следующий чертёж
