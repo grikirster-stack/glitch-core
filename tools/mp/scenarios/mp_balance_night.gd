@@ -80,7 +80,7 @@ func run_host() -> void:
 	var s0: int = Threat.spawned_total
 	await night_begin(day)
 	var budget: float = Threat.budget
-	var cap: int = Threat.cap_for_n(Threat.night_day, false, Threat.players_online())
+	var cap: int = Threat.cap_for_n(Threat.night_day, false, Threat.players_online(), Threat.threat_level())
 	night_track_begin()
 	traffic_begin()
 	var t0: float = Game.game_time
