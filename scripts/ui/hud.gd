@@ -107,6 +107,8 @@ const HINT_BEACON: String = "[E] — активировать релей-ядр�
 const HINT_CHEST: String = "[E] — открыть сундук"
 const HINT_GEN_COAL: String = "[E] — загрузить уголь в ТЭЦ"
 const HINT_GEN_SWITCH: String = "[E] — рубильник ТЭЦ (вкл/выкл) · уголь в руке + [E] — топка"
+const HINT_BURNER_FUEL: String = "[E] — загрузить топливо в горелку"
+const HINT_BURNER_SWITCH: String = "[E] — рубильник горелки (вкл/выкл) · топливо в руке + [E] — топка"
 const HINT_SOLAR_SWITCH: String = "[E] — рубильник генератора (вкл/выкл)"
 ## Подсказка управления в начале забега: клавиатура и мышь / телефон (#149).
 const CONTROLS_KEYS: Array = [
@@ -445,6 +447,8 @@ func _compute_hint(_pos: Vector2) -> String:
 	_hint_target = _cell_rect(tg["cell"])
 	if kind == player.ET_GENERATOR:
 		return generator_hint(tg["node"])
+	if kind == player.ET_BURNER:
+		return burner_hint(tg["node"])
 	if kind == player.ET_TERMINAL:
 		return HINT_TERMINAL
 	if kind == player.ET_BEACON:
@@ -504,6 +508,13 @@ func generator_hint(g) -> String:
 			return HINT_GEN_COAL
 		return HINT_GEN_SWITCH + _dismantle_tail(g)
 	return HINT_SOLAR_SWITCH + _dismantle_tail(g)
+
+
+## Подсказка у горелки: топливо в руке — топка, пустая рука — рубильник (#164).
+func burner_hint(b) -> String:
+	if player != null and Balance.FUEL.has(player.inv.selected_stack().id):
+		return HINT_BURNER_FUEL
+	return HINT_BURNER_SWITCH + _dismantle_tail(b)
 
 
 # ------------------------------------------------ ТРЕКЕР ЦЕЛИ, ОБУЧЕНИЕ, МОЩНОСТЬ
@@ -605,6 +616,13 @@ func _compute_tracker() -> void:
 		_compute_mission()
 		return
 	mission_lines = []
+	# После сигнала новой цели нет (ADR-005 § 6.4): карточка считает смены.
+	if Game.signal_sent and not Game.relay_active:
+		tracker_stage = Game.day_number
+		tracker_title = "Смена %d · Сигнал отправлен" % Game.day_number
+		tracker_detail = "ночь идёт своим чередом"
+		_set_card("Сигнал отправлен", Game.day_number, 1, -1, Vector2.INF)
+		return
 	var st: int = clampi(Game.objective_stage, 1, Game.OBJECTIVE_STAGES)
 	if Game.relay_active:
 		st = Game.OBJECTIVE_STAGES
@@ -1216,7 +1234,7 @@ func _layout_sig() -> int:
 		tsig = hash([tc.btn_center, tc.stick_center, tc.stick_radius])
 	return hash([size, UI.ui_scale, _state_hash, _hint_hash, _note_serial, notes.size(),
 			team_mates.size(), night_countdown, Game.day_number, Game.phase_name(), tsig,
-			player != null, _hotbar_count(), card_text, card_have, card_need])
+			player != null, _hotbar_count(), card_text, card_have, card_need, Game.signal_sent])
 
 
 ## Узел TouchControls, если сенсорное управление включено (иначе null).
@@ -1265,7 +1283,10 @@ func _fit_text(text: String, fs: int, max_w: float) -> String:
 
 
 func day_label() -> String:
-	return "Смена %d — %s" % [Game.day_number, Game.phase_name()]
+	var s: String = "Смена %d — %s" % [Game.day_number, Game.phase_name()]
+	if Game.signal_sent:
+		s += " · Сигнал отправлен"
+	return s
 
 
 ## Правый столбец (миникарта, плашка команды) кончается на этой высоте при ширине w и n

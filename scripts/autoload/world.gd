@@ -57,6 +57,11 @@ var spawn_point: Vector2 = Vector2.ZERO
 var lights: Array[Dictionary] = []
 var machines: Dictionary = {}       # Vector2i -> Node (машина)
 var belts: Dictionary = {}         # Vector2i -> {dir:int, items:Array}
+## Лучи света (ADR-005, #164). Перестраиваются в _process, не чаще раза в кадр.
+var beams: Beams = Beams.new()
+## Ручки света луча: клетка → источник World.add_light_source. Снимаются целиком
+## при перестроении, чтобы погасшие клетки не продолжали светить.
+var _beam_lights: Dictionary = {}
 var astar: AStarGrid2D = null
 var gen_stats: Dictionary = {}     # замеры последней генерации мира
 
@@ -168,6 +173,14 @@ func generate(p_seed: int) -> void:
 	belts.clear()
 	lights.clear()
 	_light_cells.clear()
+	_beam_lights.clear()
+	if beams != null:
+		beams.cells.clear()
+		beams.segments.clear()
+		# Словарь машин уже пуст, а плоская карта занятости — нет: иначе луч
+		# нового забега упирается в клетки построек прошлого мира.
+		beams.note_machines()
+		beams.mark_dirty()
 	_reset_light_chunks()
 	_light_max_radius = 0.0
 	_light_reach = 1
@@ -352,6 +365,7 @@ func generate(p_seed: int) -> void:
 	var t_end: int = Time.get_ticks_usec()
 	spawn_point = Vector2(float((bx - 4) * TILE) + TILE * 0.5, float(surface[bx] * TILE) - 12.0)
 	_reset_explored()   # туман войны (#59): закрыто всё, кроме старта
+	_census_ores()      # бесконечная игра (#174): цель отрастания — эта перепись
 
 	gen_stats = {
 		"gen_ms": float(t_end - t_start) / 1000.0,
@@ -1159,6 +1173,7 @@ func _fluid_mark_cell(x: int, y: int) -> void:
 func _process(delta: float) -> void:
 	_explore_tick()   # туман войны (#59): работа только при смене клетки героя
 	_defense_tick(delta)   # оборона (#31): шлюзы и решётки, раз в 0.1 с
+	_beams_tick()     # луч (#164): не чаще раза в кадр, только если мир изменился
 	_fluid_timer += delta
 	if _fluid_timer < FLUID_STEP:
 		return
@@ -1439,6 +1454,117 @@ func set_tile_raw(x: int, y: int, id: int) -> void:
 	tiles[y * W + x] = id
 
 
+# ------------------------------------------------------------ ОТРАСТАНИЕ РУДЫ (#174, ADR-005 § 6.4)
+## Планета живая: каждый рассвет в неразведанной породе (explored == 0, глубже
+## ORE_REGROW_MIN_DEPTH) камень рядом с жилой становится той же рудой — пока клеток
+## не станет столько, сколько было после генерации (ore_initial). Хлам не растёт.
+## Выбор клеток детерминирован от world_seed + день: тот же сид и та же перепись —
+## те же клетки. На глазах у игрока ничего не прорастает.
+
+## Начальная перепись: id тайла руды → клеток после генерации. Хлам не входит.
+var ore_initial: Dictionary = {}
+## Сколько клеток руды приросло за последний рассвет (замер ore-census и сценарий).
+var ore_regrow_last: Dictionary = {}
+## Сколько рассветов отрастание уже отработало (load не вызывает его повторно).
+var ore_regrow_dawns: int = 0
+
+const REGROW_ORES: Array[int] = [IDs.T.COAL_ORE, IDs.T.COPPER_ORE, IDs.T.IRON_ORE, IDs.T.CRYSTAL_ORE]
+const _REGROW_DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+
+
+## Перепись руды по готовому миру. Зовётся в конце generate(); load_state её не трогает.
+func _census_ores() -> void:
+	ore_initial.clear()
+	ore_regrow_last.clear()
+	ore_regrow_dawns = 0
+	for tid in REGROW_ORES:
+		ore_initial[str(tid)] = 0
+	if tiles.size() != W * H:
+		return
+	for i in tiles.size():
+		var key: String = str(tiles[i])
+		if ore_initial.has(key):
+			ore_initial[key] = int(ore_initial[key]) + 1
+
+
+## Клеток руды tid сейчас.
+func ore_count(tid: int) -> int:
+	if tiles.size() != W * H:
+		return 0
+	return tiles.count(tid)
+
+
+## Рассвет: вернуть до 1 % начальной переписи каждой руды. Нет кандидатов — пропуск.
+## Возвращает, сколько клеток добавлено по каждой руде (id → n).
+func regrow_ores(day: int) -> Dictionary:
+	var added: Dictionary = {}
+	ore_regrow_last = added
+	if tiles.size() != W * H or explored.size() != W * H or surface.size() != W:
+		return added
+	if ore_initial.is_empty():
+		_census_ores()
+	ore_regrow_dawns += 1
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	rng.seed = int(world_seed) + day * 100003
+	for tid in REGROW_ORES:
+		var initial: int = int(ore_initial.get(str(tid), 0))
+		var have: int = ore_count(tid)
+		var want: int = ceili(Balance.ORE_REGROW_RATE * float(initial))
+		var deficit: int = initial - have
+		var n: int = mini(want, maxi(0, deficit))
+		added[tid] = 0
+		if n <= 0:
+			continue
+		var pool: Array[int] = _regrow_candidates(tid)
+		if pool.is_empty():
+			continue
+		_regrow_shuffle(pool, rng)
+		var take: int = mini(n, pool.size())
+		for k in take:
+			var idx: int = pool[k]
+			var x: int = idx % W
+			var y: int = int(idx / W)
+			# set_tile, не raw: клиенты получают клетку обычной синхронизацией тайлов.
+			set_tile(x, y, tid)
+		added[tid] = take
+	return added
+
+
+## Камень в тумане, глубже порога, соседний по 4 сторонам с этой рудой.
+func _regrow_candidates(tid: int) -> Array[int]:
+	var out: Array[int] = []
+	var min_d: int = Balance.ORE_REGROW_MIN_DEPTH
+	for y in range(H - 3):
+		var row: int = y * W
+		for x in range(W):
+			var idx: int = row + x
+			if tiles[idx] != IDs.T.STONE or explored[idx] != 0:
+				continue
+			if y - surface[x] <= min_d:
+				continue
+			var touch: bool = false
+			for d in _REGROW_DIRS:
+				var nx: int = x + d.x
+				var ny: int = y + d.y
+				if nx < 0 or ny < 0 or nx >= W or ny >= H:
+					continue
+				if tiles[ny * W + nx] == tid:
+					touch = true
+					break
+			if touch:
+				out.append(idx)
+	return out
+
+
+## Фишер–Йейтс от ГСЧ рассветa: тот же сид и день — тот же порядок.
+func _regrow_shuffle(pool: Array[int], rng: RandomNumberGenerator) -> void:
+	for i in range(pool.size() - 1, 0, -1):
+		var j: int = rng.randi_range(0, i)
+		var tmp: int = pool[i]
+		pool[i] = pool[j]
+		pool[j] = tmp
+
+
 ## Ставит тайл и обновляет визуализацию.
 func set_tile(x: int, y: int, id: int) -> void:
 	if x < 0 or x >= W or y < 0 or y >= H:
@@ -1463,6 +1589,8 @@ func set_tile(x: int, y: int, id: int) -> void:
 	_update_astar(x, y)
 	_update_lights_around(x, y)
 	_defense_on_set_tile(Vector2i(x, y), id)
+	if beams != null and old != id:
+		beams.mark_dirty()
 	if _net_track:   # СЕТЬ (ADR-002): клетка — в батч хоста
 		_net_mark_tile(idx)
 
@@ -1884,6 +2012,32 @@ func damage_grate(c: Vector2i, amount: float) -> bool:
 	Sfx.play_at("break", cell_to_world(c), -8.0, 0.7)
 	grate_broken.emit(c)
 	return true
+
+
+## Луч (#164): перестроить карту, если мир или горелка изменились, и зажечь
+## клетки луча. Не чаще раза в кадр. Клиент считает сам — состояния машин
+## уже пришли от хоста, трассировка детерминирована.
+func _beams_tick() -> void:
+	if beams == null or not beams.dirty:
+		return
+	var before: int = beams.changed
+	beams.rebuild()
+	if beams.changed != before:
+		_apply_beam_lights()
+
+
+## Свет луча: на каждую клетку — источник 20 px. Белый ярче. Старые ручки
+## снимаются целиком: погасшая клетка не должна продолжать светить.
+func _apply_beam_lights() -> void:
+	for c in _beam_lights.keys():
+		remove_light_source(_beam_lights[c])
+	_beam_lights.clear()
+	for c in beams.cells.keys():
+		var mask: int = int(beams.cells[c])
+		if mask == 0:
+			continue
+		var power: float = Balance.BEAM_LIGHT_WHITE if mask == Beams.W else Balance.BEAM_LIGHT
+		_beam_lights[c] = add_light_source(cell_to_world(c), 20.0, power)
 
 
 ## Источник света от машины (прожектор). Возвращает ручку для remove_light_source.
@@ -2445,6 +2599,9 @@ func save_state() -> Dictionary:
 		"vents_sealed": vents_sealed.duplicate(),
 		# Небесный тайник (#60): подходили ли к обломку, открыт ли сундук (обрывок выдан).
 		"sky": _sky_save(),
+		# Отрастание (#174): цель — перепись этого мира, а не пересчёт по уже изменённым тайлам.
+		"ore_initial": ore_initial.duplicate(),
+		"ore_regrow_dawns": ore_regrow_dawns,
 	}
 
 
@@ -2530,6 +2687,14 @@ func load_state(d: Dictionary) -> bool:
 	explore_cells = explored.count(1)
 	_explore_cell = Vector2i(-9999, -9999)
 	explored_reset.emit()
+	var oi: Dictionary = d.get("ore_initial", {})
+	if oi is Dictionary and not oi.is_empty():
+		ore_initial.clear()
+		for k in oi.keys():
+			ore_initial[str(k)] = int(oi[k])
+	elif ore_initial.is_empty():
+		_census_ores()
+	ore_regrow_dawns = int(d.get("ore_regrow_dawns", ore_regrow_dawns))
 	return true
 
 

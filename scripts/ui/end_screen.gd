@@ -10,6 +10,8 @@ extends Control
 signal restart_requested
 ## Глава кампании пройдена — дальше следующая (ADR-004): N, Enter или тап.
 signal next_requested
+## Победа свободной игры: игрок остаётся (ADR-005 § 6.4, #174). C или тап по кнопке.
+signal stay_requested
 
 ## Слой CanvasLayer экрана: выше UI (HUD, инвентарь, журнал — слой 10).
 const LAYER: int = 20
@@ -30,6 +32,10 @@ var respawn_delay: float = -1.0
 var epilogue: String = ""
 ## Итог главы кампании: есть следующая глава (подсказка «[N] — дальше»).
 var can_next: bool = false
+## Победа свободной игры: кнопка «Остаться на планете» (не кампания, не хардкор).
+var can_stay: bool = false
+## Прямоугольник кнопки в экранных px (тап); пустой — кнопки нет.
+var stay_rect: Rect2 = Rect2()
 
 
 func _ready() -> void:
@@ -46,6 +52,8 @@ func show_end(p_title: String, p_subtitle: String, p_color: Color, p_stats: Arra
 	respawn_delay = -1.0
 	epilogue = ""
 	can_next = false
+	can_stay = false
+	stay_rect = Rect2()
 	net_death = false
 	net_watch = ""
 	visible = true
@@ -79,6 +87,8 @@ func hide_end() -> void:
 	visible = false
 	respawn_delay = -1.0
 	can_next = false
+	can_stay = false
+	stay_rect = Rect2()
 	epilogue = ""
 	net_death = false
 	net_watch = ""
@@ -97,15 +107,21 @@ func _input(event: InputEvent) -> void:
 		var k: InputEventKey = event
 		if can_next and (k.keycode == KEY_N or k.keycode == KEY_ENTER):
 			next_requested.emit()
+		elif can_stay and k.keycode == KEY_C:
+			stay_requested.emit()
 		elif k.keycode == KEY_R or k.keycode == KEY_ENTER or k.keycode == KEY_SPACE:
 			restart_requested.emit()
 	# На телефоне клавиш нет: тап по экрану — новая попытка (#81). Не раньше чем
 	# через 1.5 с — случайный тап в момент смерти забег не перезапускает.
-	elif event is InputEventScreenTouch and event.pressed and t > 1.5:
-		if can_next:
-			next_requested.emit()
-		else:
-			restart_requested.emit()
+	# Кнопка «Остаться» ловит тап и раньше: она нарисована, промахнуть мимо неё трудно.
+	elif event is InputEventScreenTouch and event.pressed:
+		if can_stay and stay_rect.has_point(event.position):
+			stay_requested.emit()
+		elif t > 1.5:
+			if can_next:
+				next_requested.emit()
+			else:
+				restart_requested.emit()
 
 
 func _draw() -> void:
@@ -113,7 +129,9 @@ func _draw() -> void:
 	if net_death:   # СЕТЬ (ADR-002 § 4.7): мир виден — глазами товарища
 		_draw_net_death(a)
 		return
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.02, 0.05, 0.86 * a))
+	# Победа с выбором «остаться» — мир просвечивает: туман и база видны, это не конец.
+	var veil: float = 0.38 if can_stay else 0.86
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.02, 0.05, veil * a))
 	var font: Font = ThemeDB.fallback_font
 	if epilogue != "":
 		_draw_victory(font, a)
@@ -163,12 +181,39 @@ func _draw_victory(font: Font, a: float) -> void:
 		draw_string(font, Vector2(cx, sy), String(stats[i]), HORIZONTAL_ALIGNMENT_CENTER, col_w,
 				STATS_FONT, Color(0.75, 0.82, 0.95, a))
 	y += float(half) * STATS_ROW + 14.0
-	_draw_prompt(font, a, maxf(y + 8.0, size.y - 34.0))
+	var prompt_y: float = maxf(y + 8.0, size.y - 34.0)
+	if can_stay:
+		# Кнопка — над хотбаром (он кончается за 32 px от низа) и над подсказкой
+		# клавиш. На 960×540 остаётся под итогами, на 720 — не тонет в них.
+		var by: float = minf(maxf(y + 6.0, size.y - 168.0), prompt_y - 52.0)
+		_draw_stay(font, a, by)
+	_draw_prompt(font, a, prompt_y)
+
+
+## Кнопка «Остаться на планете» под итогами. Прямоугольник — для тапа.
+func _draw_stay(font: Font, a: float, y: float) -> float:
+	var label: String = "Остаться на планете"
+	var fs: int = 22
+	var tw: float = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var bw: float = tw + 48.0
+	var bh: float = 40.0
+	var bx: float = (size.x - bw) * 0.5
+	stay_rect = Rect2(bx, y, bw, bh)
+	var hot: Color = Color(0.40, 1.0, 0.78, a)
+	draw_rect(stay_rect, Color(0.06, 0.14, 0.12, 0.92 * a))
+	draw_rect(stay_rect, hot, false, 2.0)
+	draw_string(font, Vector2(bx, y + 28.0), label, HORIZONTAL_ALIGNMENT_CENTER, bw, fs, hot)
+	return y + bh + 8.0
 
 
 func _draw_prompt(font: Font, a: float, y: float) -> void:
 	var blink: float = 0.55 + 0.45 * sin(t * 4.0)
-	draw_string(font, Vector2(0, y), "[N] — следующая глава   [R] — заново" if can_next else "[R] — новая попытка",
+	var line: String = "[R] — новая попытка"
+	if can_next:
+		line = "[N] — следующая глава   [R] — заново"
+	elif can_stay:
+		line = "[C] — остаться на планете   [R] — новая попытка"
+	draw_string(font, Vector2(0, y), line,
 			HORIZONTAL_ALIGNMENT_CENTER, size.x, 22, Color(1.0, 0.95, 0.7, a * blink))
 
 

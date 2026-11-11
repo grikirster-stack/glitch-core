@@ -142,6 +142,8 @@ func reset_run() -> void:
 	relay_have = {}                 # вклад деталей в ядро (MP-I, #94)
 	relay_req = DB.relay_req.duplicate()   # требование от N (#139) — с одиночного
 	relay_unattended = false
+	signal_sent = false             # бесконечная игра (#174)
+	signal_sends = 0
 	_power_index_size = -1          ## мир мог смениться — индекс пересоберётся
 	# --- Журнал и чертежи (#169): живут один забег.
 	Tech.reset()
@@ -623,6 +625,11 @@ var _objective_t: float = 0.0
 var relay_have: Dictionary = {}
 ## Сеть: отсчёт стоит — у ядра нет живого не спрятавшегося героя (§ 4.7, «зона удержания»).
 var relay_unattended: bool = false
+## Сигнал уже уходил на орбиту (ADR-005 § 6.4, #174): игрок остался на планете.
+## Пишется в сохранение и в глобальный пакет. Повторный запуск ядра возможен.
+var signal_sent: bool = false
+## Сколько раз сигнал удержан до конца (эпилог «вторая передача» — со второй).
+var signal_sends: int = 0
 
 
 func _tick_objective(delta: float) -> void:
@@ -754,13 +761,32 @@ func _tick_relay(dt: float) -> void:
 	if relay_timer <= 0.0:
 		relay_timer = 0.0
 		relay_active = false
-		notify("СИГНАЛ УШЁЛ НА ОРБИТУ. ЭВАКУАЦИЯ!", Color(0.4, 1.0, 0.7))
+		signal_sends += 1
+		var again: bool = signal_sent
+		signal_sent = true
+		if again:
+			notify("ВТОРАЯ ПЕРЕДАЧА. Сигнал снова ушёл на орбиту.", Color(0.4, 1.0, 0.7))
+		else:
+			notify("СИГНАЛ УШЁЛ НА ОРБИТУ. ЭВАКУАЦИЯ!", Color(0.4, 1.0, 0.7))
 		set_state(State.WON)
 
 
 ## Итоги забега для Lore.epilogue(): смены, убитые фантомы, смерти, время.
+## signal_sends > 1 — повторное удержание, эпилог помечает «вторая передача».
 func epilogue_stats() -> Dictionary:
-	return {"days": day_number, "kills": stats_kills, "deaths": stats_deaths, "time": game_time}
+	return {"days": day_number, "kills": stats_kills, "deaths": stats_deaths, "time": game_time,
+			"sends": signal_sends}
+
+
+## После сигнала игрок остаётся (ADR-005 § 6.4, #174): PLAYING, ядро и дуги на месте,
+## ночи идут прежней формулой (THREAT_RELAY — только пока relay_active). Новой цели нет.
+## Повторный запуск ядра возможен: ещё RELAY_TIME удержания — ещё эпилог.
+func continue_run() -> void:
+	if state != State.WON:
+		return
+	signal_sent = true
+	set_state(State.PLAYING)
+	notify("Остаёмся. Смена %d · сигнал отправлен." % day_number, Color(0.4, 1.0, 0.8))
 
 
 ## Попытка запустить релей-ядро: сначала вклад деталей героя hero (по умолчанию —
@@ -838,6 +864,7 @@ const SAVE_FIELDS: Array[String] = [
 	"stats_kills", "stats_deaths", "objective_stage",
 	"relay_speed",                       # цель и релей (#32)
 	"relay_have",                        # вклад деталей в релей (MP-I, #94)
+	"signal_sent", "signal_sends",       # бесконечная игра (#174)
 	"blueprints",                        # чертежи команды (ADR-005 § 7.1, #169)
 ]
 
@@ -938,7 +965,9 @@ func net_global() -> Dictionary:
 	return {"time": time_of_day, "day": day_number, "state": state, "research": 0,
 			"stage": objective_stage, "relay_active": relay_active, "relay_timer": relay_timer,
 			"tasks_done": tasks_done, "tasks_total": tasks_total,
-			"threat": 1 if Threat.active else 0, "threat_budget": Threat.budget,
+			# бит 1 — сигнал уже отправлен (#174): отдельного поля в пакете нет, PROTO не растёт
+			"threat": (1 if Threat.active else 0) | (2 if signal_sent else 0),
+			"threat_budget": Threat.budget,
 			"brownout": brownout, "game_time": game_time}
 
 
@@ -969,7 +998,9 @@ func net_apply_global(d: Dictionary) -> void:
 	else:
 		set_objective_stage(stage)
 	_set_brownout(bool(d["brownout"]))
-	Threat.active = (int(d["threat"]) & 1) != 0
+	var th: int = int(d["threat"])
+	Threat.active = (th & 1) != 0
+	signal_sent = (th & 2) != 0
 	Threat.budget = float(d["threat_budget"])
 	set_state(int(d["state"]))
 
