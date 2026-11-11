@@ -73,8 +73,13 @@ var _latched: Dictionary = {}
 var _check_t: float = 0.0
 var _net_t: float = 0.0
 var _net_hash: int = 0
-## Запланированные фантомы: [{t, kind, vent}].
+## Запланированные фантомы: [{t, kind, vent, harmless}].
 var _waves: Array = []
+## Прямой выход эха, если вентиляция лагеря уже в свете.
+var _echo_direct: bool = false
+var _echo_in: float = -1.0
+## Безвредное эхо этой главы уже выходило. Ночью оно уходит в глубину за секунды.
+var echo_out: bool = false
 
 
 # ------------------------------------------------------------------ ДЛЯ НАСЛЕДНИКА
@@ -128,6 +133,7 @@ func _process(delta: float) -> void:
 		if hold_time >= 0.0 and Game.time_of_day > hold_time and Game.time_of_day < hold_time + 0.25:
 			Game.time_of_day = hold_time
 		_tick_waves(delta)
+		_tick_direct_echo(delta)
 		on_tick(delta)
 		_check_t -= delta
 		if _check_t <= 0.0:
@@ -232,8 +238,44 @@ func on_game_state(s: int) -> void:
 # ------------------------------------------------------------------ ВОЛНЫ
 
 ## Фантом kind из вентиляции vent через after секунд.
-func wave(kind: String, vent: Vector2i, after: float) -> void:
-	_waves.append({"t": after, "kind": kind, "vent": vent})
+## harmless — не бьёт героя (главы 1–3, ADR-005 § 9): эхо подходит и отступает.
+func wave(kind: String, vent: Vector2i, after: float, harmless: bool = false) -> void:
+	_waves.append({"t": after, "kind": kind, "vent": vent, "harmless": harmless})
+
+
+## Одно безвредное эхо у базы. Вентиляция лагеря стоит в свете лампы: телеграф
+## оттуда выпускает эхо сразу в бегство, и за кадр его уже нет. Тёмной нет —
+## ставим эхо в воздух у входа, оно само подходит к свету и отступает.
+func _spawn_echo(after: float) -> void:
+	var vent: Vector2i = _dark_vent()
+	if vent.x >= 0 and World.light_at(vent) <= 0.55:
+		wave("echo", vent, after, true)
+		return
+	_echo_direct = true
+	_echo_in = after
+
+
+## Вентиляция у лагеря, в клетке которой света меньше порога бегства эха.
+## Нет тёмной — ближайшая к центру.
+func _dark_vent() -> Vector2i:
+	var b: Vector2i = World.beacon_cell
+	var best: Vector2i = Vector2i(-1, -1)
+	var bd: int = 1 << 30
+	var dark: Vector2i = Vector2i(-1, -1)
+	var dd: int = 1 << 30
+	for v in World.vents:
+		var d: int = absi(v.x - b.x) + absi(v.y - b.y)
+		if d < bd:
+			bd = d
+			best = v
+		if d > 40:
+			continue
+		if World.light_at(v) > 0.55:
+			continue
+		if d < dd:
+			dd = d
+			dark = v
+	return dark if dark.x >= 0 else best
 
 
 ## Сколько фантомов ещё впереди: запланированы, телеграф идёт или они в мире.
@@ -251,11 +293,46 @@ func _tick_waves(delta: float) -> void:
 			keep.append(w)
 			continue
 		var v: Vector2i = w["vent"]
+		var kind: String = String(w["kind"])
+		var opts: Dictionary = {"harmless": bool(w.get("harmless", false))}
 		if World.vents.has(v) and not World.is_vent_sealed(v):
-			Threat.telegraph(v, String(w["kind"]))
+			Threat.telegraph(v, kind, opts)
 		else:
-			Threat.request_spawn(String(w["kind"]))
+			Threat.request_spawn(kind, opts)
 	_waves = keep
+
+
+## Эхо без телеграфа: вентиляция в свете, и пар оттуда ничего не показывает.
+func _tick_direct_echo(delta: float) -> void:
+	if not _echo_direct:
+		return
+	_echo_in -= delta
+	if _echo_in > 0.0:
+		return
+	_echo_direct = false
+	var spot: Vector2i = _echo_spot()
+	var made: Array = Threat.spawn_phantom("echo", World.cell_to_world(spot), {"harmless": true})
+	if not made.is_empty():
+		echo_out = true
+
+
+## Воздух у входа, где света меньше порога бегства. Нет — клетка входа.
+func _echo_spot() -> Vector2i:
+	var door: Vector2i = CampaignBase.camp_door()
+	var best: Vector2i = door
+	var bd: float = 99.0
+	for y in range(door.y - 2, door.y + 6):
+		for x in range(door.x - 8, door.x + 4):
+			var c: Vector2i = Vector2i(x, y)
+			if World.get_tile_v(c) != IDs.T.AIR:
+				continue
+			if World.get_tile(c.x, c.y + 1) == IDs.T.AIR:
+				continue
+			var light: float = World.light_at(c)
+			if light < bd:
+				bd = light
+				best = c
+	return best
 
 
 # ------------------------------------------------------------------ СЛУЖЕБНОЕ

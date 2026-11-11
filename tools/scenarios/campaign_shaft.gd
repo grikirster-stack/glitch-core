@@ -10,12 +10,12 @@ const STEP_TIME: float = 2.5
 
 
 func run() -> void:
-	# Глава «Шахта» ушла с фабрикой (#170). Ствол (SHAFT_*) остался константами
-	# для глав «Свет» (#177), но база его больше не строит — проходить нечего.
+	# Глава «Шахта» ушла с фабрикой (#170). Ствол (SHAFT_*) остался константами,
+	# база его больше не строит — проходить нечего. Главы «Свет» ствол не вернут.
 	if not Campaign.has("mine"):
 		ok("глава «Шахта» снята вместе с фабрикой", true)
-		ok("ствол оставлен константами для #177", CampaignBase.SHAFT_DEPTH > 0
-				and CampaignBase.LEDGE_STEP > 0)
+		ok("ствол оставлен константами, база его не строит", CampaignBase.SHAFT_DEPTH > 0
+				and CampaignBase.LEDGE_STEP > 0 and not Campaign.CHAPTERS.has("mine"))
 		finish()
 		return
 	if start_chapter("mine") == null:

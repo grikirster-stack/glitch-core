@@ -47,6 +47,8 @@ var budget: float = 0.0             ## бюджет ночи (для HUD/отл�
 var roster: Array[String] = []      ## кто ещё выйдет этой ночью
 var spawn_timer: float = 0.0
 var spawned_total: int = 0          ## сколько фантомов вышло за забег
+## Глава выпустила безвредное эхо. Сценарий читает: ночью эхо уходит за секунды.
+var chapter_echo: bool = false
 var pending: Array = []             ## телеграфы: {cell, kind, t, hum}
 
 var _relay_seen: bool = false
@@ -72,6 +74,7 @@ func reset() -> void:
 	roster.clear()
 	spawn_timer = 0.0
 	spawned_total = 0
+	chapter_echo = false
 	_relay_seen = false
 	night_players = 1
 
@@ -397,25 +400,28 @@ func _shuffle(a: Array[String]) -> void:
 
 ## Поставить фантома в очередь появления: из вентиляции — с телеграфом,
 ## иначе сразу в пещере. false — места не нашлось.
-func request_spawn(kind: String) -> bool:
+## opts.harmless — эхо не бьёт (главы 1–3); директор его не передаёт.
+func request_spawn(kind: String, opts: Dictionary = {}) -> bool:
 	var ppos: Vector2 = spawn_anchor()
 	var vent: Vector2i = pick_vent(ppos)
 	if vent.x >= 0:
-		telegraph(vent, kind)
+		telegraph(vent, kind, opts)
 		return true
 	var cell: Vector2i = find_cave_cell(ppos)
 	if cell.x < 0:
 		return false
-	_spawn_now(kind, World.cell_to_world(cell))
+	_spawn_now(kind, World.cell_to_world(cell), opts)
 	return true
 
 
 ## Телеграф из заданной вентиляции: гул и пар, через VENT_TELEGRAPH с — фантом.
 ## Зовёт и директор (request_spawn), и глава кампании (Mission.wave).
-func telegraph(vent: Vector2i, kind: String) -> void:
+## opts доезжает до spawn_phantom (harmless глав 1–3).
+func telegraph(vent: Vector2i, kind: String, opts: Dictionary = {}) -> void:
 	var pos: Vector2 = World.cell_to_world(vent)
 	var hum: int = Sfx.loop_start("vent_hum", pos, TELEGRAPH_HUM_DB)
-	pending.append({"cell": vent, "kind": kind, "t": Balance.VENT_TELEGRAPH, "hum": hum})
+	pending.append({"cell": vent, "kind": kind, "t": Balance.VENT_TELEGRAPH, "hum": hum,
+			"opts": opts})
 	vent_warning.emit(vent)
 
 
@@ -429,12 +435,13 @@ func _tick_pending(delta: float) -> void:
 			keep.append(p)
 			continue
 		Sfx.loop_stop(int(p["hum"]))
-		_spawn_now(String(p["kind"]), World.cell_to_world(p["cell"]))
+		_spawn_now(String(p["kind"]), World.cell_to_world(p["cell"]), p.get("opts", {}))
 	pending = keep
 
 
-## Создать фантома (стаю — для роя) в точке. Возвращает созданных.
-func spawn_phantom(kind: String, pos: Vector2) -> Array:
+## Создать фантома (стаю — для роя) в точке. opts: harmless — не бьёт (главы 1–3).
+## Возвращает созданных.
+func spawn_phantom(kind: String, pos: Vector2, opts: Dictionary = {}) -> Array:
 	var out: Array = []
 	var host: Node = get_tree().current_scene
 	if host == null:
@@ -451,6 +458,7 @@ func spawn_phantom(kind: String, pos: Vector2) -> Array:
 		var p: Phantom = Phantom.create(kind)
 		p.player = pl
 		p.pack_id = pid
+		p.harmless = bool(opts.get("harmless", false))
 		host.add_child(p)
 		if not p.alive:
 			continue   # лимит MAX_PHANTOMS: копия растворилась сразу
@@ -465,8 +473,8 @@ func spawn_phantom(kind: String, pos: Vector2) -> Array:
 	return out
 
 
-func _spawn_now(kind: String, pos: Vector2) -> void:
-	var made: Array = spawn_phantom(kind, pos)
+func _spawn_now(kind: String, pos: Vector2, opts: Dictionary = {}) -> void:
+	var made: Array = spawn_phantom(kind, pos, opts)
 	if not made.is_empty() and Game.is_night():
 		Sfx.play("alarm", -20.0, 1.6)
 

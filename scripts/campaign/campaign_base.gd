@@ -1,8 +1,9 @@
 class_name CampaignBase
 extends RefCounted
-## База экспедиции «Кербер-9» (ADR-004). Цех, шахта и оборона ушли с фабрикой (#170).
-## Осталась станция: релей, терминалы, лампы, вентиляция и ствол шахты (SHAFT_*).
-## Главы «Свет» достроят базу сами (#177).
+## База экспедиции «Кербер-9» (ADR-004). Цех, шахта и оборона ушли с фабрикой (#170):
+## бура, ленты, плавильни, ТЭЦ и турели нет. Осталась станция (релей, терминалы,
+## лампы, вентиляция) и константы ствола (SHAFT_*). Главы «Свет» достраивают лагерь
+## сами: жила угля у пещеры слева (COAL_*).
 
 enum Tier { STATION }
 
@@ -14,12 +15,30 @@ const SHAFT_DEPTH: int = 43        ## пол штольни: пол базы + �
 ## места под уступом той же стены (4 ряда выше) места на него нет: прыгают, сойдя с
 ## уступа к центру проёма, над которым пусто.
 const LEDGE_STEP: int = 2
+## Жила главы «Копай»: 6 клеток угля в 10 клетках от базы. Ход от входа лагеря
+## (пол базы − 2 клетки по x, на 4 ряда вниз) выходит к жиле: она видна из
+## пещеры. Верхняя клетка жилы — воздух хода, нижние — порода: сквозь стену
+## луч не копает. Центр — COAL_AT (маркер карточки).
+const COAL_DX: int = -10
+const COAL_N: int = 6
+const COAL_AT: Vector2i = Vector2i(COAL_DX, 3)   ## от пола базы: x, ряд вниз
+
+
+## Клетка центра жилы угля (маркер «Накопай 5 угля»).
+static func coal_spot() -> Vector2i:
+	return Vector2i(World.beacon_cell.x + COAL_AT.x, floor_row() + COAL_AT.y)
+
+
+## Клетка входа в лагерь: воздух у левого края пола, рядом с вентиляцией.
+static func camp_door() -> Vector2i:
+	return Vector2i(World.beacon_cell.x - 12, World.beacon_cell.y)
 
 
 ## Достроить базу до уровня tier. Итог: имя → постройка (MachineBase).
 static func build(tier: int) -> Dictionary:
 	var named: Dictionary = {}
 	if tier >= Tier.STATION:
+		_camp(named)
 		_station(named)
 	return named
 
@@ -78,6 +97,26 @@ static func fill(x0: int, y0: int, x1: int, y1: int, id: int) -> void:
 
 
 # ------------------------------------------------------------------ УРОВНИ
+
+## Лагерь высадки и жила угля. Сундук мира уже стоит (кирка нет — её в игре нет,
+## светокристаллы и уголь). Ход от входа лагеря выходит к жиле в 10 клетках.
+static func _camp(named: Dictionary) -> void:
+	var door: Vector2i = camp_door()
+	var spot: Vector2i = coal_spot()
+	# Ход: от входа вниз и влево, до клетки перед жилой. Пол хода — камень,
+	# над ним воздух на два ряда: от входа жилу видно.
+	var x0: int = spot.x + 1
+	var x1: int = door.x
+	var y_air0: int = door.y + 1
+	var y_air1: int = spot.y - 1
+	fill(x0, y_air0, x1, y_air1, IDs.T.AIR)
+	fill(x0, spot.y, x1, spot.y, IDs.T.STONE)
+	# Ствол шахты (SHAFT_X0) начинается левее жилы — ход его не трогает.
+	for dy in range(COAL_N):
+		World.set_tile(spot.x, spot.y - 2 + dy, IDs.T.COAL_ORE)
+	named["coal"] = spot
+	named["door"] = door
+
 
 static func _station(named: Dictionary) -> void:
 	var bx: int = World.beacon_cell.x

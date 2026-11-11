@@ -1458,8 +1458,8 @@ var host_mission: String = ""
 func _build_campaign_screen() -> void:
 	var page: VBoxContainer = _net_page("Кампания")
 	screens["campaign"] = page
-	var sub: Label = _label("Пять глав на одном мире: готовая база, цель и короткая история. "
-			+ "Каждая знакомит с частью механик. Играть можно и по сети: «Создать игру» → «Режим».",
+	var sub: Label = _label("Главы «Свет» на одном мире: готовая база, одна цель и короткая история. "
+			+ "Каждая знакомит с одной идеей. Играть можно и по сети: «Создать игру» → «Режим».",
 			16, DIM_COLOR)
 	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	sub.custom_minimum_size = Vector2(NET_W, 0)
