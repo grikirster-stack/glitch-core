@@ -37,6 +37,21 @@ func run_host() -> void:
 	if p0 != null:
 		p0.inv.add(IDs.I.SCRAP, HUD.TUT_SCRAP)
 	ok("хост: хлам → следующий этап", await wait_until(func() -> bool: return m.stage >= 1, WAIT), str(m.goals))
+	# Рассвет побеждает только на этапе «Первая ночь». До него — цели главы,
+	# как в одиночном сценарии: горелка, топка, терминал, два светокристалла.
+	if p0 != null:
+		p0.inv.add(IDs.I.BURNER, 1)
+	ok("хост: горелка → этап «Свет базы»", await wait_until(func() -> bool: return m.stage >= 2, WAIT), str(m.stage))
+	var term: Vector2i = _base_terminal()
+	var burner = CampaignBase.put("Burner", term + Vector2i(1, 0), {"fuel": 4})
+	ok("хост: горящая горелка → этап «Терминал»", burner != null
+			and await wait_until(func() -> bool: return m.stage >= 3, WAIT), str(m.stage))
+	Game.complete_task()
+	ok("хост: терминал → этап «Свет»", await wait_until(func() -> bool: return m.stage >= 4, WAIT), str(m.stage))
+	var row: int = World.beacon_cell.y
+	for dx in [5, 6]:
+		World.set_tile(World.beacon_cell.x + dx + 10, row, IDs.T.LIGHT_CRYSTAL)
+	ok("хост: свет → этап «Первая ночь»", await wait_until(func() -> bool: return m.stage >= 5, WAIT), str(m.stage))
 	await barrier("night")
 	Game.time_of_day = Balance.NIGHT_END - 0.002
 	ok("хост: рассвет — победа", await wait_until(func() -> bool:
@@ -80,3 +95,10 @@ func run_client(_i: int) -> void:
 	ok("клиент: глава отмечена в его профиле", Profile.load_or_create().campaign_done.has(MISSION))
 	await barrier("won")
 	finish()
+
+
+func _base_terminal() -> Vector2i:
+	for c in World.terminal_chapters.keys():
+		if int(World.terminal_chapters[c]) == 0:
+			return c
+	return World.beacon_cell
