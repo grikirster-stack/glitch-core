@@ -292,11 +292,12 @@ func _build() -> void:
 	right.add_child(access_row)
 	var calm_button: Button = GlitchFx.menu_toggle(_button(""), profile, profile_path)
 	calm_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	calm_button.add_theme_font_size_override("font_size", UI.FONT["body"])
+	# Мельче основного: полная подпись «Меньше глитча и мерцания» и «100 %» в колонке 360 px.
+	calm_button.add_theme_font_size_override("font_size", UI.FONT["small"])
 	access_row.add_child(calm_button)
 	ui_scale_button = _button("")
-	ui_scale_button.add_theme_font_size_override("font_size", UI.FONT["body"])
-	ui_scale_button.custom_minimum_size = Vector2(96, BUTTON_H)
+	ui_scale_button.add_theme_font_size_override("font_size", UI.FONT["small"])
+	ui_scale_button.custom_minimum_size = Vector2(72, BUTTON_H)
 	ui_scale_button.tooltip_text = "Размер интерфейса игры: 100–250 %. Подпись и кнопки в забеге крупнее"
 	ui_scale_button.pressed.connect(_on_ui_scale_pressed)
 	_refresh_ui_scale_button()

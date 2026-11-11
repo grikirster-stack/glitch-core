@@ -22,6 +22,17 @@ func _init(p_size: int = 36, p_hotbar: int = 10) -> void:
 		slots[i] = ItemStack.new()
 
 
+## Размер стопки без глобального имени DB: anim_test.gd стартует как --script,
+## и на этапе компиляции автозагрузки ещё нет. В игре узел уже есть.
+static func _item_max_stack(id: int) -> int:
+	var loop: MainLoop = Engine.get_main_loop()
+	if loop is SceneTree:
+		var db: Node = (loop as SceneTree).root.get_node_or_null("DB")
+		if db != null:
+			return int(db.call("item_max_stack", id))
+	return 99
+
+
 ## 6 или 10; иное — ближайшее из двух (битое поле профиля не оставляет хотбар без ячеек).
 static func clamp_hotbar(n: int) -> int:
 	return HOTBAR_MIN if n < (HOTBAR_MIN + HOTBAR_MAX) / 2 else HOTBAR_MAX
@@ -34,7 +45,7 @@ static func default_hotbar(touchscreen: bool, args: PackedStringArray) -> int:
 	return HOTBAR_MAX
 
 func slot_max(id: int) -> int:
-	return DB.item_max_stack(id)
+	return _item_max_stack(id)
 
 func can_add(id: int, amount: int = 1) -> bool:
 	if id == IDs.I.NONE or amount <= 0:
@@ -68,7 +79,7 @@ static func stack_into(arr: Array[ItemStack], id: int, amount: int, from: int = 
 	if id == IDs.I.NONE or amount <= 0:
 		return amount
 	var end: int = arr.size() if to < 0 else mini(to, arr.size())
-	var maxst: int = DB.item_max_stack(id)
+	var maxst: int = _item_max_stack(id)
 	var left: int = amount
 	for i in range(from, end):
 		if left <= 0:
