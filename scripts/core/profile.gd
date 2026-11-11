@@ -30,6 +30,9 @@ extends RefCounted
 const NetScript = preload("res://scripts/autoload/net.gd")
 
 const PATH: String = "user://profile.cfg"
+## Отметки глав этого процесса. Файл профиля на общей машине могут снести чужие
+## прогоны между главами (один user://); память переживает пересоздание файла.
+static var done_memory: PackedStringArray = PackedStringArray()
 ## Ник по умолчанию (как у Net).
 const DEFAULT_NICK: String = NetScript.DEFAULT_NICK
 ## Порт игры по умолчанию.
@@ -148,6 +151,10 @@ static func load_or_create(path: String = "") -> Profile:
 		for c in v_done:
 			if c is String and not p.campaign_done.has(c):
 				p.campaign_done.append(c)
+	for c in done_memory:
+		if not p.campaign_done.has(c):
+			p.campaign_done.append(c)
+			dirty = true
 	if p.uid == 0:
 		p.uid = new_uid()
 		dirty = true
@@ -159,7 +166,10 @@ static func load_or_create(path: String = "") -> Profile:
 func save_to(path: String = "") -> Error:
 	if path == "":
 		path = default_path()
+	# Пишем в уже существующий файл: новый ConfigFile затирал бы отметки глав,
+	# которые записала игра, пока этот экземпляр (меню) был загружен раньше.
 	var cfg: ConfigFile = ConfigFile.new()
+	cfg.load(path)
 	cfg.set_value("profile", "uid", uid)
 	cfg.set_value("profile", "nick", nick)
 	cfg.set_value("profile", "look", look & 0xFFFF)

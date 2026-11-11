@@ -2,8 +2,9 @@ extends ScenarioBase
 ## HUD: трекер цели, отсчёт ночи, индикатор мощности, вентиляции на миникарте
 ## и FX угрозы (ADR-001 § 4.1, § 4.3, § 4.7; #34). Всё проверяется по
 ## состоянию HUD/WorldFX, а не по скриншоту:
-##  * трекер: этап 0 показывается как 1/3; смена этапа (Game.set_objective_stage,
-##    сигнал objective_changed) — новая строка в тот же кадр-два и перерисовка;
+##  * карточка «Сейчас»: этап 0 — «Запитай терминалы базы» 0/2; смена этапа
+##    (Game.set_objective_stage, сигнал objective_changed) — новая карточка
+##    в тот же кадр-два и перерисовка; текст каждой цели каждой главы ≤ 6 слов;
 ##  * отсчёт: в сумерках — целые секунды до ночи, днём и ночью — нет; HUD
 ##    перерисовывается раз в секунду, а не каждый кадр;
 ##  * мощность: ближайшая ТЭЦ — нагрузка/выход; перегруз; рубильник; генератор
@@ -43,29 +44,53 @@ func _frames(hud: HUD, n: int) -> void:
 # ------------------------------------------------------------ ТРЕКЕР
 
 func _tracker(hud: HUD) -> void:
-	ok("этап 0 показан как 1/3", hud.tracker_stage == 1 and hud.tracker_title.contains("1/3")
-			and hud.tracker_title.contains("ЗАПИТАТЬ СТАНЦИЮ"), "«%s»" % hud.tracker_title)
-	ok("этап 1: терминалы базы без питания 0/2", hud.tracker_detail.contains("0/2"),
-			"«%s»" % hud.tracker_detail)
+	ok("этап 0 — карточка «Запитай терминалы базы»", hud.tracker_stage == 1
+			and hud.card_text == "Запитай терминалы базы" and hud.card_have == 0 and hud.card_need == 2,
+			"«%s» %d/%d" % [hud.card_text, hud.card_have, hud.card_need])
+	ok("этап 1: маркер ведёт к терминалу", hud.card_at != Vector2.INF, str(hud.card_at))
+	ok("текст карточки не длиннее 6 слов", hud.card_text.split(" ", false).size() <= 6, "«%s»" % hud.card_text)
 	var r0: int = hud.stat_redraws
 	Game.set_objective_stage(2)
 	await _frames(hud, 2)
-	ok("смена этапа → трекер «СОБРАТЬ РЕЛЕЙ» сразу", hud.tracker_stage == 2
-			and hud.tracker_title.contains("СОБРАТЬ РЕЛЕЙ"), "«%s»" % hud.tracker_title)
+	ok("смена этапа → карточка «Сдай …» сразу", hud.tracker_stage == 2
+			and hud.card_text.begins_with("Сдай") and hud.card_icon >= 0 and hud.card_need > 1,
+			"«%s» иконка %d, %d/%d" % [hud.card_text, hud.card_icon, hud.card_have, hud.card_need])
 	ok("смена этапа → HUD перерисован", hud.stat_redraws > r0, "%d → %d" % [r0, hud.stat_redraws])
-	ok("этап 2: детали релея", hud.tracker_detail.contains("детали 0/%d" % Game.relay_req.size()),
+	ok("этап 2: маркер на релей-ядре", hud.card_at.distance_to(World.cell_to_world(World.beacon_cell)) < 2.0,
+			str(hud.card_at))
+	ok("этап 2: строка замера сети про детали", hud.tracker_detail.contains("детали 0/%d" % Game.relay_req.size()),
 			"«%s»" % hud.tracker_detail)
 	Game.relay_timer = 125.0
 	Game.relay_active = true
 	Game.set_objective_stage(3)
 	await _frames(hud, 2)
-	ok("этап 3: отсчёт сигнала м:сс", hud.tracker_title.contains("УДЕРЖАТЬ СИГНАЛ")
-			and hud.tracker_detail.contains("2:05"), "«%s» «%s»" % [hud.tracker_title, hud.tracker_detail])
+	ok("этап 3: «Держись у ядра», счётчик до эвакуации", hud.card_text == "Держись у ядра"
+			and hud.card_have == int(Balance.RELAY_TIME) - 125 and hud.card_need == int(Balance.RELAY_TIME),
+			"«%s» %d / %d" % [hud.card_text, hud.card_have, hud.card_need])
 	Game.relay_timer = 0.0
 	Game.relay_active = false
 	Game.set_objective_stage(0)
 	await _frames(hud, 2)
-	ok("этап сброшен → снова 1/3", hud.tracker_stage == 1, "«%s»" % hud.tracker_title)
+	ok("этап сброшен → снова карточка этапа 1", hud.tracker_stage == 1
+			and hud.card_text == "Запитай терминалы базы", "«%s»" % hud.card_text)
+	_card_words(hud)
+
+
+## Каждая цель каждой главы — не длиннее 6 слов на карточке (#160).
+func _card_words(hud: HUD) -> void:
+	var long: Array = []
+	for id in Campaign.CHAPTERS:
+		var m: Mission = Campaign.create(id)
+		if m == null:
+			long.append(id)
+			continue
+		for st in m.stages():
+			for g in st.get("goals", []):
+				var words: String = hud._card_words(String(g[0]), HUD.CARD_WORDS)
+				if words.split(" ", false).size() > 6:
+					long.append("%s: «%s»" % [id, words])
+		m.free()
+	ok("текст карточки ≤ 6 слов у каждой цели каждой главы", long.is_empty(), ", ".join(long))
 
 
 # ------------------------------------------------------------ ОТСЧЁТ ДО НОЧИ

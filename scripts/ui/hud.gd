@@ -25,11 +25,11 @@ extends Control
 ##    размера фабрики. Пересчёт — когда игрок сдвинулся или изменилось число
 ##    построек, и не реже HINT_RECHECK_SEC.
 ##
-## Трекер цели, обучение и мощность (ADR-001 § 4.1, § 4.3, § 4.7; #34):
-##  * трекер этапа цели (Game.objective_stage, #32) и цепочка подсказок первых
-##    минут (копай → крафт → ТЭЦ → питание → терминал) — строки собираются раз в
-##    STATE_RECHECK_SEC (и сразу по Game.objective_changed / brownout_changed),
-##    в ключ попадает только их хеш;
+## Карточка «Сейчас», обучение и мощность (ADR-001 § 4.1, § 4.3, § 4.7; #34, #160):
+##  * карточка этапа цели (Game.objective_stage, #32): одна невыполненная цель —
+##    картинка, ≤ 6 слов, счётчик. Строки собираются раз в STATE_RECHECK_SEC
+##    (и сразу по Game.objective_changed / brownout_changed), в ключ — хеш текста
+##    и отдельно иконка, have/need, видимость маркера;
 ##  * индикатор мощности: генератор под курсором, иначе ближайший в окне
 ##    ±POWER_SCAN_CELLS × ±POWER_SCAN_ROWS клеток вокруг игрока (окно
 ##    сканируется тем же шагом STATE_RECHECK_SEC и только если игрок сменил
@@ -64,7 +64,8 @@ const CURSOR_GEN_REACH: float = 5.6 * 16.0
 const MAP_SIZE: Vector2i = Vector2i(186, 52)
 const MAP_OFFSET: Vector2 = Vector2(194, 46)
 ## Длина ключа состояния (см. _fill_key). [46..61] — команда в сети (MP-J).
-const KEY_LEN: int = 64
+## [62] — подпись раскладки, [63..66] — карточка: иконка, have, need, маркер (#160).
+const KEY_LEN: int = 67
 
 # ------------------------------------------------- ЦВЕТА (ADR-003 V6, «Споровый луг»)
 ## Палитра мира — DB.PAL (V1); здесь только её роли в HUD и цвета плашек концепта
@@ -134,13 +135,27 @@ enum Tut { DIG, CRAFT, PLACE, POWER, TERMINAL, DONE }
 ## Сколько хлама нужно на ТЭЦ (рецепт: 2 жел. пластины + 6 хлама, db.gd).
 const TUT_SCRAP: int = 6
 
-# ---------------------------------- ТРЕКЕР / ОБУЧЕНИЕ / МОЩНОСТЬ (читают сценарии)
-## Этап цели, который показывает трекер (1..4).
+# ---------------------------------- КАРТОЧКА «СЕЙЧАС» / ОБУЧЕНИЕ / МОЩНОСТЬ (читают сценарии)
+## Этап цели (1..3). Старые поля трекера больше не рисуются — их читает замер сети.
 var tracker_stage: int = 1
 var tracker_title: String = ""
 var tracker_detail: String = ""
-## Глава кампании (ADR-004): задачи этапа после первой (она — в tracker_detail).
+## Глава кампании (ADR-004): остальные задачи этапа. Карточка их не перечисляет.
 var mission_lines: Array[String] = []
+## Карточка «Сейчас»: одна невыполненная цель. card_text — ≤ 6 слов; card_icon —
+## IDs.I или −1 (пиктограмма этапа); card_at — мировая точка или INF.
+var card_text: String = ""
+var card_have: int = 0
+var card_need: int = 0
+var card_icon: int = -1
+var card_at: Vector2 = Vector2.INF
+## Маркер на экране: false — цели нет или она за кадром (тогда стрелка).
+var card_mark_on: bool = false
+## Камера показывает цель ещё столько секунд (клик по карточке).
+var card_look_left: float = 0.0
+## Куда вернуть камеру после показа цели (смещение от героя).
+var _card_cam_back: Vector2 = Vector2.ZERO
+var _card_looking: bool = false
 ## Шаг цепочки обучения (Tut) и его строка ("" — цепочка пройдена).
 var tutorial_step: int = Tut.DIG
 var tutorial_text: String = ""
@@ -186,6 +201,7 @@ var _mark_progress: float = -1.0
 
 # ------------------------------------------------------------ ВНУТРЕННЕЕ
 var _cross: Control = null
+var _card_hit: Control = null   ## кликабельная карточка «Сейчас»
 var _tc: Node = null   ## TouchControls (без типа — цикл зависимостей)
 var _map: Control = null
 var _mark: Control = null
@@ -202,6 +218,9 @@ var _fog_tex: ImageTexture = null
 var _fog_dirty: bool = false
 var _fog_open: PackedByteArray = PackedByteArray()   # 1 — пиксель тумана открыт
 var _mouse: Vector2 = Vector2(-1.0, -1.0)
+## Клетка цели карточки и фаза мигания рамки (0/1).
+var _card_cell: Vector2i = Vector2i(-9999, -9999)
+var _card_blink: int = 0
 ## Клетка, которую копнёт ЛКМ (рамка), и клетка под курсором, которую копать нельзя (красный
 ## крест), в экранных px; пустой Rect2i — нет. Рисуются слоем прицела.
 var _dig_rect: Rect2i = Rect2i()
@@ -234,6 +253,10 @@ func _ready() -> void:
 	_map = _make_layer(_draw_map_layer)
 	_mark = _make_layer(_draw_mark_layer)
 	_cross = _make_layer(_draw_cross_layer)
+	_card_hit = Control.new()
+	_card_hit.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_card_hit.gui_input.connect(_on_card_input)
+	add_child(_card_hit)
 	_map_img = Image.create(MAP_SIZE.x, MAP_SIZE.y, false, Image.FORMAT_RGBA8)
 	_map_tex = ImageTexture.create_from_image(_map_img)
 	_fog_img = Image.create(MAP_SIZE.x, MAP_SIZE.y, false, Image.FORMAT_RGBA8)
@@ -357,6 +380,11 @@ func _fill_key() -> void:
 	_key[43] = power_out_x10
 	_key[44] = power_flags
 	_key[45] = 1 if Game.is_night() else 0    # скобки опасности и метка суток (V6)
+	# Карточка «Сейчас» (#160): иконка, счётчик и виден ли маркер. Текст — в _state_hash.
+	_key[63] = card_icon
+	_key[64] = card_have
+	_key[65] = card_need
+	_key[66] = 1 if card_mark_on else (2 if card_at != Vector2.INF else 0)
 	_fill_team_key()   # СЕТЬ (MP-J): [46..61]
 	if player == null:
 		_key[12] = 0
@@ -511,10 +539,13 @@ func _update_state(delta: float) -> void:
 		_compute_tracker()
 		_compute_tutorial()
 		cursor_changed = true
+	_update_card_look(delta)
+	_update_card_mark()
 	if cursor_changed:
 		power_gen = _pick_power_gen()
 		power_text = _power_line(power_gen)
-		_state_hash = hash([tracker_title, tracker_detail, tutorial_text, power_text, mission_lines])
+		_state_hash = hash([card_text, card_have, card_need, card_icon, card_at, card_mark_on,
+				tutorial_text, power_text])
 
 
 ## Генератор под курсором (в досягаемости), иначе ближайший к игроку.
@@ -578,9 +609,8 @@ func _power_line(g) -> String:
 	return _gen_name(g)
 
 
-## Этап цели (#32: Game.objective_stage, названия — Game.OBJECTIVE_TITLES) и
-## строка под ним. Этап 0 («ещё не пересчитан») показываем как первый. Отсчёт
-## удержания — в строке под этапом (м:сс), поэтому заголовок без него.
+## Карточка «Сейчас» (#160): одна невыполненная цель. tracker_* заполняется тем же
+## смыслом — его ещё читает замер сети, на экран он не идёт. Этап 0 показываем как первый.
 func _compute_tracker() -> void:
 	if Game.in_mission():
 		_compute_mission()
@@ -591,12 +621,17 @@ func _compute_tracker() -> void:
 		tracker_stage = Game.day_number
 		tracker_title = "Смена %d · Сигнал отправлен" % Game.day_number
 		tracker_detail = "ночь идёт своим чередом"
+		_set_card("Сигнал отправлен", Game.day_number, 1, -1, Vector2.INF)
 		return
 	var st: int = clampi(Game.objective_stage, 1, Game.OBJECTIVE_STAGES)
 	if Game.relay_active:
 		st = Game.OBJECTIVE_STAGES
 	tracker_stage = st
-	tracker_title = "ЦЕЛЬ %d/%d: %s" % [st, Game.OBJECTIVE_STAGES, Game.OBJECTIVE_TITLES[st]]
+	tracker_title = String(Game.OBJECTIVE_TITLES[st])
+	var have: int = 0
+	var need: int = 1
+	var words: String = ""
+	var icon: int = Game.objective_icon()
 	match st:
 		1:
 			var tot: int = 0
@@ -607,32 +642,53 @@ func _compute_tracker() -> void:
 				tot += 1
 				if not World.terminals.has(c) or _terminal_powered(c):
 					okc += 1
-			tracker_detail = "терминалы базы под питанием %d/%d" % [okc, tot]
+			have = okc
+			need = maxi(1, tot)
+			words = "Запитай терминалы базы"
+			tracker_detail = "терминалы %d/%d" % [okc, tot]
 		2:
 			var have_all: int = 0
 			var miss: String = ""
+			var miss_have: int = 0
+			var miss_need: int = 1
+			var miss_id: int = -1
 			for id in Game.relay_req:
-				var need: int = int(Game.relay_req[id])
-				var have: int = Game.relay_count(id) + (player.inv.count_of(id) if player != null else 0)   # + сдано в ядро (MP-I)
-				if have >= need:
+				var n: int = int(Game.relay_req[id])
+				var h: int = Game.relay_count(id) + (player.inv.count_of(id) if player != null else 0)
+				if h >= n:
 					have_all += 1
-				elif miss == "":
-					miss = " · %s %d/%d" % [DB.item_name(id), have, need]
+				elif miss_id < 0:
+					miss = " · %s %d/%d" % [DB.item_name(id), h, n]
+					miss_have = h
+					miss_need = n
+					miss_id = int(id)
+			if miss_id >= 0:
+				have = miss_have
+				need = miss_need
+				icon = miss_id
+				words = "Сдай %s" % DB.item_name(miss_id)
+			else:
+				have = have_all
+				need = maxi(1, Game.relay_req.size())
+				words = "Собери релей-ядро"
+			# Строка для замера сети (mp_relay_scale); на карточку не идёт.
 			tracker_detail = "детали %d/%d%s · [E] у ядра" % [have_all, Game.relay_req.size(), miss]
 		_:
 			var left: int = int(ceil(Game.relay_timer))
-			tracker_detail = "до эвакуации %d:%02d · %s" % [left / 60, left % 60,
-					"СИГНАЛ БЕЗ ПРИСМОТРА" if Game.relay_unattended else "держитесь"]   # MP-I: зона удержания
+			have = maxi(0, int(Balance.RELAY_TIME) - left)
+			need = int(Balance.RELAY_TIME)
+			words = "Держись у ядра"
+			tracker_detail = "до эвакуации %d:%02d" % [left / 60, left % 60]
+	_set_card(words, have, need, icon, Game.objective_at())
 
 
-## Глава кампании (ADR-004): «ГЛАВА n · НАЗВАНИЕ — этап k/N», задачи этапа строками
-## «[+] текст» / «[ ] текст есть/нужно»; первая — в tracker_detail.
+## Глава кампании: карточка — первая невыполненная задача. Остальные не перечисляются.
 func _compute_mission() -> void:
 	var m = Game.mission
 	tracker_stage = int(m.stage) + 1
-	tracker_title = "ГЛАВА %d · %s — %s %d/%d" % [int(m.chapter), String(m.title).to_upper(),
-			String(m.stage_title), mini(int(m.stage) + 1, maxi(1, m.stages_total())), maxi(1, m.stages_total())]
+	tracker_title = String(m.stage_title)
 	var lines: Array[String] = []
+	var open: Dictionary = {}
 	for g in m.goals:
 		var have: int = int(g["have"])
 		var need: int = int(g["need"])
@@ -640,15 +696,33 @@ func _compute_mission() -> void:
 		if need > 1:
 			line += " %d/%d" % [have, need]
 		lines.append(line)
+		if open.is_empty() and have < need:
+			open = g
 	tracker_detail = lines[0] if not lines.is_empty() else ""
 	mission_lines = lines.slice(1)
+	if open.is_empty() and not m.goals.is_empty():
+		open = m.goals[0]
+	if open.is_empty():
+		_set_card("", 0, 0, -1, Vector2.INF)
+		return
+	_set_card(String(open["text"]), int(open["have"]), int(open["need"]),
+			int(open.get("icon", -1)), open.get("at", Vector2.INF))
+
+
+## Записать карточку. Текст длиннее 6 слов режется — полный текст глав правит G*.
+func _set_card(text: String, have: int, need: int, icon: int, at: Vector2) -> void:
+	card_text = _card_words(text, CARD_WORDS)
+	card_have = maxi(0, have)
+	card_need = maxi(0, need)
+	card_icon = icon
+	card_at = at if at is Vector2 else Vector2.INF
 
 
 ## Шаг обучения: самый дальний выполненный признак (вперёд — сразу, назад — никогда).
 ## В главе кампании вместо цепочки — подсказка этапа (Mission.hint).
 func _compute_tutorial() -> void:
 	if Game.in_mission():
-		tutorial_text = String(Game.mission.hint)
+		tutorial_text = _one_hint(String(Game.mission.hint))
 		return
 	if tutorial_step == Tut.DONE:
 		tutorial_text = ""
@@ -684,6 +758,76 @@ func _compute_tutorial() -> void:
 			tutorial_text = "%d/5 Терминал под питанием: держите [E]" % n
 		_:
 			tutorial_text = ""
+
+
+## Первые n слов, без обрезки «…». Пустая строка остаётся пустой.
+static func _card_words(text: String, n: int) -> String:
+	var parts: PackedStringArray = text.split(" ", false)
+	if parts.size() <= n:
+		return " ".join(parts)
+	var cut: PackedStringArray = PackedStringArray()
+	for i in n:
+		cut.append(parts[i])
+	return " ".join(cut)
+
+
+## Подсказка этапа — одна фраза: до первого «·», без склейки клавиш.
+static func _one_hint(text: String) -> String:
+	var i: int = text.find("·")
+	if i < 0:
+		return text.strip_edges()
+	return text.substr(0, i).strip_edges()
+
+
+## Маркер цели: на экране — мигающая рамка, за краем — стрелка.
+func _update_card_mark() -> void:
+	var on: bool = false
+	var cell: Vector2i = Vector2i(-9999, -9999)
+	if card_at != Vector2.INF and player != null and player.camera != null:
+		cell = World.world_to_cell(card_at)
+		var sr: Rect2 = get_viewport().get_canvas_transform() * World.cell_rect(cell)
+		var vis: Rect2 = get_viewport().get_visible_rect().grow(-8.0)
+		on = vis.encloses(sr)
+	var blink: int = int(Game.game_time * 4.0) % 2
+	if on != card_mark_on or cell != _card_cell or (on and blink != _card_blink):
+		card_mark_on = on
+		_card_cell = cell
+		_card_blink = blink
+		if _mark != null:
+			_mark.queue_redraw()
+
+
+## Клик по карточке: камера на 2 с уезжает к цели и возвращается. Герой не двигается.
+func _on_card_input(event: InputEvent) -> void:
+	if not (event is InputEventMouseButton):
+		return
+	var mb: InputEventMouseButton = event
+	if not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if card_at == Vector2.INF or player == null or player.camera == null:
+		return
+	_card_hit.accept_event()
+	var cam: Camera2D = player.camera
+	if not _card_looking:
+		_card_cam_back = cam.position
+	_card_looking = true
+	card_look_left = CARD_LOOK_SEC
+	cam.position = card_at - player.global_position
+	cam.reset_smoothing()
+
+
+## Показ цели кончился — камера встаёт обратно на героя.
+func _update_card_look(delta: float) -> void:
+	if not _card_looking:
+		return
+	card_look_left -= delta
+	if card_look_left > 0.0 and player != null and is_instance_valid(player):
+		return
+	_card_looking = false
+	card_look_left = 0.0
+	if player != null and player.camera != null:
+		player.camera.position = _card_cam_back
+		player.camera.reset_smoothing()
 
 
 ## Под питанием ли хоть один терминал базы (главы 1–2) — обучение про них.
@@ -917,6 +1061,7 @@ func _interact_progress() -> float:
 func _draw_mark_layer() -> void:
 	var t0: int = Time.get_ticks_usec()
 	stat_mark_redraws += 1
+	_draw_card_marker()
 	if mark_rect.size == Vector2i.ZERO:
 		stat_us += Time.get_ticks_usec() - t0
 		return
@@ -997,6 +1142,19 @@ func _draw_cross_layer() -> void:
 ## (низкие экраны при больших коэффициентах), отбрасывается строками по приоритету, а не
 ## налезает на соседей. На телефоне блоки обходят кнопки TouchControls.
 
+## Карточка «Сейчас» (#160): левый верх, под полосами здоровья. Высота 64.
+## Слов в заголовке — не больше 6.
+const CARD_X: float = 14.0
+const CARD_Y: float = 54.0
+const CARD_H: float = 64.0
+const CARD_ICON: float = 48.0
+const CARD_WORDS: int = 6
+## Клик по карточке показывает цель столько секунд, потом камера возвращается.
+const CARD_LOOK_SEC: float = 2.0
+## Стрелка у края экрана: сторона квадрата и отступ от края, px.
+const CARD_ARROW: float = 28.0
+const CARD_ARROW_PAD: float = 36.0
+
 ## Поля экрана и шаг строк текста (FONT.body + плашка), px.
 const PAD: float = 8.0
 const ROW_H: float = 24.0
@@ -1049,7 +1207,7 @@ func layout_rect(key: String) -> Rect2:
 	return _lay.get(key, Rect2())
 
 
-const LAYOUT_RECTS: Array = ["hp", "emp", "status", "day", "countdown", "map", "team", "hotbar",
+const LAYOUT_RECTS: Array = ["hp", "emp", "card", "status", "day", "countdown", "map", "team", "hotbar",
 		"hint", "notes"]
 
 
@@ -1076,7 +1234,7 @@ func _layout_sig() -> int:
 		tsig = hash([tc.btn_center, tc.stick_center, tc.stick_radius])
 	return hash([size, UI.ui_scale, _state_hash, _hint_hash, _note_serial, notes.size(),
 			team_mates.size(), night_countdown, Game.day_number, Game.phase_name(), tsig,
-			player != null, _hotbar_count(), Game.signal_sent])
+			player != null, _hotbar_count(), card_text, card_have, card_need, Game.signal_sent])
 
 
 ## Узел TouchControls, если сенсорное управление включено (иначе null).
@@ -1187,8 +1345,18 @@ func _compute_layout() -> Dictionary:
 		var hcx: float = clampf(hx + hb_w * 0.5 - hw * 0.5, h_lo, maxf(h_lo, minf(w - PAD, hi) - hw))
 		L["hint"] = Rect2(hcx, hy - 4.0 - ROW_H, hw, ROW_H)
 		stack_top = hy - 4.0 - ROW_H
-	# ---- Слева: статус. Не ниже подсказки и кнопки «копать» (над джойстиком). Есть
-	# уведомление — статус оставляет ему строку: на низких экранах уступает он, а не оно.
+	# ---- Слева: карточка «Сейчас» (x=14, y=54), под ней — одна строка подсказки
+	# этапа. Мощность и старый трекер на экран не идут (#160).
+	var rows: Array = _status_rows()
+	var card_y: float = CARD_Y
+	if L.has("emp"):
+		card_y = maxf(card_y, (L["emp"] as Rect2).end.y + 6.0)
+	var y0: float = card_y
+	if player and card_text != "":
+		var cap: float = (L["map"] as Rect2).position.x - CARD_X - 8.0
+		var cw: float = minf(_card_width(), maxf(96.0, cap))
+		L["card"] = Rect2(CARD_X, card_y, cw, CARD_H)
+		y0 = card_y + CARD_H + 4.0
 	var s_limit: float = stack_top - 4.0
 	if not notes.is_empty():
 		s_limit -= ROW_H
@@ -1198,8 +1366,6 @@ func _compute_layout() -> Dictionary:
 	if L.has("team"):
 		blockers.append(L["team"])
 	blockers.append_array(tb.values())
-	var rows: Array = _status_rows()
-	var y0: float = 8.0 + HP_H + 4.0 + EMP_H + 6.0 if player else 8.0
 	var s_bottom: float = _status_place(rows, y0, s_limit, blockers)
 	L["rows"] = rows
 	if not rows.is_empty():
@@ -1211,7 +1377,7 @@ func _compute_layout() -> Dictionary:
 	# Два варианта: у правого края (под миникартой и колонкой кнопок) и левее колонки кнопок
 	# (на низких экранах) — берём тот, куда влезает больше строк. Джойстик и «копать» обходятся.
 	var n_bottom: float = stack_top - 4.0
-	var rows_end: float = s_bottom if not rows.is_empty() else 0.0
+	var rows_end: float = s_bottom if not rows.is_empty() else (CARD_Y + CARD_H if L.has("card") else 0.0)
 	for id in tb:
 		if id == "e" or id == "run" or id == "jump":
 			n_bottom = minf(n_bottom, (tb[id] as Rect2).position.y - 4.0)
@@ -1262,41 +1428,14 @@ func _compute_layout() -> Dictionary:
 	return L
 
 
-## Строки блока под здоровьем: {text, kind, prio, color, w}. prio — порядок отбрасывания при
-## нехватке места (больше — раньше). Трекер и подсказка шага обучения — главное.
+## Строки под карточкой: {text, kind, prio, color, w}. prio — порядок отбрасывания при
+## нехватке места (больше — раньше). На экране — только подсказка этапа (в главе)
+## и шаг обучения. Трекер, мощность и список задач карточка не дублирует (#160).
 func _status_rows() -> Array:
-	var fb: int = UI.FONT["body"]
 	var rows: Array = []
-	if tracker_title != "":
-		rows.append({"text": tracker_title, "kind": "title", "prio": 0,
-				"color": C_BIO.lerp(C_LINE, 0.3)})
-	if tracker_detail != "":
-		rows.append({"text": tracker_detail, "kind": "detail", "prio": 0, "color": Color(C_LINE, 0.95)})
-	if tutorial_text != "":
-		rows.append({"text": ("» " if Game.in_mission() else "ОБУЧЕНИЕ ") + tutorial_text,
-				"kind": "tutorial", "prio": 1, "color": C_HAZARD.lerp(C_LINE, 0.35)})
-	var g = power_gen
-	if g != null and is_instance_valid(g):
-		var out: float = g.current_output()
-		var ld: float = float(g.power_load)
-		var state: String = ""
-		if not g.enabled:
-			state = " · ВЫКЛ"
-		elif _gen_no_fuel(g):
-			state = " · нет угля"
-		elif g.overloaded():
-			state = " · ПЕРЕГРУЗ"
-		var warn: bool = g.overloaded() or not g.enabled
-		rows.append({"text": "%s: нагрузка %.1f / выход %.1f%s" % [power_text, ld, out, state],
-				"kind": "power", "prio": 2, "gen": g, "load": ld, "out": out,
-				"color": C_WARN.lerp(C_LINE, 0.25) if warn else Color(C_HAZARD.lerp(C_LINE, 0.55), 0.95)})
-	elif Game.brownout:
-		rows.append({"text": "ПЕРЕГРУЗ СЕТИ — станки замедлены", "kind": "brownout", "prio": 2,
-				"color": C_WARN.lerp(C_LINE, 0.25)})
-	for line in mission_lines:
-		rows.append({"text": line, "kind": "mission", "prio": 3, "color": Color(C_LINE, 0.95)})
-	for r in rows:
-		r["full"] = r["text"]   # полный текст: обрезается заново под свободную ширину (_status_place)
+	if tutorial_text != "" and Game.in_mission():
+		rows.append({"text": tutorial_text, "kind": "tutorial", "prio": 1,
+				"color": C_HAZARD.lerp(C_LINE, 0.35), "full": tutorial_text})
 	return rows
 
 
@@ -1375,7 +1514,8 @@ func _draw() -> void:
 				Color(C_BIO, 0.55))
 		_text_outlined(font, emp_rect.position + Vector2(6, 13), "ИМПУЛЬС [Q]", fs, Color(C_LINE, 0.95))
 
-		# Трекер цели, мощность, обучение (#34)
+		# Карточка «Сейчас» и одна строка подсказки (#160)
+		_draw_card(font)
 		_draw_status_block(font)
 
 	# ---- Время суток ---------------------------------------------------------
@@ -1451,9 +1591,118 @@ func _draw() -> void:
 	stat_us += Time.get_ticks_usec() - t0
 
 
-## Блок под здоровьем: трекер цели, мощность генератора, шаг обучения (строки — из
-## раскладки: что не влезло, уже отброшено).
-## Всё, что здесь рисуется, — в ключе: _state_hash (строки), [39..44] (числа).
+## Ширина карточки: иконка 48 и текст заголовка (не уже счётчика).
+func _card_width() -> float:
+	var ft: int = UI.FONT["title"]
+	var fb: int = UI.FONT["body"]
+	var tw: float = _tw(card_text, ft)
+	if card_need > 1:
+		tw = maxf(tw, _tw("%d / %d" % [card_have, card_need], fb))
+	return CARD_ICON + 16.0 + tw + 12.0
+
+
+## Карточка «Сейчас»: плашка 64 px, картинка 48×48, ≤ 6 слов, счётчик если need > 1.
+func _draw_card(font: Font) -> void:
+	if not _lay.has("card") or card_text == "":
+		if _card_hit != null:
+			_card_hit.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		return
+	var r: Rect2 = _lay["card"]
+	if _card_hit != null:
+		_card_hit.mouse_filter = Control.MOUSE_FILTER_STOP
+		_card_hit.position = r.position
+		_card_hit.size = r.size
+	draw_rect(r, C_PLATE)
+	draw_rect(r, Color(C_LINE, 0.35), false, 1.0)
+	var icon_r: Rect2 = Rect2(r.position + Vector2(8.0, 8.0), Vector2(CARD_ICON, CARD_ICON))
+	draw_rect(icon_r, C_PLATE_HI)
+	if card_icon >= 0:
+		var tex: ImageTexture = DB.item_texture(card_icon)
+		if tex:
+			draw_texture_rect(tex, icon_r.grow(-4.0), false)
+	else:
+		_draw_stage_glyph(icon_r, tracker_stage)
+	var tx: float = icon_r.end.x + 8.0
+	var ft: int = UI.FONT["title"]
+	_text_outlined(font, Vector2(tx, r.position.y + 8.0 + float(ft)), card_text, ft, C_LINE)
+	if card_need > 1:
+		var fb: int = UI.FONT["body"]
+		_text_outlined(font, Vector2(tx, r.position.y + 8.0 + float(ft) + 4.0 + float(fb)),
+				"%d / %d" % [card_have, card_need], fb, C_BIO.lerp(C_LINE, 0.25))
+
+
+## Пиктограмма этапа, когда у цели нет предмета: антенна, шестерня, молния — квадратами.
+func _draw_stage_glyph(r: Rect2, stage: int) -> void:
+	var c: Color = C_BIO.lerp(C_LINE, 0.2)
+	var s: float = 6.0
+	var o: Vector2 = r.position + (r.size - Vector2(s * 3.0, s * 3.0)) * 0.5
+	if stage <= 1:
+		# Антенна: мачта и перекладина.
+		draw_rect(Rect2(o + Vector2(s, 0.0), Vector2(s, s * 3.0)), c)
+		draw_rect(Rect2(o + Vector2(0.0, s), Vector2(s * 3.0, s)), c)
+	elif stage == 2:
+		# Шестерня: квадрат и четыре зубца.
+		draw_rect(Rect2(o + Vector2(s, s), Vector2(s, s)), c)
+		draw_rect(Rect2(o + Vector2(s, 0.0), Vector2(s, s)), c)
+		draw_rect(Rect2(o + Vector2(s, s * 2.0), Vector2(s, s)), c)
+		draw_rect(Rect2(o + Vector2(0.0, s), Vector2(s, s)), c)
+		draw_rect(Rect2(o + Vector2(s * 2.0, s), Vector2(s, s)), c)
+	else:
+		# Молния: три ступени.
+		draw_rect(Rect2(o + Vector2(s, 0.0), Vector2(s * 2.0, s)), c)
+		draw_rect(Rect2(o + Vector2(s, s), Vector2(s, s)), c)
+		draw_rect(Rect2(o + Vector2(0.0, s * 2.0), Vector2(s * 2.0, s)), c)
+
+
+## Стрелка-квадрат у края экрана и расстояние в клетках, либо рамка на клетке цели.
+func _draw_card_marker() -> void:
+	if card_at == Vector2.INF or player == null:
+		return
+	var inv_s: float = 1.0 / UI.ui_scale
+	var xf: Transform2D = get_viewport().get_canvas_transform()
+	var cell: Vector2i = World.world_to_cell(card_at)
+	var sr: Rect2 = xf * World.cell_rect(cell)
+	var vis: Rect2 = get_viewport().get_visible_rect()
+	if card_mark_on:
+		var blink: bool = int(Game.game_time * 4.0) % 2 == 0
+		if not blink:
+			return
+		var r: Rect2 = Rect2(sr.position * inv_s, sr.size * inv_s).grow(MARK_GROW)
+		var w: float = MARK_W
+		_mark.draw_rect(Rect2(r.position, Vector2(r.size.x, w)), C_INTERACT)
+		_mark.draw_rect(Rect2(r.position.x, r.end.y - w, r.size.x, w), C_INTERACT)
+		_mark.draw_rect(Rect2(r.position, Vector2(w, r.size.y)), C_INTERACT)
+		_mark.draw_rect(Rect2(r.end.x - w, r.position.y, w, r.size.y), C_INTERACT)
+		return
+	var center: Vector2 = vis.get_center()
+	var target: Vector2 = xf * card_at
+	var dir: Vector2 = target - center
+	if dir.length_squared() < 1.0:
+		return
+	dir = dir.normalized()
+	var half: Vector2 = vis.size * 0.5 - Vector2(CARD_ARROW_PAD, CARD_ARROW_PAD) * UI.ui_scale
+	var scale: float = INF
+	if absf(dir.x) > 0.001:
+		scale = minf(scale, half.x / absf(dir.x))
+	if absf(dir.y) > 0.001:
+		scale = minf(scale, half.y / absf(dir.y))
+	var tip: Vector2 = (center + dir * scale) * inv_s
+	var box: float = CARD_ARROW
+	var br: Rect2 = Rect2(tip - Vector2(box, box) * 0.5, Vector2(box, box))
+	_mark.draw_rect(br, C_PLATE)
+	_mark.draw_rect(br, C_INTERACT, false, 2.0)
+	# Носик стрелки — маленький квадрат со стороны цели.
+	var nose: Vector2 = dir * (box * 0.55)
+	_mark.draw_rect(Rect2(br.get_center() + nose - Vector2(4, 4), Vector2(8, 8)), C_INTERACT)
+	var dist: int = absi(cell.x - World.world_to_cell(player.global_position).x) \
+			+ absi(cell.y - World.world_to_cell(player.global_position).y)
+	var label: String = "%d" % dist
+	var fs: int = UI.FONT["body"]
+	_mark.draw_string(ThemeDB.fallback_font, br.position + Vector2(0, 20), label,
+			HORIZONTAL_ALIGNMENT_CENTER, br.size.x, fs, C_LINE)
+
+
+## Блок под карточкой: одна строка подсказки (что не влезло — уже отброшено).
 func _draw_status_block(font: Font) -> void:
 	var rows: Array = _lay["rows"]
 	var fb: int = UI.FONT["body"]

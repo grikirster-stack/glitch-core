@@ -47,16 +47,18 @@ func stages() -> Array:
 			"say": ["Последняя деталь — антенна. Рецепт у сборщика в цехе.",
 					"Медные пластины, стекло и кристальные блоки — в сундуке у края цеха."],
 			"goals": [["Антенна релея собрана", func() -> Vector2i:
-				return Vector2i(_antennas(), 1)]]},
+				return Vector2i(_antennas(), 1), IDs.I.RELAY_ANTENNA, func() -> Vector2: return _chest_at("assembler")]]},
 		{"title": "Ядро", "hint": "Детали — в сундуке у релея · держите E у релей-ядра: сдать и запустить",
 			"say": ["Остальные детали ядра — в сундуке рядом с релеем. Возьмите их и держите E у ядра.",
 					"Когда ядро запустится, сигнал услышат все. Будьте у ядра — и не дайте им его заглушить."],
-			"goals": [["Релей запущен", func() -> Vector2i: return flag(Game.relay_active)]]},
+			"goals": [["Релей запущен", func() -> Vector2i: return flag(Game.relay_active),
+				IDs.I.RELAY_ANTENNA, func() -> Vector2: return World.cell_to_world(World.beacon_cell)]]},
 		{"title": "Сигнал", "hint": "Будьте у ядра · турели и прожекторы — под питанием · двойник носит ваш скафандр",
 			"say": ["Сигнал пошёл! Девяносто секунд. Они идут — все, кто есть."],
 			"enter": _start_hold,
 			"goals": [["Удержать сигнал", func() -> Vector2i:
-				return Vector2i(int(Balance.RELAY_TIME - Game.relay_timer), int(Balance.RELAY_TIME))]]},
+				return Vector2i(int(Balance.RELAY_TIME - Game.relay_timer), int(Balance.RELAY_TIME)),
+				IDs.I.RELAY_ANTENNA, func() -> Vector2: return World.cell_to_world(World.beacon_cell)]]},
 	]
 
 
@@ -67,6 +69,13 @@ func outro() -> String:
 func _start_hold() -> void:
 	director = true
 	Game.relay_speed = RELAY_SPEED
+
+
+func _chest_at(key: String) -> Vector2:
+	var m = b.get(key)
+	if m != null and is_instance_valid(m) and "cell" in m:
+		return World.cell_to_world(m.cell)
+	return World.cell_to_world(World.beacon_cell)
 
 
 func _antennas() -> int:
