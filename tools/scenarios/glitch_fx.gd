@@ -93,6 +93,15 @@ func run() -> void:
 	Threat.vent_warning.emit(near)
 	ok("вентиляция рядом → блоки у решётки", fx.active_name() == "vent")
 	# Слабое событие поверх сильного не перебивает его; сильное перебивает слабое.
+	# Точка эффекта — клетка ядра. Ядра нет: без поставленного ядра fire()
+	# целится в (−1, −1) и отбрасывает событие как «вне экрана».
+	var core_cell: Vector2i = World.world_to_cell(player.global_position) + Vector2i(1, -1)
+	if World.get_tile_v(core_cell) != IDs.T.AIR:
+		World.set_tile(core_cell.x, core_cell.y, IDs.T.AIR)
+	ok("ядро для глитча поставлено", MachineBase.place_machine("RainbowCore", core_cell))
+	Game.core_cell = core_cell
+	# Первый «ядро запущено» уже был в этом сценарии: пауза 1 с иначе съест повтор.
+	fx._next_ok[GlitchFx.Kind.RELAY_START] = 0.0
 	Game.relay_active = true
 	Game.objective_changed.emit(Game.OBJECTIVE_STAGES)
 	Game.relay_active = false
@@ -100,6 +109,10 @@ func run() -> void:
 	Threat.vent_warning.emit(near)
 	ok("слабое событие не перебивает сильное", fx.active_name() == "relay_start")
 	await _expect_off("relay_start")
+	Game.core_cell = Vector2i(-1, -1)
+	var core = World.machines.get(core_cell)
+	if core != null:
+		core.dismantle()
 	Threat.vent_warning.emit(near)
 	ok("пауза события: вентиляция подряд — без эффекта", not fx.active())
 

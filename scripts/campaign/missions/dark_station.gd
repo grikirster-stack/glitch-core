@@ -19,6 +19,11 @@ func _init() -> void:
 	teaches = "копка, ручной крафт, горелка, терминал, свет против фантомов"
 
 
+func build() -> void:
+	# Горелка у релея: клиент видит её в снимке, не крафтит из воздуха.
+	CampaignBase.build(CampaignBase.Tier.STATION)
+
+
 func kit() -> Array:
 	return [[IDs.I.LAMP, 3], [IDs.I.COAL, 6], [IDs.I.STONE, 8], [IDs.I.SCRAP, 4]]
 
