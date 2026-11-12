@@ -47,6 +47,9 @@ var _light: Dictionary = {}
 var _lit: bool = false
 ## В каком списке мира стоим: 0 нет, Beams.B / C / M.
 var _listed: int = 0
+## Глава «Цвета» (#217): прожектор можно погасить тапом, не снимая жёлтый луч.
+## Иначе эхо ночи не доходит — маяк светит раньше, чем игрок успел встать.
+var lamp_off: bool = false
 
 
 func _init() -> void:
@@ -55,6 +58,24 @@ func _init() -> void:
 	can_turn = false
 	hp = Balance.PHAROS_HP
 	max_hp = Balance.PHAROS_HP
+
+
+func interact(_p) -> void:
+	# Тап по жёлтому маяку гасит и зажигает прожектор. Луч при этом остаётся:
+	# цвет башни не меняется, меняется только свет. Другие цвета тап не трогает.
+	if color != Beams.Y or not active or _destroyed:
+		return
+	var f: int = Engine.get_physics_frames()
+	if f - _lamp_frame <= 1:
+		return
+	_lamp_frame = f
+	lamp_off = not lamp_off
+	_sync_light()
+	Game.notify("Прожектор: %s" % ("погашен" if lamp_off else "горит"),
+			Color(1.0, 0.85, 0.4) if lamp_off else Color(1.0, 0.95, 0.55), IDs.I.PHAROS)
+
+
+var _lamp_frame: int = -10
 
 
 func _process(delta: float) -> void:
@@ -246,7 +267,7 @@ func light_radius() -> float:
 
 
 func _sync_light() -> void:
-	var want: bool = color == Beams.Y and active and not _destroyed
+	var want: bool = color == Beams.Y and active and not _destroyed and not lamp_off
 	if want == _lit:
 		return
 	_lit = want
@@ -269,7 +290,10 @@ func relight() -> void:
 # ---------------------------------------------------------------- СИНИЙ
 
 ## Раз в 3 с фантомы в радиусе не бьют 1 с. Скорость режет World.slow_factor_at.
+## Осада главы «Солнце» в радиусе стоит, пока синий горит: импульса раз в 3 с
+## не хватает, копатель доходит между станами (#218).
 func _tick_blue(delta: float) -> void:
+	_hold_siege()
 	_frost_t -= delta
 	if _frost_t > 0.0:
 		return
@@ -285,6 +309,21 @@ func _tick_blue(delta: float) -> void:
 		if p.has_method("apply_stun"):
 			p.apply_stun(Balance.PHAROS_BLUE_STUN)
 		UI.spawn_chip(pc, frost)
+
+
+## Копатель на осаде в радиусе мороза не шагает, пока луч синий.
+func _hold_siege() -> void:
+	var r: int = blue_radius()
+	for p in get_tree().get_nodes_in_group("phantom"):
+		if not is_instance_valid(p) or String(p.get("kind")) != "burrower":
+			continue
+		if p.get("siege_target") == null:
+			continue
+		var pc: Vector2i = World.world_to_cell(p.global_position)
+		if maxi(absi(pc.x - cell.x), absi(pc.y - cell.y)) > r:
+			continue
+		if p.has_method("apply_stun"):
+			p.apply_stun(0.2)
 
 
 # --------------------------------------------------------------- ГОЛУБОЙ
@@ -437,6 +476,7 @@ func save_state() -> Dictionary:
 	d["frost_t"] = _frost_t
 	d["white_t"] = _white_t
 	d["dome_down"] = _dome_down
+	d["lamp_off"] = lamp_off
 	return d
 
 
@@ -454,6 +494,7 @@ func load_state(d: Dictionary) -> void:
 	_frost_t = float(d.get("frost_t", _frost_t))
 	_white_t = float(d.get("white_t", _white_t))
 	_dome_down = float(d.get("dome_down", _dome_down))
+	lamp_off = bool(d.get("lamp_off", lamp_off))
 	target = null
 	_scan_t = 0.0
 	_apply_color()
@@ -472,6 +513,9 @@ func net_state() -> PackedByteArray:
 	var bits: int = color & 7
 	if lens:
 		bits |= 8
+	# Бит 4 — прожектор погашен тапом (#217). Старый пакет его не ставит.
+	if lamp_off:
+		bits |= 16
 	b.append(bits)
 	return b
 
@@ -483,9 +527,11 @@ func apply_net_state(b: PackedByteArray) -> int:
 	var bits: int = int(b[o])
 	var next: int = bits & 7
 	var has_lens: bool = (bits & 8) != 0
-	if next != color or has_lens != lens:
+	var off: bool = (bits & 16) != 0
+	if next != color or has_lens != lens or off != lamp_off:
 		color = next
 		lens = has_lens
+		lamp_off = off
 		active = color != 0
 		# Клиент собирает свои списки из цвета: купол рисуется здесь,
 		# белый открывает руду без пакета explored.

@@ -12,6 +12,7 @@ const SIX: float = 600.0
 
 func run() -> void:
 	var t5: float = await _sun()
+	await _sun_fail()
 	var t6: float = await _rainbow()
 	_words()
 	_six(t5 + t6)
@@ -117,26 +118,50 @@ func _sun() -> float:
 			acc.stored if acc != null else -1.0, acc.color if acc != null else -1])
 	ok("этап ночи", await wait_stage(4, 2.0), str(mission.stage))
 	ok("ночь наступила", Game.is_night(), "%.3f" % Game.time_of_day)
-	drive_threat = true
 	var spawned: bool = await wait_until(func() -> bool:
-		return _burrower() != null, 8.0)
-	ok("копатель вышел", spawned)
+		return _burrower() != null, 3.0)
+	ok("копатель вышел сам", spawned)
 	var burr: Node = _burrower()
-	var far: bool = true
-	if burr != null:
-		var ph: Pharos = World.machines.get(LightLate.at(LightLate.PHAROS)) as Pharos
-		# Ставим у кромки мороза, справа от маяка: скорость падает, до построек не доходит.
-		# Радиус синего — 4 клетки. Ставим внутри, иначе мороз не берёт.
-		burr.global_position = World.cell_to_world(LightLate.at(LightLate.PHAROS) + Vector2i(3, 0))
-		await wait(0.4)
-		var slow: float = World.slow_factor_at(burr.global_position)
-		ok("синий маяк морозит копателя", ph != null and ph.color == Beams.B and slow < 0.99,
-				"цвет %d, скорость ×%.2f" % [ph.color if ph != null else -1, slow])
-		var base_pos: Vector2 = World.cell_to_world(World.beacon_cell)
-		far = burr.global_position.distance_to(base_pos) > 48.0
+	var from: Vector2 = burr.global_position if burr != null else Vector2.ZERO
+	var ph: Pharos = World.machines.get(LightLate.at(LightLate.PHAROS)) as Pharos
+	ok("копатель идёт к маяку, не стоит", burr != null and burr.get("siege_target") == ph,
+			str(burr.get("siege_target")) if burr != null else "нет")
+	# Герой в стороне: копатель идёт к постройке, не к нему. Не телепортируем.
+	stand_at_cell(LightLate.at(LightLate.PHAROS) + Vector2i(0, -6))
 	# Ночь главы считает _process. Ждём по Game.game_time, не по физике.
 	Engine.time_scale = 6.0
 	var t_night: float = Game.game_time
+	var moved: bool = false
+	while Game.game_time - t_night < 20.0:
+		if burr != null and is_instance_valid(burr) and burr.global_position.distance_to(from) > 24.0:
+			moved = true
+			break
+		await get_tree().process_frame
+	Engine.time_scale = 1.0
+	var walked: int = int(mission.get("path_cells"))
+	print("  [замер] копатель прошёл %d клеток к маяку" % walked)
+	ok("копатель сдвинулся к постройке", moved and walked >= 1, "клеток %d" % walked)
+	# Мороз — свойство синего маяка, не телепорт копателя: сдвиг с пути
+	# роняет его в ствол, и ночь с защитой ложно проваливается.
+	# Beams.B — 4. Белый (7) даёт маску 5, это не мороз.
+	var edge: Vector2 = World.cell_to_world(LightLate.at(LightLate.PHAROS) + Vector2i(3, 0))
+	var saw_blue: bool = false
+	# Белый ещё в башне в первый кадр ночи. Ждём по Game.game_time с ускорением:
+	# кадры стены при time_scale 1 не успевают за лучом.
+	# Победа прошлой главы оставляет DEAD/WON: коллектор не гаснет, пока не PLAYING.
+	# NIGHT_START (0.66) ещё даёт daylight 0.35 — белый держит башню. Глубокая ночь
+	# гасит коллектор, синий накопителя доходит до маяка.
+	if Game.state != Game.State.PLAYING:
+		Game.set_state(Game.State.PLAYING)
+	Game.time_of_day = 0.80
+	for _i in 180:
+		if ph != null and ph.color == Beams.B and ph.active and World.slow_factor_at(edge) < 0.99:
+			saw_blue = true
+			break
+		await get_tree().process_frame
+	ok("синий маяк морозит подход", saw_blue,
+			"цвет %d" % (ph.color if ph != null else -1))
+	Engine.time_scale = 6.0
 	var done: bool = false
 	while Game.game_time - t_night < 80.0:
 		if mission.result != Mission.Result.RUNNING:
@@ -145,7 +170,8 @@ func _sun() -> float:
 		await get_tree().process_frame
 	Engine.time_scale = 1.0
 	ok("ночь 60 с — победа, постройки целы", done and mission.result == Mission.Result.WON, str(mission.result))
-	ok("копатель не дошёл до построек", far)
+	ok("с синим маяком урона нет", float(mission.get("strike_at")) < 0.0,
+			"удар на %.1f с" % float(mission.get("strike_at")))
 	return await _won("sun", t0)
 
 
@@ -267,6 +293,48 @@ func _chapters_end_with(tail: Array) -> bool:
 		if Campaign.CHAPTERS[off + i] != tail[i]:
 			return false
 	return true
+
+
+## Без синего копатель доходит до маяка и бьёт. Главу можно провалить.
+func _sun_fail() -> void:
+	if not _started("sun"):
+		ok("провал главы 5: глава стартовала", false)
+		return
+	print("  [замер] провал: этап %d" % mission.stage)
+	mission.stage = 4
+	mission.call("_begin_night")
+	var acc: Accumulator = World.machines.get(LightLate.at(LightLate.ACCUM)) as Accumulator
+	if acc != null:
+		acc.stored = 0.0
+		acc.color = 0
+		acc.set_mode(Accumulator.MODE_STORE)
+	var ph: Pharos = World.machines.get(LightLate.at(LightLate.PHAROS)) as Pharos
+	if ph != null:
+		ph.beam_receive(0)
+	if World.beams != null:
+		World.beams.note_machines()
+		World.beams.rebuild()
+	var burr: Node = _burrower()
+	ok("без синего копатель всё равно вышел", burr != null)
+	if burr == null:
+		return
+	print("  [замер] провал: копатель ", World.world_to_cell(burr.global_position), " маяк ", LightLate.at(LightLate.PHAROS))
+	stand_at_cell(LightLate.at(LightLate.COLLECTOR))
+	Engine.time_scale = 8.0
+	var t0: float = Game.game_time
+	var lost: bool = false
+	while Game.game_time - t0 < 50.0:
+		if mission.result == Mission.Result.LOST:
+			lost = true
+			break
+		await get_tree().process_frame
+	Engine.time_scale = 1.0
+	var walked: int = int(mission.get("path_cells"))
+	var at: float = float(mission.get("strike_at"))
+	print("  [замер] без защиты: %d клеток, удар на %.1f с, итог %d" % [walked, at, mission.result])
+	ok("копатель дошёл до постройки", walked >= 3, "клеток %d" % walked)
+	ok("без защиты постройка получила урон", lost and at >= 0.0,
+			"итог %d, «%s»" % [mission.result, mission.result_text])
 
 
 # ------------------------------------------------------------------ МЕЛОЧИ

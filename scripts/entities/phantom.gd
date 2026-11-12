@@ -76,6 +76,9 @@ var repath: float = 0.0
 var stun: float = 0.0
 var target_pos: Vector2 = Vector2.ZERO
 var target_machine: Node2D = null	## Машина-цель роя и тени (null — цель игрок).
+## Глава «Солнце» (#218): постройка, к которой копатель идёт всю ночь.
+## Пока жива — свет его не разворачивает и цель не теряется.
+var siege_target: Node2D = null
 var alert: float = 0.0
 var wander_t: float = 0.0
 var jitter: float = 0.0
@@ -186,8 +189,8 @@ func _physics_process(delta: float) -> void:
 	# --- Растворение в глубине ------------------------------------------------
 	# Забывший про игрока фантом (не в погоне) уходит за пределы досягаемости.
 	# Эхо у луча (#215) ещё идёт к цели: растворять его по дороге нельзя.
-	if state != St.CHASE and _forced_flee <= 0.0 and approach_t <= 0.0 \
-			and _age > SPAWN_GRACE and dist > _despawn_limit():
+	# Осада (#218) тоже: копатель, сорвавшийся с хода, всё равно бьёт постройку.
+	if not _keeps_body(dist):
 		alive = false
 		queue_free()
 		return
@@ -264,6 +267,8 @@ func _physics_process(delta: float) -> void:
 
 	# --- Движение ------------------------------------------------------------
 	var speed: float = _move_speed(player_light)
+	# Стан синего маяка держит и осаду (#218): иначе копатель доходит
+	# до постройки и с защитой. Свет клетки осаду не разворачивает.
 	if stun > 0.0 or frozen:
 		speed = 0.0
 	else:
@@ -332,6 +337,8 @@ func _physics_process(delta: float) -> void:
 			"burrower":
 				if state == St.CHASE:
 					_burrow(dt)
+					if target_machine != null:
+						_machine_attack(dt)
 
 	# --- Атака ---------------------------------------------------------------
 	# Бьём игрока, только если цель — он сам (у роя и тени цель бывает машиной).
@@ -363,6 +370,11 @@ func _physics_process(delta: float) -> void:
 
 ## Состояние на этот кадр — по типу фантома.
 func _decide(dt: float, dist: float, light: float) -> void:
+	# Осада главы важнее света: копатель идёт к постройке сквозь луч.
+	if siege_target != null and is_instance_valid(siege_target) and kind == "burrower":
+		target_machine = siege_target
+		state = St.CHASE
+		return
 	if light > light_flee:
 		state = St.FLEE
 		target_machine = null
@@ -391,8 +403,14 @@ func _decide(dt: float, dist: float, light: float) -> void:
 			else:
 				_decide_hunter(dist)
 		"burrower":
-			# Копатель чует игрока сквозь породу и роет к нему напрямую.
-			if dist < Balance.BURROWER_HUNT_PX:
+			# Глава «Солнце» (#218): копатель идёт к постройке, не к герою.
+			# Свет клетки его не разворачивает — иначе он стоит у луча всю ночь.
+			if siege_target != null and is_instance_valid(siege_target):
+				target_machine = siege_target
+				state = St.CHASE
+				alert = 2.0
+			elif dist < Balance.BURROWER_HUNT_PX:
+				# Вне главы чует игрока сквозь породу и роет к нему напрямую.
 				state = St.CHASE
 				alert = 2.0
 			else:
@@ -596,13 +614,22 @@ func _machine_attack(dt: float) -> void:
 	var m: Node2D = target_machine
 	if m == null or not is_instance_valid(m):
 		return
-	if global_position.distance_to(m.global_position) > MACHINE_REACH:
+	# Рой и тень бьют с 20 px. Осада копателя — иначе: тело 12×22 упирается
+	# в твёрдую клетку башни, центр остаётся дальше 20 px, и удар не начинается.
+	# Соседняя клетка (Чебышёв ≤ 1) для осады — досягаемость. Порог роя и тени
+	# не трогаем. Синий мороз отсекает удар ниже, уже после этой проверки.
+	if not _siege_in_reach(m) \
+			and global_position.distance_to(m.global_position) > MACHINE_REACH:
 		return
 	_hit_t -= dt
 	if _hit_t > 0.0:
 		return
 	_hit_t = Balance.MACHINE_HIT_PERIOD
 	machine_hits += 1
+	# Синий маяк держит осаду (#218): копатель доходит до кромки мороза,
+	# но постройку не бьёт, пока луч синий. Без синего удар проходит.
+	if _on_siege() and _siege_frozen():
+		return
 	if m is MachineBase:
 		(m as MachineBase).take_damage(dmg)
 
@@ -658,6 +685,14 @@ static func can_dig(t: int) -> bool:
 
 
 # ------------------------------------------------------------------ СВЕТ, ОБЗОР
+
+## Держать тело: погоня, сирена, подход к лучу, осада постройки.
+## Иначе забытый фантом растворяется за пределом досягаемости.
+func _keeps_body(dist: float) -> bool:
+	if state == St.CHASE or _forced_flee > 0.0 or approach_t > 0.0 or _on_siege():
+		return true
+	return _age <= SPAWN_GRACE or dist <= _despawn_limit()
+
 
 func _despawn_limit() -> float:
 	## Днём фантомы уходят глубже, ночью запас больше — ночь должна пугать.
@@ -842,6 +877,46 @@ func apply_stun(t: float) -> void:
 	_flee_from = Vector2.ZERO
 
 
+## Осада жива: постройка на месте, копатель ещё идёт к ней.
+func _on_siege() -> bool:
+	return kind == "burrower" and siege_target != null and is_instance_valid(siege_target)
+
+
+## Копатель на осаде стоит в соседней клетке машины: тело не влезает в клетку башни.
+## Рой и тень сюда не попадают — у них нет осады, порог остаётся 20 px.
+func _siege_in_reach(m: Node2D) -> bool:
+	if not _on_siege() or m != siege_target or not ("cell" in m):
+		return false
+	var mine: Vector2i = World.world_to_cell(global_position)
+	var mc: Vector2i = m.cell
+	return maxi(absi(mine.x - mc.x), absi(mine.y - mc.y)) <= 1
+
+
+## Синий маяк в радиусе мороза: осада не бьёт, пока он горит.
+func _siege_frozen() -> bool:
+	if not (siege_target is Pharos):
+		return false
+	var ph: Pharos = siege_target as Pharos
+	if ph.color != Beams.B or not ph.active:
+		return false
+	var c: Vector2i = World.world_to_cell(global_position)
+	var r: int = ph.blue_radius()
+	return maxi(absi(c.x - ph.cell.x), absi(c.y - ph.cell.y)) <= r + 1
+
+
+## Глава «Солнце» (#218): идти к постройке, пока она стоит. Свет клетки
+## не разворачивает — иначе копатель замирает у луча и до базы не доходит.
+## Сеть не трогает: клиент рисует позицию из пакета хоста.
+func siege(machine: Node2D) -> void:
+	if net_puppet or not alive or machine == null or not is_instance_valid(machine):
+		return
+	siege_target = machine
+	target_machine = machine
+	state = St.CHASE
+	alert = 2.0
+	repath = 0.0
+
+
 ## Глава «Огонь» (#215): идти к точке t секунд, пока свет не вспугнет.
 ## Стан, сирена и свет ярче light_flee перебивают. Сеть не трогает: клиент
 ## рисует позицию из пакета хоста.
@@ -853,6 +928,7 @@ func approach(t: float, at: Vector2) -> void:
 	if state != St.FLEE and stun <= 0.0:
 		state = St.CHASE
 		target_machine = null
+		siege_target = null
 		repath = 0.0
 
 
@@ -867,6 +943,7 @@ func force_flee(t: float, from: Vector2 = Vector2.ZERO) -> void:
 		_flee_from = from
 	state = St.FLEE
 	target_machine = null
+	siege_target = null
 
 
 func take_damage(amount: float, from: Vector2) -> void:
