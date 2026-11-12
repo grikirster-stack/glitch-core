@@ -75,33 +75,56 @@ func _run() -> void:
 		push_error("chapter_sun_shot: копатель не вышел")
 		quit(1)
 		return
-	# На пути, в двух клетках от башни: кадр не ждёт, пока он доползёт, и не ставит в угол.
-	burr.global_position = world.cell_to_world(tower + Vector2i(-2, 0))
+	# На полу, в двух клетках левее маяка: путь к башне, не яма и не небо.
+	# Физику не глушим — копатель рисуется из _physics_process. Стан держит.
+	var stand: Vector2i = tower + Vector2i(-2, 0)
+	burr.global_position = world.cell_to_world(stand) + Vector2(0.0, 5.0)
+	burr.set("state", 2)
+	burr.set("stun", 8.0)
+	burr.set("vel", Vector2.ZERO)
+	burr.set("facing", 1)
+	burr.call("queue_redraw")
 	var here: Vector2i = world.world_to_cell(burr.global_position)
-	if absi(here.x - tower.x) > 4 or here.y != tower.y:
-		push_error("chapter_sun_shot: копатель не на пути %s" % str(here))
+	if absi(here.x - tower.x) > 3 or absi(here.x - tower.x) < 1 or here.y != tower.y:
+		push_error("chapter_sun_shot: копатель не на пути %s, маяк %s" % [str(here), str(tower)])
 		quit(1)
 		return
-	burr.set_physics_process(false)
-	burr.set_process(false)
 	var p: Node2D = current_scene.get("player")
 	p.set_physics_process(false)
-	p.set_process(false)
-	# Герой под карточкой: круг тумана накрывает текст, копатель остаётся на пути.
-	p.global_position = world.cell_to_world(tower + Vector2i(1, -1))
+	# Герой у маяка: круг тумана накрывает пол, копателя и башню.
+	p.global_position = world.cell_to_world(tower + Vector2i(1, 0)) + Vector2(0.0, 2.0)
 	p.set("vel", Vector2.ZERO)
+	p.set("facing", -1)
+	p.call("queue_redraw")
 	var cam: Camera2D = p.get("camera")
-	cam.zoom = Vector2(1.85, 1.85)
-	cam.position = world.cell_to_world(tower + Vector2i(-1, 0)) - p.global_position
-	cam.reset_smoothing()
+	# Сглаживание за кадры ожидания возвращает взгляд на героя, и копатель
+	# остаётся за краем. Зум держит ViewZoom — пишем и его.
+	cam.position_smoothing_enabled = false
+	var zoom: Node = p.get_node_or_null("ViewZoom")
+	if zoom != null:
+		zoom.set("target", 2.6)
+		zoom.set("current", 2.6)
+		zoom.call("_apply")
+	cam.zoom = Vector2(2.6, 2.6)
+	# Кадр на копателя и маяк. Карточка сверху, рамка сядет на клетку маяка.
+	cam.position = world.cell_to_world(tower + Vector2i(-1, 0)) - p.global_position + Vector2(0.0, 20.0)
 	var hud: Node = root.get_node("UI").get("hud")
 	hud.set("notes", [])
 	hud.set("tutorial_text", "")
 	hud.set("hint_text", "")
+	# Одна строка этапа, без клавиш и без «·». На время кадра, не в геймплей.
+	m.set("hint", "Синий мороз не пускает копателя")
 	m.call("evaluate")
 	hud.call("_compute_tracker")
+	hud.call("_compute_tutorial")
 	await _frames(4)
-	cam.reset_smoothing()
+	burr.set("stun", 8.0)
+	burr.global_position = world.cell_to_world(stand) + Vector2(0.0, 5.0)
+	burr.set("facing", 1)
+	burr.call("queue_redraw")
+	p.call("queue_redraw")
+	cam.zoom = Vector2(2.6, 2.6)
+	cam.position = world.cell_to_world(tower + Vector2i(-1, 0)) - p.global_position + Vector2(0.0, 20.0)
 	await RenderingServer.frame_post_draw
 	var img: Image = root.get_texture().get_image()
 	if img == null or img.is_empty() or img.get_width() != 1280 or img.get_height() != 720:

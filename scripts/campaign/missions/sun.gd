@@ -187,9 +187,9 @@ func _begin_night() -> void:
 	_night_t = 0.0
 	_arm_blue()
 	_snapshot_hp()
-	# Лампы лагеря светят до самой ямы ствола: тёмной клетки на полу нет,
-	# и копатель не выходит (#218). Гасим две левые и кладём пол хода.
-	# Синий стан держит его у кромки мороза; без синего он доходит и бьёт.
+	# Лампы лагеря и белый луч светят до самой ямы: на части сидов тёмной
+	# клетки на полу нет, и копатель не выходит (#218, сид 12345).
+	# Гасим лампы на ходе и кладём пол. Выход — вне мороза и в темноте.
 	_carve_lane()
 	var spot: Vector2i = _burrower_spot()
 	var made: Array = Threat.spawn_phantom("burrower", World.cell_to_world(spot), {})
@@ -223,49 +223,87 @@ func _night_done() -> bool:
 	return _night_t >= _guard_sec() and not Game.is_night()
 
 
-## Две левые лампы лагеря (cx−11 и cx−3) светят на 1.0 до кромки ямы.
-## Без них ход слева от двери темнее порога бегства, и копатель выходит.
+## Лампы на ходе (cx−11, cx−3 и всё, что ещё светит левее двери) гасим.
+## Иначе на части сидов (12345) свет чужой лампы или луча держит выход
+## выше порога бегства, и копатель не сдвигается.
 func _dim_camp() -> void:
 	var b: Vector2i = World.beacon_cell
-	for dx in [-11, -3]:
-		var c: Vector2i = Vector2i(b.x + dx, b.y)
+	var door: Vector2i = CampaignBase.camp_door()
+	for x in range(door.x - 14, door.x + 1):
+		var c: Vector2i = Vector2i(x, b.y)
 		if World.get_tile_v(c) == IDs.T.LIGHT_CRYSTAL:
 			World.set_tile(c.x, c.y, IDs.T.AIR)
+	# Горелка станции (cx−1) с углём бьёт красным на 24 клетки — сквозь ход.
+	var burner: Burner = World.machines.get(Vector2i(b.x - 1, b.y)) as Burner
+	if burner != null:
+		burner.enabled = false
+		burner.burn_left = 0.0
+		burner.color = 0
+		if World.beams != null:
+			World.beams.note_machines()
+			World.beams.mark_dirty()
+			World.beams.rebuild()
+			World._apply_beam_lights()
 
 
 ## Ход на ряду маяка: воздух над сталью, от тёмной клетки до башни.
-## Сталь копатель не роет. Яма ствола западнее двери закрыта полом.
+## Сталь копатель не роет. Яма ствола на этом ряду закрыта полом:
+## на сиде 12345 выход падал в ствол и до постройки не доходил.
+## Ход длиннее окна поиска: лампа у входа пещеры светит на клетки
+## у двери, тёмная лежит западнее.
 func _carve_lane() -> void:
 	_dim_camp()
 	var ph: Vector2i = LightLate.at(LightLate.PHAROS)
 	var door: Vector2i = CampaignBase.camp_door()
-	var x0: int = door.x - 6
+	var x0: int = door.x - 14
 	for x in range(x0, ph.x):
 		var c: Vector2i = Vector2i(x, ph.y)
 		if not World.machines.has(c) and World.get_tile_v(c) != IDs.T.AIR:
 			World.set_tile(c.x, c.y, IDs.T.AIR)
 		var floor: Vector2i = Vector2i(x, ph.y + 1)
-		if not World.machines.has(floor) and not World.is_solid_cell(floor):
+		if not World.machines.has(floor):
 			World.set_tile(floor.x, floor.y, IDs.T.STEEL)
 
 
-## Тёмная клетка хода не ближе четырёх клеток к маяку: вплотную удар
-## не выглядит ходом, а свет ламп западнее двери копателя разворачивает.
+## Выход вне мороза (Чебышёв до маяка ≥ 6) и в темноте (свет ≤ порога).
+## Ближе стан обнуляет скорость — копатель не сдвигается (сид 12345).
+## Светлой клетки не берём: гасим лампы на ходе и ищем дальше по ходу.
 func _burrower_spot() -> Vector2i:
 	var door: Vector2i = CampaignBase.camp_door()
 	var flee: float = float(Balance.PHANTOMS["burrower"]["light_flee"])
 	var ph: Vector2i = LightLate.at(LightLate.PHAROS)
-	var best: Vector2i = Vector2i(door.x - 2, ph.y)
+	var best: Vector2i = Vector2i(-1, -1)
 	var bd: int = 1 << 30
-	for x in range(door.x - 6, ph.x - 3):
-		var c: Vector2i = Vector2i(x, ph.y)
+	var y: int = ph.y
+	for x in range(door.x - 12, ph.x - 5):
+		var c: Vector2i = Vector2i(x, y)
 		if not _walkable(c) or World.light_at(c) > flee:
 			continue
-		var d: int = absi(c.x - ph.x)
+		if maxi(absi(c.x - ph.x), absi(c.y - ph.y)) < 6:
+			continue
+		var d: int = absi(c.x - ph.x) + absi(c.y - ph.y)
 		if d < bd:
 			bd = d
 			best = c
-	return best
+	if best.x >= 0:
+		return best
+	# Темноты на окне нет — гасим оставшийся свет хода и ищем ещё раз.
+	_dim_lane_lights(door, ph)
+	for x in range(door.x - 12, ph.x - 5):
+		var c2: Vector2i = Vector2i(x, y)
+		if not _walkable(c2) or World.light_at(c2) > flee:
+			continue
+		return c2
+	return Vector2i(ph.x - 6, ph.y)
+
+
+## Лампы и кристаллы на самом ходе: их свет держит выход выше порога.
+func _dim_lane_lights(door: Vector2i, ph: Vector2i) -> void:
+	for x in range(door.x - 14, ph.x):
+		for dy in [-1, 0, 1]:
+			var c: Vector2i = Vector2i(x, ph.y + dy)
+			if World.get_tile_v(c) == IDs.T.LIGHT_CRYSTAL:
+				World.set_tile(c.x, c.y, IDs.T.AIR)
 
 
 func _walkable(c: Vector2i) -> bool:

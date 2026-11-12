@@ -73,7 +73,9 @@ func _run() -> void:
 	m.set("hold_time", -1.0)
 	m.call("_begin_night")
 	game.set("state", 1)
-	game.set("time_of_day", 0.80)
+	# Сумерки, не глухая ночь: амбиент ночи гасит эхо до комка.
+	# is_night() ещё истинна (порог 0.66), прожектор погашен отдельно.
+	game.set("time_of_day", 0.66)
 	game.set("game_time", 30.0)
 	if int(pharos.get("color")) != 3 or not bool(pharos.get("lamp_off")) or bool(pharos.get("_lit")):
 		push_error("chapter_colors_shot: прожектор не погашен, цвет %s лампа %s свет %s" % [
@@ -82,28 +84,52 @@ func _run() -> void:
 		return
 	var p: Node2D = current_scene.get("player")
 	p.set_physics_process(false)
-	p.set_process(false)
-	# Герой под карточкой: круг тумана накрывает её правый край. Эхо рядом.
-	var stand: Vector2i = world.beacon_cell + Vector2i(1, -1)
-	p.global_position = world.cell_to_world(stand)
+	# Открытый пол левее машин лагеря: ряд y — воздух над сталью.
+	# dx −20 оставлял эхо у панели. Ещё клетка влево — пустой грунт
+	# с обеих сторон, силуэт не сливается со стеной (#217).
+	var stand: Vector2i = world.beacon_cell + Vector2i(-22, 0)
+	for dx in range(-1, 4):
+		world.set_tile(stand.x + dx, stand.y, 0)
+		world.set_tile(stand.x + dx, stand.y - 1, 0)
+		world.set_tile(stand.x + dx, stand.y + 1, 16)
+	world.reveal_around(stand, 16)
+	p.global_position = world.cell_to_world(stand) + Vector2(0.0, 2.0)
 	p.set("vel", Vector2.ZERO)
+	p.set("facing", 1)
+	p.call("queue_redraw")
 	var threat: Node = root.get_node("Threat")
-	var spot: Vector2i = m.call("_echo_spot")
-	var made: Array = threat.spawn_phantom("echo", world.cell_to_world(spot), {})
+	var made: Array = threat.spawn_phantom("echo", world.cell_to_world(stand + Vector2i(1, 0)), {})
 	if made.is_empty():
 		push_error("chapter_colors_shot: эхо не вышло")
 		quit(1)
 		return
 	var echo = made[0]
-	# На полу у героя, в круге тумана: эхо читается рядом с ним.
-	echo.global_position = p.global_position + Vector2(28.0, 6.0)
+	# Соседняя клетка справа, тот же пол. Физику не глушим: эхо рисуется
+	# из _physics_process. Стан держит его на месте, визор красный.
+	echo.global_position = world.cell_to_world(stand + Vector2i(1, 0)) + Vector2(0.0, 2.0)
 	echo.set("state", 2)
-	echo.set("approach_t", 8.0)
-	echo.set("approach_at", p.global_position)
+	echo.set("stun", 8.0)
+	echo.set("approach_t", 0.0)
+	echo.set("vel", Vector2.ZERO)
+	echo.set("facing", -1)
+	echo.call("queue_redraw")
+	var here: Vector2i = world.world_to_cell(echo.global_position)
+	if absi(here.x - stand.x) > 1 or absi(here.y - stand.y) > 1:
+		push_error("chapter_colors_shot: эхо не рядом %s / %s" % [str(here), str(stand)])
+		quit(1)
+		return
 	var cam: Camera2D = p.get("camera")
-	cam.zoom = Vector2(1.7, 1.7)
-	cam.position = p.global_position + Vector2(48.0, -8.0) - p.global_position
-	cam.reset_smoothing()
+	# ViewZoom в _ready ставит 2.2. Сглаживание за 4 кадра возвращает
+	# взгляд на героя — без него сдвиг кадра остаётся.
+	cam.position_smoothing_enabled = false
+	var zoom: Node = p.get_node_or_null("ViewZoom")
+	if zoom != null:
+		zoom.set("target", 2.8)
+		zoom.set("current", 2.8)
+		zoom.call("_apply")
+	cam.zoom = Vector2(2.8, 2.8)
+	# Взгляд чуть ниже пары: карточка и подсказка остаются над силуэтами.
+	cam.position = Vector2(8.0, 8.0)
 	var hud: Node = root.get_node("UI").get("hud")
 	hud.set("notes", [])
 	hud.set("tutorial_text", "")
@@ -113,8 +139,15 @@ func _run() -> void:
 	m.call("evaluate")
 	hud.call("_compute_tracker")
 	hud.call("_compute_tutorial")
-	await _frames(6)
-	cam.reset_smoothing()
+	await _frames(4)
+	# Стан тикает в физике. Перед кадром возвращаем красный визор и место.
+	echo.set("stun", 8.0)
+	echo.global_position = world.cell_to_world(stand + Vector2i(1, 0)) + Vector2(0.0, 2.0)
+	echo.set("facing", -1)
+	echo.call("queue_redraw")
+	p.call("queue_redraw")
+	cam.zoom = Vector2(2.8, 2.8)
+	cam.position = Vector2(8.0, 8.0)
 	await RenderingServer.frame_post_draw
 	var img: Image = root.get_texture().get_image()
 	if img == null or img.is_empty() or img.get_width() != 1280 or img.get_height() != 720:
