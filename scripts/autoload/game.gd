@@ -141,14 +141,17 @@ func advance_clock(dt: float) -> void:
 	if dt <= 0.0:
 		return
 	var prev_t: float = time_of_day
-	var night: bool = prev_t >= Balance.NIGHT_START or prev_t < Balance.NIGHT_END
-	time_of_day = fmod(time_of_day + dt, 1.0)
+	time_of_day = fmod(prev_t + dt, 1.0)
+	if time_of_day < 0.0:
+		time_of_day += 1.0
+	# Рассвет — только переход через NIGHT_END. Шаг из глубокой ночи (0.80) к 0.04
+	# границу не пересекает. Шаг длиннее цикла тоже не считается: ночь надо пройти.
 	var crossed: bool = false
-	if night and dt < 1.0:
-		if prev_t >= Balance.NIGHT_START:
-			crossed = time_of_day < prev_t or time_of_day >= Balance.NIGHT_END
-		else:
-			crossed = time_of_day >= Balance.NIGHT_END and time_of_day < Balance.NIGHT_START
+	if dt > 0.0 and dt < 1.0:
+		if prev_t < Balance.NIGHT_END:
+			crossed = time_of_day >= Balance.NIGHT_END and time_of_day < prev_t + dt + 0.0001
+		elif prev_t >= Balance.NIGHT_START:
+			crossed = time_of_day >= Balance.NIGHT_END and time_of_day < Balance.NIGHT_START and time_of_day < prev_t
 	if not crossed:
 		return
 	day_number += 1

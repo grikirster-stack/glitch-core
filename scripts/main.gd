@@ -11,6 +11,8 @@ var _shot_taken: bool = false
 var _args: PackedStringArray = PackedStringArray()
 ## Режим сценария: директор угрозы молчит, фантомов создаёт сам сценарий.
 var scenario_mode: bool = false
+## Ночей на момент смерти: респаун добавляет ровно одну смену, не пачку.
+var _nights_at_death: int = 0
 
 
 func _ready() -> void:
@@ -315,6 +317,7 @@ func _setup_respawn() -> void:
 func _on_player_died() -> void:
 	if _net_coop_died():   # СЕТЬ (ADR-002 D11): смерть в сети — NetCoop, часы не двигаются
 		return
+	_nights_at_death = Game.nights_survived
 	if hardcore:
 		Game.set_state(Game.State.DEAD)
 		return
@@ -332,9 +335,14 @@ func _respawn() -> void:
 	if Game.in_mission():   # ADR-004: ночь главы не перематывается — её надо пережить
 		Game.notify("%s Мешок с вещами остался на месте гибели." % where, Color(1.0, 0.85, 0.6))
 		return
-	# К рассвету: ставим время чуть раньше конца ночи — Game сам перейдёт рубеж
-	# и начнёт новую смену (day_number, «Смена N», роспуск фантомов — по сигналу).
-	Game.time_of_day = Balance.NIGHT_END - 0.0005
+	var nights0: int = _nights_at_death
+	# К рассвету — ровно одна новая смена. За RESPAWN_DELAY ночь могла уже кончиться
+	# сама: тогда часы не крутим, только дописываем смену.
+	if Game.nights_survived == nights0:
+		Game.time_of_day = Balance.NIGHT_END - 0.0005
+		Game.advance_clock(0.001)
+	elif Game.time_of_day < Balance.NIGHT_END or Game.time_of_day >= Balance.NIGHT_START:
+		Game.time_of_day = Balance.NIGHT_END
 	Game.notify("%s Мешок с вещами остался на месте гибели." % where, Color(1.0, 0.85, 0.6))
 
 
