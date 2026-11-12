@@ -51,6 +51,10 @@ var kind: String = "echo"
 ## Сирена (#172): пока > 0, состояние — FLEE от _flee_from, _decide молчит.
 var _forced_flee: float = 0.0
 var _flee_from: Vector2 = Vector2.ZERO
+## Глава «Огонь» (#215): пока > 0, эхо идёт к лучу (CHASE на approach_at),
+## а не бродит. Свет ярче light_flee по-прежнему перебивает — эхо отступает.
+var approach_t: float = 0.0
+var approach_at: Vector2 = Vector2.ZERO
 var hp: float = MAX_HP
 var max_hp: float = MAX_HP
 var dmg: float = 24.0				## Урон по игроку за удар.
@@ -181,7 +185,9 @@ func _physics_process(delta: float) -> void:
 
 	# --- Растворение в глубине ------------------------------------------------
 	# Забывший про игрока фантом (не в погоне) уходит за пределы досягаемости.
-	if state != St.CHASE and _forced_flee <= 0.0 and _age > SPAWN_GRACE and dist > _despawn_limit():
+	# Эхо у луча (#215) ещё идёт к цели: растворять его по дороге нельзя.
+	if state != St.CHASE and _forced_flee <= 0.0 and approach_t <= 0.0 \
+			and _age > SPAWN_GRACE and dist > _despawn_limit():
 		alive = false
 		queue_free()
 		return
@@ -196,11 +202,17 @@ func _physics_process(delta: float) -> void:
 	# --- Решения -------------------------------------------------------------
 	if _forced_flee > 0.0:
 		_forced_flee = maxf(0.0, _forced_flee - dt)
+	if approach_t > 0.0:
+		approach_t = maxf(0.0, approach_t - dt)
 	if stun > 0.0:
 		state = St.DORMANT
 	elif _forced_flee > 0.0:
 		# Сирена (#172): пока таймер жив, свет и приманка состояние не меняют.
 		state = St.FLEE
+		target_machine = null
+	elif approach_t > 0.0 and light <= light_flee:
+		# Луч ещё не вспугнул: идём к нему, не к герою и не в блуждание.
+		state = St.CHASE
 		target_machine = null
 	else:
 		_decide(dt, dist, light)
@@ -406,11 +418,13 @@ func _decide_hunter(dist: float) -> void:
 		state = St.ROAM if dist > 260.0 else St.DORMANT
 
 
-## Куда идём в погоне: к машине-цели или к игроку.
+## Куда идём в погоне: к машине-цели, к лучу главы или к игроку.
 func _chase_goal() -> Vector2:
 	if target_machine != null and is_instance_valid(target_machine):
 		return target_machine.global_position
 	target_machine = null
+	if approach_t > 0.0:
+		return approach_at
 	return player.global_position
 
 
@@ -826,6 +840,20 @@ func apply_stun(t: float) -> void:
 	# Стан сильнее сирены: пока стоим, гон не решает.
 	_forced_flee = 0.0
 	_flee_from = Vector2.ZERO
+
+
+## Глава «Огонь» (#215): идти к точке t секунд, пока свет не вспугнет.
+## Стан, сирена и свет ярче light_flee перебивают. Сеть не трогает: клиент
+## рисует позицию из пакета хоста.
+func approach(t: float, at: Vector2) -> void:
+	if net_puppet or not alive or t <= 0.0:
+		return
+	approach_t = maxf(approach_t, t)
+	approach_at = at
+	if state != St.FLEE and stun <= 0.0:
+		state = St.CHASE
+		target_machine = null
+		repath = 0.0
 
 
 ## Сирена (#172): FLEE на t секунд от точки from, независимо от light_flee.

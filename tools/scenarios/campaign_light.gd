@@ -8,6 +8,7 @@ func run() -> void:
 	_goal_words()
 	await _dig()
 	await _fire()
+	await _fire_timeout()
 	finish()
 
 
@@ -180,23 +181,88 @@ func _fire() -> void:
 		await wait_until(func() -> bool: return Game.is_night(), 20.0)
 	Engine.time_scale = 1.0
 	ok("сумерки через ~40 с", dusk and waited >= 30.0 and waited <= 55.0, "%.1f с" % waited)
+	var t_night: float = Game.game_time
+	# Герой в стороне: не перекрывает ход и не зовёт эхо шумом.
+	stand_at_cell(mark + Vector2i(3, 2))
+	player.vel = Vector2.ZERO
 	await wait(0.4)
 	ok("безвредное эхо вышло", Threat.chapter_echo)
 	var hp0: float = player.hp
-	# Эхо само боится света луча. Если оно ещё в мире и не бежит — ставим на луч.
-	var echo: Node = null
-	var nodes: Array = get_tree().get_nodes_in_group("phantom")
-	if not nodes.is_empty():
-		echo = nodes[0]
-	if echo != null and is_instance_valid(echo) and int(echo.state) != Phantom.St.FLEE:
-		echo.global_position = World.cell_to_world(mark + Vector2i(0, -2))
 	var fled: bool = await wait_until(func() -> bool:
-		return bool(mission.get("_retreated")) or (
-				echo != null and is_instance_valid(echo) and int(echo.state) == Phantom.St.FLEE), 6.0)
-	ok("эхо отступило от луча", fled, "флаг %s" % str(mission.get("_retreated")))
+		return bool(mission.get("_retreated")), 30.0)
+	var retreat_s: float = Game.game_time - t_night
+	var near: float = float(mission.get("echo_near"))
+	print("[глава 2] секунд до отступления %.1f, мин. клеток до луча %.1f" % [retreat_s, near])
+	ok("эхо само дошло до луча", near <= 1.5, "мин. клеток %.1f" % near)
+	ok("эхо отступило от луча", fled and bool(mission.get("_retreated")),
+			"за %.1f с, флаг %s" % [retreat_s, str(mission.get("_retreated"))])
+	ok("этап «Сумерки» закрылся", mission.stage > 2 or mission.result != Mission.Result.RUNNING,
+			"этап %d" % mission.stage)
 	await _won("fire", now() - t0)
 	ok("эхо не било героя", player.hp >= hp0 - 0.1, "hp %.0f → %.0f" % [hp0, player.hp])
 	Engine.time_scale = 1.0
+
+
+## Эхо этой главы (безвредное). Чужих фантомов в сценарии нет.
+func _chapter_echo() -> Node:
+	for n in get_tree().get_nodes_in_group("phantom"):
+		if is_instance_valid(n) and bool(n.get("harmless")):
+			return n
+	return null
+
+
+## Клеток до красного луча (по центрам). Горелка станции тоже красная —
+## её не считаем, эхо идёт к лучу метки. Нет луча — большое число.
+func _dist_to_beam(pos: Vector2, mark: Vector2i) -> float:
+	if World.beams == null:
+		return 999.0
+	var best: float = 999.0
+	var here: Vector2i = World.world_to_cell(pos)
+	for c in World.beams.cells.keys():
+		if int(World.beams.cells[c]) & Beams.R == 0:
+			continue
+		if absi(c.x - mark.x) > 1:
+			continue
+		var d: float = Vector2(here - c).length()
+		if d < best:
+			best = d
+	return best
+
+
+## Эхо не пришло к лучу — этап всё равно закрывается, солнце не стоит вечно (#215).
+func _fire_timeout() -> void:
+	if not _started("fire"):
+		return
+	var mark: Vector2i = mission.call("mark")
+	var burner: Burner = CampaignBase.put("Burner", mark, {"dir": 3, "fuel": 3}) as Burner
+	ok("таймаут: горелка уже горит", burner != null and burner.burning())
+	# Носик вверх, как ставит игрок. Иначе луч бьёт вправо и этап «Уголь» молчит.
+	# Прямой dir из put() носик не перестраивает. turn() помечает луч грязным,
+	# мир перестроит его на следующем кадре — ручной rebuild здесь сбивает подпись.
+	if burner != null:
+		while burner.dir != 3:
+			burner.turn()
+	await wait(0.3)
+	if not await wait_stage(2, 3.0):
+		ok("таймаут: этап «Сумерки»", false, "этап %d" % mission.stage)
+		return
+	# Луч гасим: эхо идёт, но отступить от света не может.
+	if burner != null:
+		burner.enabled = false
+	if World.beams != null:
+		World.beams.mark_dirty()
+		World.beams.rebuild()
+		World._apply_beam_lights()
+	Game.time_of_day = Balance.NIGHT_START
+	var t0: float = Game.game_time
+	Engine.time_scale = 8.0
+	var closed: bool = await wait_until(func() -> bool:
+		return mission.result != Mission.Result.RUNNING, 40.0)
+	Engine.time_scale = 1.0
+	var waited: float = Game.game_time - t0
+	ok("глава не висит, если эхо не дошло до луча", closed and mission.result == Mission.Result.WON,
+			"за %.1f с, итог %d" % [waited, mission.result])
+	ok("таймаут этапа конечный", waited < 40.0, "%.1f с" % waited)
 
 
 ## Текст, который карточка покажет по текущим целям главы (HUD режет до 6 слов).
