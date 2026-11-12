@@ -636,6 +636,12 @@ func _t_water_check() -> void:
 func _t_anim_start() -> void:
 	# Секция «== Анимации ==»: те же проверки, что и в tools/anim_test.gd.
 	# Общий код — дублирования нет. Шаг 19 раньше звал power_test (#170 снят).
+	# Шаг релея выше доводит ядро до победы, и к этому моменту экран «ЭВАКУАЦИЯ»
+	# уже открыт. С #214 он глушит копку и E — секция проверяет героя, не финал.
+	# Прячем экран, состояние WON не трогаем: его ждёт «== Финал ==» (#212 не чиним).
+	var es: Node = scene.get("end_screen")
+	if es != null and es.has_method("hide_end"):
+		es.hide_end()
 	anim = AnimTestScript.Runner.new(self)
 	add_child(anim)
 	anim.start(scene)

@@ -294,6 +294,11 @@ func _handle_input(dt: float) -> void:
 
 	if net_role == NetRole.OWNER:   # СЕТЬ (ADR-002): действия своего героя клиента — у хоста
 		return
+	# Экран победы/смерти рисуется поверх мира, но ЛКМ/ПКМ опрашиваются каждый кадр
+	# и раньше копали и ставили блоки сквозь него (#214). Клавиши экрана — его _input.
+	if _end_screen_open():
+		_drop_world_aim()
+		return
 	if _ui_blocking():
 		dig_cell = Vector2i(-1, -1)
 		return
@@ -1205,6 +1210,27 @@ func _ui_blocking() -> bool:
 	if net_role == NetRole.PROXY:
 		return net_window_open
 	return UI.blocking()
+
+
+## Экран победы или смерти поверх мира (EndScreen в сцене). Пока он виден, ЛКМ и ПКМ
+## не копают и не ставят: клик принадлежит экрану, а не клетке под курсором (#214).
+## is_visible_in_tree, не поле visible: сценарий иногда гасит экран через visible
+## родителя, и поле остаётся true — тогда копка не возвращалась бы после финала.
+func _end_screen_open() -> bool:
+	var sc: Node = get_tree().current_scene
+	if sc == null:
+		return false
+	var es: CanvasItem = sc.get("end_screen") as CanvasItem
+	return es != null and is_instance_valid(es) and es.is_visible_in_tree()
+
+
+## Сбросить прицел копки, пока мир за экраном трогать нельзя.
+func _drop_world_aim() -> void:
+	dig_cell = Vector2i(-1, -1)
+	mining_progress = 0.0
+	mining_cell = Vector2i(-1, -1)
+	_place_cd = 0.0
+	_lmb_was = false
 
 
 ## Звук действия героя. Свой герой — как раньше (Sfx.play); хост ещё рассылает его
