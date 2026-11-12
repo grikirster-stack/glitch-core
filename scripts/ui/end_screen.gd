@@ -34,8 +34,11 @@ var epilogue: String = ""
 var can_next: bool = false
 ## Победа свободной игры: кнопка «Остаться на планете» (не кампания, не хардкор).
 var can_stay: bool = false
-## Прямоугольник кнопки в экранных px (тап); пустой — кнопки нет.
+## Прямоугольник кнопки в экранных px (тап и клик); пустой — кнопки нет.
+## Хитбокс не меньше нарисованного прямоугольника и не уже пальца (MIN_HIT).
 var stay_rect: Rect2 = Rect2()
+## Палец не должен промахиваться мимо текста: минимум стороны хитбокса, px.
+const STAY_MIN_HIT: float = 44.0
 
 
 func _ready() -> void:
@@ -100,6 +103,13 @@ func _process(delta: float) -> void:
 		queue_redraw()
 
 
+func _gui_input(event: InputEvent) -> void:
+	# Клик по кнопке приходит сюда: Control на весь экран с MOUSE_FILTER_STOP,
+	# и до _input мышь не доходит. В headless вьюпорт её тоже не доводит —
+	# сценарий зовёт _gui_input напрямую, как панель инвентаря (#69, #214).
+	_on_pointer(event)
+
+
 func _input(event: InputEvent) -> void:
 	if not visible or respawn_delay >= 0.0 or net_death:   # смерть в сети: R не перезапускает
 		return
@@ -107,21 +117,45 @@ func _input(event: InputEvent) -> void:
 		var k: InputEventKey = event
 		if can_next and (k.keycode == KEY_N or k.keycode == KEY_ENTER):
 			next_requested.emit()
+			get_viewport().set_input_as_handled()
 		elif can_stay and k.keycode == KEY_C:
 			stay_requested.emit()
+			get_viewport().set_input_as_handled()
 		elif k.keycode == KEY_R or k.keycode == KEY_ENTER or k.keycode == KEY_SPACE:
 			restart_requested.emit()
-	# На телефоне клавиш нет: тап по экрану — новая попытка (#81). Не раньше чем
-	# через 1.5 с — случайный тап в момент смерти забег не перезапускает.
-	# Кнопка «Остаться» ловит тап и раньше: она нарисована, промахнуть мимо неё трудно.
-	elif event is InputEventScreenTouch and event.pressed:
-		if can_stay and stay_rect.has_point(event.position):
-			stay_requested.emit()
-		elif t > 1.5:
-			if can_next:
-				next_requested.emit()
-			else:
-				restart_requested.emit()
+			get_viewport().set_input_as_handled()
+		return
+	# Клик мышью Control с MOUSE_FILTER_STOP забирает в _gui_input и до _input
+	# не доводит. Тап (и клик, если GUI его пропустил) обрабатываем здесь.
+	_on_pointer(event)
+
+
+## Тап и клик ЛКМ. Кнопка «Остаться» срабатывает сразу; промах по экрану — новая
+## попытка, но не раньше 1.5 с (случайный тап в момент смерти забег не рвёт).
+func _on_pointer(event: InputEvent) -> void:
+	if not visible or respawn_delay >= 0.0 or net_death:
+		return
+	var pos: Vector2 = Vector2(-1, -1)
+	var down: bool = false
+	if event is InputEventScreenTouch and event.pressed:
+		pos = event.position
+		down = true
+	elif event is InputEventMouseButton and event.pressed \
+			and event.button_index == MOUSE_BUTTON_LEFT:
+		pos = event.position
+		down = true
+	if not down:
+		return
+	if can_stay and _stay_hit(pos):
+		stay_requested.emit()
+		get_viewport().set_input_as_handled()
+		accept_event()
+	elif event is InputEventScreenTouch and t > 1.5:
+		if can_next:
+			next_requested.emit()
+		else:
+			restart_requested.emit()
+		get_viewport().set_input_as_handled()
 
 
 func _draw() -> void:
@@ -190,20 +224,27 @@ func _draw_victory(font: Font, a: float) -> void:
 	_draw_prompt(font, a, prompt_y)
 
 
-## Кнопка «Остаться на планете» под итогами. Прямоугольник — для тапа.
+## Кнопка «Остаться на планете» под итогами. Прямоугольник — хитбокс тапа и клика.
 func _draw_stay(font: Font, a: float, y: float) -> float:
 	var label: String = "Остаться на планете"
 	var fs: int = 22
 	var tw: float = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-	var bw: float = tw + 48.0
-	var bh: float = 40.0
+	var bw: float = maxf(tw + 48.0, STAY_MIN_HIT)
+	var bh: float = maxf(40.0, STAY_MIN_HIT)
 	var bx: float = (size.x - bw) * 0.5
 	stay_rect = Rect2(bx, y, bw, bh)
 	var hot: Color = Color(0.40, 1.0, 0.78, a)
 	draw_rect(stay_rect, Color(0.06, 0.14, 0.12, 0.92 * a))
 	draw_rect(stay_rect, hot, false, 2.0)
-	draw_string(font, Vector2(bx, y + 28.0), label, HORIZONTAL_ALIGNMENT_CENTER, bw, fs, hot)
+	var ascent: float = font.get_ascent(fs)
+	draw_string(font, Vector2(bx, y + (bh - font.get_height(fs)) * 0.5 + ascent), label,
+			HORIZONTAL_ALIGNMENT_CENTER, bw, fs, hot)
 	return y + bh + 8.0
+
+
+## Точка в хитбоксе кнопки. Прямоугольник уже не уже текста и не уже пальца.
+func _stay_hit(pos: Vector2) -> bool:
+	return stay_rect.size.x > 0.0 and stay_rect.has_point(pos)
 
 
 func _draw_prompt(font: Font, a: float, y: float) -> void:
