@@ -105,10 +105,11 @@ func _check_mark(stats: Dictionary, want: String, gen: Node2D, chest: Node2D) ->
 	elif want == HINT_CHEST:
 		tgt = chest
 	if tgt != null:
-		var sp: Vector2 = hud.get_viewport().get_canvas_transform() * tgt.global_position
-		var good: bool = Rect2(hud.mark_rect).grow(8.0).has_point(sp)
+		# Клетка цели в мире, не экранный кэш: canvas transform в _process
+		# отстаёт от сглаженной камеры на кадр (#211).
+		var good: bool = hud.mark_on_world(tgt.global_position)
 		stats["mark_ok" if good else "mark_bad"] = int(stats["mark_ok" if good else "mark_bad"]) + 1
-	elif want == "" and hud.mark_rect.size != Vector2i.ZERO:
+	elif want == "" and hud.mark_visible():
 		stats["mark_bad"] = int(stats["mark_bad"]) + 1
 
 

@@ -213,6 +213,10 @@ var _card_hit: Control = null   ## кликабельная карточка «�
 var _tc: Node = null   ## TouchControls (без типа — цикл зависимостей)
 var _map: Control = null
 var _mark: Control = null
+## Рамка цели в мире (#211): CanvasLayer HUD не едет за камерой, а экранный
+## прямоугольник, посчитанный в _process, отстаёт на кадр — сглаживание камеры
+## пишет canvas transform после idle. Слой в мировых px двигает сам рендер.
+var _world_mark: Node2D = null
 ## Объект, с которым можно взаимодействовать (мировые px; пустой — нет).
 var _hint_target: Rect2 = Rect2()
 var _map_img: Image = null
@@ -243,6 +247,8 @@ var _hint_pos: Vector2 = Vector2(INF, INF)
 var _hint_machines: int = -1
 var _hint_hiding: bool = false
 var _hint_cell: Vector2i = Vector2i(-1, -1)   ## клетка под курсором (подсказка зависит от неё)
+## Клетка рамки интерактива в мировых px (то, что рисует _world_mark).
+var _mark_world: Rect2 = Rect2()
 var _state_t: float = 0.0
 var _state_hash: int = 0
 var _power_cursor: Vector2i = Vector2i(-9999, -9999)
@@ -260,6 +266,14 @@ func _ready() -> void:
 	_key.resize(KEY_LEN)
 	_map = _make_layer(_draw_map_layer)
 	_mark = _make_layer(_draw_mark_layer)
+	_world_mark = Node2D.new()
+	# Выше построек, WorldFX (20) и тумана (30): рамка должна читаться на предмете.
+	_world_mark.z_index = 40
+	_world_mark.draw.connect(_draw_world_mark)
+	# Слой HUD (CanvasLayer) рисует в экранных px и не следует за камерой.
+	# Мировой узел кладём в корень вьюпорта: его трансформ — трансформ камеры.
+	get_tree().root.add_child.call_deferred(_world_mark)
+	tree_exiting.connect(_drop_world_mark)
 	_cross = _make_layer(_draw_cross_layer)
 	_card_hit = Control.new()
 	_card_hit.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -684,6 +698,9 @@ func _update_card_mark() -> void:
 		card_mark_on = on
 		_card_cell = cell
 		_card_blink = blink
+		# Рамка цели — в мире, стрелка — на слое HUD. Оба слоя, чтобы не осталась
+		# стрелка, когда цель вошла в кадр, и наоборот.
+		_redraw_world_mark()
 		if _mark != null:
 			_mark.queue_redraw()
 
@@ -934,27 +951,79 @@ func map_explored_at(c: Vector2i) -> bool:
 
 # ------------------------------------------------------------ РАМКА ИНТЕРАКТИВА
 ## ADR-003 § 3.2: рамка цвета `interact` вокруг объекта, с которым сработает E,
-## и клавиша «E» над ним. Отдельный слой: перерисовывается, только когда рамка
-## сдвинулась на экране (камера/объект) или появилась/пропала, — основной слой
-## и его ключ не трогает.
+## и клавиша «E» над ним. Рисуется в мировых px (_world_mark): камера, тряска
+## и зум двигают её вместе с клеткой. Экранный кэш в _process отставал на кадр
+## (#211) — сглаживание камеры пишет canvas transform после idle. mark_rect
+## остаётся для сценариев: экранный прямоугольник клетки, пересчитанный в _draw.
 
 func _update_mark() -> void:
-	var r: Rect2i = Rect2i()
-	if _hint_target.size != Vector2.ZERO:
-		var sr: Rect2 = get_viewport().get_canvas_transform() * _hint_target
-		r = Rect2i(sr.position.round(), sr.size.round())
 	var pr: float = _interact_progress()
-	if r != mark_rect:
-		mark_rect = r
+	var changed: bool = _hint_target != _mark_world
+	if changed:
+		_mark_world = _hint_target
 		_mark_progress = pr
-		_mark.queue_redraw()
+		_redraw_world_mark()
 	elif absf(pr - _mark_progress) > 0.03:
 		# Плашка «E» наполняется при удержании (разбор постройки): слой
 		# перерисовываем, только когда полоса изменилась заметно — перерисовка
 		# каждый кадр (с текстом!) съедала бы кадр хоста.
 		_mark_progress = pr
-		if mark_rect.size != Vector2i.ZERO:
-			_mark.queue_redraw()
+		if _mark_world.size != Vector2.ZERO:
+			_redraw_world_mark()
+
+
+## Есть ли рамка интерактива. Не mark_rect: тот пишется в _draw и в _process ещё пуст.
+func mark_visible() -> bool:
+	return _mark_world.size != Vector2.ZERO
+
+
+## Точка мира внутри клетки рамки. Допуск — клетка: центр машины на середине,
+## а клетка рисуется от угла.
+func mark_on_world(world_pos: Vector2) -> bool:
+	if _mark_world.size == Vector2.ZERO:
+		return false
+	return _mark_world.grow(float(World.TILE)).has_point(world_pos)
+
+
+## Экранный прямоугольник рамки при текущей камере (не кэш прошлого кадра).
+func mark_live_rect() -> Rect2:
+	if _mark_world.size == Vector2.ZERO:
+		return Rect2()
+	return get_viewport().get_canvas_transform() * _mark_world
+
+
+## На сколько экранных px рамка уехала от клетки предмета при текущей камере.
+## Клетка мировая, поэтому цифра — 0: сдвиг камеры двигает рамку вместе с ней.
+## До #211 кэш _process отставал от сглаживания (на прыжке — 7 px).
+func mark_screen_lag() -> float:
+	if _mark_world.size == Vector2.ZERO or player == null:
+		return -1.0
+	var cell: Vector2i = World.world_to_cell(_mark_world.get_center())
+	var live: Rect2 = mark_live_rect()
+	var expect: Rect2 = get_viewport().get_canvas_transform() * World.cell_rect(cell)
+	return live.position.distance_to(expect.position)
+
+
+## Экранный прямоугольник рамки. Считается в _draw мирового слоя — там canvas
+## transform уже тот, которым рисуется кадр. Из _process его читать нельзя:
+## сглаживание камеры пишет трансформ после idle (#211).
+func _sync_mark_rect() -> void:
+	if _mark_world.size == Vector2.ZERO:
+		mark_rect = Rect2i()
+		return
+	var sr: Rect2 = get_viewport().get_canvas_transform() * _mark_world
+	mark_rect = Rect2i(sr.position.round(), sr.size.round())
+
+
+func _drop_world_mark() -> void:
+	if _world_mark != null and is_instance_valid(_world_mark):
+		_world_mark.queue_free()
+	_world_mark = null
+
+
+func _redraw_world_mark() -> void:
+	if _world_mark != null and is_instance_valid(_world_mark):
+		_world_mark.queue_redraw()
 
 
 ## Доля удержания E (0..1): разбор постройки или чтение терминала.
@@ -964,33 +1033,61 @@ func _interact_progress() -> float:
 	return clampf(float(player.task_progress), 0.0, 1.0)
 
 
+## Стрелка цели карточки — экранная, её слой по-прежнему в HUD.
+## stat_mark_redraws считает мировую рамку (_draw_world_mark), не стрелку.
 func _draw_mark_layer() -> void:
 	var t0: int = Time.get_ticks_usec()
-	stat_mark_redraws += 1
-	_draw_card_marker()
-	if mark_rect.size == Vector2i.ZERO:
-		stat_us += Time.get_ticks_usec() - t0
-		return
-	var inv_s: float = 1.0 / UI.ui_scale   # рамка считается в px холста, слой рисует в логических
-	var r: Rect2 = Rect2(Vector2(mark_rect.position) * inv_s, Vector2(mark_rect.size) * inv_s).grow(MARK_GROW)
-	var w: float = MARK_W
-	# Рамка — четыре полосы (не draw_rect с обводкой: углы остаются квадратными).
-	_mark.draw_rect(Rect2(r.position, Vector2(r.size.x, w)), C_INTERACT)
-	_mark.draw_rect(Rect2(r.position.x, r.end.y - w, r.size.x, w), C_INTERACT)
-	_mark.draw_rect(Rect2(r.position, Vector2(w, r.size.y)), C_INTERACT)
-	_mark.draw_rect(Rect2(r.end.x - w, r.position.y, w, r.size.y), C_INTERACT)
-	# Клавиша «E»: сливовая плашка с жёлтой кромкой над объектом.
-	var k: Rect2 = Rect2(roundf(r.get_center().x - 11.0), r.position.y - 28.0, 22.0, 22.0)
-	_mark.draw_rect(k, C_PLATE)
-	_mark.draw_rect(Rect2(k.position, Vector2(k.size.x, 2.0)), C_INTERACT)
-	_mark.draw_string(ThemeDB.fallback_font, k.position + Vector2(0, 18), "E",
-			HORIZONTAL_ALIGNMENT_CENTER, k.size.x, UI.FONT["body"], C_INTERACT)
-	# Удержание E (разбор постройки): плашка наполняется бирюзовой полосой.
-	var pr: float = _interact_progress()
-	if pr > 0.0:
-		_mark.draw_rect(Rect2(k.position + Vector2(1.0, k.size.y - 4.0),
-				Vector2((k.size.x - 2.0) * pr, 3.0)), C_BIO)
+	_draw_card_arrow()
 	stat_us += Time.get_ticks_usec() - t0
+
+
+## Рамка интерактива и мигающая рамка цели карточки — в мировых px.
+## Толщина линий делится на зум: на экране она та же, что была у слоя HUD.
+func _draw_world_mark() -> void:
+	var t0: int = Time.get_ticks_usec()
+	stat_mark_redraws += 1
+	_sync_mark_rect()
+	var zoom: float = get_viewport().get_canvas_transform().get_scale().x
+	if zoom < 0.01:
+		zoom = 1.0
+	var w: float = MARK_W / zoom
+	if _mark_world.size != Vector2.ZERO:
+		var r: Rect2 = _mark_world.grow(MARK_GROW / zoom)
+		_world_mark.draw_rect(Rect2(r.position, Vector2(r.size.x, w)), C_INTERACT)
+		_world_mark.draw_rect(Rect2(r.position.x, r.end.y - w, r.size.x, w), C_INTERACT)
+		_world_mark.draw_rect(Rect2(r.position, Vector2(w, r.size.y)), C_INTERACT)
+		_world_mark.draw_rect(Rect2(r.end.x - w, r.position.y, w, r.size.y), C_INTERACT)
+		# Клавиша «E»: сливовая плашка с жёлтой кромкой над объектом.
+		var box: float = 22.0 / zoom
+		var gap: float = 6.0 / zoom
+		var k: Rect2 = Rect2(r.get_center().x - box * 0.5, r.position.y - gap - box, box, box)
+		_world_mark.draw_rect(k, C_PLATE)
+		_world_mark.draw_rect(Rect2(k.position, Vector2(k.size.x, 2.0 / zoom)), C_INTERACT)
+		var fs: int = UI.FONT["body"]
+		_world_mark.draw_set_transform(k.position, 0.0, Vector2.ONE / zoom)
+		_world_mark.draw_string(ThemeDB.fallback_font, Vector2(0, 18), "E",
+				HORIZONTAL_ALIGNMENT_CENTER, 22.0, fs, C_INTERACT)
+		_world_mark.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		var pr: float = _interact_progress()
+		if pr > 0.0:
+			_world_mark.draw_rect(Rect2(k.position + Vector2(1.0, k.size.y - 4.0) / zoom,
+					Vector2((22.0 - 2.0) * pr, 3.0) / zoom), C_BIO)
+	_draw_card_frame(w, zoom)
+	stat_us += Time.get_ticks_usec() - t0
+
+
+## Мигающая рамка цели карточки на клетке мира. Видимость решает _update_card_mark.
+func _draw_card_frame(w: float, zoom: float) -> void:
+	if not card_mark_on or card_at == Vector2.INF:
+		return
+	if int(Game.game_time * 4.0) % 2 != 0:
+		return
+	var cell: Vector2i = World.world_to_cell(card_at)
+	var r: Rect2 = World.cell_rect(cell).grow(MARK_GROW / zoom)
+	_world_mark.draw_rect(Rect2(r.position, Vector2(r.size.x, w)), C_INTERACT)
+	_world_mark.draw_rect(Rect2(r.position.x, r.end.y - w, r.size.x, w), C_INTERACT)
+	_world_mark.draw_rect(Rect2(r.position, Vector2(w, r.size.y)), C_INTERACT)
+	_world_mark.draw_rect(Rect2(r.end.x - w, r.position.y, w, r.size.y), C_INTERACT)
 
 
 # ------------------------------------------------------------ ПРИЦЕЛ
@@ -1583,26 +1680,15 @@ func _draw_stage_glyph(r: Rect2, stage: int) -> void:
 		draw_rect(Rect2(o + Vector2(0.0, s * 2.0), Vector2(s * 2.0, s)), c)
 
 
-## Стрелка-квадрат у края экрана и расстояние в клетках, либо рамка на клетке цели.
-func _draw_card_marker() -> void:
-	if card_at == Vector2.INF or player == null:
+## Стрелка-квадрат у края экрана и расстояние в клетках. Рамка на клетке цели —
+## в мировом слое (_draw_card_frame): экранный прямоугольник отставал от камеры.
+func _draw_card_arrow() -> void:
+	if card_at == Vector2.INF or player == null or card_mark_on:
 		return
 	var inv_s: float = 1.0 / UI.ui_scale
 	var xf: Transform2D = get_viewport().get_canvas_transform()
 	var cell: Vector2i = World.world_to_cell(card_at)
-	var sr: Rect2 = xf * World.cell_rect(cell)
 	var vis: Rect2 = get_viewport().get_visible_rect()
-	if card_mark_on:
-		var blink: bool = int(Game.game_time * 4.0) % 2 == 0
-		if not blink:
-			return
-		var r: Rect2 = Rect2(sr.position * inv_s, sr.size * inv_s).grow(MARK_GROW)
-		var w: float = MARK_W
-		_mark.draw_rect(Rect2(r.position, Vector2(r.size.x, w)), C_INTERACT)
-		_mark.draw_rect(Rect2(r.position.x, r.end.y - w, r.size.x, w), C_INTERACT)
-		_mark.draw_rect(Rect2(r.position, Vector2(w, r.size.y)), C_INTERACT)
-		_mark.draw_rect(Rect2(r.end.x - w, r.position.y, w, r.size.y), C_INTERACT)
-		return
 	var center: Vector2 = vis.get_center()
 	var target: Vector2 = xf * card_at
 	var dir: Vector2 = target - center

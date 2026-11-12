@@ -179,10 +179,10 @@ func _target_kind() -> String:
 	return String(player.interact_target().get("kind", ""))
 
 
-## Рамка HUD вокруг точки мира (допуск 8 px, как в interact_priority).
+## Рамка HUD вокруг точки мира. Клетка в мировых px: экранный кэш в _process
+## отстаёт от сглаженной камеры (#211).
 func _mark_on(hud: HUD, world_pos: Vector2) -> bool:
-	var sp: Vector2 = hud.get_viewport().get_canvas_transform() * world_pos
-	return hud.mark_rect.size != Vector2i.ZERO and Rect2(hud.mark_rect).grow(8.0).has_point(sp)
+	return hud.mark_on_world(world_pos)
 
 
 ## Пустой слот хотбара (рука должна быть пустой — иначе E грузит, а не разбирает).
