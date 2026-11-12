@@ -74,7 +74,9 @@ func _process(delta: float) -> void:
 		_mach_t = MACHINE_CHECK_SEC
 		_mach_n = World.machines.size()
 		for m in World.machines.values():
-			if m is CanvasItem and is_instance_valid(m) and (m as CanvasItem).material == null:
+			if not is_instance_valid(m) or m.is_queued_for_deletion():
+				continue
+			if m is CanvasItem and (m as CanvasItem).material == null:
 				(m as CanvasItem).material = tile_material
 	stat_us += Time.get_ticks_usec() - t0
 

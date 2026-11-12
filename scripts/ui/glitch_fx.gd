@@ -8,8 +8,8 @@ extends CanvasLayer
 ##  * релей ловит сигнал — блоки «артефактов сжатия» у излучателя: квадрат
 ##    2×2 макропикселя (по BLOCK_PX px мира), часть блоков — мозаика со сдвигом,
 ##    часть подкрашена цветом опасности или свечением спор;
-##      этап 2 «приём сигнала», этап 4 при запущенном ядре «ядро запущено»
-##      (Game.objective_changed + Game.relay_active, #175: этапов четыре),
+##      этап удержания при запущенном ядре — «ядро запущено»
+##      (Game.objective_changed + Game.relay_active, #212),
 ##      отметки отсчёта удержания (Game.RELAY_REMINDERS) — «приём сигнала»;
 ##  * двойник раскрыт (первый раз замер под взглядом) или ударил героя — разрыв
 ##    строк: полосы ROW_PX px мира сдвигаются вбок, с расслоением каналов;
@@ -154,11 +154,11 @@ func active_name() -> String:
 
 func _on_objective(stage: int) -> void:
 	var bp: Vector2 = World.cell_to_world(Game.core_cell if Game.core_placed() else World.beacon_cell)
-	# Этап 4 — удержание сигнала. «Ядро запущено» — только когда отсчёт уже идёт.
+	# «Ядро запущено» — только удержание с уже идущим отсчётом.
+	# Этап дуг (4) глитч не включает: это ещё не сигнал (#212).
+	# «Приём сигнала» — отметки отсчёта в _watch.
 	if stage == Game.OBJECTIVE_STAGES and Game.relay_active:
 		fire(Kind.RELAY_START, bp)
-	elif stage == 2:
-		fire(Kind.RELAY_SIGNAL, bp)
 	_wake()
 
 

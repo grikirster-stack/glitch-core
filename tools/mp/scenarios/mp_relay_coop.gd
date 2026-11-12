@@ -1,5 +1,5 @@
 extends "res://tools/mp/scenarios/mp_coop_base.gd"
-## mp_relay_coop (ADR-002 § 4.7; #175). Свободная сеть запускает ядро семью дугами,
+## mp_relay_coop (ADR-002 § 4.7; #175, #212). Свободная сеть запускает ядро шестью дугами,
 ## не вкладом деталей (вклад остался у главы «Сигнал»).
 ##
 ##  * хост ставит ядро, шесть дуг — E не запускает; седьмая — кадр CORE, отсчёт пошёл;
@@ -39,9 +39,13 @@ func run_host() -> void:
 	await barrier("c0_done")
 
 	# --- Седьмая дуга — отсчёт пошёл. E у ядра то же самое, что core_launch.
-	Game.core_feed(Beams.W)
+	# Белый дугу не зажигает (#212): седьмой цвет — пурпурный. Этапы 1–3 сданы.
+	Game.core_feed(Beams.M)
+	Game.tasks_done = 1
+	Game.stats_ore = Balance.FREE_ORE_NEED
+	Game.nights_survived = Balance.FREE_NIGHTS_NEED
 	var started: bool = Game.try_finish(player)
-	ok("семь дуг — ядро запущено", started and Game.relay_active and Game.core_arcs == 0x7F)
+	ok("шесть дуг — ядро запущено", started and Game.relay_active and Game.core_arcs == Game.CORE_ARCS_FREE)
 	ok("отсчёт — %d с" % int(Balance.RELAY_TIME), absf(Game.relay_timer - Balance.RELAY_TIME) < 2.0,
 			"%.1f" % Game.relay_timer)
 	await barrier("started")
@@ -100,8 +104,8 @@ func run_client(i: int) -> void:
 			str(Game.core_arcs))
 	await barrier("c0_done")
 	await barrier("started")
-	ok("c%d: ядро запущено, семь дуг" % i, await wait_until(func() -> bool:
-		return Game.relay_active and Game.core_arcs == 0x7F, WAIT), str(Game.core_arcs))
+	ok("c%d: ядро запущено, шесть дуг" % i, await wait_until(func() -> bool:
+		return Game.relay_active and Game.core_arcs == Game.CORE_ARCS_FREE, WAIT), str(Game.core_arcs))
 	await barrier("away")
 	ok("c%d: у ядра никого — «без присмотра», отсчёт стоит" % i, await wait_until(func() -> bool:
 		return Game.relay_unattended, WAIT))

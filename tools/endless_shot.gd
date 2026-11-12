@@ -61,8 +61,12 @@ func _run(scene: Node) -> void:
 	var core: Vector2i = world.beacon_cell + Vector2i(2, 0)
 	world.set_tile(core.x, core.y, 0)
 	MachineBase.place_machine("RainbowCore", core)
-	for c in [1, 2, 4, 3, 6, 5, 7]:
+	# Белый (7) дугу не зажигает: шесть чистых цветов, без маски 7.
+	for c in [1, 2, 4, 3, 6, 5]:
 		game.call("core_feed", c)
+	game.set("tasks_done", 1)
+	game.set("stats_ore", 12)
+	game.set("nights_survived", 1)
 	game.call("try_finish", player)
 	game.set("relay_timer", 0.02)
 	var es: Node = scene.get("end_screen")

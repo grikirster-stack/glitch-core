@@ -52,25 +52,27 @@ func run() -> void:
 			"%d → %d (макс %d)" % [n0, get_tree().get_node_count(), n_max])
 
 	var bp: Vector2 = World.cell_to_world(World.beacon_cell)
-	# --- 2. Старт ядра (этап 4 + отсчёт) — блоки у излучателя.
-	# Этап 4 без relay_active — ещё не удержание, глитча запуска нет.
+	# --- 2. Старт ядра (этап удержания + отсчёт) — блоки у излучателя.
+	# Этап дуг без relay_active — ещё не удержание, глитча запуска нет.
 	await _shot_before()
 	Game.objective_changed.emit(4)
-	ok("этап 4 без отсчёта — не «ядро запущено»", not fx.glitch_active())
+	ok("этап дуг без отсчёта — не «ядро запущено»", not fx.glitch_active())
 	Game.relay_active = true
-	Game.objective_changed.emit(4)
+	Game.objective_changed.emit(Game.OBJECTIVE_STAGES)
 	ok("ядро запущено → блоки у ядра", fx.glitch_active() and fx.active_name() == "relay_start",
 			fx.active_name())
 	Game.relay_active = false
 	await _shot_after("glitch_relay", bp)
 	await _expect_off("relay_start")
 
-	# Отметка отсчёта удержания — «приём сигнала». Этап 4 ставим заранее: иначе
-	# Game сам перейдёт на него (relay_active) и «ядро запущено» перебьёт сигнал.
+	# Отметка отсчёта удержания — «приём сигнала». Этап удержания ставим заранее:
+	# иначе Game сам перейдёт на него (relay_active) и «ядро запущено» перебьёт сигнал.
 	var stage0: int = Game.objective_stage
-	Game.objective_stage = 4
+	Game.objective_stage = Game.OBJECTIVE_STAGES
 	Game.relay_active = true
 	Game.relay_timer = 30.5
+	fx._relay_prev = 30.5
+	fx._next_ok[GlitchFx.Kind.RELAY_SIGNAL] = 0.0
 	fx._wake()
 	await wait(0.1)
 	Game.relay_timer = 29.9

@@ -3,7 +3,7 @@ extends "res://tools/mp/scenarios/mp_coop_base.gd"
 ## Требование деталей от N остаётся в Game (глава «Сигнал»), но запуск его не ждёт.
 ##
 ##  * N = 2: дуги хоста видны Ане (COOP CORE), требование ×1.25 всё ещё считается;
-##  * шесть дуг — запуск отказывает; седьмая — ядро запущено;
+##  * пять дуг — запуск отказывает; шестая — ядро запущено; белый не седьмая;
 ##  * Аня вышла и вернулась — дуги на месте (не гаснут), команде — уведомление о N.
 ## Отсчёты — по игровым часам (wait_until), не по кадрам.
 
@@ -70,8 +70,12 @@ func run_host() -> void:
 	ok("Аня вышла снова", await wait_until(func() -> bool: return Net.peers.size() == 1, 15.0))
 	ok("N = 1 снова: требование как в первый раз", await wait_until(func() -> bool: return Game.relay_req == req1, WAIT),
 			str(Game.relay_req))
-	Game.core_feed(Beams.W)
-	ok("седьмая дуга — ядро запущено", Game.try_finish(player) and Game.relay_active and Game.core_arcs == 0x7F)
+	Game.core_feed(Beams.M)
+	Game.tasks_done = 1
+	Game.stats_ore = Balance.FREE_ORE_NEED
+	Game.nights_survived = Balance.FREE_NIGHTS_NEED
+	ok("шестая дуга — ядро запущено", Game.try_finish(player) and Game.relay_active
+			and Game.core_arcs == Game.CORE_ARCS_FREE)
 	Game.relay_active = false
 	share_clear(["req", "arcs"])
 	finish()
@@ -98,7 +102,8 @@ func run_client(_i: int) -> void:
 			func() -> bool: return Game.relay_req == req, WAIT), "%s / %s" % [str(Game.relay_req), str(req)])
 	if req is Dictionary:
 		var line: String = _hud_line()
-		ok("c0: HUD (этап 2) — дуги", line.begins_with("дуги "), "«%s»" % line)
+		# Этап 2 теперь добыча (#212). Дуги — строка этапа 4, её клиент ещё не видит.
+		ok("c0: HUD этапа добычи", line.begins_with("руда "), "«%s»" % line)
 		# Счётчик деталей с панели снят (#169): требование читает трекер HUD, не окно крафта.
 		ok("c0: панель крафта больше не рисует счётчик деталей", UI.panel != null
 				and not UI.panel.has_method("_goal_req"))

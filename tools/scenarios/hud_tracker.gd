@@ -43,39 +43,40 @@ func _frames(hud: HUD, n: int) -> void:
 # ------------------------------------------------------------ ТРЕКЕР
 
 func _tracker(hud: HUD) -> void:
-	ok("этап 1 — карточка «Поставь ядро»", hud.tracker_stage == 1
-			and hud.card_text == "Поставь ядро" and hud.card_have == 0 and hud.card_need == 1,
+	ok("этап 1 — карточка «Прочитай терминал»", hud.tracker_stage == 1
+			and hud.card_text == "Прочитай терминал" and hud.card_have == 0 and hud.card_need == 1,
 			"«%s» %d/%d" % [hud.card_text, hud.card_have, hud.card_need])
-	ok("этап 1: маркер ведёт к сундуку лагеря", hud.card_at.distance_to(
-			World.cell_to_world(World.camp_chest_cell)) < 2.0, str(hud.card_at))
 	ok("текст карточки не длиннее 6 слов", hud.card_text.split(" ", false).size() <= 6, "«%s»" % hud.card_text)
 	var r0: int = hud.stat_redraws
-	var cell: Vector2i = World.beacon_cell + Vector2i(2, 0)
-	World.set_tile(cell.x, cell.y, IDs.T.AIR)
-	MachineBase.place_machine("RainbowCore", cell)
+	Game.stats_ore = 3
 	Game.set_objective_stage(2)
 	await _frames(hud, 2)
-	ok("смена этапа → карточка «Зажги семь дуг» сразу", hud.tracker_stage == 2
-			and hud.card_text == "Зажги семь дуг" and hud.card_icon == IDs.I.RAINBOW_CORE and hud.card_need == 7,
-			"«%s» иконка %d, %d/%d" % [hud.card_text, hud.card_icon, hud.card_have, hud.card_need])
+	ok("этап 2 — карточка «Накопай руды»", hud.tracker_stage == 2
+			and hud.card_text == "Накопай руды" and hud.card_have == 3
+			and hud.card_need == Balance.FREE_ORE_NEED and hud.card_icon == IDs.I.COAL,
+			"«%s» %d/%d" % [hud.card_text, hud.card_have, hud.card_need])
 	ok("смена этапа → HUD перерисован", hud.stat_redraws > r0, "%d → %d" % [r0, hud.stat_redraws])
-	ok("этап 2: маркер на ядре", hud.card_at.distance_to(World.cell_to_world(Game.core_cell)) < 2.0,
-			str(hud.card_at))
-	ok("этап 2: строка замера — дуги 0/7", hud.tracker_detail.begins_with("дуги 0/7"),
+	Game.set_objective_stage(4)
+	await _frames(hud, 2)
+	ok("этап 4 — карточка «Зажги шесть дуг»", hud.tracker_stage == 4
+			and hud.card_text == "Зажги шесть дуг" and hud.card_icon == IDs.I.RAINBOW_CORE and hud.card_need == 6,
+			"«%s» иконка %d, %d/%d" % [hud.card_text, hud.card_icon, hud.card_have, hud.card_need])
+	ok("этап 4: строка замера — дуги 0/6", hud.tracker_detail.begins_with("дуги 0/6"),
 			"«%s»" % hud.tracker_detail)
 	Game.relay_timer = 125.0
 	Game.relay_active = true
-	Game.set_objective_stage(4)
+	Game.set_objective_stage(6)
 	await _frames(hud, 2)
-	ok("этап 4: «Держись у ядра», счётчик до эвакуации", hud.card_text == "Держись у ядра"
+	ok("этап 6: «Держись у ядра», счётчик до эвакуации", hud.card_text == "Держись у ядра"
 			and hud.card_have == int(Balance.RELAY_TIME) - 125 and hud.card_need == int(Balance.RELAY_TIME),
 			"«%s» %d / %d" % [hud.card_text, hud.card_have, hud.card_need])
 	Game.relay_timer = 0.0
 	Game.relay_active = false
+	Game.stats_ore = 0
 	Game.set_objective_stage(0)
 	await _frames(hud, 2)
 	ok("этап сброшен → снова карточка этапа 1", hud.tracker_stage == 1
-			and hud.card_text == "Поставь ядро", "«%s»" % hud.card_text)
+			and hud.card_text == "Прочитай терминал", "«%s»" % hud.card_text)
 	_card_words(hud)
 
 

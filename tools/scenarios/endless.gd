@@ -114,8 +114,11 @@ func _stay() -> void:
 	var core: Vector2i = World.beacon_cell + Vector2i(2, 0)
 	World.set_tile(core.x, core.y, IDs.T.AIR)
 	MachineBase.place_machine("RainbowCore", core)
-	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M, Beams.W]:
+	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M]:
 		Game.core_feed(c)
+	Game.tasks_done = 1
+	Game.stats_ore = Balance.FREE_ORE_NEED
+	Game.nights_survived = Balance.FREE_NIGHTS_NEED
 	Game.try_finish(player)
 	ok("ядро запущено для проверки финала", Game.relay_active)
 	Game.relay_timer = 0.05

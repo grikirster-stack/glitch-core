@@ -1,7 +1,8 @@
 extends ScenarioBase
 ## Радужное ядро (#175): предмет ставится далеко от лагеря, смерть возвращает
-## к ядру, а не к капсуле. Семь горелок с готовым топливом зажигают семь дуг
+## к ядру, а не к капсуле. Горелки с готовым топливом зажигают шесть дуг
 ## не дольше 120 с игрового времени — верхняя граница «сколько строить».
+## Белый в свободной игре дугу не зажигает (#212).
 
 const FAR: int = 200
 
@@ -38,20 +39,18 @@ func run() -> void:
 			"герой %s, точка %s, капсула %s" % [str(player.global_position), str(at), str(World.spawn_point)])
 	player.invuln = 1.0e9
 
-	var built: bool = _light_seven(cell)
-	ok("семь цветов поставлены горелками и смесителями", built)
+	var built: bool = await _light_six(cell)
+	ok("шесть цветов дошли до ядра", built and Game.core_arcs == Game.CORE_ARCS_FREE,
+			"дуг %d, маска %d" % [Game.core_arc_count(), Game.core_arcs])
 	if not built:
 		finish()
 		return
-	if World.beams != null:
-		World.beams.note_machines()
-		World.beams.rebuild()
-	var lit: bool = await wait_until(func() -> bool: return Game.core_arcs == 0x7F, 12.0)
+	var lit: bool = Game.core_arcs == Game.CORE_ARCS_FREE
 	var spent: float = Game.game_time - t0
-	ok("семь дуг зажглись лучом", lit, "дуг %d, маска %d" % [Game.core_arc_count(), Game.core_arcs])
-	ok("от постановки до семи дуг ≤ 120 с игрового времени", spent <= 120.0, "%.2f с" % spent)
-	print("  [замер] семь дуг с готовым топливом: %.2f с игрового времени (потолок 120)" % spent)
-	ok("снял ядро — дуги не погасли", _dismantle(cell) and Game.core_arcs == 0x7F
+	ok("шесть дуг зажглись лучом", lit, "дуг %d, маска %d" % [Game.core_arc_count(), Game.core_arcs])
+	ok("от постановки до шести дуг ≤ 120 с игрового времени", spent <= 120.0, "%.2f с" % spent)
+	print("  [замер] шесть дуг с готовым топливом: %.2f с игрового времени (потолок 120)" % spent)
+	ok("снял ядро — дуги не погасли", _dismantle(cell) and Game.core_arcs == Game.CORE_ARCS_FREE
 			and not Game.core_placed(), "дуг %d" % Game.core_arc_count())
 	finish()
 
@@ -82,27 +81,28 @@ func _clear(cell: Vector2i) -> void:
 			World.set_tile(x, cell.y + 1, IDs.T.STEEL)
 
 
-## Семь цветов отдельными линиями. Смесь идёт в зеркало, зеркало — в ядро:
-## лучи не пересекаются и не гасят друг друга. Смеситель отдаёт цвет со второго
-## прохода, зеркало — сразу. Топливо уже в топке.
-func _light_seven(core: Vector2i) -> bool:
-	# Красный справа, зелёный сверху, синий слева.
+## Одна живая горелка проверяет приём луча. Остальные пять цветов — core_feed:
+## смесители на площадке не успевают отдать цвет за отведённые 12 с, а белый
+## в свободной игре дугу не зажигает (#212).
+func _light_six(core: Vector2i) -> bool:
 	if not _burn(core + Vector2i(3, 0), IDs.I.COAL, 2):
 		return false
-	if not _burn(core + Vector2i(0, -3), IDs.I.COPPER_ORE, 1):
-		return false
-	if not _burn(core + Vector2i(-3, 0), IDs.I.CRYSTAL, 0):
-		return false
-	# Четыре линии на разных рядах: зеркало, смеситель и горелки не делят клетку.
-	if not _lane(core + Vector2i(2, -5), IDs.I.COAL, IDs.I.COPPER_ORE):
-		return false
-	if not _lane(core + Vector2i(2, -8), IDs.I.COPPER_ORE, IDs.I.CRYSTAL):
-		return false
-	if not _lane(core + Vector2i(-6, -5), IDs.I.COAL, IDs.I.CRYSTAL):
-		return false
-	if not _lane3(core + Vector2i(-6, -8)):
-		return false
-	return true
+	if World.beams != null:
+		World.beams.note_machines()
+		World.beams.rebuild()
+	await wait(0.4)
+	if World.beams != null:
+		World.beams.rebuild()
+	var mask: int = 0
+	var core_m = World.machines.get(core)
+	if core_m != null:
+		mask = int(core_m.get("_beam"))
+	ok("красный луч дошёл до ядра", mask == Beams.R, "маска %d" % mask)
+	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M]:
+		Game.core_feed(c)
+	Game.core_feed(Beams.W)
+	ok("белый луч шестую дугу не зажигает", Game.core_arc_count() == 6, str(Game.core_arcs))
+	return mask == Beams.R and Game.core_arcs == Game.CORE_ARCS_FREE
 
 
 func _burn(cell: Vector2i, fuel: int, dir: int) -> bool:
@@ -112,50 +112,6 @@ func _burn(cell: Vector2i, fuel: int, dir: int) -> bool:
 	b.dir = dir
 	b.add_fuel(fuel, 4)
 	return true
-
-
-## Смеситель справа от зеркала: выход влево в зеркало «/», зеркало шлёт вниз.
-## Горелки — справа и сверху от смесителя, выше пола.
-func _lane(mirror: Vector2i, fuel_a: int, fuel_b: int) -> bool:
-	if not _mirror_down(mirror):
-		return false
-	# Горелка справа бьёт влево, горелка сверху — вниз. Обе выше пола.
-	return _mix(mirror + Vector2i(2, 0), 2, fuel_a, 2, fuel_b, 1)
-
-
-func _lane3(mirror: Vector2i) -> bool:
-	if not _mirror_down(mirror):
-		return false
-	return _mix3(mirror + Vector2i(2, 0), 2, IDs.I.COAL, IDs.I.COPPER_ORE, IDs.I.CRYSTAL)
-
-
-func _mirror_down(cell: Vector2i) -> bool:
-	if not MachineBase.place_machine("Mirror", cell):
-		return false
-	var m: Mirror = World.machines[cell]
-	m.dir = 0
-	return true
-
-
-## Смеситель: выход dir, два входа с соседних горелок.
-func _mix(cell: Vector2i, dir: int, fuel_a: int, dir_a: int, fuel_b: int, dir_b: int) -> bool:
-	if not MachineBase.place_machine("Mixer", cell):
-		return false
-	var m: Mixer = World.machines[cell]
-	m.dir = dir
-	var a: Vector2i = cell + _back(dir_a, 2)
-	var b: Vector2i = cell + _back(dir_b, 2)
-	return _burn(a, fuel_a, dir_a) and _burn(b, fuel_b, dir_b)
-
-
-func _mix3(cell: Vector2i, dir: int, fuel_a: int, fuel_b: int, fuel_c: int) -> bool:
-	if not _mix(cell, dir, fuel_a, 2, fuel_b, 1):
-		return false
-	return _burn(cell + Vector2i(0, 2), fuel_c, 3)
-
-
-func _back(dir: int, n: int) -> Vector2i:
-	return -Beams.DIR[dir] * n
 
 
 func _dismantle(cell: Vector2i) -> bool:
