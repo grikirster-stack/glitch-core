@@ -1,23 +1,33 @@
 extends Mission
-## Глава 3 «Зеркало» (ADR-005 § 9, #178): луч поворачивается.
+## Глава 3 «Зеркало» (ADR-005 § 9, #178, #216): луч поворачивается.
 ##
-## Горелка лагеря уже горит. Подвал — за углом, прямой луч туда не доходит.
-## В наборе два зеркала. Одно стоит у поворота не той гранью: тап поворачивает.
-## Луч в комнате открывает сундук-находку.
+## Горелка лагеря уже горит и смотрит вниз. У поворота зеркала нет: прямой
+## луч упирается в сталь. Игрок сам ставит зеркало из набора и крутит его.
+## Верная грань («\») уводит луч вправо, в комнату. Любая другая — в тупик
+## (вверх, в потолок, или по диагонали в стену): подвал остаётся тёмным,
+## глава не закрывается. Один тап по уже стоящему верному зеркалу невозможен —
+## его ещё нет.
 
 const LOOT_GLASS: int = 4
 const LOOT_COPPER: int = 2
+## «\» (dir 1 и 3): вниз-идущий луч уходит вправо, в комнату.
+## Остальные шесть положений — промах (см. Mirror._TABLE, вход снизу).
+const AIM_DIR: int = 1
 
 var _cache: Chest = null
 var _opened: bool = false
+## Сколько раз игрок повернул зеркало у поворота. Сценарий читает: глава
+## не закрывается одним тапом по уже верному зеркалу.
+var turns: int = 0
+var _hooked: Mirror = null
 
 
 func _init() -> void:
 	id = "mirror"
 	chapter = 3
 	title = "Зеркало"
-	brief = "Под лагерем тёмная комната за углом. Горелка светит вниз, но луч упирается в поворот."
-	teaches = "зеркало поворачивает луч"
+	brief = "Под лагерем тёмная комната за углом. Горелка светит вниз, но на повороте пусто."
+	teaches = "зеркало ставят и поворачивают, чтобы луч дошёл"
 	# День стоит: ночи в этой главе нет.
 	start_time = 0.30
 	hold_time = 0.30
@@ -34,12 +44,7 @@ func build() -> void:
 	if burner != null:
 		burner.dir = 1
 		burner.add_fuel(IDs.I.COAL, Burner.FUEL_MAX)
-	# Зеркало у поворота смотрит не туда: «/» уводит луч вверх, в потолок колодца.
-	var mirror: Mirror = CampaignBase.put("Mirror", LightLayout.at(LightLayout.CORNER),
-			{"dir": 0}) as Mirror
-	if mirror != null:
-		mirror.dir = 0
-	# Второе — на полке у входа, чтобы набор не кончился, если первое разобрали.
+	# Поворот пуст: зеркало ставит игрок. Запасное — на полке, не на луче.
 	var spare: Mirror = CampaignBase.put("Mirror", LightLayout.at(LightLayout.SPARE),
 			{"dir": 0}) as Mirror
 	if spare != null:
@@ -50,13 +55,36 @@ func build() -> void:
 func stages() -> Array:
 	return [
 		{"title": "Поворот",
-			"hint": "Тап по зеркалу поворачивает его",
-			"say": ["Луч бьёт вниз и упирается. За углом темно.",
-					"Зеркало у поворота смотрит не туда."],
+			"hint": "Поставь зеркало на поворот и поверни",
+			"say": ["Луч бьёт вниз и упирается в сталь. За углом темно.",
+					"Зеркало ставят на поворот. Не та грань — луч в стену."],
+			"goals": [["Поставь зеркало на поворот", func() -> Vector2i: return flag(_placed()),
+				IDs.I.MIRROR, func() -> Vector2: return LightLayout.world_at(LightLayout.CORNER)]]},
+		{"title": "Луч",
+			"hint": "Тап по зеркалу поворачивает грань",
+			"say": ["Зеркало стоит. Крути, пока луч не уйдёт в комнату.",
+					"Мимо — и подвал снова тёмный."],
 			"goals": [["Доведи луч до подвала", func() -> Vector2i: return flag(_cellar_lit()),
 				IDs.I.MIRROR, func() -> Vector2: return LightLayout.world_at(LightLayout.DOOR)]],
 			"done": _open_cache},
 	]
+
+
+func on_tick(_delta: float) -> void:
+	_hook_corner()
+
+
+func fail_reason() -> String:
+	# Промах не валит главу сразу: игрок крутит зеркало, пока луч не попадёт.
+	# Достижимый провал — разобрать своё зеркало и не поставить снова: без
+	# зеркала в наборе и на повороте луч до подвала не довести.
+	if stage < 1 or result != Result.RUNNING:
+		return ""
+	if _placed():
+		return ""
+	if heroes_have(IDs.I.MIRROR) > 0:
+		return ""
+	return "Зеркало снято, поставить нечем."
 
 
 func outro() -> String:
@@ -73,8 +101,32 @@ func _clear_well() -> void:
 			World.set_tile(c.x, c.y, IDs.T.AIR)
 
 
+func _placed() -> bool:
+	return World.machines.get(LightLayout.at(LightLayout.CORNER)) is Mirror
+
+
+func _hook_corner() -> void:
+	var m: Mirror = World.machines.get(LightLayout.at(LightLayout.CORNER)) as Mirror
+	if m == null:
+		_hooked = null
+		return
+	if m == _hooked:
+		return
+	_hooked = m
+	if not m.turned.is_connected(_on_turn):
+		m.turned.connect(_on_turn)
+
+
+func _on_turn() -> void:
+	turns += 1
+
+
 func _cellar_lit() -> bool:
 	if World.beams == null:
+		return false
+	var m: Mirror = World.machines.get(LightLayout.at(LightLayout.CORNER)) as Mirror
+	var d: int = m.dir & 7
+	if d != AIM_DIR and d != 3:
 		return false
 	return World.beams.color_at(LightLayout.at(LightLayout.CELLAR)) != 0
 
