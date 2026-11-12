@@ -151,6 +151,8 @@
 
 ![Глава «Копай»: карточка «Накопай 5 угля»](docs/img/shots/chapter_light_1.png)
 
+![Глава «Огонь»: эхо у красного луча](docs/img/shots/chapter_fire_echo.png)
+
 ![Глава «Зеркало»: карточка «Доведи луч до подвала»](docs/img/shots/chapter_light_3.png)
 
 ![Глава «Солнце»: ночь, карточка «Переживи ночь»](docs/img/shots/chapter_light_5.png)
