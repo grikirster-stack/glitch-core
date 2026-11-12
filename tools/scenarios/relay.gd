@@ -1,5 +1,5 @@
 extends ScenarioBase
-## Ядро (ADR-005 § 6.3, #175): семь дуг → E 3 с у ядра → этап 4,
+## Ядро (ADR-005 § 6.3, #175, #212): шесть дуг → E 3 с у ядра → этап 6,
 ## отсчёт Balance.RELAY_TIME (180 с) → победа, на финальном экране — эпилог Lore.
 ## Ждать три минуты в тесте смысла нет: отсчёт ускоряется (Game.relay_speed).
 
@@ -14,7 +14,12 @@ func run() -> void:
 		finish()
 		return
 	_feed_all()
-	ok("семь дуг горят", Game.core_arcs == 0x7F, str(Game.core_arcs))
+	ok("шесть дуг горят", Game.core_arcs == Game.CORE_ARCS_FREE, str(Game.core_arcs))
+	# Этапы 1–3 свободной игры (#212): без них E у ядра отсчёт не начинает.
+	Game.tasks_done = 1
+	Game.stats_ore = Balance.FREE_ORE_NEED
+	Game.nights_survived = Balance.FREE_NIGHTS_NEED
+	Game.update_objective()
 
 	var placed: bool = stand_next_to_cell(cell)
 	ok("герой встал у ядра", placed, str(cell))
@@ -33,7 +38,7 @@ func run() -> void:
 	ok("ядро запущено", started)
 	ok("удержание — %d с" % int(Balance.RELAY_TIME), Balance.RELAY_TIME == 180.0
 			and absf(Game.relay_timer - Balance.RELAY_TIME) < 2.0, "%.1f с" % Game.relay_timer)
-	ok("этап цели 4 — удержать сигнал", Game.objective_stage == 4, Game.objective_text())
+	ok("этап цели 6 — удержать сигнал", Game.objective_stage == 6, Game.objective_text())
 
 	Game.relay_speed = SPEED
 	var t0: float = Game.relay_timer
@@ -68,7 +73,8 @@ func _place_core() -> Vector2i:
 
 
 func _feed_all() -> void:
-	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M, Beams.W]:
+	# Белый дугу не зажигает (#212): седьмой цвет — пурпурный, не маска 7.
+	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M]:
 		Game.core_feed(c)
 
 

@@ -469,8 +469,16 @@ func _break_tile(cell: Vector2i) -> void:
 	_sfx_here("break", -8.0, randf_range(0.9, 1.15))
 	_fx(NetCodec.Fx.CHIP_TILE, World.cell_to_world(cell), tid)
 	Game.stats_mined += 1
+	if _ore_drop(drop):
+		Game.stats_ore += 1
 	if drop != IDs.I.NONE:
 		spawn_item(drop, 1, World.cell_to_world(cell))
+
+
+## Руда свободной цели: уголь, медь, железо, кристалл. Хлам и камень — нет.
+func _ore_drop(drop: int) -> bool:
+	return drop == IDs.I.COAL or drop == IDs.I.COPPER_ORE \
+			or drop == IDs.I.IRON_ORE or drop == IDs.I.CRYSTAL
 
 
 func _do_place(cell: Vector2i, fresh: bool = true) -> void:
@@ -741,7 +749,7 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 			task_progress += dt / 3.0
 			if task_progress >= 1.0:
 				task_progress = 0.0
-				Game.try_finish(self)   # запуск ядра: семь дуг, иначе перечень (#175)
+				Game.try_finish(self)   # запуск ядра: дуги готовы, иначе перечень (#175)
 		ET_BURNER, ET_ACCUMULATOR, ET_SIREN:
 			# Горелка: топливо — топка, пустая рука — рубильник (#164);
 			# накопитель: рубильник «копить / отдавать» (#166);

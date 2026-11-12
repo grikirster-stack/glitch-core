@@ -537,19 +537,25 @@ func _station_line(_station: String) -> Array:
 	return ["Наведи — что нужно. Клик — сделать.", C_DIM]
 
 
-## Семь дуг ядра под рецептами: горящая — цветом, тёмная — серым квадратом.
+## Дуги ядра под рецептами: горящая — цветом, тёмная — серым квадратом.
+## В свободной игре белого квадрата нет (#212): он не зажигается и в счётчик не входит.
 func _draw_goal(origin: Vector2) -> void:
 	if Game.in_mission():
 		return
 	var y: float = origin.y + 496.0
-	var lit: int = Game.core_arcs & 0x7F
-	var label: String = "Дуги %d/7" % Game.core_arc_count()
+	var need: int = Game.arc_need()
+	var lit: int = Game.core_arcs & need
+	var label: String = "Дуги %d/%d" % [Game.core_arc_count(), Game.arc_need_count()]
 	_text(Vector2(origin.x + 16.0, y), label, 80.0, UI.FONT["small"], Color(C_DIM, 0.9))
-	for i in 7:
+	var drawn: int = 0
+	for i in Game.CORE_ARC_COLOR.size():
+		if (need & (1 << i)) == 0:
+			continue
 		var col: Color = Color(0.35, 0.37, 0.40)
 		if (lit & (1 << i)) != 0:
 			col = Beams.COLOR[Game.CORE_ARC_COLOR[i]]
-		draw_rect(Rect2(origin.x + 96.0 + float(i) * 14.0, y - 10.0, 10.0, 10.0), col)
+		draw_rect(Rect2(origin.x + 96.0 + float(drawn) * 14.0, y - 10.0, 10.0, 10.0), col)
+		drawn += 1
 	_draw_cat_chip(origin, y)
 
 

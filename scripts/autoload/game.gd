@@ -53,14 +53,20 @@ var cat_timer: float = 0.0
 ## Уже выходил в эту ночь после сигнала. Сбрасывается на рассвете.
 var _cat_night: bool = false
 var stats_mined: int = 0
+## Клетки руды, сломанные руками (уголь, медь, железо, кристалл).
+## Хлам, глина и камень не считаются: белый луч у поверхности их не заменяет (#212).
+var stats_ore: int = 0
+## Ночей, дожитых до рассвета (не номер смены: день 1 ещё не ночь).
+var nights_survived: int = 0
 var stats_crafted: int = 0
 var stats_kills: int = 0
 var stats_deaths: int = 0              ## Смертей за забег (респаун — #29).
 ## Сценарии сами создают фантомов: директор угрозы (Threat, #27) при этом
 ## флаге волны не ведёт. Ставит main.gd.
 var scenario_mode: bool = false
-## Этап цели свободной игры (временно, #169; F1 перепишет окончательно):
-## 0 — не начато, 1 — запитать станцию, 2 — собрать релей, 3 — удержать сигнал.
+## Этап цели свободной игры (ADR-005 § 6.3–6.4, #212):
+## 0 — не начато, 1 — запитать (терминал лагеря), 2 — добыть руду,
+## 3 — пережить ночь, 4 — шесть дуг, 5 — запустить, 6 — удержать сигнал.
 var objective_stage: int = 0
 ## Глава кампании (Mission, scripts/campaign/) или null — свободная игра. Без типа —
 ## как player: цикл autoload → class_name. Цель главы заменяет четыре этапа релея:
@@ -94,6 +100,8 @@ func reset_run() -> void:
 	cat_timer = 0.0
 	_cat_night = false
 	stats_mined = 0
+	stats_ore = 0
+	nights_survived = 0
 	stats_crafted = 0
 	stats_kills = 0
 	stats_deaths = 0
@@ -122,18 +130,33 @@ func _process(delta: float) -> void:
 	if state != State.PLAYING:
 		return
 	game_time += delta
-	var prev_t: float = time_of_day
-	time_of_day = fmod(time_of_day + delta / DAY_LENGTH, 1.0)
-	# Смена начинается с рассветом — в момент, когда ночь кончилась.
-	# Раньше номер считался как 1 + int(t * 2): он прыгал 1↔2 внутри одного
-	# цикла, дважды за цикл слал «Смена N» и никогда не рос дальше двух.
-	if prev_t < Balance.NIGHT_END and time_of_day >= Balance.NIGHT_END:
-		day_number += 1
-		_cat_night = false
-		day_started.emit(day_number)
-		notify("Смена %d. Фантомы голоднее." % day_number, Color(0.9, 0.9, 0.7))
+	advance_clock(delta / DAY_LENGTH)
 	_tick_cat(delta)
 	_tick_objective(delta)
+
+
+## Сдвинуть часы суток на dt (доля цикла). Рассвет из ночи считает смену и ночь.
+## Прыжок длиннее цикла ночь не засчитывает: её надо пересечь, а не перескочить.
+func advance_clock(dt: float) -> void:
+	if dt <= 0.0:
+		return
+	var prev_t: float = time_of_day
+	var night: bool = prev_t >= Balance.NIGHT_START or prev_t < Balance.NIGHT_END
+	time_of_day = fmod(time_of_day + dt, 1.0)
+	var crossed: bool = false
+	if night and dt < 1.0:
+		if prev_t >= Balance.NIGHT_START:
+			crossed = time_of_day < prev_t or time_of_day >= Balance.NIGHT_END
+		else:
+			crossed = time_of_day >= Balance.NIGHT_END and time_of_day < Balance.NIGHT_START
+	if not crossed:
+		return
+	day_number += 1
+	nights_survived += 1
+	_cat_night = false
+	day_started.emit(day_number)
+	notify("Смена %d. Фантомы голоднее." % day_number, Color(0.9, 0.9, 0.7))
+	update_objective()
 
 
 func is_night() -> bool:
@@ -323,24 +346,34 @@ func is_powered(_p: Vector2) -> bool:
 	return true
 
 
-# ------------------------------------------------- ЦЕЛЬ И ЯДРО (ADR-005 § 6.3, #175)
-## Четыре этапа свободной игры. Этап выводится из состояния забега раз в
+# ------------------------------------------------- ЦЕЛЬ И ЯДРО (ADR-005 § 6.3–6.4, #175, #212)
+## Шесть этапов свободной игры. Этап выводится из состояния забега раз в
 ## OBJECTIVE_CHECK_INTERVAL и только растёт:
-##   1. Поставить ядро — постройки RainbowCore ещё нет.
-##   2. Зажечь семь дуг — луч чистого цвета в клетку ядра ставит бит core_arcs.
-##   3. Запустить ядро — E 3 с у активного ядра, если горят все семь.
-##   4. Удержать сигнал — Balance.RELAY_TIME с; директор угрозы в режиме релея
+##   1. Запитать — прочитать терминал лагеря (чертёж, не ТЭЦ).
+##   2. Добыть — сломать Balance.FREE_ORE_NEED клеток руды (не хлам и не камень).
+##   3. Пережить ночь — рассвет после ночи, nights_survived ≥ FREE_NIGHTS_NEED.
+##   4. Зажечь шесть дуг — луч чистого цвета в клетку ядра ставит бит core_arcs.
+##      Белый (маска 7) дугу не зажигает: это ясный свет шахты, не седьмой цвет.
+##   5. Запустить ядро — E 3 с у активного ядра. Релей не стартует, пока 1–3 не сданы
+##      и не горят шесть дуг. Белый луч сам этап добычи не закрывает.
+##   6. Удержать сигнал — Balance.RELAY_TIME с; директор угрозы в режиме релея
 ##      (cap RELAY_HOLD_CAP, двойник — сразу после разведчика). Победа → эпилог Lore.
-## Терминалы базы в этапах не участвуют: это журнал и подарок (D2, #169).
-## Старое сохранение с этапом > 4 сжимается в 4.
+## Старое сохранение: этап 1–3 (ядро / дуги / запуск) сдвигается на +3,
+## этап > 6 сжимается в удержание. Уже идущий отсчёт не откатывается.
 
-const OBJECTIVE_STAGES: int = 4
+const OBJECTIVE_STAGES: int = 6
 const OBJECTIVE_CHECK_INTERVAL: float = 0.25
 ## Названия этапов для HUD и инвентаря (индекс — номер этапа).
-const OBJECTIVE_TITLES: Array = ["", "ПОСТАВЬ ЯДРО", "ЗАЖГИ СЕМЬ ДУГ", "ЗАПУСТИ ЯДРО", "УДЕРЖИ СИГНАЛ"]
+const OBJECTIVE_TITLES: Array = [
+	"", "ЗАПИТАЙ БАЗУ", "ДОБУДЬ РУДУ", "ПЕРЕЖИВИ НОЧЬ",
+	"ЗАЖГИ ДУГИ", "ЗАПУСТИ ЯДРО", "УДЕРЖИ СИГНАЛ",
+]
 ## Имена семи дуг: индекс — бит core_arcs, значение — маска Beams.
+## Белый в списке есть для главы «Радуга» (#179). В свободной игре
+## core_feed его не ставит (#212): коллектор не закрывает цель.
 const CORE_ARC_COLOR: Array[int] = [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M, Beams.W]
-## Все семь дуг горят.
+## Свободная игра: шесть чистых цветов. Глава: все семь, включая белый.
+const CORE_ARCS_FREE: int = 0x3F
 const CORE_ARCS_FULL: int = 0x7F
 ## Отметки отсчёта (секунд до конца), на которых игроку напоминают, сколько держаться.
 const RELAY_REMINDERS: Array = [150, 120, 90, 60, 30, 10]
@@ -385,15 +418,39 @@ func in_mission() -> bool:
 	return mission != null and is_instance_valid(mission)
 
 
-## Этап, до которого игрок дошёл: ядра нет — 1, дуг не семь — 2, не запущено — 3.
+## Этап, до которого игрок дошёл. Раньше ядро — этапы 1–3 (запитать, добыть, ночь).
 func objective_target() -> int:
 	if relay_active or state == State.WON:
-		return 4
-	if not core_placed():
+		return OBJECTIVE_STAGES
+	if not free_powered():
 		return 1
-	if (core_arcs & CORE_ARCS_FULL) != CORE_ARCS_FULL:
+	if not free_mined():
 		return 2
-	return 3
+	if not free_night_done():
+		return 3
+	if (core_arcs & arc_need()) != arc_need():
+		return 4
+	return 5
+
+
+## Запитать: прочитан терминал (чертёж или задание). Питания ТЭЦ больше нет.
+func free_powered() -> bool:
+	return tasks_done > 0 or not blueprints.is_empty()
+
+
+## Добыть: руда руками, не хлам поверхности и не белый свет коллектора.
+func free_mined() -> bool:
+	return stats_ore >= Balance.FREE_ORE_NEED
+
+
+## Пережить ночь: хотя бы один рассвет после ночи.
+func free_night_done() -> bool:
+	return nights_survived >= Balance.FREE_NIGHTS_NEED
+
+
+## Этапы 1–3 сданы. Пока нет — core_launch отказывает, релей не стартует.
+func free_ready() -> bool:
+	return free_powered() and free_mined() and free_night_done()
 
 
 ## Стоит ли хоть одно ядро (активная клетка жива).
@@ -402,10 +459,10 @@ func core_placed() -> bool:
 	return core_cell.x >= 0 and core != null and String(core.kind) == "RainbowCore"
 
 
-## Сколько дуг уже горит (0..7).
+## Сколько нужных дуг уже горит. Свободная игра не считает белый.
 func core_arc_count() -> int:
 	var n: int = 0
-	var bits: int = core_arcs & CORE_ARCS_FULL
+	var bits: int = core_arcs & arc_need()
 	while bits != 0:
 		n += bits & 1
 		bits >>= 1
@@ -419,33 +476,67 @@ func core_color_name(color: int) -> String:
 	return "?"
 
 
-## Имена цветов, которых ещё нет среди семи дуг.
+## Имена цветов, которых ещё нет. В свободной игре белый в перечень не входит.
 func core_missing_names() -> Array:
 	var out: Array = []
+	var need: int = arc_need()
 	for i in CORE_ARC_COLOR.size():
+		if (need & (1 << i)) == 0:
+			continue
 		if (core_arcs & (1 << i)) == 0:
 			out.append(core_color_name(CORE_ARC_COLOR[i]))
 	return out
 
 
-## Картинка этапа для карточки «Сейчас»: ядро, пока оно есть в предметах.
-## В главе картинку даёт цель главы.
+## Маска дуг до запуска. Глава ждёт семь, свободная игра — шесть.
+func arc_need() -> int:
+	return CORE_ARCS_FULL if in_mission() else CORE_ARCS_FREE
+
+
+## Сколько дуг нужно зажечь: 7 в главе, 6 в свободной игре.
+func arc_need_count() -> int:
+	return 7 if in_mission() else 6
+
+
+## Картинка этапа для карточки «Сейчас». В главе картинку даёт цель главы.
 func objective_icon() -> int:
 	if in_mission():
 		return -1
-	return IDs.I.RAINBOW_CORE
+	match clampi(objective_stage, 1, OBJECTIVE_STAGES):
+		1:
+			return -1
+		2:
+			return IDs.I.COAL
+		3:
+			return IDs.I.LAMP
+		_:
+			return IDs.I.RAINBOW_CORE
 
 
-## Куда вести маркер карточки. Ядро стоит — к нему; нет — к сундуку лагеря.
-## Нет точки — Vector2.INF. В главе точку даёт цель.
+## Куда вести маркер карточки. Добыча — к устью ствола, ночь — к лагерю,
+## дуги и запуск — к ядру. Нет точки — Vector2.INF. В главе точку даёт цель.
 func objective_at() -> Vector2:
 	if in_mission():
 		return Vector2.INF
+	var st: int = clampi(objective_stage, 1, OBJECTIVE_STAGES)
+	if st == 2:
+		return World.cell_to_world(_shaft_mouth())
+	if st <= 3:
+		if World.camp_chest_cell.x >= 0:
+			return World.cell_to_world(World.camp_chest_cell)
+		return World.cell_to_world(World.beacon_cell)
 	if core_placed():
 		return World.cell_to_world(core_cell)
 	if World.camp_chest_cell.x >= 0:
 		return World.cell_to_world(World.camp_chest_cell)
 	return Vector2.INF
+
+
+## Устье ствола свободной игры: три клетки левее лагеря, как в кампании.
+func _shaft_mouth() -> Vector2i:
+	var bx: int = World.beacon_cell.x
+	var by: int = World.beacon_cell.y
+	return Vector2i(clampi(bx - 18, 2, World.W - 3), by)
 
 
 ## Строка этапа для HUD/инвентаря: «ЦЕЛЬ 2/3: СОБРАТЬ РЕЛЕЙ», на удержании — с отсчётом.
@@ -462,16 +553,21 @@ func _enter_stage(s: int) -> void:
 	var bp: Vector2 = _core_pos()
 	match s:
 		1:
-			notify("Цель 1/4: поставь Радужное ядро. Оно в сундуке лагеря.", Color(0.5, 0.95, 0.8))
+			notify("Цель 1/6: прочитай терминал лагеря. Держи E.", Color(0.5, 0.95, 0.8))
 		2:
-			notify("Ядро стоит. Цель 2/4: зажги семь дуг — по лучу каждого цвета.", RELAY_COLOR)
-			UI.flash_ring(bp, RELAY_COLOR)
+			notify("Цель 2/6: накопай %d руды. Хлам не считается." % Balance.FREE_ORE_NEED,
+					Color(0.95, 0.85, 0.45))
 		3:
-			notify("Семь дуг горят. Цель 3/4: удерживай E у ядра 3 с.", RELAY_COLOR)
+			notify("Цель 3/6: переживи ночь. Дождись рассвета.", Color(0.7, 0.75, 1.0))
+		4:
+			notify("Цель 4/6: зажги шесть дуг. Белый луч не считается.", RELAY_COLOR)
+			UI.flash_ring(bp, RELAY_COLOR)
+		5:
+			notify("Шесть дуг горят. Цель 5/6: удерживай E у ядра 3 с.", RELAY_COLOR)
 			UI.flash_ring(bp, RELAY_COLOR)
 			Sfx.play("power", -8.0)
-		4:
-			notify("Цель 4/4: удержать сигнал %d с. Они идут." % int(RELAY_TIME), RELAY_COLOR)
+		6:
+			notify("Цель 6/6: удержать сигнал %d с. Они идут." % int(RELAY_TIME), RELAY_COLOR)
 			UI.flash_ring(bp, RELAY_COLOR)
 
 
@@ -613,8 +709,8 @@ func continue_run() -> void:
 	notify("Остаёмся. Смена %d · сигнал отправлен." % day_number, Color(0.4, 1.0, 0.8))
 
 
-## Попытка запустить ядро (E 3 с). Свободная игра — семь дуг. Глава и сеть
-## сначала сдают детали (relay_req), потом запускают, если набрано всё.
+## Попытка запустить ядро (E 3 с). Свободная игра — этапы 1–3 и семь дуг.
+## Глава сначала сдаёт детали (relay_req), потом запускает, если набрано всё.
 ## hero — кто держит E. true — отсчёт пошёл.
 func try_finish(hero = null) -> bool:
 	if in_mission():
@@ -685,14 +781,18 @@ func _relay_say(hero, text: String, color: Color, team: bool) -> void:
 		hero._notify(text, color)
 
 
-## Запуск ядра: семь дуг, ядро стоит, отсчёт ещё не идёт. Иначе — перечень
-## недостающих цветов. true — отсчёт пошёл.
+## Запуск ядра: этапы 1–3, нужные дуги, ядро стоит, отсчёт ещё не идёт.
+## Иначе — чего не хватает (терминал, руда, ночь, цвета). true — отсчёт пошёл.
+## Глава зовёт ту же функцию после своих задач: ворота свободной игры её не держат.
 func core_launch() -> bool:
 	if not Net.is_authority():   # СЕТЬ (ADR-002): ядро запускает хост
 		return false
 	if relay_active or not core_placed():
 		return false
-	if (core_arcs & CORE_ARCS_FULL) != CORE_ARCS_FULL:
+	if not in_mission() and not free_ready():
+		notify(free_block_text(), Color(1.0, 0.6, 0.4))
+		return false
+	if (core_arcs & arc_need()) != arc_need():
 		var missing: Array = core_missing_names()
 		notify("Не хватает дуг: " + ", ".join(missing), Color(1.0, 0.6, 0.4))
 		return false
@@ -703,11 +803,26 @@ func core_launch() -> bool:
 	Sfx.play("power", -2.0)
 	UI.flash_ring(_core_pos(), Color.WHITE)
 	_net_core_changed()
-	update_objective()          # этап 4 — сразу, а не через 0.25 с
+	update_objective()          # этап удержания — сразу, а не через 0.25 с
 	return true
 
 
+## Чего не хватает до запуска: терминал, руда или ночь. Пусто — этапы 1–3 сданы.
+func free_block_text() -> String:
+	var parts: Array = []
+	if not free_powered():
+		parts.append("прочитай терминал")
+	if not free_mined():
+		parts.append("руда %d/%d" % [stats_ore, Balance.FREE_ORE_NEED])
+	if not free_night_done():
+		parts.append("переживи ночь")
+	if parts.is_empty():
+		return ""
+	return "Рано запускать: " + ", ".join(parts)
+
+
 ## Луч чистого цвета попал в ядро. Бит ставится один раз, дуга не гаснет.
+## Белый (маска 7) — не дуга: ясный свет показывает руду, семь цветов он не закрывает.
 func core_feed(color: int) -> void:
 	if not Net.is_authority():
 		return
@@ -716,14 +831,18 @@ func core_feed(color: int) -> void:
 		return
 	core_arcs |= bit
 	var n: int = core_arc_count()
-	notify("Дуга «%s» зажглась (%d/7)" % [core_color_name(color), n], Beams.COLOR[color])
+	notify("Дуга «%s» зажглась (%d/%d)" % [core_color_name(color), n, arc_need_count()],
+			Beams.COLOR[color])
 	UI.flash_ring(_core_pos(), Beams.COLOR[color])
 	_net_core_changed()
 	update_objective()
 
 
-## Бит дуги по маске цвета. 0 — это не один из семи чистых.
+## Бит дуги по маске цвета. 0 — смесь или чужой бит.
+## В свободной игре белый не зажигает дугу (#212). В главе «Радуга» — зажигает.
 func _arc_bit(color: int) -> int:
+	if color == Beams.W and not in_mission():
+		return 0
 	var i: int = CORE_ARC_COLOR.find(color)
 	if i < 0:
 		return 0
@@ -808,7 +927,8 @@ func _stand_pos(c: Vector2i) -> Vector2:
 ## первая же раскладка после загрузки.
 const SAVE_FIELDS: Array[String] = [
 	"time_of_day", "day_number", "tasks_total", "tasks_done", "wave",
-	"game_time", "relay_active", "relay_timer", "stats_mined", "stats_crafted",
+	"game_time", "relay_active", "relay_timer", "stats_mined", "stats_ore",
+	"nights_survived", "stats_crafted",
 	"stats_kills", "stats_deaths", "objective_stage",
 	"relay_speed",                       # цель и релей (#32)
 	"relay_have",                        # вклад деталей (глава и сеть, #94)
@@ -844,7 +964,16 @@ func load_state(d: Dictionary) -> void:
 		blueprints = PackedStringArray(d["blueprints"])
 	else:
 		blueprints = PackedStringArray()
-	# Старый этап > 4 сжимается в удержание.
+	# Старый файл (#175): 1 ядро, 2 дуги, 3 запуск, 4 удержание.
+	# Новый: те же четыре шага — это этапы 4–6, перед ними запитать / добыть / ночь.
+	# Уже идущий отсчёт не откатываем: игрок его уже заслужил.
+	# Свежий файл оба поля пишет, даже нулями: миграция на него не срабатывает.
+	if not d.has("nights_survived") and not d.has("stats_ore"):
+		if relay_active or objective_stage >= 4:
+			objective_stage = OBJECTIVE_STAGES
+		elif objective_stage > 0:
+			objective_stage = mini(OBJECTIVE_STAGES - 1, objective_stage + 3)
+	# Старый этап > 6 сжимается в удержание.
 	if objective_stage > OBJECTIVE_STAGES:
 		objective_stage = OBJECTIVE_STAGES
 	_rebuild_cores()
@@ -904,7 +1033,13 @@ func _net_client_process(delta: float) -> void:
 	if state != State.PLAYING:
 		return
 	game_time += delta
-	time_of_day = fmod(time_of_day + delta / DAY_LENGTH, 1.0)
+	# Смену и ночь клиенту приносит пакет хоста: свои часы их не считают.
+	var saved_nights: int = nights_survived
+	var saved_day: int = day_number
+	advance_clock(delta / DAY_LENGTH)
+	nights_survived = saved_nights
+	if day_number != saved_day:
+		day_number = saved_day
 	if relay_active and _relay_hold_ok():   # MP-I (#94): без присмотра отсчёт стоит и здесь
 		relay_timer = maxf(0.0, relay_timer - delta * relay_speed)
 
@@ -933,6 +1068,9 @@ func net_apply_global(d: Dictionary) -> void:
 	game_time = float(d["game_time"])
 	var day: int = int(d["day"])
 	var new_day: bool = day > day_number
+	# Хост уже пережил ночь, если смена выросла. Пакет смены ночей не возит (PROTO).
+	if new_day and time_of_day < Balance.NIGHT_END:
+		nights_survived = maxi(nights_survived, day - 1)
 	day_number = day
 	if new_day:
 		day_started.emit(day)

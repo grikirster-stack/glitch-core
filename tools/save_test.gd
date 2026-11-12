@@ -191,7 +191,7 @@ class Runner extends Node:
 		_ok("решётка запечатала вентиляцию с прежним HP", _grate.x < 0 or (world.is_vent_sealed(_grate)
 				and float(world.vents_sealed[_grate]) < float(Balance.GRATE_HP)),
 				"HP %s" % str(world.vents_sealed.get(_grate)))
-		_ok("этап релея вернулся", int(game.objective_stage) == 4 and bool(game.relay_active)
+		_ok("этап релея вернулся", int(game.objective_stage) == 6 and bool(game.relay_active)
 				and is_equal_approx(float(game.relay_timer), float(_snap["game"]["relay_timer"])))
 		var wreck = world.sky_cache.get("wreck")
 		_ok("небесный тайник: открыт, ссылка на сундук", wreck == null or (bool(wreck.opened)
@@ -313,8 +313,8 @@ class Runner extends Node:
 		game.time_of_day = 0.31
 		game.stats_mined = 41
 		game.tasks_done = 1
-		game.objective_stage = 3
-		game.relay_active = true          # этап релея (#32): сигнал держится
+		game.objective_stage = 6
+		game.relay_active = true          # удержание сигнала: этап 6
 		game.relay_timer = 151.5
 		if not world.terminals.is_empty():
 			world.terminals.remove_at(0)
@@ -444,6 +444,8 @@ class Runner extends Node:
 		_ok("старый файл с research/tech грузится", ok_l, save_s.last_error)
 		_ok("research проигнорирован, чертежей нет", ok_l and game.blueprints.is_empty(), str(game.blueprints))
 		_ok("журнал из старого файла восстановлен", ok_l and tech.read_chapters == [0, 2], str(tech.read_chapters))
+		# Файл уже пишет stats_ore и nights_survived: этап 4 остаётся этапом дуг.
+		# Сжатие в удержание — только у файла, где этих полей нет вовсе.
 		_ok("этап 4 из файла на месте", ok_l and game.objective_stage == 4, str(game.objective_stage))
 		save_s.remove(SLOT + "_legacy")
 		_legacy_factory_case()

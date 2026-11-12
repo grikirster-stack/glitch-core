@@ -170,8 +170,8 @@ func _process(delta: float) -> void:
 	# Купол маяка пульсирует, пока жив: без этого квадрат встанет колом.
 	if not World.pharos_dome.is_empty():
 		_dirty = true
-	# Столб запуска и семь дуг ядра — постоянный рисунок, не вспышка.
-	if Game.relay_active or (Game.core_placed() and (Game.core_arcs & 0x7F) == 0x7F):
+	# Столб запуска и дуги ядра — постоянный рисунок, не вспышка.
+	if Game.relay_active or (Game.core_placed() and (Game.core_arcs & Game.arc_need()) == Game.arc_need()):
 		_dirty = true
 	_sync_column()
 	if animating:
@@ -468,8 +468,8 @@ func _draw() -> void:
 
 	# Питание снято (#170): колец радиуса больше нет.
 
-	# --- Ядро: пульс, когда горят все семь дуг --------------------------------
-	if Game.core_placed() and (Game.core_arcs & 0x7F) == 0x7F:
+	# --- Ядро: пульс, когда горят все дуги ------------------------------------
+	if Game.core_placed() and (Game.core_arcs & Game.arc_need()) == Game.arc_need():
 		var bp: Vector2 = World.cell_to_world(Game.core_cell)
 		var pulse: float = 0.5 + 0.5 * sin(float(Time.get_ticks_msec()) * 0.003)
 		draw_arc(bp, 18.0 + pulse * 4.0, 0.0, TAU, 28, Color(1.0, 1.0, 1.0, 0.55), 2.0)
@@ -523,20 +523,27 @@ func _draw() -> void:
 		draw_arc(Vector2(s["pos"]), 14.0 + t2 * 8.0, -0.9 + t2 * 1.8, 0.9 + t2 * 1.8, 12, col2, 3.0)
 
 
-## Семь дуг над кубом, поверх луча: иначе луч закрывает столбики.
+## Дуги над кубом, поверх луча: иначе луч закрывает столбики.
+## В свободной игре белого столбика нет (#212).
 func _draw_core_arcs() -> void:
 	if not Game.core_placed():
 		return
 	var bp: Vector2 = World.cell_to_world(Game.core_cell)
-	var lit: int = Game.core_arcs & 0x7F
-	var plate: Rect2 = Rect2(bp.x - 12.0, bp.y - 14.0, 24.0, 8.0)
+	var need: int = Game.arc_need()
+	var lit: int = Game.core_arcs & need
+	var n: int = Game.arc_need_count()
+	var plate: Rect2 = Rect2(bp.x - 12.0, bp.y - 14.0, float(n) * 3.0 + 4.0, 8.0)
 	draw_rect(plate, Color(0.08, 0.09, 0.12, 0.92))
+	var drawn: int = 0
 	for i in Game.CORE_ARC_COLOR.size():
+		if (need & (1 << i)) == 0:
+			continue
 		var col: Color = Color(0.42, 0.44, 0.48, 0.9)
 		if (lit & (1 << i)) != 0:
 			col = Beams.COLOR[Game.CORE_ARC_COLOR[i]]
-		var x: float = bp.x - 10.0 + float(i) * 3.0
+		var x: float = bp.x - 10.0 + float(drawn) * 3.0
 		draw_rect(Rect2(x, bp.y - 12.0, 2.0, 5.0), col)
+		drawn += 1
 
 
 ## Линия луча по центрам клеток: 4 px, яркая у источника и тусклая к концу.

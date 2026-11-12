@@ -575,10 +575,13 @@ func _t_relay() -> void:
 	var cell: Vector2i = World.beacon_cell + Vector2i(2, 0)
 	World.set_tile(cell.x, cell.y, IDs.T.AIR)
 	var placed: bool = MachineBase.place_machine("RainbowCore", cell)
-	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M, Beams.W]:
+	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M]:
 		Game.core_feed(c)
+	Game.tasks_done = 1
+	Game.stats_ore = Balance.FREE_ORE_NEED
+	Game.nights_survived = Balance.FREE_NIGHTS_NEED
 	var ok: bool = placed and Game.try_finish()
-	_ok("ядро запущено", ok and Game.core_arcs == 0x7F)
+	_ok("ядро запущено", ok and Game.core_arcs == Game.CORE_ARCS_FREE)
 	_ok("таймер идёт", Game.relay_active and Game.relay_timer > 0.0)
 	Game.relay_timer = 0.05
 	_next(15, 0.5)

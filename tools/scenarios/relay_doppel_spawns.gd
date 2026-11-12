@@ -23,10 +23,13 @@ func run() -> void:
 	var cell: Vector2i = World.beacon_cell + Vector2i(2, 0)
 	World.set_tile(cell.x, cell.y, IDs.T.AIR)
 	MachineBase.place_machine("RainbowCore", cell)
-	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M, Beams.W]:
+	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M]:
 		Game.core_feed(c)
+	Game.tasks_done = 1
+	Game.stats_ore = Balance.FREE_ORE_NEED
+	Game.nights_survived = Balance.FREE_NIGHTS_NEED
 	ok("ядро запущено", Game.try_finish())
-	ok("этап 4 — удержать сигнал", Game.objective_stage == 4, Game.objective_text())
+	ok("этап 6 — удержать сигнал", Game.objective_stage == 6, Game.objective_text())
 	ok("cap на удержании — %d" % Balance.RELAY_HOLD_CAP,
 			Threat.cap_for(Game.day_number, true) == Balance.RELAY_HOLD_CAP)
 

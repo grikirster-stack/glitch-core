@@ -551,19 +551,30 @@ func _compute_tracker() -> void:
 		1:
 			have = 0
 			need = 1
-			words = "Поставь ядро"
-			tracker_detail = "ядра нет · сундук лагеря"
+			words = "Прочитай терминал"
+			tracker_detail = "лагерь · держи [E]"
 		2:
-			have = Game.core_arc_count()
-			need = 7
-			words = "Зажги семь дуг"
-			var miss: String = ", ".join(Game.core_missing_names())
-			tracker_detail = "дуги %d/7%s · [E] у ядра" % [have, (" · нет " + miss) if miss != "" else ""]
+			have = Game.stats_ore
+			need = Balance.FREE_ORE_NEED
+			words = "Накопай руды"
+			tracker_detail = "руда %d/%d · хлам не считается" % [have, need]
 		3:
+			have = mini(Game.nights_survived, Balance.FREE_NIGHTS_NEED)
+			need = Balance.FREE_NIGHTS_NEED
+			words = "Переживи ночь"
+			tracker_detail = "рассвет ещё не был"
+		4:
 			have = Game.core_arc_count()
-			need = 7
+			need = Game.arc_need_count()
+			words = "Зажги шесть дуг"
+			var miss: String = ", ".join(Game.core_missing_names())
+			tracker_detail = "дуги %d/%d%s · белый не считается" % [have, need,
+					(" · нет " + miss) if miss != "" else ""]
+		5:
+			have = Game.core_arc_count()
+			need = Game.arc_need_count()
 			words = "Запусти ядро"
-			tracker_detail = "семь дуг · [E] 3 с у ядра"
+			tracker_detail = "дуги готовы · [E] 3 с у ядра"
 		_:
 			var left: int = int(ceil(Game.relay_timer))
 			have = maxi(0, int(Balance.RELAY_TIME) - left)
@@ -626,7 +637,8 @@ func _compute_tutorial() -> void:
 	if player != null:
 		scrap = player.inv.count_of(IDs.I.SCRAP)
 	# Питания нет (#170): хлам → крафт горелки → поставить → терминал.
-	if Game.tasks_done > 0 or Game.objective_stage >= 2:
+	# Этап 2 теперь — добыча, терминал ещё впереди на этапе 1.
+	if Game.tasks_done > 0 or Game.objective_stage >= 4:
 		lvl = Tut.DONE
 	elif player != null and _burner_near():
 		lvl = Tut.TERMINAL
@@ -1570,11 +1582,13 @@ func _draw_stage_glyph(r: Rect2, stage: int) -> void:
 		draw_rect(Rect2(o + Vector2(s, 0.0), Vector2(s, s * 3.0)), c)
 		draw_rect(Rect2(o + Vector2(0.0, s), Vector2(s * 3.0, s)), c)
 	elif stage == 2:
-		# Шестерня: квадрат и четыре зубца.
-		draw_rect(Rect2(o + Vector2(s, s), Vector2(s, s)), c)
-		draw_rect(Rect2(o + Vector2(s, 0.0), Vector2(s, s)), c)
-		draw_rect(Rect2(o + Vector2(s, s * 2.0), Vector2(s, s)), c)
-		draw_rect(Rect2(o + Vector2(0.0, s), Vector2(s, s)), c)
+		# Жила: тёмный квадрат и яркая сердцевина.
+		draw_rect(Rect2(o + Vector2(0.0, s), Vector2(s * 3.0, s)), c)
+		draw_rect(Rect2(o + Vector2(s, 0.0), Vector2(s, s * 3.0)), c)
+		draw_rect(Rect2(o + Vector2(s, s), Vector2(s, s)), C_LINE)
+	elif stage == 3:
+		# Луна: дуга из двух квадратов.
+		draw_rect(Rect2(o + Vector2(s, 0.0), Vector2(s, s * 3.0)), c)
 		draw_rect(Rect2(o + Vector2(s * 2.0, s), Vector2(s, s)), c)
 	else:
 		# Молния: три ступени.
