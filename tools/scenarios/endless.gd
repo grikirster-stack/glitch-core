@@ -6,10 +6,11 @@ extends ScenarioBase
 ##    клеток угля нет, в тумане уголь отрос.
 ## 2. Фантомы. Тень при смерти роняет SHADE_DROP_COAL угля, мотылёк роя —
 ##    SWARM_DROP_COPPER меди. Чёрный ящик не мешает: предметы лежат отдельно.
-## 3. После сигнала. Победа → экран с кнопкой «Остаться на планете» → C → PLAYING,
-##    signal_sent, ядро на месте, карточка «Смена N · Сигнал отправлен». Повторный
-##    запуск ядра доходит до второй победы, в эпилоге — «вторая передача».
-##    Хардкор кнопки не даёт.
+## 3. После сигнала. Победа → экран с кнопкой «Остаться на планете». Клик мышью
+##    по stay_rect — то же, что C: PLAYING, signal_sent, ядро на месте, карточка
+##    «Смена N · Сигнал отправлен». Пока экран открыт, ЛКМ не копает мир под ним,
+##    а клик мимо кнопки игру не продолжает. Повторный запуск ядра доходит до
+##    второй победы, в эпилоге — «вторая передача». Хардкор кнопки не даёт.
 
 
 func run() -> void:
@@ -124,12 +125,31 @@ func _stay() -> void:
 	var es: EndScreen = scene.get("end_screen")
 	await await_frame()
 	ok("на финале есть «Остаться на планете»", es != null and es.visible and es.can_stay
-			and es.stay_rect.size.x > 0.0, es.title if es != null else "нет экрана")
+			and es.stay_rect.size.x > 0.0 and es.stay_rect.size.y >= EndScreen.STAY_MIN_HIT,
+			es.title if es != null else "нет экрана")
 	var beacon: Vector2i = World.beacon_cell
-	# C на экране финала ловит сам экран (_input), не шов игрока.
-	es.stay_requested.emit()
+	# Пока экран открыт, зажатая ЛКМ не должна копать клетку под курсором (#214).
+	var dig: Vector2i = find_mineable()
+	ok("есть клетка, которую клик мог бы выкопать", dig.x >= 0, str(dig))
+	var dig_before: int = World.get_tile_v(dig) if dig.x >= 0 else -1
+	if dig.x >= 0:
+		aim(World.cell_to_world(dig))
+		press_mouse(MOUSE_BUTTON_LEFT)
+		await wait(0.6)
+		ok("клик сквозь экран победы не копает", World.get_tile_v(dig) == dig_before
+				and player.mining_progress <= 0.0,
+				"тайл %d → %d, прогресс %.2f" % [dig_before, World.get_tile_v(dig), player.mining_progress])
+		release_mouse(MOUSE_BUTTON_LEFT)
+	# Клик мимо кнопки игру не продолжает: только прямоугольник stay_rect.
+	_click_screen(es.stay_rect.position + Vector2(-8.0, es.stay_rect.size.y * 0.5))
+	await await_frame()
+	ok("клик мимо кнопки не оставляет на планете", Game.state == Game.State.WON and es.visible,
+			"state=%d" % Game.state)
+	# Клик мышью по кнопке — тот же путь, что C: событие в EndScreen._gui_input.
+	_click_screen(es.stay_rect.get_center())
 	var stayed: bool = await wait_until(func() -> bool: return Game.state == Game.State.PLAYING, 2.0)
-	ok("C — остались, состояние PLAYING", stayed and Game.signal_sent, "state=%d" % Game.state)
+	ok("клик по кнопке — остались, состояние PLAYING", stayed and Game.signal_sent,
+			"state=%d" % Game.state)
 	ok("экран финала закрыт", es != null and not es.visible)
 	ok("ядро на месте", World.beacon_cell == beacon, str(World.beacon_cell))
 	var hud: HUD = UI.hud
@@ -158,3 +178,19 @@ func _stay() -> void:
 	await await_frame()
 	ok("хардкор: C не возвращает в игру", Game.state == Game.State.WON and es.visible)
 	scene.set("hardcore", false)
+
+
+## Клик ЛКМ в экранной точке. В headless вьюпорт мышь до контрола не доводит
+## (как у панели инвентаря, #69): событие идёт в _gui_input — тот же обработчик,
+## что ловит клик по кнопке на десктопе (Control на весь экран, MOUSE_FILTER_STOP).
+func _click_screen(pos: Vector2) -> void:
+	var screen: EndScreen = scene.get("end_screen")
+	for pressed in [true, false]:
+		var ev: InputEventMouseButton = InputEventMouseButton.new()
+		ev.button_index = MOUSE_BUTTON_LEFT
+		ev.pressed = pressed
+		ev.position = pos
+		ev.global_position = pos
+		if screen != null:
+			screen._gui_input(ev)
+		await get_tree().process_frame
