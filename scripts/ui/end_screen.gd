@@ -116,18 +116,29 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k: InputEventKey = event
 		if can_next and (k.keycode == KEY_N or k.keycode == KEY_ENTER):
+			_eat()
 			next_requested.emit()
-			get_viewport().set_input_as_handled()
 		elif can_stay and k.keycode == KEY_C:
+			_eat()
 			stay_requested.emit()
-			get_viewport().set_input_as_handled()
 		elif k.keycode == KEY_R or k.keycode == KEY_ENTER or k.keycode == KEY_SPACE:
+			_eat()
 			restart_requested.emit()
-			get_viewport().set_input_as_handled()
 		return
 	# Клик мышью Control с MOUSE_FILTER_STOP забирает в _gui_input и до _input
 	# не доводит. Тап (и клик, если GUI его пропустил) обрабатываем здесь.
 	_on_pointer(event)
+
+
+## Погасить клавишу в текущем вьюпорте.
+##
+## Зовём ДО сигнала: сигнал может перезагрузить сцену (R — заново, N — следующая
+## глава), а сцена уходит из дерева уже внутри сигнала — тогда get_viewport()
+## вернёт null, и падение на set_input_as_handled() уронит кадр (#225).
+func _eat() -> void:
+	var vp: Viewport = get_viewport()
+	if vp != null:
+		vp.set_input_as_handled()
 
 
 ## Тап и клик ЛКМ. Кнопка «Остаться» срабатывает сразу; промах по экрану — новая
@@ -147,15 +158,15 @@ func _on_pointer(event: InputEvent) -> void:
 	if not down:
 		return
 	if can_stay and _stay_hit(pos):
-		stay_requested.emit()
-		get_viewport().set_input_as_handled()
+		_eat()
 		accept_event()
+		stay_requested.emit()
 	elif event is InputEventScreenTouch and t > 1.5:
+		_eat()
 		if can_next:
 			next_requested.emit()
 		else:
 			restart_requested.emit()
-		get_viewport().set_input_as_handled()
 
 
 func _draw() -> void:
