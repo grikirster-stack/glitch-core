@@ -86,6 +86,9 @@ func _transition() -> void:
 	if runner.scene != null:
 		runner.scene.set("seed_value", seed0)
 	Net.session = session0
+	ok("сид прогона возвращён", runner.scene != null
+			and int(runner.scene.get("seed_value")) == seed0,
+			"сид=%d" % (int(runner.scene.get("seed_value")) if runner.scene != null else -1))
 
 
 ## Нажатая клавиша.
