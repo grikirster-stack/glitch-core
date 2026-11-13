@@ -442,7 +442,16 @@ func _next_scenario() -> void:
 		return
 	print("== Сценарий: %s ==" % String(REGISTRY[name]["title"]))
 	_reset_world()
-	var sc: ScenarioBase = load(DIR + String(REGISTRY[name]["file"])).new()
+	var path: String = DIR + String(REGISTRY[name]["file"])
+	var scr: Script = load(path)
+	if scr == null or not scr.can_instantiate():
+		# Файл не распарсился: раньше .new() ронял раннер, и тот молчал до
+		# таймаута — в CI это выглядело бы как зависшая сборка.
+		print("== Сценарий не загрузился: %s ==" % path)
+		ok("сценарий загрузился", false, path)
+		_next_scenario()
+		return
+	var sc: ScenarioBase = scr.new()
 	sc.setup(self, scene)
 	add_child(sc)
 	_current = sc
