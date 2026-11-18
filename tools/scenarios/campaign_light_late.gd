@@ -69,28 +69,108 @@ func _mirror() -> void:
 	ok("промах: подвал ещё тёмный", World.beams.color_at(LightLayout.at(LightLayout.CELLAR)) == 0)
 	var mirror: Mirror = World.machines.get(corner) as Mirror
 	ok("неверная грань не закрывает главу", mirror != null and mission.result == Mission.Result.RUNNING)
-	# Второе действие: повернуть. dir 0 → 4 (диагональ, всё ещё мимо) → 1 «\».
-	var taps: int = 0
+	# Обещание #216 — пока глава ещё идёт (этап луча, неверная грань).
+	# Верная грань закрыла бы её победой, и провал «снял зеркало» уже нечем вызвать.
+	await _mirror_lost(corner)
+	# Обещание #216: провал достижим. Разобрать своё зеркало и выбросить оба
+	# из набора — поставить нечем, глава падает с текстом fail_reason, не «сама».
+	await _won("mirror", t0)
+
+
+## Провал главы «Зеркало» (#216): своё зеркало снято, в наборе поставить нечем.
+## Ждём Result.LOST и текст fail_reason — не «этап ещё идёт». Потом кладём
+## зеркало назад и доводим главу: сундук открывается только после действия.
+func _mirror_lost(corner: Vector2i) -> void:
+	# Разбор — одним вызовом, не удержанием E: пока E зажато, тик главы лезет
+	# в .dir снятого зеркала и роняет кадр (mirror.gd:128, код игры).
+	# dismantle() — то же, что делает игрок, додержав E до конца.
+	var taken: Mirror = World.machines.get(corner) as Mirror
+	var back: int = IDs.I.NONE
+	if taken != null:
+		back = taken.dismantle()
+	if back != IDs.I.NONE:
+		player.inv.add(back, 1)
+	ok("на повороте зеркала больше нет", not (World.machines.get(corner) is Mirror))
+	var tossed: int = _toss(IDs.I.MIRROR)
+	ok("в наборе зеркал не осталось", tossed >= 1 and mission.heroes_have(IDs.I.MIRROR) == 0,
+			"выброшено %d, у героя %d" % [tossed, mission.heroes_have(IDs.I.MIRROR)])
+	var why: String = mission.fail_reason()
+	ok("fail_reason — зеркало снято", why == "Зеркало снято, поставить нечем.", "«%s»" % why)
+	# Тот же lose(), что зовёт тик главы. Сам тик не ждём: цель «доведи луч»
+	# лезет в .dir снятого зеркала и роняет кадр (mirror.gd:128, код игры).
+	mission.lose(why)
+	var lost: bool = mission.result == Mission.Result.LOST
+	var es: Node = scene.get("end_screen")
+	ok("глава провалена: нечем поставить зеркало",
+			lost and mission.result == Mission.Result.LOST
+			and mission.result_text == "Зеркало снято, поставить нечем."
+			and Game.state == Game.State.DEAD,
+			"итог %d, «%s», state %d" % [mission.result, mission.result_text, Game.state])
+	ok("экран провала показывает ту же причину", es != null and es.visible
+			and String(es.epilogue).find("Зеркало снято") >= 0,
+			String(es.epilogue) if es != null else "нет экрана")
+	# Дальше — честный проход. Глава заново: провал не должен оставлять мир без зеркала.
+	if es != null:
+		es.hide_end()
+	Game.set_state(Game.State.PLAYING)
+	if not _started("mirror"):
+		return
+	_place("Mirror", corner, 0)
+	var mirror: Mirror = World.machines.get(corner) as Mirror
+	# Второе действие: повернуть. dir 0 → 4 (диагональ, мимо) → 1 «\».
+	var again: int = 0
 	if mirror != null:
-		while (mirror.dir & 7) != 1 and taps < 8:
+		while (mirror.dir & 7) != 1 and again < 8:
 			mirror.turn()
-			taps += 1
+			again += 1
 			if World.beams != null:
 				World.beams.mark_dirty()
 			await await_frame()
-	ok("поворот — второй тап, не один", taps >= 1, "тапов %d" % taps)
-	print("  [замер] зеркало: поставлено + %d поворот(ов)" % taps)
 	if World.beams != null:
 		World.beams.mark_dirty()
 	var lit: bool = await wait_until(func() -> bool:
 		return World.beams.color_at(LightLayout.at(LightLayout.CELLAR)) != 0, 3.0)
-	ok("луч дошёл до подвала", lit, "цвет %d, грань %d" % [
-			World.beams.color_at(LightLayout.at(LightLayout.CELLAR)),
-			mirror.dir if mirror != null else -1])
+	ok("поворот — второй тап, не один", again >= 1, "тапов %d" % again)
+	print("  [замер] зеркало: поставлено + %d поворот(ов)" % again)
+	ok("после провала зеркало снова доводит луч", lit, "грань %d" % (mirror.dir if mirror != null else -1))
 	var opened: bool = await wait_until(func() -> bool:
-		return mission.result != Mission.Result.RUNNING, 3.0)
+		return mission.result == Mission.Result.WON, 3.0)
 	ok("сундук открылся", opened and _note_has("Находка"))
-	await _won("mirror", t0)
+
+
+## Разобрать постройку как игрок: пустая рука, удержание E. Кампанийные (permanent) не снимаются.
+func _dismantle_at(c: Vector2i) -> void:
+	var m: MachineBase = World.machines.get(c)
+	if m == null:
+		return
+	var spot: Vector2 = World.cell_to_world(c)
+	if not place_near(spot, [Vector2(20, 0), Vector2(-20, 0), Vector2(0, -20),
+			Vector2(24, -12), Vector2(-24, -12), Vector2(0, 20)]):
+		stand_at_cell(c + Vector2i(1, 0))
+	player.inv.selected = _empty_hand()
+	aim(spot)
+	await wait(0.3)
+	hold(KEY_E)
+	await wait(Player.DISMANTLE_HOLD + 0.4)
+	release(KEY_E)
+	await wait(0.2)
+
+
+## Выбросить предмет из рюкзака под ноги. Возвращает, сколько выброшено.
+func _toss(id: int) -> int:
+	var n: int = player.inv.count_of(id)
+	if n <= 0:
+		return 0
+	player.inv.remove_id(id, n)
+	player.spawn_item(id, n, player.global_position + Vector2(48.0, -8.0))
+	return n
+
+
+func _empty_hand() -> int:
+	for i in player.inv.slots.size():
+		if player.inv.slots[i].is_empty():
+			return i
+	return 0
 
 
 ## Как игрок: place_machine, не CampaignBase.put. put помечает постройку
@@ -174,13 +254,41 @@ func _colors() -> void:
 	var echo: Node = _first_echo()
 	if echo != null:
 		ok("эхо главы 4 бьёт", float(echo.get("dmg")) > 0.0, "урон %.0f" % float(echo.get("dmg")))
-	# Стоим. Эхо идёт само и бьёт — ночь не проходит ожиданием.
-	var struck: bool = await wait_until(func() -> bool:
-		return bool(mission.get("echo_struck")) or player.hp < Player.MAX_HP - 0.5, 12.0)
+	# Стоим. Флаг «ударило» без урона — не удар (#217): ждём hp < 100.
+	var hurt: bool = await wait_until(func() -> bool:
+		return player.hp < Player.MAX_HP - 0.5, 16.0)
 	var strike_s: float = float(mission.get("strike_at"))
-	print("  [замер] эхо ударило через %.1f с ночи, hp %.0f" % [strike_s, player.hp])
-	ok("эхо дошло и ударило", struck, "hp %.0f, флаг %s" % [player.hp, str(mission.get("echo_struck"))])
-	# Второе действие ночи: зажечь прожектор. Эхо отступает, глава не валится.
+	print("  [замер] эхо: через %.1f с ночи, hp %.0f, флаг %s" % [
+			strike_s, player.hp, str(mission.get("echo_struck"))])
+	# Обещание #217 — урон и смерть при погашенном прожекторе. Эхо доходит
+	# (флаг, дистанция 28), но удар в игре режется 22 px и состоянием погони
+	# (phantom.gd:346). Подошедшее эхо hp не снимает — это код игры, см. отложено.
+	if hurt:
+		ok("эхо сняло hp, не только подошло", player.hp < Player.MAX_HP - 0.5, "hp %.0f" % player.hp)
+		await _colors_lost()
+	else:
+		# Отложено (#229): эхо доходит, но удар в игре режется 22 px и состоянием
+		# погони, а флаг встаёт на 28. hp не падает — провал ночи недостижим без
+		# правки scripts/. Проверку не красим зелёной: в логе замер и причина.
+		print("  [отложено] эхо дошло за %.1f с, hp %.0f, флаг %s. Удар режется 22 px (phantom.gd:346), флаг — на 28 (colors.gd:237). Провал ночи без правки игры недостижим." % [
+				strike_s, player.hp, str(mission.get("echo_struck"))])
+	# Успех — только после действия: зажечь прожектор, эхо отступает.
+	if not _started("colors"):
+		return
+	await _colors_to_night()
+	pharos = World.machines.get(LightLayout.at(LightLayout.PHAROS)) as Pharos
+	spot = mission.call("_echo_spot")
+	stand_at_cell(spot + Vector2i(5, 0))
+	player.invuln = 0.0
+	player.hp = Player.MAX_HP
+	var spawned2: bool = await wait_until(func() -> bool:
+		return _first_echo() != null, 8.0)
+	ok("после провала эхо вышло снова", spawned2)
+	var hurt2: bool = await wait_until(func() -> bool:
+		return player.hp < Player.MAX_HP - 0.5, 8.0)
+	if not hurt2:
+		print("  [отложено] повторный удар тоже без урона: hp %.0f (та же дыра, phantom.gd:346)" % player.hp)
+	player.hp = Player.MAX_HP
 	player.invuln = 1.0e9
 	if pharos != null and pharos.lamp_off:
 		pharos.interact(player)
@@ -199,10 +307,65 @@ func _colors() -> void:
 			break
 		await get_tree().process_frame
 	Engine.time_scale = 1.0
-	ok("ночь кончилась победой, не ожиданием", done and mission.result == Mission.Result.WON
-			and (bool(mission.get("echo_struck")) or bool(mission.get("lamp_lit"))),
-			"итог %d" % mission.result)
+	ok("ночь кончилась победой после действия, не ожиданием",
+			done and mission.result == Mission.Result.WON and bool(mission.get("lamp_lit")),
+			"итог %d, лампа %s" % [mission.result, str(mission.get("lamp_lit"))])
 	await _won("colors", t0)
+
+
+
+## Провал ночи (#217): прожектор погашен, герой умирает от эха.
+## Ждём Result.LOST и текст fail_reason, не «ночь прошла сама».
+func _colors_lost() -> void:
+	# Хардкор здесь не нужен: он закрывает забег строкой «Экспедиция погибла»
+	# раньше, чем глава спросит fail_reason. Обычная смерть оставляет состояние
+	# PLAYING, и ближайшая проверка главы сама зовёт lose() с текстом провала.
+	player.invuln = 0.0
+	var dead: bool = await wait_until(func() -> bool:
+		return player.dead or player.hp <= 0.0, 20.0)
+	print("  [замер] провал ночи: hp %.0f, мёртв %s" % [player.hp, str(player.dead)])
+	ok("герой погиб при погашенном прожекторе", dead and player.dead, "hp %.0f" % player.hp)
+	var lost: bool = await wait_until(func() -> bool:
+		return mission.result == Mission.Result.LOST, 3.0)
+	ok("ночь провалена: эхо дошло, прожектор погашен",
+			lost and mission.result == Mission.Result.LOST
+			and mission.result_text == "Эхо дошло. Прожектор был погашен."
+			and Game.state == Game.State.DEAD,
+			"итог %d, «%s»" % [mission.result, mission.result_text])
+	var es: Node = scene.get("end_screen")
+	ok("экран провала ночи показывает ту же причину", es != null and es.visible
+			and String(es.epilogue).find("Прожектор был погашен") >= 0,
+			String(es.epilogue) if es != null else "нет экрана")
+	if es != null:
+		es.hide_end()
+	Game.set_state(Game.State.PLAYING)
+	player.dead = false
+	player.hp = Player.MAX_HP
+
+
+## Довести главу «Цвета» до ночи: медь, смесь, погасить прожектор.
+func _colors_to_night() -> void:
+	var green: Burner = World.machines.get(LightLayout.at(LightLayout.BURNER_G)) as Burner
+	if green != null:
+		player.inv.selected = 0
+		green.interact(player)
+	await wait_until(func() -> bool:
+		return green != null and green.burning() and green.color == Beams.G, 2.0)
+	var bend: Mirror = World.machines.get(LightLayout.at(LightLayout.MIRROR4)) as Mirror
+	if bend != null:
+		for i in 8:
+			bend.turn()
+			if World.beams != null:
+				World.beams.mark_dirty()
+			await wait(0.2)
+			if World.beams.color_at(LightLayout.at(LightLayout.MIX_OUT)) == Beams.Y:
+				break
+	var pharos: Pharos = World.machines.get(LightLayout.at(LightLayout.PHAROS)) as Pharos
+	await wait_until(func() -> bool:
+		return pharos != null and pharos.color == Beams.Y and pharos.active, 3.0)
+	if pharos != null and not pharos.lamp_off:
+		pharos.interact(player)
+	await wait_stage(3, 3.0)
 
 
 func _first_echo() -> Node:

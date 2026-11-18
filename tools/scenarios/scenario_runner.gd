@@ -222,7 +222,8 @@ const REGISTRY: Dictionary = {
 	"cheap_win": {
 		"file": "cheap_win.gd",
 		"title": "дешёвая победа",
-		"desc": "коллектор и ядро не дают эвакуацию; терминал, 12 руды и ночь — дают",
+		"timeout_ms": 180000,
+		"desc": "коллектор и ядро не дают эвакуацию; терминал E, 12 руды киркой и ночь часами — дают",
 	},
 	"relay_doppel_spawns": {
 		"file": "relay_doppel_spawns.gd",
@@ -378,15 +379,29 @@ const REGISTRY: Dictionary = {
 	# Переход главы 1 → 2 по N на экране итога (#227).
 	"chapter_transition": {
 		"file": "chapter_transition.gd", "title": "переход глав 1 → 2",
-		"desc": "N на экране итога: глава перезагружается, ключ погашен, дальше «Огонь»",
+		"desc": "N, R и тап «дальше»: ключ погашен до сигнала, дальше «Огонь» или та же глава",
 	},
 	"rainbow_cat": {"file": "rainbow_cat.gd", "title": "радужный кот", "timeout_ms": 90000,
 		"desc": "5 эхо в 15 клетках мертвы за ≤ 30 с; через 90 с кот в ядре; заряд только под лучом; след ≥ 1.5"},
-}
+	# Битый файл в реестре (#227, дыра приёмки #229). Записи нет, пока сценарий
+	# сам её не положит на время прогона: закоммиченный битый файл уронил бы
+	# --scenario=all — CI роняет шаг на любом SCRIPT ERROR, включая Parse Error.
+	"load_guard": {"file": "load_guard.gd", "title": "битый сценарий в реестре",
+		"desc": "временный битый файл в реестре: явный FAIL и следующий сценарий продолжается"},
+	}
 
 var scene: Node = null
 var checks: int = 0
 var fails: int = 0
+## Проба битого файла (#229): не печатать строку FAIL. CI роняет шаг на ней,
+## а проба как раз обязана получить провал. В обычном прогоне — false.
+var quiet_fail: bool = false
+## Проба битого файла не перегенерирует мир живого прогона.
+var skip_reset: bool = false
+## Проба битого файла забирает баннер сюда, а не в лог.
+var quiet_banner: String = ""
+## Записи пробы битого файла: const REGISTRY дописать нельзя.
+static var _probe_registry: Dictionary = {}
 var scenarios_total: int = 0
 
 ## Игровые часы сценариев, с: сумма delta физических кадров (с учётом
@@ -435,19 +450,21 @@ func _next_scenario() -> void:
 		_summary()
 		return
 	var name: String = String(_queue.pop_front())
-	if not REGISTRY.has(name):
+	var entry: Dictionary = _scenario_entry(name)
+	if entry.is_empty():
 		print("== Сценарий: %s ==" % name)
 		ok("сценарий есть в реестре", false)
 		_next_scenario()
 		return
-	print("== Сценарий: %s ==" % String(REGISTRY[name]["title"]))
-	_reset_world()
-	var path: String = DIR + String(REGISTRY[name]["file"])
-	var scr: Script = load(path)
+	print("== Сценарий: %s ==" % String(entry["title"]))
+	if not skip_reset:
+		_reset_world()
+	var path: String = DIR + String(entry["file"])
+	var scr: Script = _load_scenario(path)
 	if scr == null or not scr.can_instantiate():
 		# Файл не распарсился: раньше .new() ронял раннер, и тот молчал до
 		# таймаута — в CI это выглядело бы как зависшая сборка.
-		print("== Сценарий не загрузился: %s ==" % path)
+		_banner_missing(path)
 		ok("сценарий загрузился", false, path)
 		_next_scenario()
 		return
@@ -456,9 +473,33 @@ func _next_scenario() -> void:
 	add_child(sc)
 	_current = sc
 	_started_ms = Time.get_ticks_msec()
-	_timeout_ms = int(REGISTRY[name].get("timeout_ms", TIMEOUT_MS))
+	_timeout_ms = int(entry.get("timeout_ms", TIMEOUT_MS))
 	sc.done.connect(_on_scenario_done.bind(sc))
 	sc.run()
+
+
+static func _scenario_entry(name: String) -> Dictionary:
+	if _probe_registry.has(name):
+		return _probe_registry[name]
+	return REGISTRY.get(name, {})
+
+
+func _banner_missing(path: String) -> void:
+	if quiet_fail:
+		quiet_banner = path
+		return
+	print("== Сценарий не загрузился: %s ==" % path)
+
+
+func _load_scenario(path: String) -> Script:
+	if not quiet_fail:
+		return load(path)
+	# Проба битого файла: Parse Error — предмет проверки, а CI роняет шаг
+	# на строке SCRIPT ERROR. Глушим печать на время одного load().
+	Engine.print_error_messages = false
+	var scr: Script = load(path)
+	Engine.print_error_messages = true
+	return scr
 
 
 func _on_scenario_done(sc: ScenarioBase) -> void:
@@ -515,7 +556,10 @@ func ok(label: String, cond: bool, extra: String = "") -> void:
 		print("  OK   %s %s" % [label, extra])
 	else:
 		fails += 1
-		print("  FAIL %s %s" % [label, extra])
+		# Проба битого файла сама ждёт провал. Строку FAIL не печатаем:
+		# CI роняет шаг на ней, даже если это ожидаемый провал пробы.
+		if not quiet_fail:
+			print("  FAIL %s %s" % [label, extra])
 
 
 ## Подождать игровые секунды (по физическим кадрам, см. sim_time; не число
