@@ -238,7 +238,10 @@ func _colors() -> void:
 	ok("этап ночи", await wait_stage(3, 2.0), str(mission.stage))
 	# Герой у входа, не в клетке эха: удар должен дойти, а не случиться на спавне.
 	var spot: Vector2i = mission.call("_echo_spot")
-	stand_at_cell(spot + Vector2i(5, 0))
+	var dark: Vector2i = _dark_stand(spot)
+	print("  [замер] клетка героя %s, свет %.2f (порог бегства %.2f)" % [
+			str(dark), World.light_at(dark), float(Balance.PHANTOMS["echo"]["light_flee"])])
+	stand_at_cell(dark)
 	player.invuln = 0.0
 	player.hp = Player.MAX_HP
 	var spawned: bool = await wait_until(func() -> bool:
@@ -247,40 +250,31 @@ func _colors() -> void:
 	var echo: Node = _first_echo()
 	if echo != null:
 		ok("эхо главы 4 бьёт", float(echo.get("dmg")) > 0.0, "урон %.0f" % float(echo.get("dmg")))
-	# Стоим. Флаг «ударило» без урона — не удар (#217): ждём hp < 100.
 	var hurt: bool = await wait_until(func() -> bool:
 		return player.hp < Player.MAX_HP - 0.5, 16.0)
 	var strike_s: float = float(mission.get("strike_at"))
 	print("  [замер] эхо: через %.1f с ночи, hp %.0f, флаг %s" % [
 			strike_s, player.hp, str(mission.get("echo_struck"))])
-	# Обещание #217 — урон и смерть при погашенном прожекторе. Эхо доходит
-	# (флаг, дистанция 28), но удар в игре режется 22 px и состоянием погони
-	# (phantom.gd:346). Подошедшее эхо hp не снимает — это код игры, см. отложено.
-	if hurt:
-		ok("эхо сняло hp, не только подошло", player.hp < Player.MAX_HP - 0.5, "hp %.0f" % player.hp)
-		await _colors_lost()
-	else:
-		# Отложено (#229): эхо доходит, но удар в игре режется 22 px и состоянием
-		# погони, а флаг встаёт на 28. hp не падает — провал ночи недостижим без
-		# правки scripts/. Проверку не красим зелёной: в логе замер и причина.
-		print("  [отложено] эхо дошло за %.1f с, hp %.0f, флаг %s. Удар режется 22 px (phantom.gd:346), флаг — на 28 (colors.gd:237). Провал ночи без правки игры недостижим." % [
-				strike_s, player.hp, str(mission.get("echo_struck"))])
+	# Герой в темноте: на свету эхо убегает, не дойдя (порог 0.55). В темноте
+	# доходит и бьёт — hp падает, провал ночи достижим.
+	ok("эхо сняло hp, не только подошло", hurt and player.hp < Player.MAX_HP - 0.5,
+			"hp %.0f, флаг %s" % [player.hp, str(mission.get("echo_struck"))])
+	await _colors_lost()
 	# Успех — только после действия: зажечь прожектор, эхо отступает.
 	if not _started("colors"):
 		return
 	await _colors_to_night()
 	pharos = World.machines.get(LightLayout.at(LightLayout.PHAROS)) as Pharos
 	spot = mission.call("_echo_spot")
-	stand_at_cell(spot + Vector2i(5, 0))
+	stand_at_cell(_dark_stand(spot))
 	player.invuln = 0.0
 	player.hp = Player.MAX_HP
 	var spawned2: bool = await wait_until(func() -> bool:
 		return _first_echo() != null, 8.0)
 	ok("после провала эхо вышло снова", spawned2)
 	var hurt2: bool = await wait_until(func() -> bool:
-		return player.hp < Player.MAX_HP - 0.5, 8.0)
-	if not hurt2:
-		print("  [отложено] повторный удар тоже без урона: hp %.0f (та же дыра, phantom.gd:346)" % player.hp)
+		return player.hp < Player.MAX_HP - 0.5, 16.0)
+	ok("второй удар тоже снимает hp", hurt2 and player.hp < Player.MAX_HP, "hp %.0f" % player.hp)
 	player.hp = Player.MAX_HP
 	player.invuln = 1.0e9
 	if pharos != null and pharos.lamp_off:
@@ -359,6 +353,22 @@ func _colors_to_night() -> void:
 	if pharos != null and not pharos.lamp_off:
 		pharos.interact(player)
 	await wait_stage(3, 3.0)
+
+
+## Клетка, где герою темно: эхо убегает со света ярче порога и не доходит.
+func _dark_stand(spot: Vector2i) -> Vector2i:
+	var best: Vector2i = spot
+	var bd: float = World.light_at(spot)
+	for dy in range(-4, 5):
+		for dx in range(-10, 11):
+			var c: Vector2i = spot + Vector2i(dx, dy)
+			if not World.in_bounds(c.x, c.y) or World.is_solid_cell(c):
+				continue
+			var lv: float = World.light_at(c)
+			if lv < bd:
+				bd = lv
+				best = c
+	return best
 
 
 func _first_echo() -> Node:
