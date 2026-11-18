@@ -124,7 +124,11 @@ func _on_turn() -> void:
 func _cellar_lit() -> bool:
 	if World.beams == null:
 		return false
+	# Зеркало могли разобрать: цель тикает, пока E ещё зажато, и чтение
+	# .dir у снятого зеркала роняло кадр (#231). Нет зеркала — подвал тёмный.
 	var m: Mirror = World.machines.get(LightLayout.at(LightLayout.CORNER)) as Mirror
+	if m == null or not is_instance_valid(m):
+		return false
 	var d: int = m.dir & 7
 	if d != AIM_DIR and d != 3:
 		return false
