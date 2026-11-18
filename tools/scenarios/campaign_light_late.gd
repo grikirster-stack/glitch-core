@@ -81,25 +81,18 @@ func _mirror() -> void:
 ## Ждём Result.LOST и текст fail_reason — не «этап ещё идёт». Потом кладём
 ## зеркало назад и доводим главу: сундук открывается только после действия.
 func _mirror_lost(corner: Vector2i) -> void:
-	# Разбор — одним вызовом, не удержанием E: пока E зажато, тик главы лезет
-	# в .dir снятого зеркала и роняет кадр (mirror.gd:128, код игры).
-	# dismantle() — то же, что делает игрок, додержав E до конца.
-	var taken: Mirror = World.machines.get(corner) as Mirror
-	var back: int = IDs.I.NONE
-	if taken != null:
-		back = taken.dismantle()
-	if back != IDs.I.NONE:
-		player.inv.add(back, 1)
+	# Как игрок: пустая рука, удержание E. Тик цели за это время читает
+	# зеркало — и не должен падать, даже когда его уже сняли (#231).
+	await _dismantle_at(corner)
 	ok("на повороте зеркала больше нет", not (World.machines.get(corner) is Mirror))
 	var tossed: int = _toss(IDs.I.MIRROR)
 	ok("в наборе зеркал не осталось", tossed >= 1 and mission.heroes_have(IDs.I.MIRROR) == 0,
 			"выброшено %d, у героя %d" % [tossed, mission.heroes_have(IDs.I.MIRROR)])
 	var why: String = mission.fail_reason()
 	ok("fail_reason — зеркало снято", why == "Зеркало снято, поставить нечем.", "«%s»" % why)
-	# Тот же lose(), что зовёт тик главы. Сам тик не ждём: цель «доведи луч»
-	# лезет в .dir снятого зеркала и роняет кадр (mirror.gd:128, код игры).
-	mission.lose(why)
-	var lost: bool = mission.result == Mission.Result.LOST
+	# Провал приходит сам: тик главы зовёт lose(), сценарий его не подменяет.
+	var lost: bool = await wait_until(func() -> bool:
+		return mission.result == Mission.Result.LOST, 3.0)
 	var es: Node = scene.get("end_screen")
 	ok("глава провалена: нечем поставить зеркало",
 			lost and mission.result == Mission.Result.LOST
