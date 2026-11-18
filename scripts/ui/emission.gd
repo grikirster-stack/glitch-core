@@ -43,6 +43,7 @@ var stat_frames: int = 0
 
 
 func _ready() -> void:
+	add_to_group("emission")
 	var sh: Shader = Shader.new()
 	sh.code = shader_code()
 	tile_material = ShaderMaterial.new()

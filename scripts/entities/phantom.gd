@@ -116,6 +116,10 @@ var _drain_t: float = Balance.SHADE_DRAIN_PERIOD	## Таймер дренажа 
 var _dig_t: float = 0.0				## Таймер копания (копатель).
 var _buzz_t: float = 0.0			## Таймер жужжания роя.
 var _blocked_x: bool = false		## В прошлом кадре упёрлись в стену по горизонтали.
+## Дочерний узел обводки отхода (#236). null — обводки нет.
+var _outline: Node2D = null
+var _outline_col: Color = Color(0, 0, 0, 0)
+var _outline_flip: bool = false
 
 # Свет игрока общий для всех фантомов: пересчитывать его на каждого — расточительно.
 static var _shared_player_light: float = 0.0
@@ -1332,6 +1336,8 @@ func _split_d(t: float, rate: float) -> float:
 
 ## Эхо: тёмно-фиолетовая копия скафандра, верх распадается светящимися спорами,
 ## визор цвета опасности, расслоение каналов 1 px.
+## Обводка отхода (#236): только безвредное эхо и только в FLEE. Цвет — луч,
+## от которого оно бежит. Остальные состояния и бьющие главы не трогаем.
 func _draw_echo() -> void:
 	var t: float = jitter
 	var base: Color = Color(0.29, 0.23, 0.36)
@@ -1342,6 +1348,7 @@ func _draw_echo() -> void:
 	_face(facing < 0)
 	# Тень на земле — плоская полоса.
 	draw_rect(Rect2(-7.0, SIZE.y * 0.5, 14.0, 1.0), GROUND_SHADOW)
+	_sync_flee_outline()
 	# Расслоение: красная копия шлема и корпуса влево, циановая вправо.
 	var d: float = _split_d(t, 9.0)
 	draw_rect(Rect2(-5.0 - d, -9.0, 10.0, 8.0), SPLIT_RED)
@@ -1375,6 +1382,73 @@ func _draw_echo() -> void:
 		draw_rect(Rect2(sx, -10.0 - floorf(life * 7.0), sz, sz), Color(BIO, 0.9 * (1.0 - life)))
 	_face(false)
 	_draw_status(t, -19.0)
+
+
+## Обводка отхода на дочернем узле. CanvasModulate ночи гасит draw_rect самого
+## фантома — обычный контур на кадре 16.9 не читается. Узел берёт материал
+## эмиссии (как ореол луча): цвет луча выходит своим и в темноте.
+func _sync_flee_outline() -> void:
+	var on: bool = harmless and kind == "echo" and state == St.FLEE
+	if _outline == null:
+		if not on:
+			return
+		_outline = Node2D.new()
+		_outline.z_as_relative = false
+		_outline.z_index = 6
+		add_child(_outline)
+	if _outline.material == null:
+		var em: Node = _emission_node()
+		if em != null and em.get("glow_material") != null:
+			_outline.material = em.glow_material
+	_outline.visible = on
+	if not on:
+		return
+	var col: Color = _flee_beam_color()
+	if _outline_col == col and _outline_flip == (facing < 0):
+		return
+	_outline_col = col
+	_outline_flip = facing < 0
+	_outline.queue_redraw()
+	if not _outline.draw.is_connected(_paint_flee_outline):
+		_outline.draw.connect(_paint_flee_outline)
+
+
+func _emission_node() -> Node:
+	var tree: SceneTree = get_tree()
+	if tree == null:
+		return null
+	return tree.get_first_node_in_group("emission")
+
+
+func _paint_flee_outline() -> void:
+	if _outline == null:
+		return
+	var col: Color = _outline_col
+	var flip: float = -1.0 if _outline_flip else 1.0
+	_outline.draw_set_transform(Vector2.ZERO, 0.0, Vector2(flip, 1.0))
+	# Поле 2 px вокруг шлема, корпуса, ранца и ног. Силуэт рисуется поверх.
+	_outline.draw_rect(Rect2(-8.0, -12.0, 16.0, 13.0), col)
+	_outline.draw_rect(Rect2(-9.0, -4.0, 18.0, 14.0), col)
+	_outline.draw_rect(Rect2(-12.0, -4.0, 6.0, 12.0), col)
+	_outline.draw_rect(Rect2(-8.0, 5.0, 8.0, 8.0), col)
+	_outline.draw_rect(Rect2(0.0, 5.0, 8.0, 8.0), col)
+	_outline.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Цвет луча в клетке эха или у соседа. Нет луча — красный горелки (Beams.R):
+## глава «Огонь» отступает именно от него. Смесь берём как есть.
+func _flee_beam_color() -> Color:
+	if World.beams != null:
+		var here: Vector2i = World.world_to_cell(global_position)
+		var mask: int = World.beams.color_at(here)
+		if mask == 0:
+			for d in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+				mask = World.beams.color_at(here + d)
+				if mask != 0:
+					break
+		if mask > 0 and mask < Beams.COLOR.size():
+			return Beams.COLOR[mask]
+	return Beams.COLOR[Beams.R]
 
 
 ## Индикатор погони, полоса hp и искры оглушения — общие для всех типов.
