@@ -88,9 +88,10 @@ func _sun() -> float:
 	ok("белый открыл ≥ 5 клеток кристалла", shown,
 			"маяк %d, клеток %d" % [_pharos_color(), _crystals_open()])
 	ok("этап копки", await wait_stage(2, 2.0), str(mission.stage))
-	_dig_crystals(3)
-	ok("накопано 3 кристалла", player.inv.count_of(IDs.I.CRYSTAL) >= 3,
-			"кристаллов %d" % player.inv.count_of(IDs.I.CRYSTAL))
+	# #235: цель закрывается штатной копкой, не стиранием тайла.
+	var dug: int = await _mine_goal()
+	ok("накопано 3 кристалла штатной копкой", dug >= 3,
+			"копано %d, в инвентаре %d" % [dug, player.inv.count_of(IDs.I.CRYSTAL)])
 	ok("этап запаса", await wait_stage(3, 2.0), str(mission.stage))
 	var burner: Burner = World.machines.get(LightLate.at(LightLate.BURNER)) as Burner
 	var acc: Accumulator = World.machines.get(LightLate.at(LightLate.ACCUM)) as Accumulator
@@ -383,17 +384,35 @@ func _crystals_open() -> int:
 	return n
 
 
-func _dig_crystals(n: int) -> void:
+## Три кристалла цели — штатной ЛКМ с клетки слева (#235). Печатает секунды
+## копки каждого и возвращает, сколько сломано. Курсор — на центр грани:
+## в угол клетки луч не целится, он уходит в соседа по диагонали.
+func _mine_goal() -> int:
 	var got: int = 0
-	for row in LightLate.CRYSTAL_ROWS:
-		if got >= n:
-			break
-		var c: Vector2i = LightLate.crystal_cell(int(row))
+	for c in LightLate.goal_cells():
 		if World.get_tile_v(c) != IDs.T.CRYSTAL_ORE:
 			continue
-		World.set_tile(c.x, c.y, IDs.T.AIR)
-		player.inv.add(IDs.I.CRYSTAL, 1)
+		stand_at_cell(LightLate.goal_stand(c))
+		await wait(0.3)
+		var face: Vector2 = Vector2(float(c.x * World.TILE) + 1.0, float(c.y * World.TILE) + 8.0)
+		aim(face)
+		press_mouse(MOUSE_BUTTON_LEFT)
+		var t0: float = Game.game_time
+		var broke: bool = await _until_proc(func() -> bool:
+			return World.get_tile_v(c) != IDs.T.CRYSTAL_ORE, 6.0)
+		release_mouse(MOUSE_BUTTON_LEFT)
+		var sec: float = Game.game_time - t0
+		print("  [замер] кристалл %s: %s за %.2f с, копал %s" % [
+				c, "сломан" if broke else "цел", sec, player.dig_cell])
+		if not broke:
+			break
 		got += 1
+		var picked: bool = await _until_proc(func() -> bool:
+			return player.inv.count_of(IDs.I.CRYSTAL) >= got, 3.0)
+		if not picked:
+			print("  [замер] кристалл %s: дроп не подобран" % c)
+			break
+	return got
 
 
 func _burrower() -> Node:
