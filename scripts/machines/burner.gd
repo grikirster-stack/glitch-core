@@ -217,7 +217,11 @@ func _draw() -> void:
 	draw_rect(Rect2(-5.0, -3.0, 8.0, 7.0), C_FRAME)
 	draw_rect(Rect2(-4.0, -2.0, 6.0, 5.0), flame)
 	if hot:
-		draw_rect(Rect2(-3.0, 0.0, 4.0, 2.0), flame.lightened(0.3))
+		# Три языка из низа окна: высота дышит, иначе топка — статичный прямоугольник.
+		var hi: Color = flame.lightened(0.3)
+		for i in 3:
+			var h: int = maxi(1, 2 + int(sin(t * 9.0 + float(i)) * 2.0))
+			draw_rect(Rect2(-3.0 + float(i) * 2.0, 3.0 - float(h), 2.0, float(h)), hi)
 	# Носик по направлению: из него бьёт луч.
 	_draw_nozzle()
 	# Шкала топлива справа, как у ТЭЦ: доля текущей единицы снизу вверх

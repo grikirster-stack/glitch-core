@@ -92,10 +92,20 @@ func _draw() -> void:
 			col = Beams.COLOR[c]
 			if full:
 				col = Color(col.r, col.g, col.b, pulse)
-		draw_rect(Rect2(x0 + float(drawn) * 3.0, -14.0, 2.0, 6.0), col)
+		var bx: float = x0 + float(drawn) * 3.0
+		draw_rect(Rect2(bx, -14.0, 2.0, 6.0), col)
+		if (lit & bit) != 0:
+			_draw_arc(bx, -15.0, col)
 		drawn += 1
 	if full:
 		draw_rect(Rect2(-2.0, 1.0, 4.0, 3.0), Color(1.0, 1.0, 1.0, 0.35 + 0.4 * pulse))
 	if Game.relay_active and cell == Game.core_cell:
 		# Белая искра: сигнал уже идёт, столб рисует WorldFX.
 		draw_rect(Rect2(-1.0, -8.0, 2.0, 2.0), Color.WHITE)
+
+
+## Дуга над зажжённым столбиком: три квадрата, цвет луча. Пульс — в цвете.
+func _draw_arc(x: float, top: float, col: Color) -> void:
+	draw_rect(Rect2(x, top - 2.0, 2.0, 2.0), col)
+	draw_rect(Rect2(x - 1.0, top - 4.0, 2.0, 2.0), col)
+	draw_rect(Rect2(x + 1.0, top - 4.0, 2.0, 2.0), col)
