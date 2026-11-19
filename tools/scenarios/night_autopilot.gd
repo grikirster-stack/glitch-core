@@ -9,7 +9,7 @@ extends "res://tools/scenarios/balance_common.gd"
 ##   пусто        — ночи 1–3, один светокристалл;
 ##   средняя      — 2 горелки + 1 маяк; по цвету (7) и «оставили красный»;
 ##   семь цветов  — 2 горелки на чистых цветах + 7 маяков;
-##   удержание    — та же база, 180 с, Game.relay_active (THREAT_RELAY).
+##   удержание    — та же база, Balance.RELAY_TIME с, Game.relay_active (THREAT_RELAY).
 ##
 ## Дефолт — дым для CI (шард сценариев 12 мин): пусто, средняя «оставили красный»,
 ## семь цветов, удержание, по одному прогону. Флаги не входят в `--scenario=all`:
@@ -22,8 +22,6 @@ extends "res://tools/scenarios/balance_common.gd"
 
 
 const NIGHT_SECS: float = 90.0
-## Удержание сигнала длиннее ночи (Balance.RELAY_TIME).
-const HOLD_SECS: float = 180.0
 const SPEED: float = 4.0
 ## Фантом ближе — ночь «под давлением» (бест-практики A2).
 const PRESSURE_PX: float = 7.0 * 16.0
@@ -64,6 +62,11 @@ func run() -> void:
 	ok("первая ночь не раньше 140 с", dawn >= 140.0, "%.1f с" % dawn)
 
 	var rows: Array = []
+	if _flag("autopilot-post"):
+		rows.append(await _level_post(repeats))
+		_print_table(rows)
+		finish()
+		return
 	rows.append(await _level_empty(repeats))
 	if colors:
 		for mask in COLOR_ORDER:
@@ -115,6 +118,20 @@ func _dawn_to_night() -> float:
 
 
 ## «Пусто»: ничего не построено, один светокристалл у героя. Ночи 1–3.
+## После сигнала, пустая база: ядро стоит, signal_sent, ночи 4–6.
+## В CI не входит (--autopilot-post). Меряет, растёт ли B со сменой.
+func _level_post(repeats: int) -> Dictionary:
+	_wipe_built()
+	stand_next_to_beacon()
+	_put_lamp()
+	var core_c: Vector2i = World.beacon_cell + Vector2i(2, -1)
+	World.set_tile(core_c.x, core_c.y, IDs.T.AIR)
+	var placed: bool = MachineBase.place_machine("RainbowCore", core_c)
+	ok("ядро поставлено", placed)
+	Game.signal_sent = true
+	return await _nights("после сигнала", [4, 5, 6], [core_c] if placed else [], repeats, NIGHT_SECS, false)
+
+
 func _level_empty(repeats: int) -> Dictionary:
 	_wipe_built()
 	stand_next_to_beacon()
@@ -139,7 +156,7 @@ func _level_mid(mask: int, repeats: int, stuck_red: bool) -> Dictionary:
 ## (уголь и медь) — бест-практики B1, T считает пару. Синий и смеси держит
 ## накопитель с запасом луча: он отдаёт цвет и не жжёт топливо, в T входит
 ## как накопитель (0,25), не как третья топка.
-## hold — удержание сигнала 180 с, T += THREAT_RELAY.
+## hold — удержание сигнала RELAY_TIME с, T += THREAT_RELAY.
 func _level_seven(repeats: int, hold: bool) -> Dictionary:
 	_wipe_built()
 	stand_next_to_beacon()
@@ -149,7 +166,7 @@ func _level_seven(repeats: int, hold: bool) -> Dictionary:
 	ok("%s: семь маяков под лучом" % title, int(built["lit"]) == 7, "маяков %d" % int(built["lit"]))
 	ok("%s: горят 2 горелки" % title, int(built["burners"]) == 2, "%d" % int(built["burners"]))
 	var day: int = 3 if hold else 6
-	var secs: float = HOLD_SECS if hold else NIGHT_SECS
+	var secs: float = Balance.RELAY_TIME if hold else NIGHT_SECS
 	return await _nights(title, [day], built["cells"], repeats, secs, hold)
 
 
@@ -382,7 +399,7 @@ func _quiet_day(day: int, hold: bool) -> bool:
 	return day <= Balance.QUIET_NIGHTS and not hold
 
 
-## Одна ночь. hold — удержание сигнала: T получает THREAT_RELAY, окно HOLD_SECS.
+## Одна ночь. hold — удержание сигнала: T получает THREAT_RELAY, окно Balance.RELAY_TIME.
 func _one_night(day: int, machines: Array, secs: float, hold: bool) -> Dictionary:
 	clear_phantoms()
 	Threat.reset()
@@ -393,7 +410,7 @@ func _one_night(day: int, machines: Array, secs: float, hold: bool) -> Dictionar
 	# ночи, advance_clock перескакивает рассвет и директор закрывает смену.
 	Game.relay_active = hold
 	# Не из ночи: _begin_night ловит фронт «стало ночью». Пин после такта
-	# не даёт часам уйти в день, пока меряем 180 с.
+	# не даёт часам уйти в день, пока меряем окно удержания.
 	Game.time_of_day = 0.50 if hold else Balance.NIGHT_START - 1.0 / Balance.DAY_LENGTH
 	_pin_night = false
 	player.hp = Player.MAX_HP

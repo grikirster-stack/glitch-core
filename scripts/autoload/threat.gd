@@ -100,13 +100,23 @@ func scripted() -> bool:
 
 # ------------------------------------------------------------------ ФОРМУЛЫ
 
-## Уровень угрозы T (ADR-005 § 6.2). Смена не выше THREAT_DAY_CAP.
+## Уровень угрозы T (ADR-005 § 6.2). Смена не выше потолка: 3 до сигнала,
+## 6 после (#261). Кампания и ночи 1–2 потолок не поднимают.
 func threat_level() -> float:
-	return minf(float(Game.day_number), float(Balance.THREAT_DAY_CAP)) \
+	return minf(float(Game.day_number), float(day_cap())) \
 			+ Balance.THREAT_PER_BURNER * float(burners_lit()) \
 			+ Balance.THREAT_PER_PHAROS * float(pharos_lit()) \
 			+ Balance.THREAT_PER_ACCUM * float(accumulators()) \
 			+ (Balance.THREAT_RELAY if Game.relay_active else 0.0)
+
+
+
+## Потолок смены в формуле T. После сигнала — 6, иначе 3.
+## Кампания свой потолок не поднимает: у главы своя ночь.
+static func day_cap() -> int:
+	if Game.signal_sent and not Game.in_mission():
+		return Balance.THREAT_DAY_CAP_POST_RELAY
+	return Balance.THREAT_DAY_CAP
 
 
 ## Тихая ночь: первые QUIET_NIGHTS, пока не держим сигнал.
@@ -129,7 +139,7 @@ static func cap_for(day: int, relay: bool, t: float = -1.0) -> int:
 		return Balance.RELAY_HOLD_CAP
 	if quiet_night(day, false):
 		return Balance.QUIET_ALIVE_CAP
-	var level: float = t if t >= 0.0 else float(mini(day, Balance.THREAT_DAY_CAP))
+	var level: float = t if t >= 0.0 else float(mini(day, day_cap()))
 	var cap: int = Balance.CAP_BASE + int(floor(level))
 	return mini(cap, Balance.CAP_MAX)
 

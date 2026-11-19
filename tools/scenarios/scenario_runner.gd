@@ -182,7 +182,7 @@ const REGISTRY: Dictionary = {
 		"file": "night_autopilot.gd",
 		"title": "ночь на автопилоте",
 		"timeout_ms": 240000,
-		"desc": "пусто / 2 горелки+красный маяк / семь цветов / удержание 180 с; --autopilot-colors и --autopilot-repeats в CI не входят",
+		"desc": "пусто / 2 горелки+красный маяк / семь цветов / удержание RELAY_TIME с; --autopilot-colors и --autopilot-repeats в CI не входят",
 	},
 	"vent_spawn": {
 		"file": "vent_spawn.gd",
