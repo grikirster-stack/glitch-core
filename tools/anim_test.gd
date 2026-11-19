@@ -79,6 +79,7 @@ enum {
 	ST_CAT_TRAIL,
 	ST_CAT_NIGHT,
 	ST_GENERAL,
+	ST_A3,
 }
 
 
@@ -247,6 +248,7 @@ class Runner extends Node:
 			ST_FX_TTL: _s_fx_ttl()
 			ST_FX_LIMIT: _s_fx_limit()
 			ST_FX_LIMIT_WAIT: _s_fx_limit_wait()
+			ST_A3: _s_a3()
 			ST_PULSE_START: _s_pulse_start()
 			ST_PULSE_CHECK: _s_pulse_check()
 			ST_LIGHT_API: _s_light_api()
@@ -922,7 +924,117 @@ class Runner extends Node:
 		_cat = null
 		if game != null:
 			game.time_of_day = _tod0
+		_next(ST_A3, 0.05)
+
+
+
+	## Картинка A3 (#239): пламя, дуги, корка, бур, шаг, присед, предмет, споры.
+	## Состояние задаётся прямо — без ожидания кадра, как проверки A2.
+	func _s_a3() -> void:
+		_a3_flame()
+		_a3_arcs()
+		_a3_frost()
+		_a3_burrow()
+		_a3_stride()
+		_a3_crouch()
+		_a3_item()
+		_a3_spores()
 		_next(ST_GENERAL, 0.05)
+
+
+	## Языки топки: sin(t*9+i) даёт разную высоту на двух моментах.
+	func _a3_flame() -> void:
+		var h0: Array = _flame_heights(0.0)
+		var h1: Array = _flame_heights(0.2)
+		_ok("языки пламени меняют высоту", h0 != h1, "%s -> %s" % [str(h0), str(h1)])
+
+
+	func _flame_heights(t: float) -> Array:
+		var out: Array = []
+		for i in 3:
+			out.append(maxi(1, 2 + int(sin(t * 9.0 + float(i)) * 2.0)))
+		return out
+
+
+	## Дуга над зажжённым столбиком — три квадрата цвета луча.
+	func _a3_arcs() -> void:
+		var src: String = FileAccess.get_file_as_string("res://scripts/machines/rainbow_core.gd")
+		var at: int = src.find("func _draw_arc")
+		var body: String = src.substr(at, 240) if at >= 0 else ""
+		var squares: int = body.count("draw_rect(")
+		_ok("дуга ядра — три квадрата цвета луча", squares == 3 and body.contains("col"),
+				"квадратов %d" % squares)
+
+
+	## Корка заморозки — цвет синего луча, не только побледнение.
+	func _a3_frost() -> void:
+		var src: String = FileAccess.get_file_as_string("res://scripts/entities/phantom.gd")
+		var at: int = src.find("func _draw_frost")
+		var body: String = src.substr(at, 220) if at >= 0 else ""
+		_ok("корка заморозки цвета синего луча",
+				body.contains("Beams.COLOR[Beams.B]") and body.count("draw_rect(") == 3,
+				"квадратов %d" % body.count("draw_rect("))
+
+
+	## Копатель в погоне сыплет крошку: счётчик чипов растёт.
+	func _a3_burrow() -> void:
+		var chips0: int = world_fx.chips.size() if world_fx != null else 0
+		var ph: GDScript = load("res://scripts/entities/phantom.gd")
+		var p: Node = ph.new()
+		p.set("player", player)
+		p.set("kind", "burrower")
+		p.set("state", int(_ph_enum.get("CHASE", 2)))
+		p.set("jitter", 1.0)
+		p.set("_spark_t", 0.0)
+		scene.add_child(p)
+		p.global_position = player.global_position + Vector2(40.0, 0.0)
+		p.call("_sparks_at_bit", 8.0)
+		var grew: int = world_fx.chips.size() - chips0 if world_fx != null else 0
+		_ok("копатель в погоне сыплет крошку", grew > 0, "чипов +%d" % grew)
+		p.queue_free()
+
+
+	## Шаг: ведущая нога на 2 px вперёд, корпус кренится на 1 px.
+	func _a3_stride() -> void:
+		var w0: float = player.walk_anim
+		var v0: float = player.vel.x
+		player.vel.x = player.SPEED
+		player.walk_anim = PI * 0.5
+		var lay: Dictionary = player.body_layout()
+		player.walk_anim = w0
+		player.vel.x = v0
+		var leg: Rect2 = lay.get("leg_front", Rect2())
+		var torso: Rect2 = lay.get("torso", Rect2())
+		_ok("шаг на 2 px и крен корпуса на 1 px",
+				absf(leg.position.x) >= 1.0 and absf(torso.position.x) >= 1.0,
+				"нога %.0f, торс %.0f" % [leg.position.x, torso.position.x])
+
+
+	## Присед: crouch > 0 опускает торс на 1 px (Avatar.squash).
+	func _a3_crouch() -> void:
+		var stood: Dictionary = player.body_layout()
+		var y0: float = stood["torso"].position.y
+		player.crouch = 0.2
+		var sat: Dictionary = player.body_layout()
+		var y1: float = sat["torso"].position.y
+		player.crouch = 0.0
+		_ok("присед опускает торс на 1 px", is_equal_approx(y1 - y0, 1.0),
+				"торс %.0f -> %.0f" % [y0, y1])
+
+
+	## Предмет на земле покачивается на 1 px.
+	func _a3_item() -> void:
+		var src: String = FileAccess.get_file_as_string("res://scripts/entities/item_entity.gd")
+		var bob: bool = src.contains("round(sin(age * 3.0))") and src.contains("position.y += bob - _bob")
+		_ok("предмет на земле покачивается на 1 px", bob, "sin(age*3)")
+
+
+	## Споры ночью: угол кремового пятна на шляпке горит на эмиссии.
+	func _a3_spores() -> void:
+		var em: GDScript = load("res://scripts/ui/emission.gd")
+		var code: String = em.shader_code()
+		var night: bool = code.contains("night > 0.0") and code.contains("spot")
+		_ok("споры ночью горят на эмиссии", night, "шейдер %s" % ("с ночью" if night else "без ночи"))
 
 
 	## Окно топки горящей горелки — цвет луча, не сажа холодной топки.
