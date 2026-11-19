@@ -40,8 +40,11 @@ const RUNS: Dictionary = {
 	"mining": {"sc": "mp_balance_mining", "flags": []},
 	"doppel": {"sc": "mp_balance_doppel", "flags": [], "ns": [2, 3, 4]},
 }
+## siege3/def3/siege5/def5 сняты из дефолта: mp_balance_siege удалён вместе
+## с базой из ТЭЦ и буров (#170). Ключи в RUNS оставлены — явный --runs=siege3
+## честно падает «нет файла», а не молча меряет пустоту.
 const DEFAULT_RUNS: Array = ["night1", "night1_dark", "night3_dark", "night3_solo1", "night3_solo2",
-		"night3_solo3", "siege3", "def3", "siege5", "def5", "mining", "doppel"]
+		"night3_solo3", "mining", "doppel"]
 
 ## Цели. key — «прогон.метрика»; ratio — факт при N делится на факт при N = 1 того же сида;
 ## ns — при каких N проверять. op: ">=", "<=", "==", "in" (lo..hi). by_mean — в допуске

@@ -19,9 +19,8 @@ extends "res://tools/scenarios/balance_common.gd"
 ## необработанной жиле (телепорт), засекается только копка и подбор.
 ## Ручной крафт в игре мгновенный, поэтому в итог не входит.
 
-## Нижняя граница чистой добычи (ADR-001 § 2). Не ноль: ноль пропускает релей
-## из воздуха. Руками не быстрее станков — порог эпохи фабрики остаётся.
-const TARGET_MIN: float = 25.0
+## Порог 25 мин эпохи фабрики снят (#212, #239): победа — терминал, 12 руды,
+## ночь и шесть дуг, не пластины RELAY_REQ. Секундомер копки остаётся.
 const SAMPLE_MAIN: int = 10         ## проб на сырьё, которого в бюджете ≥ 20
 const SAMPLE_MINOR: int = 4
 const PICK_PX: float = 60.0         ## копаем не дальше магнита предметов (70 px)
@@ -79,8 +78,11 @@ func run() -> void:
 				int(res["picked"]), spu * float(n) / 60.0])
 	ok("каждое сырьё измерено ботом", all_measured)
 	var minutes: float = total / 60.0
-	metric("hand_relay_min", minutes, "минут чистой добычи руками до релея")
-	ok("релей руками ≥ %.0f мин добычи" % TARGET_MIN, minutes >= TARGET_MIN, "%.1f мин" % minutes)
+	metric("hand_relay_min", minutes, "минут чистой добычи legacy-релея; не цель победы (#212)")
+	var day_s: float = (Balance.NIGHT_START - Balance.START_TIME) * Balance.DAY_LENGTH
+	metric("ore_secs_day", day_s, "световой день, с: столько чистой копки влезает между рассветом и ночью")
+	print("  legacy-релей %.1f мин добычи — справочно, порог 25 мин снят (#212)" % minutes)
+	print("  световой день %.0f с чистой копки (ore_secs_day)" % day_s)
 	finish()
 
 
