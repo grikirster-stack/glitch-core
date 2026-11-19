@@ -1454,11 +1454,36 @@ func _flee_beam_color() -> Color:
 
 ## Корка синего маяка: три квадрата цвета луча по контуру. Побледнения мало —
 ## ребёнок должен видеть, что фантом замёрз, а не просто побледнел.
+func _frost_color() -> Color:
+	return Beams.COLOR[Beams.B]
+
+
 func _draw_frost() -> void:
-	var ice: Color = Beams.COLOR[Beams.B]
-	draw_rect(Rect2(-6.0, -10.0, 3.0, 2.0), ice)
-	draw_rect(Rect2(3.0, -4.0, 3.0, 2.0), ice)
-	draw_rect(Rect2(-4.0, 6.0, 3.0, 2.0), ice)
+	var ice: Color = _frost_color()
+	for r in _frost_rects():
+		draw_rect(r, ice)
+
+
+## Три квадрата корки. Тот же набор, что рисует _draw_frost.
+func _frost_rects() -> Array:
+	return [
+		Rect2(-6.0, -10.0, 3.0, 2.0),
+		Rect2(3.0, -4.0, 3.0, 2.0),
+		Rect2(-4.0, 6.0, 3.0, 2.0),
+	]
+
+
+## Картинка кадра: корка (если эхо оглушено) и крошка копателя в погоне.
+## anim_test читает её, а не исходник. Крошка идёт тем же путём, что _draw.
+## Цвет корки — тот же _frost_color, которым красит _draw.
+func picture() -> Dictionary:
+	var ice: Color = _frost_color()
+	var out: Dictionary = {"frost": [], "frost_color": ice}
+	if kind == "echo" and stun > 0.0:
+		out["frost"] = _frost_rects()
+	if kind == "burrower" and state == St.CHASE and stun <= 0.0:
+		_sparks_at_bit(SIZE.y * 0.5)
+	return out
 
 
 ## Крошка породы у острия бура. Раз в 0.2 с, только в погоне: видно, что роет,
