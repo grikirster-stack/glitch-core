@@ -1,9 +1,10 @@
 extends ScenarioBase
 ## Сирена (#172, ADR-005 § 7.2).
 ##
-## Рой из 5 и тень в 6 клетках. Под лучом заряд доходит за 60 с, E гонит всех
-## в FLEE на 10 с, расстояние до сирены растёт. Через 10 с снова идут.
-## Без луча заряд стоит.
+## Рой из 5 и тень в 6 клетках. Под лучом заряд доходит за SIREN_RECHARGE
+## (не дольше 62 с — запас на кадр), E гонит всех в FLEE на 10 с, расстояние
+## до сирены растёт. Через 10 с снова идут. Без луча заряд стоит.
+## Замер: луч с сумерек (14 с) + начало ночи — успевает ли заряд к первой волне.
 
 
 const TILE: float = 16.0
@@ -46,7 +47,27 @@ func run() -> void:
 	ok("заряд полон за ≤ 62 с", full and siren.charge >= Balance.SIREN_RECHARGE - 0.05
 			and now_proc() - t0 <= 62.5,
 			"%.2f / %.0f за %.1f с" % [siren.charge, Balance.SIREN_RECHARGE, now_proc() - t0])
-	print("  [замер] заряд сирены: %.2f с под лучом (цель %.0f)" % [siren.charge, Balance.SIREN_RECHARGE])
+	var charged: float = now_proc() - t0
+	print("  [замер] заряд сирены: %.2f с под лучом (цель %.0f, факт %.1f с)" % [
+			siren.charge, Balance.SIREN_RECHARGE, charged])
+	# metric("siren_charge_s", charged, "секунд под лучом до полного заряда")
+	# Первая волна пустой ночи: телеграф 2 с, интервал при T = 3 → 5.5 с.
+	# Луч с сумерек копится DUSK_START→NIGHT_START до телеграфа.
+	var dusk_s: float = Balance.DAY_LENGTH * (Balance.NIGHT_START - Balance.DUSK_START)
+	var wave_s: float = Balance.VENT_TELEGRAPH + Balance.SPAWN_INTERVAL_MAX \
+			- Balance.SPAWN_INTERVAL_PER_T * float(Balance.THREAT_DAY_CAP)
+	var ready_at: float = Balance.SIREN_RECHARGE - dusk_s
+	print("  [замер] к первой волне: сумерки %.1f с + волна %.1f с, заряд готов через %.1f с ночи (реле %.0f)" % [
+			dusk_s, wave_s, ready_at, Balance.SIREN_RECHARGE])
+	# metric("siren_ready_after_night_s", ready_at, "секунд ночи до готовности, если луч с сумерек")
+	# metric("siren_first_wave_s", wave_s, "секунд от начала ночи до первой волны (T=3)")
+	# Приёмка: луч с сумерек доводит заряд раньше первой волны (7.5 с ночи).
+	# 20 с успевают (готова на 5.6 с), 30 — нет (15.6 с).
+	print("  [замер] готова к волне: %s (нужно ≤ %.1f с ночи)" % [
+			"да" if ready_at <= wave_s + 0.05 else "нет", wave_s])
+	ok("сирена готова к первой волне, если луч с сумерек",
+			ready_at <= wave_s + 0.05,
+			"готова через %.1f с ночи, волна на %.1f с" % [ready_at, wave_s])
 
 	# Рой — стая целиком (spawn даёт 4–6, берём пять). Тень в 6 клетках, на полу.
 	# Ходячая тень бежит от сирены вбок: под ней нужен коридор, иначе край обрыва.
