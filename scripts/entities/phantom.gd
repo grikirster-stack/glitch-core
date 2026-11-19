@@ -55,6 +55,8 @@ var _flee_from: Vector2 = Vector2.ZERO
 ## а не бродит. Свет ярче light_flee по-прежнему перебивает — эхо отступает.
 var approach_t: float = 0.0
 var approach_at: Vector2 = Vector2.ZERO
+## Директор (#268): сквозь свет, пока героя не видно. Глава не ставит.
+var seek_los: bool = false
 var hp: float = MAX_HP
 var max_hp: float = MAX_HP
 var dmg: float = 24.0				## Урон по игроку за удар.
@@ -189,6 +191,11 @@ func _physics_process(delta: float) -> void:
 		return
 
 	var dist: float = global_position.distance_to(player.global_position)
+	# Директор (#268): сквозь свет, пока героя не видно. Кристалл в соседней
+	# клетке закрывает луч — _has_los врёт, и эхо стоит в свете у героя.
+	# Свет самой клетки героя при дистанции удара — та же видимость.
+	if seek_los and _seen_hero(dist):
+		seek_los = false
 
 	# --- Растворение в глубине ------------------------------------------------
 	# Забывший про игрока фантом (не в погоне) уходит за пределы досягаемости.
@@ -217,7 +224,7 @@ func _physics_process(delta: float) -> void:
 		# Сирена (#172): пока таймер жив, свет и приманка состояние не меняют.
 		state = St.FLEE
 		target_machine = null
-	elif approach_t > 0.0 and light <= light_flee:
+	elif approach_t > 0.0 and (light <= light_flee or (seek_los and not _seen_hero(dist))):
 		# Луч ещё не вспугнул: идём к нему, не к герою и не в блуждание.
 		state = St.CHASE
 		target_machine = null
@@ -230,17 +237,12 @@ func _physics_process(delta: float) -> void:
 	if state == St.CHASE:
 		target_pos = _chase_goal()
 	elif state == St.FLEE:
-		if _flee_from != Vector2.ZERO:
-			var away: Vector2 = global_position - _flee_from
-			if away.length_squared() < 4.0:
-				away = Vector2(1.0, 0.0)
-			# Сирена прямо над тенью: горизонтали нет, пеший фантом так и стоит.
-			# Боковой шаг даёт ходьбе направление, рою он почти ничего не меняет.
-			if absf(away.x) < 8.0:
-				away.x = 16.0 if facing >= 0 else -16.0
-			target_pos = global_position + away.normalized() * 90.0
+		if flying:
+			target_pos = _flee_air()
 		else:
-			target_pos = global_position + (global_position - World.cell_to_world(World.world_to_cell(global_position))).normalized() * 90.0
+			# Пеший шаг смотрит только по X. Цель строго вверх (отход от центра
+			# клетки) даёт vel 0 — эхо стоит в свете всю ночь (#268).
+			target_pos = _flee_step()
 	elif state == St.ROAM:
 		wander_t -= dt
 		if wander_t <= 0.0:
@@ -373,13 +375,50 @@ func _physics_process(delta: float) -> void:
 # ------------------------------------------------------------------ РЕШЕНИЯ
 
 ## Состояние на этот кадр — по типу фантома.
+
+## Отход по воздуху: от точки сирены или от центра своей клетки.
+func _flee_air() -> Vector2:
+	var away: Vector2 = global_position - _flee_from if _flee_from != Vector2.ZERO 			else global_position - World.cell_to_world(World.world_to_cell(global_position))
+	if away.length_squared() < 4.0:
+		away = Vector2(1.0, 0.0)
+	if absf(away.x) < 8.0:
+		away.x = 16.0 if facing >= 0 else -16.0
+	return global_position + away.normalized() * 90.0
+
+
+## Пеший отход: проходимый сосед, дальше от источника света и темнее.
+## Чистая вертикаль пешему не шаг — такие клетки в конце списка.
+func _flee_step() -> Vector2:
+	var origin: Vector2 = _flee_from if _flee_from != Vector2.ZERO 			else World.cell_to_world(World.world_to_cell(global_position))
+	var here: Vector2i = World.world_to_cell(global_position)
+	var best: Vector2i = Vector2i(-1, -1)
+	var score: float = -INF
+	for d in [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(-1, -1), Vector2i(1, -1), \
+			Vector2i(-1, 1), Vector2i(1, 1), Vector2i(0, -1), Vector2i(0, 1)]:
+		var c: Vector2i = here + d
+		if not World.in_bounds(c.x, c.y):
+			continue
+		if World.astar != null and World.astar.is_point_solid(c):
+			continue
+		var w: Vector2 = World.cell_to_world(c)
+		var s: float = w.distance_to(origin) - World.light_at(c) * 48.0
+		if d.x == 0:
+			s -= 32.0
+		if s > score:
+			score = s
+			best = c
+	if best.x >= 0:
+		return World.cell_to_world(best)
+	return global_position + Vector2(16.0 if facing >= 0 else -16.0, 0.0)
+
+
 func _decide(dt: float, dist: float, light: float) -> void:
 	# Осада главы важнее света: копатель идёт к постройке сквозь луч.
 	if siege_target != null and is_instance_valid(siege_target) and kind == "burrower":
 		target_machine = siege_target
 		state = St.CHASE
 		return
-	if light > light_flee:
+	if light > light_flee and not (seek_los and approach_t > 0.0 and not _seen_hero(dist)):
 		state = St.FLEE
 		target_machine = null
 		return
@@ -757,6 +796,15 @@ func _blocked_ahead() -> bool:
 	return World.is_solid_at(ahead)
 
 
+## Директор (#268): герой виден. Луч по клеткам врёт, если кристалл стоит
+## в соседней клетке и закрывает отрезок — при дистанции удара свет клетки
+## героя значит то же, что прямая видимость.
+func _seen_hero(dist: float) -> bool:
+	if _has_los():
+		return true
+	return dist < 28.0 and _player_light_value(player.global_position) > light_flee
+
+
 func _has_los() -> bool:
 	## Кэшированная линия видимости: луч по клеткам стоит слишком дорого,
 	## чтобы считать его каждый кадр. Пересчитываем по таймеру,
@@ -922,6 +970,13 @@ func siege(machine: Node2D) -> void:
 ## Глава «Огонь» (#215): идти к точке t секунд, пока свет не вспугнет.
 ## Стан, сирена и свет ярче light_flee перебивают. Сеть не трогает: клиент
 ## рисует позицию из пакета хоста.
+## Директор (#268): вести к герою сквозь свет до первой прямой видимости.
+## После LOS порог света обычный. Глава зовёт approach без этого флага.
+func seek_until_seen(t: float, at: Vector2) -> void:
+	seek_los = true
+	approach(t, at)
+
+
 func approach(t: float, at: Vector2) -> void:
 	if net_puppet or not alive or t <= 0.0:
 		return
