@@ -63,12 +63,15 @@ func _tracker(hud: HUD) -> void:
 			"«%s» иконка %d, %d/%d" % [hud.card_text, hud.card_icon, hud.card_have, hud.card_need])
 	ok("этап 4: строка замера — дуги 0/6", hud.tracker_detail.begins_with("дуги 0/6"),
 			"«%s»" % hud.tracker_detail)
-	Game.relay_timer = 125.0
+	# Остаток внутри удержания. 125 с было «ещё не прошло 55» при полоске 180.
+	# После RELAY_TIME = 90 HUD делает max(0, 90−125) и карточка врёт 0/90 (#246).
+	var left: int = mini(45, int(Balance.RELAY_TIME) - 1)
+	Game.relay_timer = float(left)
 	Game.relay_active = true
 	Game.set_objective_stage(6)
 	await _frames(hud, 2)
 	ok("этап 6: «Держись у ядра», счётчик до эвакуации", hud.card_text == "Держись у ядра"
-			and hud.card_have == int(Balance.RELAY_TIME) - 125 and hud.card_need == int(Balance.RELAY_TIME),
+			and hud.card_have == int(Balance.RELAY_TIME) - left and hud.card_need == int(Balance.RELAY_TIME),
 			"«%s» %d / %d" % [hud.card_text, hud.card_have, hud.card_need])
 	Game.relay_timer = 0.0
 	Game.relay_active = false

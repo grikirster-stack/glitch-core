@@ -141,10 +141,12 @@ static func interval_for(t: float) -> float:
 
 
 ## Открыт ли тип к этой ночи (ADR-005 § 6.1). Эхо — всегда. Рой — если горят
-## две и больше горелки. Тень — если есть накопитель или сундук с топливом
-## (горелка с запасом тоже считается). Копатель — со смены 4 и если в мире есть
-## стальная стена. Двойник — в свободной игре со смены 6, в миссии никогда;
-## на удержании сигнала — как раньше, сразу.
+## SWARM_BURNERS горелок (три: две — это R+G для жёлтого, и стая приходила
+## раньше ответа). Тень — если есть накопитель или топливо, которое игрок
+## положил сам: сундук лагеря (permanent) не считается, иначе тень открыта
+## с ночи 3 всегда. Копатель — со смены 4, стена ему не ключ (иначе «не строй
+## стену» закрывает его навсегда). Двойник — в свободной игре со смены 6,
+## в миссии никогда; на удержании сигнала — как раньше, сразу.
 static func kind_open(kind: String, night: int, relay: bool) -> bool:
 	if kind == "echo":
 		return true
@@ -156,11 +158,11 @@ static func kind_open(kind: String, night: int, relay: bool) -> bool:
 		return false
 	match kind:
 		"swarm":
-			return _count_burners() >= 2
+			return _count_burners() >= Balance.SWARM_BURNERS
 		"shade":
 			return _count_accumulators() > 0 or _fuel_stored()
 		"burrower":
-			return night >= int(Balance.PHANTOMS["burrower"]["from_night"]) and _steel_wall()
+			return night >= int(Balance.PHANTOMS["burrower"]["from_night"])
 		"doppel":
 			return night >= int(Balance.PHANTOMS["doppel"]["from_night"])
 	return false
@@ -243,8 +245,10 @@ static func _pharos_under_beam(m: Object) -> bool:
 
 
 ## Есть ли у базы топливо, которое тень может съесть: сундук с топливом или
-## горелка с запасом в топке (горящая единица не считается запасом). Тайники
-## руин далеко от ядра не в счёт — иначе тень открыта с первой секунды мира.
+## горелка с запасом в топке (горящая единица не считается запасом). Сундук
+## лагеря (permanent) не в счёт: 8 угля там лежат с генерации, и тень была бы
+## открыта с ночи 3 без единой постройки игрока. Тайники руин далеко от ядра
+## не в счёт по той же причине.
 const FUEL_BASE_RADIUS: int = 24
 
 static func _fuel_stored() -> bool:
@@ -256,7 +260,7 @@ static func _fuel_stored() -> bool:
 		if absi(cell.x - origin.x) > FUEL_BASE_RADIUS or absi(cell.y - origin.y) > FUEL_BASE_RADIUS:
 			continue
 		var k: String = String(m.get("kind"))
-		if k == "Chest" and _chest_has_fuel(m):
+		if k == "Chest" and not bool(m.get("permanent")) and _chest_has_fuel(m):
 			return true
 		if k == "Burner" and m.has_method("fuel_units") and int(m.call("fuel_units")) > 0:
 			return true
@@ -270,8 +274,8 @@ static func _chest_has_fuel(m: Object) -> bool:
 	return false
 
 
-## В мире есть стальная стена — копателю есть что рыть. По строкам: один
-## find() по всему миру — это кадр, а открытие вида спрашивают на состав ночи.
+## В мире есть стальная стена. Открытие копателя её больше не спрашивает
+## (ночь ≥ 4 сама по себе): стена — ответ, не ключ. Функция осталась для замера.
 static func _steel_wall() -> bool:
 	var row: int = World.W
 	var id: int = IDs.T.STEEL_WALL
@@ -356,7 +360,7 @@ func _begin_night() -> void:
 	roster = plan_roster(budget, night_day, Game.relay_active, _doppels_alive())
 	# Эхо — первым (разведка), остальное вперемешку. Рой, если открыт, — сразу
 	# за разведчиком: иначе эхо занимает cap, и стая не выходит за ночь
-	# (ночь 3, две горелки, сид 4242).
+		# (ночь 3, три горелки, сид 4242).
 	var head: Array[String] = []
 	if not roster.is_empty() and roster[0] == "echo":
 		head.append(roster.pop_front())

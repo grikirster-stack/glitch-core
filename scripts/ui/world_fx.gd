@@ -552,6 +552,11 @@ func _draw_core_arcs() -> void:
 			col = Beams.COLOR[Game.CORE_ARC_COLOR[i]]
 		var x: float = bp.x - 10.0 + float(drawn) * 3.0
 		draw_rect(Rect2(x, bp.y - 12.0, 2.0, 5.0), col)
+		if (lit & (1 << i)) != 0:
+			# Дуга над столбиком: три квадрата цвета луча, поверх пластины.
+			draw_rect(Rect2(x, bp.y - 16.0, 2.0, 2.0), col)
+			draw_rect(Rect2(x - 1.0, bp.y - 18.0, 2.0, 2.0), col)
+			draw_rect(Rect2(x + 1.0, bp.y - 18.0, 2.0, 2.0), col)
 		drawn += 1
 
 

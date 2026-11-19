@@ -61,6 +61,8 @@ enum {
 	ST_PH_CHASE,
 	ST_PH_DAMAGE,
 	ST_PH_STUN,
+	ST_PH_CRUST,
+	ST_PH_OUTLINE,
 	ST_PH_LIMIT,
 	ST_MAC_SETUP,
 	ST_MAC_POWER,
@@ -74,6 +76,8 @@ enum {
 	ST_PULSE_CHECK,
 	ST_LIGHT_API,
 	ST_CAT,
+	ST_CAT_TRAIL,
+	ST_CAT_NIGHT,
 	ST_GENERAL,
 }
 
@@ -113,6 +117,7 @@ class Runner extends Node:
 	var _phantom: Node = null
 	var _cat: Node2D = null
 	var _cat_colors: Dictionary = {}
+	var _trail_age0: float = 0.0
 	var _hp0: float = 0.0
 	var _jitter0: float = 0.0
 	var _task0: float = 0.0
@@ -231,6 +236,8 @@ class Runner extends Node:
 			ST_PH_CHASE: _s_phantom_chase()
 			ST_PH_DAMAGE: _s_phantom_damage()
 			ST_PH_STUN: _s_phantom_stun()
+			ST_PH_CRUST: _s_phantom_crust()
+			ST_PH_OUTLINE: _s_phantom_outline()
 			ST_PH_LIMIT: _s_phantom_limit()
 			ST_MAC_SETUP: _s_machines_setup()
 			ST_MAC_POWER: _s_machines_power()
@@ -244,6 +251,8 @@ class Runner extends Node:
 			ST_PULSE_CHECK: _s_pulse_check()
 			ST_LIGHT_API: _s_light_api()
 			ST_CAT: _s_cat()
+			ST_CAT_TRAIL: _s_cat_trail()
+			ST_CAT_NIGHT: _s_cat_night()
 			ST_GENERAL: _s_general()
 			_: _finish()
 
@@ -658,6 +667,47 @@ class Runner extends Node:
 			_next(ST_PH_LIMIT)
 			return
 		_ok("стаун истекает", float(_phantom.stun) <= 0.0, "stun=%.3f" % float(_phantom.stun))
+		_next(ST_PH_CRUST)
+
+
+	## Стан синего маяка красит фантома: корка цвета луча, не только число stun.
+	## Рисунка из теста не снять — сверяем, что исходник красит стан цветом синего.
+	func _s_phantom_crust() -> void:
+		var src: String = FileAccess.get_file_as_string("res://scripts/entities/phantom.gd")
+		# Корка — цвет стана рядом с проверкой stun в рисунке эха, не где-то в файле.
+		var at: int = src.find("if stun > 0.0:")
+		var frost: bool = false
+		while at >= 0 and not frost:
+			var win: String = src.substr(at, 160)
+			frost = win.contains("STUN_TINT") or win.contains("Beams.COLOR[Beams.B]")
+			at = src.find("if stun > 0.0:", at + 12)
+		_ok("стан синего маяка красит фантома", frost,
+				"корка в рисунке эха" if frost else "синей корки в рисунке нет")
+		_next(ST_PH_OUTLINE)
+
+
+	## Обводка отхода (PR #238): у безвредного эха в FLEE узел виден, в CHASE — нет.
+	func _s_phantom_outline() -> void:
+		if _phantom == null or not is_instance_valid(_phantom):
+			_ok("обводка отхода проверяется", false, "фантома нет")
+			_next(ST_PH_LIMIT)
+			return
+		_phantom.set_physics_process(false)
+		_phantom.set("harmless", true)
+		_phantom.set("kind", "echo")
+		var flee: int = int(_ph_enum.get("FLEE", 3))
+		var chase: int = int(_ph_enum.get("CHASE", 2))
+		_phantom.set("state", flee)
+		_phantom.call("_sync_flee_outline")
+		var outline: Node = _phantom.get("_outline")
+		var flee_on: bool = outline != null and bool(outline.visible)
+		_ok("обводка отхода видна в FLEE", flee_on,
+				"узел %s" % ("виден" if flee_on else "нет"))
+		_phantom.set("state", chase)
+		_phantom.call("_sync_flee_outline")
+		var chase_off: bool = outline == null or not bool(outline.visible)
+		_ok("обводки нет в погоне", chase_off, "регресс PR #238")
+		_phantom.set_physics_process(true)
 		_next(ST_PH_LIMIT)
 
 
@@ -707,6 +757,7 @@ class Runner extends Node:
 			_next(ST_MAC_PROGRESS)
 			return
 		_ok("горелка горит", float(_gen.burn_left) > 0.0, "пламя %.1f" % float(_gen.burn_left))
+		_check_flame()
 		_ok("терминал читается без ТЭЦ", bool(game.call("is_powered", player.global_position)))
 		_ok("сундук не питается током", _smelter == null or not _smelter.get("powered"))
 		_next(ST_MAC_PROGRESS, 0.3)
@@ -830,10 +881,71 @@ class Runner extends Node:
 		_ok("кот рисуется", _cat != null and is_instance_valid(_cat) and _cat.is_inside_tree(),
 				"фаза %.2f" % (float(_cat.tail_phase) if _cat != null else -1.0))
 		_ok("хвост меняет цвет", n >= 2, "цветов %d" % n)
+		_trail_age0 = _trail_head_age()
+		_next(ST_CAT_TRAIL, 0.35)
+
+
+	## След кота: после полёта точек хватает, цвета разные, старые гаснут.
+	func _s_cat_trail() -> void:
+		var pts: Array = world_fx.cat_pts if world_fx != null else []
+		_ok("след кота длиннее пяти точек", pts.size() >= 5, "точек %d" % pts.size())
+		var colors: Dictionary = {}
+		var stale: int = 0
+		var life: float = 1.5
+		var bal: Node = get_tree().root.get_node_or_null("Balance")
+		if bal != null:
+			life = float(bal.get("CAT_TRAIL_LIFE"))
+		for p in pts:
+			colors[p["color"]] = true
+			if float(p["t"]) > life:
+				stale += 1
+		_ok("след кота разноцветный", colors.size() >= 2, "цветов %d" % colors.size())
+		var aged: float = _trail_head_age()
+		_ok("след кота стареет", aged > _trail_age0, "возраст %.3f -> %.3f" % [_trail_age0, aged])
+		_ok("старше 1.5 с точек следа нет", stale == 0, "просрочено %d" % stale)
+		game.time_of_day = 0.93
+		_next(ST_CAT_NIGHT, 0.3)
+
+
+	## Ночь не гасит кота: лента и тело на материале эмиссии и видимы.
+	func _s_cat_night() -> void:
+		var trail: Node = world_fx.get_node_or_null("CatTrail") if world_fx != null else null
+		var glow: Node = _cat.get_node_or_null("Glow") if _cat != null and is_instance_valid(_cat) else null
+		var em: Node = get_tree().get_first_node_in_group("emission")
+		var mat: Variant = em.get("glow_material") if em != null else null
+		var trail_ok: bool = trail != null and trail.visible and trail.material == mat and mat != null
+		var glow_ok: bool = glow != null and glow.visible and glow.material == mat and mat != null
+		_ok("лента следа светится ночью", trail_ok, "CatTrail %s" % ("на эмиссии" if trail_ok else "нет"))
+		_ok("тело кота светится ночью", glow_ok, "Glow %s" % ("на эмиссии" if glow_ok else "нет"))
 		if _cat != null and is_instance_valid(_cat):
 			_cat.queue_free()
 		_cat = null
+		if game != null:
+			game.time_of_day = _tod0
 		_next(ST_GENERAL, 0.05)
+
+
+	## Окно топки горящей горелки — цвет луча, не сажа холодной топки.
+	func _check_flame() -> void:
+		if _gen == null or not bool(_gen.call("burning")):
+			_ok("окно топки цветом луча", false, "горелка не горит")
+			return
+		var c: int = int(_gen.color)
+		var beams: GDScript = load("res://scripts/world/beams.gd")
+		var palette: Array = beams.COLOR
+		var want: Color = palette[c] if c > 0 and c < palette.size() else Color(0, 0, 0, 0)
+		var soot: Color = Color("#C4A484")
+		var src: String = FileAccess.get_file_as_string("res://scripts/machines/burner.gd")
+		var paints: bool = src.contains("flame = Beams.COLOR[color]") and src.contains("Rect2(-4.0, -2.0, 6.0, 5.0), flame")
+		_ok("окно топки цветом луча", paints and want != soot,
+				"цвет %d %s" % [c, str(want)])
+
+
+	## Возраст самой свежей точки следа (0 — следа нет).
+	func _trail_head_age() -> float:
+		if world_fx == null or world_fx.cat_pts.is_empty():
+			return 0.0
+		return float(world_fx.cat_pts.back()["t"])
 
 
 	# ------------------------------------------------------------------ общее
