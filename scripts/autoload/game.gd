@@ -379,7 +379,7 @@ const CORE_ARC_COLOR: Array[int] = [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C,
 const CORE_ARCS_FREE: int = 0x3F
 const CORE_ARCS_FULL: int = 0x7F
 ## Отметки отсчёта (секунд до конца), на которых игроку напоминают, сколько держаться.
-const RELAY_REMINDERS: Array = [150, 120, 90, 60, 30, 10]
+const RELAY_REMINDERS: Array = [60, 30, 10]
 const RELAY_COLOR: Color = Color(0.4, 1.0, 0.8)
 
 ## Ускорение отсчёта удержания — для тестов (сценарий relay). В игре всегда 1.
