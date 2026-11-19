@@ -138,6 +138,9 @@ var _dusk_acc: float = 0.0
 ## материал эмиссии (Emission.glow_material) снимал с ореолов CanvasModulate,
 ## а частицы и пар оставались под ним.
 var _glow_node: Node2D = null
+## Лента следа кота. Свой узел с материалом эмиссии: кот выходит ночью,
+## и CanvasModulate мира не должен гасить шлейф.
+var _trail_node: Node2D = null
 
 
 func _ready() -> void:
@@ -147,6 +150,17 @@ func _ready() -> void:
 	_glow_node.show_behind_parent = true
 	_glow_node.draw.connect(_on_glow_draw)
 	add_child(_glow_node)
+	# Поверх ореолов, под частицами самого WorldFX: лента читается и днём, и ночью.
+	_trail_node = Node2D.new()
+	_trail_node.name = "CatTrail"
+	_trail_node.z_as_relative = false
+	# Выше тумана (FogLayer, z 30): шлейф — свет, его должно быть видно ночью.
+	_trail_node.z_index = 40
+	_trail_node.draw.connect(_on_trail_draw)
+	add_child(_trail_node)
+	# Emission._ready мог отработать раньше: материал уже лежит на ореолах.
+	if _glow_node.material != null:
+		_trail_node.material = _glow_node.material
 	queue_redraw()
 	_stats_on = OS.get_cmdline_user_args().has(STATS_FLAG)
 	Threat.vent_warning.connect(spawn_vent_steam)
@@ -188,6 +202,8 @@ func _process(delta: float) -> void:
 		_dirty = false
 		queue_redraw()
 		_glow_node.queue_redraw()
+		if not cat_pts.is_empty():
+			_trail_node.queue_redraw()
 	if _stats_on:
 		_stats_t += delta
 		if _stats_t >= STATS_INTERVAL:
@@ -497,16 +513,7 @@ func _draw() -> void:
 	_draw_core_arcs()
 	_draw_domes(view)
 
-	# --- След кота: ломаная из семи цветов, гаснет за 1,5 с ------------------
-	if cat_pts.size() >= 2:
-		var poly: PackedVector2Array = PackedVector2Array()
-		var cols: PackedColorArray = PackedColorArray()
-		for p in cat_pts:
-			var a: float = 1.0 - float(p["t"]) / Balance.CAT_TRAIL_LIFE
-			var c: Color = p["color"]
-			poly.append(p["pos"])
-			cols.append(Color(c.r, c.g, c.b, clampf(a, 0.0, 1.0)))
-		draw_polyline_colors(poly, cols, 2.0)
+	# След кота рисует _trail_node: лента на материале эмиссии (_on_trail_draw).
 
 	# --- Дуги турели ----------------------------------------------------------
 	for a in arcs:
@@ -639,9 +646,38 @@ func _draw_domes(view: Rect2) -> void:
 		draw_rect(box, edge, false, 1.0)
 
 
-## Материал слоя ореолов (Emission, ADR-003 V3).
+## Материал слоя ореолов и ленты кота (Emission, ADR-003 V3).
+## all_emit: ночь не гасит ни ореол, ни шлейф.
 func set_glow_material(m: Material) -> void:
 	_glow_node.material = m
+	if _trail_node != null:
+		_trail_node.material = m
+
+
+## Ширина ленты следа, px. Было 2 (полилиния) — на зуме игры нитка, не шлейф.
+const TRAIL_WIDTH: float = 7.0
+
+
+## Лента следа: прямоугольник на сегмент, цвет точки, альфа гаснет за 1,5 с.
+## Семь цветов идут по кругу — это и есть радуга за котом.
+func _on_trail_draw() -> void:
+	var n: int = cat_pts.size()
+	if n < 2:
+		return
+	var life: float = Balance.CAT_TRAIL_LIFE
+	var half: float = TRAIL_WIDTH * 0.5
+	for i in range(n - 1):
+		var a: Vector2 = cat_pts[i]["pos"]
+		var b: Vector2 = cat_pts[i + 1]["pos"]
+		var d: Vector2 = b - a
+		if d.length_squared() < 0.25:
+			continue
+		var dir: Vector2 = d.normalized()
+		var side: Vector2 = Vector2(-dir.y, dir.x) * half
+		var col: Color = cat_pts[i]["color"]
+		col.a = clampf(1.0 - float(cat_pts[i]["t"]) / life, 0.0, 1.0)
+		_trail_node.draw_colored_polygon(PackedVector2Array([
+			a - side, a + side, b + side, b - side]), col)
 
 
 ## Слой ореолов: свечение источников света под остальными эффектами.
