@@ -553,7 +553,8 @@ func _seek_machine(dt: float, radius: float) -> void:
 
 
 ## Подходит ли машина в цели этому типу. Рой — горящая горелка (или пурпурный
-## маяк). Тень — горящая горелка, жёлтый маяк или пурпурный маяк.
+## маяк). Тень — горящая горелка или пурпурный маяк. Жёлтый — прожектор,
+## не добыча: иначе «яркий свет» сам зовёт тень (развилка 3, #239 D1).
 func _is_prey(m: Node) -> bool:
 	if not (m is MachineBase):
 		return false
@@ -566,10 +567,7 @@ func _is_prey(m: Node) -> bool:
 	if kind == "swarm":
 		return mb.kind == "Burner" and mb.has_method("burning") and bool(mb.call("burning"))
 	if kind == "shade":
-		if mb.kind == "Burner" and mb.has_method("burning") and bool(mb.call("burning")):
-			return true
-		# Прожектор стал маяком под жёлтым (#170).
-		return mb.kind == "Pharos" and int(mb.get("color")) == Beams.Y and bool(mb.get("active"))
+		return mb.kind == "Burner" and mb.has_method("burning") and bool(mb.call("burning"))
 	return false
 
 
@@ -608,7 +606,7 @@ func _shade_tick(dt: float) -> void:
 				coal_drained += 1
 				burner.queue_redraw()
 	else:
-		# Жёлтый и пурпурный маяк не выключить и не осушить — тень бьёт их.
+			# Пурпурный маяк не выключить и не осушить — тень бьёт его как машину.
 		_machine_attack(dt)
 
 

@@ -188,14 +188,15 @@ func clear_phantoms() -> void:
 
 var _lost: Array = []
 
-## База у релея без фабрики (#170): две горящие горелки и сундук — добыча для роя.
+## База у релея без фабрики (#170): три горящие горелки и сундук — добыча для роя.
+## Порог роя — Balance.SWARM_BURNERS (было 2; по рекомендации question развилки 4).
 ## defended — ещё 2 красных маяка (горелка R + зеркало) и стальная стена по бокам.
 ## Возвращает {ok, machines, turrets} — turrets здесь число красных маяков.
 func build_base(defended: bool) -> Dictionary:
 	var bx: int = World.beacon_cell.x
 	var row: int = World.beacon_cell.y
 	stand_in_corridor(0)
-	var plan: Array = [["Burner", 5], ["Chest", 7], ["Chest", 8], ["Burner", 10], ["Chest", 12]]
+	var plan: Array = [["Burner", 5], ["Chest", 7], ["Chest", 8], ["Burner", 10], ["Chest", 12], ["Burner", 14]]
 	var machines: Array = []
 	var turrets: int = 0
 	var all_ok: bool = true
