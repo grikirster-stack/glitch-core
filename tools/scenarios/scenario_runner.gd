@@ -181,8 +181,8 @@ const REGISTRY: Dictionary = {
 	"night_autopilot": {
 		"file": "night_autopilot.gd",
 		"title": "ночь на автопилоте",
-		"timeout_ms": 180000,
-		"desc": "три уровня базы × 90 с: пусто / горелка+маяк / семь цветов; секунды до первой ночи",
+		"timeout_ms": 240000,
+		"desc": "пусто / 2 горелки+красный маяк / семь цветов / удержание 180 с; --autopilot-colors и --autopilot-repeats в CI не входят",
 	},
 	"vent_spawn": {
 		"file": "vent_spawn.gd",
@@ -257,8 +257,8 @@ const REGISTRY: Dictionary = {
 	# --- Баланс: боты ADR-001 § 2 (#33); таблица по сидам — tools/balance_probe.gd ---
 	"balance_hand": {
 		"file": "balance_hand.gd",
-		"title": "баланс: релей руками",
-		"desc": "бот копает сырьё релея через шов ввода: ≥ 25 мин чистой добычи",
+		"title": "баланс: секундомер копки",
+		"desc": "бот копает сырьё через шов: секунды на единицу и световой день; порог 25 мин снят (#212)",
 		"timeout_ms": 240000,
 	},
 	# balance_factory снят вместе с линиями буров (#170).
