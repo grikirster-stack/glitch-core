@@ -363,7 +363,7 @@ const REGISTRY: Dictionary = {
 	"pharos_blue": {"file": "pharos_blue.gd", "title": "маяк под синим", "timeout_ms": 60000,
 		"desc": "кристалл → эхо в 3 клетках идёт вдвое медленнее и раз в 3 с не бьёт 1 с; мкс slow_factor_at"},
 	"pharos_dome": {"file": "pharos_dome.gd", "title": "маяк под голубым", "timeout_ms": 30000,
-		"desc": "смесь G+B: горелка под куполом не теряет HP, купол гасит 100 и через 10 с снова есть"},
+		"desc": "смесь G+B: горелка под куполом не теряет HP, купол гасит PHAROS_DOME_HP и через 10 с снова есть; замер ударов тени/роя/копателя"},
 	"pharos_lure": {"file": "pharos_lure.gd", "title": "маяк под пурпурным", "timeout_ms": 40000,
 		"desc": "смесь R+B: рой в 20 клетках за 15 с у маяка, не у горелки; маяк 200 HP"},
 	"pharos_white": {"file": "pharos_white.gd", "title": "маяк под белым", "timeout_ms": 30000,

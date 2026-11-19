@@ -62,9 +62,10 @@ const PHAROS_BLUE_RADIUS: int = 4
 const PHAROS_BLUE_SLOW: float = 0.5
 const PHAROS_BLUE_STUN: float = 1.0
 const PHAROS_BLUE_STUN_PERIOD: float = 3.0
-## Голубой купол: 3 клетки, 100 урона, потом 10 с тишины и снова 100.
+## Голубой купол: 3 клетки, 200 урона (было 100 — 4 удара тени и тишина),
+## потом 10 с тишины и снова 200. Зелёный HEAL этим PR не трогается.
 const PHAROS_DOME_RADIUS: int = 3
-const PHAROS_DOME_HP: float = 100.0
+const PHAROS_DOME_HP: float = 200.0
 const PHAROS_DOME_DOWN: float = 10.0
 ## Пурпурный зовёт рой и тень на 640 px; сам маяк под ним крепче.
 const PHAROS_LURE_PX: float = 640.0

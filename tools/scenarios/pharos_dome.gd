@@ -1,8 +1,9 @@
 extends ScenarioBase
 ## Маяк под голубым (ADR-005 § 5, #168).
 ##
-## Зелёный и синий через смеситель. Горелка в 2 клетках не теряет HP от 5
-## ударов эха: купол принимает 100 и гаснет. Через 10 с купол снова есть.
+## Зелёный и синий через смеситель. Горелка в 2 клетках не теряет HP, пока
+## купол жив: он принимает PHAROS_DOME_HP и гаснет. Через 10 с купол снова есть.
+## Замер: удары тени / роя / копателя до тишины. Число ударов эха — от константы.
 
 
 func run() -> void:
@@ -34,12 +35,16 @@ func run() -> void:
 		finish()
 		return
 	var hp0: float = under.hp
-	# Эхо бьёт 24. Пять ударов — 120, купол держит 100 и гаснет на пятом.
-	for _i in 5:
-		under.take_damage(Balance.PHANTOMS["echo"]["dmg"])
+	# Эхо бьёт 24. Купол гаснет на ударе, который переполняет PHAROS_DOME_HP.
+	var echo_dmg: float = float(Balance.PHANTOMS["echo"]["dmg"])
+	var echo_hits: int = int(ceil(Balance.PHAROS_DOME_HP / echo_dmg))
+	for _i in echo_hits:
+		under.take_damage(echo_dmg)
 	ok("горелка под куполом не потеряла HP", is_equal_approx(under.hp, hp0), "hp %.0f" % under.hp)
-	ok("купол принял 100 и погас", not pharos.dome_up and pharos.dome_hp <= 0.0, "dome_hp %.0f" % pharos.dome_hp)
-	ok("шестой удар уже по горелке", _hurt(under) and under.hp < hp0, "hp %.0f" % under.hp)
+	ok("купол принял урон и погас", not pharos.dome_up and pharos.dome_hp <= 0.0,
+			"dome_hp %.0f, ударов эха %d" % [pharos.dome_hp, echo_hits])
+	ok("следующий удар уже по горелке", _hurt(under) and under.hp < hp0, "hp %.0f" % under.hp)
+	_measure_life()
 
 	var back: bool = await wait_until(func() -> bool: return pharos.dome_up, 10.5)
 	ok("через 10 с купол снова есть", back and is_equal_approx(pharos.dome_hp, Balance.PHAROS_DOME_HP),
@@ -47,6 +52,21 @@ func run() -> void:
 	# Дальше 3 клеток (манхэттен) купола нет.
 	ok("за 3 клетками купола нет", World.dome_at(pc + Vector2i(4, 0)) == null)
 	finish()
+
+
+
+## Ударов типа до тишины. Первый сразу, дальше раз в MACHINE_HIT_PERIOD.
+func _measure_life() -> void:
+	var period: float = Balance.MACHINE_HIT_PERIOD
+	for kind in ["shade", "swarm", "burrower", "echo"]:
+		var dmg: float = float(Balance.PHANTOMS[kind]["dmg"])
+		var hits: int = int(ceil(Balance.PHAROS_DOME_HP / dmg))
+		var life: float = float(hits - 1) * period
+		print("  [замер] купол %s: %d ударов × %.0f урона, жизнь %.1f с до тишины %d с (HP %.0f)" % [
+				kind, hits, dmg, life, int(Balance.PHAROS_DOME_DOWN), Balance.PHAROS_DOME_HP])
+	ok("купол против тени живёт соразмерно паузе 10 с",
+			float(int(ceil(Balance.PHAROS_DOME_HP / float(Balance.PHANTOMS["shade"]["dmg"]))) - 1) * period >= Balance.PHAROS_DOME_DOWN - 0.05,
+			"HP %.0f" % Balance.PHAROS_DOME_HP)
 
 
 func _hurt(m: MachineBase) -> bool:
