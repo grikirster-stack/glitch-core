@@ -22,7 +22,7 @@ const START_TIME: float = 0.04         ## старт забега на расс�
 const BEAM_LEN: int = 24
 const BEAM_LEN_WHITE: int = 32
 const BEAM_BLOCK_COST: int = 2
-const BEAM_LIGHT: float = 0.5          ## B3: полоска не забор; соседи 20 px больше не складываются в 3–4
+const BEAM_LIGHT: float = 0.5          ## B3: полоска не забор. Источники 20 px складываются: середина луча 1.5 = 3×0.5, забор остаётся
 const BEAM_LIGHT_WHITE: float = 1.5
 const FUEL: Dictionary = {IDs.I.COAL: 45.0, IDs.I.COPPER_ORE: 30.0, IDs.I.CRYSTAL: 60.0}
 ## Запасная длительность угля, если предмет не в FUEL (шкала горелки, тень).
