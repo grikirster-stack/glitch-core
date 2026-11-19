@@ -2324,7 +2324,7 @@ func _apply_beam_lights() -> void:
 		if mask == 0:
 			continue
 		var power: float = Balance.BEAM_LIGHT_WHITE if mask == Beams.W else Balance.BEAM_LIGHT
-		_beam_lights[c] = add_light_source(cell_to_world(c), 20.0, power)
+		_beam_lights[c] = add_light_source(cell_to_world(c), Balance.BEAM_LIGHT_RADIUS, power)
 
 
 ## Источник света от машины (прожектор). Возвращает ручку для remove_light_source.
