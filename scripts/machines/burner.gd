@@ -206,6 +206,28 @@ func set_enabled(on: bool) -> void:
 			Color(0.6, 1.0, 0.6) if on else Color(1.0, 0.7, 0.4))
 
 
+## Высоты трёх языков топки в момент t (с). То же, что рисует _draw:
+## anim_test читает картинку, не свою копию формулы.
+func flame_marks(t: float) -> Array:
+	var out: Array = []
+	if not burning():
+		return out
+	for m in _flame_rects(t):
+		out.append(int(m["rect"].size.y))
+	return out
+
+
+func _flame_rects(t: float) -> Array:
+	var out: Array = []
+	if not burning() or color <= 0 or color >= Beams.COLOR.size():
+		return out
+	var hi: Color = Beams.COLOR[color].lightened(0.3)
+	for i in 3:
+		var h: int = maxi(1, 2 + int(sin(t * 9.0 + float(i)) * 2.0))
+		out.append({"rect": Rect2(-3.0 + float(i) * 2.0, 3.0 - float(h), 2.0, float(h)), "color": hi})
+	return out
+
+
 func _draw() -> void:
 	var hot: bool = burning()
 	var t: float = Time.get_ticks_msec() * 0.001
@@ -218,10 +240,8 @@ func _draw() -> void:
 	draw_rect(Rect2(-4.0, -2.0, 6.0, 5.0), flame)
 	if hot:
 		# Три языка из низа окна: высота дышит, иначе топка — статичный прямоугольник.
-		var hi: Color = flame.lightened(0.3)
-		for i in 3:
-			var h: int = maxi(1, 2 + int(sin(t * 9.0 + float(i)) * 2.0))
-			draw_rect(Rect2(-3.0 + float(i) * 2.0, 3.0 - float(h), 2.0, float(h)), hi)
+		for m in _flame_rects(t):
+			draw_rect(m["rect"], m["color"])
 	# Носик по направлению: из него бьёт луч.
 	_draw_nozzle()
 	# Шкала топлива справа, как у ТЭЦ: доля текущей единицы снизу вверх

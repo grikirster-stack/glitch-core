@@ -79,6 +79,7 @@ enum {
 	ST_CAT_TRAIL,
 	ST_CAT_NIGHT,
 	ST_GENERAL,
+	ST_A3,
 }
 
 
@@ -247,6 +248,7 @@ class Runner extends Node:
 			ST_FX_TTL: _s_fx_ttl()
 			ST_FX_LIMIT: _s_fx_limit()
 			ST_FX_LIMIT_WAIT: _s_fx_limit_wait()
+			ST_A3: _s_a3()
 			ST_PULSE_START: _s_pulse_start()
 			ST_PULSE_CHECK: _s_pulse_check()
 			ST_LIGHT_API: _s_light_api()
@@ -922,7 +924,270 @@ class Runner extends Node:
 		_cat = null
 		if game != null:
 			game.time_of_day = _tod0
+		_next(ST_A3, 0.05)
+
+
+
+	## Картинка A3 (#276): пламя, дуги, корка, бур, шаг, присед, предмет, споры.
+	## Состояние задаётся прямо — без ожидания кадра, как проверки A2.
+	## Каждая проверка читает раскладку или рисунок, не исходник.
+	func _s_a3() -> void:
+		_a3_flame()
+		_a3_arcs()
+		_a3_frost()
+		_a3_burrow()
+		_a3_stride()
+		_a3_crouch()
+		_a3_item()
+		_a3_spores()
 		_next(ST_GENERAL, 0.05)
+
+
+	## Языки топки: два момента с разницей 0.2 с дают разную высоту языков.
+	## Высоту читаем из того, что горелка нарисует (Burner.flame_marks), не из формулы теста.
+	func _a3_flame() -> void:
+		var burner: Node = _a3_burner()
+		if burner == null or not burner.has_method("flame_marks"):
+			_ok("языки пламени меняют высоту", false, "горелки нет")
+			return
+		var h0: Array = burner.call("flame_marks", 0.0)
+		var h1: Array = burner.call("flame_marks", 0.2)
+		var differ: bool = h0.size() == 3 and h1.size() == 3 and h0 != h1
+		var span: float = 0.0
+		for i in mini(h0.size(), h1.size()):
+			span = maxf(span, absf(float(h0[i]) - float(h1[i])))
+		_ok("языки пламени меняют высоту", differ and span >= 1.0,
+				"%s -> %s" % [str(h0), str(h1)])
+		if burner != _gen:
+			burner.queue_free()
+
+
+	## Горящая горелка вне мира: та же _draw, но время языков задаём сами.
+	func _a3_burner() -> Node:
+		if _gen != null and is_instance_valid(_gen) and _gen.has_method("flame_marks"):
+			return _gen
+		var scr: GDScript = load("res://scripts/machines/burner.gd")
+		var b: Node = scr.new()
+		b.set("burn_left", 5.0)
+		b.set("color", 1)
+		b.set("enabled", true)
+		return b
+
+
+	## Дуга над зажжённым столбиком: три квадрата цвета луча, не серой дуги.
+	## Квадраты — то, что ядро отдаёт в picture() (тот же путь, что _draw).
+	func _a3_arcs() -> void:
+		var arcs0: int = int(game.core_arcs) if game != null else 0
+		var cells0: Array = game.core_cells.duplicate() if game != null else []
+		var cell0: Vector2i = game.core_cell if game != null else Vector2i(-1, -1)
+		if game != null:
+			game.core_arcs = 1 << 0
+			game.core_cell = Vector2i(3, 3)
+			if not game.core_cells.has(game.core_cell):
+				game.core_cells.append(game.core_cell)
+		var scr: GDScript = load("res://scripts/machines/rainbow_core.gd")
+		var core: Node = scr.new()
+		core.set("cell", Vector2i(3, 3))
+		var pic: Dictionary = core.call("picture") if core.has_method("picture") else {}
+		var squares: Array = pic.get("arc", [])
+		var beam: Color = Color(0, 0, 0, 0)
+		var beams: GDScript = load("res://scripts/world/beams.gd")
+		if beams.COLOR.size() > 1:
+			beam = beams.COLOR[1]
+		var dim: Color = scr.ARC_DIM
+		var n: int = 0
+		var colored: int = 0
+		for s in squares:
+			if not (s is Rect2):
+				continue
+			n += 1
+			var c: Color = pic.get("arc_color", dim)
+			if c.is_equal_approx(beam) and not c.is_equal_approx(dim):
+				colored += 1
+		_ok("дуга ядра — три квадрата цвета луча", n == 3 and colored == 3,
+				"квадратов %d, цветом луча %d" % [n, colored])
+		core.free()
+		if game != null:
+			game.core_arcs = arcs0
+			game.core_cells = cells0
+			game.core_cell = cell0
+
+
+	## Корка заморозки: три квадрата цвета синего луча на оглушённом эхе.
+	## Читаем picture() фантома, не текст _draw_frost.
+	func _a3_frost() -> void:
+		var ph: GDScript = load("res://scripts/entities/phantom.gd")
+		var p: Node = ph.new()
+		p.set("player", player)
+		p.set("kind", "echo")
+		p.set("state", int(_ph_enum.get("CHASE", 2)))
+		p.set("stun", 1.0)
+		p.set("jitter", 0.4)
+		var pic: Dictionary = p.call("picture") if p.has_method("picture") else {}
+		var squares: Array = pic.get("frost", [])
+		var beams: GDScript = load("res://scripts/world/beams.gd")
+		var ice: Color = beams.COLOR[beams.B] if beams.COLOR.size() > beams.B else Color(0, 0, 0, 0)
+		var n: int = 0
+		var colored: int = 0
+		for s in squares:
+			if not (s is Rect2):
+				continue
+			n += 1
+			var c: Color = pic.get("frost_color", Color(0, 0, 0, 0))
+			if c.is_equal_approx(ice):
+				colored += 1
+		_ok("корка заморозки цвета синего луча", n == 3 and colored == 3,
+				"квадратов %d, синих %d" % [n, colored])
+		p.free()
+
+
+	## Копатель в погоне сыплет крошку: кадр рисунка вызывает тот же путь, что _draw.
+	func _a3_burrow() -> void:
+		var chips0: int = world_fx.chips.size() if world_fx != null else 0
+		var ph: GDScript = load("res://scripts/entities/phantom.gd")
+		var p: Node = ph.new()
+		p.set("player", player)
+		p.set("kind", "burrower")
+		p.set("state", int(_ph_enum.get("CHASE", 2)))
+		p.set("jitter", 1.0)
+		p.set("_spark_t", 0.0)
+		p.set("facing", 1)
+		scene.add_child(p)
+		p.global_position = player.global_position + Vector2(48.0, 0.0)
+		if p.has_method("picture"):
+			p.call("picture")
+		else:
+			p.call("_sparks_at_bit", 8.0)
+		var grew: int = world_fx.chips.size() - chips0 if world_fx != null else 0
+		var stone: Color = Color(0, 0, 0, 0)
+		if db != null and db.has_method("pal"):
+			stone = db.pal("s_base")
+		var tinted: int = 0
+		if world_fx != null:
+			for i in range(chips0, world_fx.chips.size()):
+				var c: Color = world_fx.chips[i]["color"]
+				if c.is_equal_approx(stone):
+					tinted += 1
+		_ok("копатель в погоне сыплет крошку", grew >= 4 and tinted == grew,
+				"чипов +%d, цветом камня %d" % [grew, tinted])
+		p.queue_free()
+
+
+	## Шаг: ведущая нога на 2 px вперёд (разница двух фаз), корпус кренится на 1 px.
+	## Раскладка — body_layout, то же, что рисует Avatar. Поза задаётся прямо.
+	func _a3_stride() -> void:
+		var w0: float = player.walk_anim
+		var v0: Vector2 = player.vel
+		var f0: int = int(player.facing)
+		var g0: bool = bool(player.on_ground)
+		player.facing = 1
+		player.on_ground = true
+		player.vel = Vector2.ZERO
+		player.walk_anim = 0.0
+		var idle: Dictionary = player.body_layout()
+		player.vel = Vector2(player.SPEED, 0.0)
+		player.walk_anim = PI * 0.5
+		var fore: Dictionary = player.body_layout()
+		player.walk_anim = PI * 1.5
+		var back: Dictionary = player.body_layout()
+		player.walk_anim = w0
+		player.vel = v0
+		player.facing = f0
+		player.on_ground = g0
+		var step: float = (fore["leg_front"] as Rect2).position.x - (back["leg_front"] as Rect2).position.x
+		var lean: float = (fore["torso"] as Rect2).position.x - (idle["torso"] as Rect2).position.x
+		_ok("шаг на 2 px и крен корпуса на 1 px",
+				is_equal_approx(step, 2.0) and is_equal_approx(lean, 1.0),
+				"нога %+.0f px, торс %+.0f px" % [step, lean])
+
+
+	## Присед: crouch > 0 опускает торс на 1 px и укорачивает его на 1 px.
+	func _a3_crouch() -> void:
+		var stood: Dictionary = player.body_layout()
+		var y0: float = stood["torso"].position.y
+		var h0: float = stood["torso"].size.y
+		player.crouch = 0.2
+		var sat: Dictionary = player.body_layout()
+		var y1: float = sat["torso"].position.y
+		var h1: float = sat["torso"].size.y
+		player.crouch = 0.0
+		_ok("присед опускает торс на 1 px",
+				is_equal_approx(y1 - y0, 1.0) and is_equal_approx(h0 - h1, 1.0),
+				"торс y %.0f -> %.0f, высота %.0f -> %.0f" % [y0, y1, h0, h1])
+
+
+	## Предмет на земле покачивается на 1 px: два возраста дают сдвиг position.y ровно на 1.
+	func _a3_item() -> void:
+		var scr: GDScript = load("res://scripts/entities/item_entity.gd")
+		var e: Node2D = scr.new()
+		var ids: GDScript = load("res://scripts/core/ids.gd")
+		e.item_id = int(ids.I.COAL)
+		e.grounded = true
+		e.despawn = false
+		scene.add_child(e)
+		var y0: float = e.position.y
+		e.age = 0.0
+		e.call("_bob_tick")
+		var low: float = e.position.y
+		e.age = PI / 6.0
+		e.call("_bob_tick")
+		var high: float = e.position.y
+		var d: float = absf(high - low)
+		_ok("предмет на земле покачивается на 1 px", is_equal_approx(d, 1.0),
+				"y %.0f -> %.0f (старт %.0f)" % [low, high, y0])
+		e.queue_free()
+
+
+	## Споры ночью: угол кремового пятна на шляпке — пиксель bio, и шейдер эмиссии
+	## подменяет его на bio только при night > 0. Читаем атлас и shader_code().
+	func _a3_spores() -> void:
+		var img: Image = _a3_cap_image()
+		var spore: Color = db.pal("fl3") if db != null else Color(0, 0, 0, 0)
+		var cap: Color = db.pal("fl1") if db != null else Color(0, 0, 0, 0)
+		var bio: Color = db.pal("bio") if db != null else Color(0, 0, 0, 0)
+		# Угол, который ищет шейдер: пиксель bio, слева и сверху — кремовое пятно (fl3).
+		# Соседи розовой шляпки (fl1) не считаются: ночь зажигает только такой угол.
+		var tips: int = 0
+		var pink_corners: int = 0
+		if img != null:
+			for y in range(1, img.get_height()):
+				for x in range(1, img.get_width()):
+					var left_cream: bool = _a3_near(img.get_pixel(x - 1, y), spore)
+					var up_cream: bool = _a3_near(img.get_pixel(x, y - 1), spore)
+					if not (left_cream and up_cream):
+						continue
+					if _a3_near(img.get_pixel(x, y), bio):
+						tips += 1
+					elif _a3_near(img.get_pixel(x, y), cap):
+						pink_corners += 1
+		var em: GDScript = load("res://scripts/ui/emission.gd")
+		var code: String = em.shader_code()
+		# Ветка ночи подменяет этот угол на bio. Список glow_colors bio не доказывает:
+		# без ветки night угол остаётся кремовым и гаснет.
+		var branch: int = code.find("night > 0.0")
+		var tail: String = code.substr(branch) if branch >= 0 else ""
+		var lit: bool = branch >= 0 and tail.contains("spot") \
+				and tail.contains("mix(c, vec3(%.4f, %.4f, %.4f)" % [bio.r, bio.g, bio.b]) \
+				and tail.contains("%.4f, %.4f, %.4f" % [spore.r, spore.g, spore.b])
+		_ok("споры ночью горят на эмиссии", tips >= 1 and lit,
+				"углов %d (розовых %d), шейдер %s" % [tips, pink_corners, "с ночью" if lit else "без ночи"])
+
+
+	func _a3_cap_image() -> Image:
+		if db == null:
+			return null
+		var ids: GDScript = load("res://scripts/core/ids.gd")
+		var cell: Vector2i = db.atlas_of_tile.get(int(ids.T.LEAVES), Vector2i(-1, -1))
+		var tex: ImageTexture = db.atlas_texture
+		if tex == null or cell.x < 0:
+			return null
+		var img: Image = tex.get_image()
+		var ts: int = int(db.TILE_SIZE)
+		return img.get_region(Rect2i(cell.x * ts, cell.y * ts, ts, ts))
+
+
+	func _a3_near(a: Color, b: Color) -> bool:
+		return absf(a.r - b.r) < 0.02 and absf(a.g - b.g) < 0.02 and absf(a.b - b.b) < 0.02
 
 
 	## Окно топки горящей горелки — цвет луча, не сажа холодной топки.
