@@ -137,15 +137,16 @@ void fragment() {
 		if (e > 0.5) {
 			COLOR.rgb *= inv_amb;
 		} else if (night > 0.0 && max3(abs(c - vec3(%.4f, %.4f, %.4f))) < EPS) {
-			// Спора: угол кремового пятна на шляпке — и слева, и сверху розовая шляпка
-			// (у кольца роста на стебле розовое только сверху).
-			vec3 cap = vec3(%.4f, %.4f, %.4f);
+			// Спора: угол кремового пятна на шляпке. Слева и сверху — само пятно
+			// (кремовое): у кольца роста на стебле розовое только сверху, у волокна
+			// стебля соседа-крема нет. Ночью угол загорается бирюзой.
+			vec3 spot = vec3(%.4f, %.4f, %.4f);
 			vec3 l = texture(TEXTURE, UV - vec2(TEXTURE_PIXEL_SIZE.x, 0.0)).rgb;
 			vec3 u = texture(TEXTURE, UV - vec2(0.0, TEXTURE_PIXEL_SIZE.y)).rgb;
-			if (max3(abs(l - cap)) < EPS && max3(abs(u - cap)) < EPS) {
+			if (max3(abs(l - spot)) < EPS && max3(abs(u - spot)) < EPS) {
 				COLOR.rgb = mix(c, vec3(%.4f, %.4f, %.4f) * inv_amb, night);
 			}
 		}
 	}
 }
-""" % [MATCH_EPS, "\n\t\t".join(checks), spore.r, spore.g, spore.b, cap.r, cap.g, cap.b, bio.r, bio.g, bio.b]
+""" % [MATCH_EPS, "\n\t\t".join(checks), spore.r, spore.g, spore.b, spore.r, spore.g, spore.b, bio.r, bio.g, bio.b]

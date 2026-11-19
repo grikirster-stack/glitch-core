@@ -23,6 +23,8 @@ extends Node2D
 ## но в кадре камеры (с запасом GLOW_MARGIN радиуса) их десятки. Если в камере
 ## больше — рисуем ближайшие к центру камеры.
 const MAX_GLOWS: int = 48
+## Ореолов спор за кадр: шляпки в кадре, не источники света мира.
+const SPORE_GLOW_MAX: int = 24
 ## Максимум живых частиц. При переполнении вытесняются самые старые.
 const MAX_CHIPS: int = 160
 ## Максимум живых колец импульса.
@@ -721,6 +723,31 @@ func _draw_glows(cam: Camera2D, view: Rect2) -> void:
 				Vector2(lr, lr) * 1.8), false, col)
 	glows_drawn = cands.size()
 	peak_glows = maxi(peak_glows, glows_drawn)
+	_draw_spore_glow(view, k)
+
+
+## Споры на шляпках свечника (ADR-003 § 4.1): ночью кончик шляпки тлеет.
+## Ореол маленький и только в кадре — источников света мира не добавляет,
+## днём его нет. Рисуется на слое ореолов, ночь его не гасит.
+func _draw_spore_glow(view: Rect2, k: float) -> void:
+	if k < 0.35 or not DB.glow_texture:
+		return
+	var x0: int = maxi(0, int(floor(view.position.x / World.TILE)) - 1)
+	var y0: int = maxi(0, int(floor(view.position.y / World.TILE)) - 1)
+	var x1: int = mini(World.W - 1, int(ceil(view.end.x / World.TILE)) + 1)
+	var y1: int = mini(World.H - 1, int(ceil(view.end.y / World.TILE)) + 1)
+	var n: int = 0
+	var col: Color = GLOW_BIO
+	col.a = 0.55 * k
+	for y in range(y0, y1 + 1):
+		for x in range(x0, x1 + 1):
+			if World.get_tile(x, y) != IDs.T.LEAVES:
+				continue
+			if n >= SPORE_GLOW_MAX:
+				return
+			n += 1
+			var p: Vector2 = Vector2(float(x * World.TILE) + 8.0, float(y * World.TILE) + 3.0)
+			_glow_node.draw_texture_rect(DB.glow_texture, Rect2(p - Vector2(6.0, 6.0), Vector2(12.0, 12.0)), false, col)
 
 
 ## Цвет ореола — по тайлу в клетке источника (≤ MAX_GLOWS поисков за перерисовку).

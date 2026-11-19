@@ -69,6 +69,9 @@ var slash_cd: float = 0.0
 var emp_cd: float = 0.0
 var emp_max: float = 8.0
 var walk_anim: float = 0.0
+## Присед перед прыжком, с: торс сжат на 1 px, пока таймер не истёк (только рисунок).
+var crouch: float = 0.0
+const CROUCH_TIME: float = 0.08
 var camera: Camera2D
 ## Зум камеры (колесо, +/−, щипок на телефоне); есть только у своего героя, как и камера.
 var view_zoom: ViewZoom = null
@@ -149,6 +152,7 @@ func _physics_process(delta: float) -> void:
 	_stun = maxf(0.0, _stun - dt)
 	_hit_flash = maxf(0.0, _hit_flash - dt)
 	_step_gap = maxf(0.0, _step_gap - dt)
+	crouch = maxf(0.0, crouch - dt)
 	noise = maxf(0.0, noise - dt * 40.0)
 	_repair_cd = maxf(0.0, _repair_cd - dt)
 	if net_role != NetRole.OWNER:   # СЕТЬ (ADR-002): укрытие и HP героя клиента считает хост
@@ -224,6 +228,7 @@ func _integrate(dt: float, sprint: bool) -> void:
 	# Двойного прыжка нет: после прыжка _coyote обнуляется, а наземлиться
 	# можно только на твёрдом.
 	if not hiding and _stun <= 0.0 and _jump_buffer > 0.0 and (on_ground or _coyote > 0.0):
+		crouch = CROUCH_TIME
 		vel.y = JUMP_VELOCITY
 		on_ground = false
 		_coyote = 0.0
@@ -1032,7 +1037,11 @@ func _sfx(n: String, v: float = 0.0, p: float = 1.0) -> void:
 ## tank, leg_*, boot_* — Rect2; light — Vector2 (место фонаря на шлеме).
 func body_layout() -> Dictionary:
 	var air: bool = not on_ground and not hiding and absf(vel.y) > 40.0
-	return Avatar.layout(look, facing, walk_anim, _breath, absf(vel.x) / SPEED, air, _works_ahead())
+	var lay: Dictionary = Avatar.layout(look, facing, walk_anim, _breath, absf(vel.x) / SPEED, air, _works_ahead())
+	if crouch > 0.0:
+		lay = lay.duplicate()
+		Avatar.squash(lay)
+	return lay
 
 
 ## Рука вытянута вперёд: копает клетку перед собой (или над/под собой) либо

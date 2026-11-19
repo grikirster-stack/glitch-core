@@ -34,6 +34,8 @@ var item_id: int = IDs.I.NONE
 var count: int = 1
 var vel: Vector2 = Vector2.ZERO
 var grounded: bool = false
+## Текущий пиксель покачивания (0 или ±1): чтобы не копить дробь в позиции.
+var _bob: float = 0.0
 var age: float = 0.0
 var magnet: bool = false
 var pickup_delay: float = 0.45
@@ -85,6 +87,22 @@ static func ground_count() -> int:
 	return _ground.size()
 
 
+## Покачивание лежащего предмета: целый пиксель туда-сюда по sin(age*3).
+## Двигает position, не global_position: физика и подбор его не видят.
+func _bob_tick() -> void:
+	var bob: float = round(sin(age * 3.0))
+	if bob != _bob:
+		position.y += bob - _bob
+		_bob = bob
+
+
+## Снять покачивание: предмет снова летит, позиция — физическая.
+func _drop_bob() -> void:
+	if _bob != 0.0:
+		position.y -= _bob
+		_bob = 0.0
+
+
 func _physics_process(delta: float) -> void:
 	if not Net.is_authority():   # СЕТЬ (ADR-002): подбор и слияние — на хосте
 		_net_puppet(delta)
@@ -114,6 +132,7 @@ func _physics_process(delta: float) -> void:
 	if d < MAGNET_DIST and pickup_delay <= 0.0 and not magnet and alive:
 		magnet = true
 		_unregister()
+		_drop_bob()
 	if magnet:
 		var dir: Vector2 = (player.global_position - global_position).normalized()
 		global_position += dir * 340.0 * delta
@@ -132,7 +151,9 @@ func _physics_process(delta: float) -> void:
 				pickup_delay = FULL_RETRY
 		return
 	if grounded:
+		_bob_tick()
 		return
+	_drop_bob()
 	vel.y += 900.0 * delta
 	var res: Dictionary = World.move_body(global_position, vel * delta, Vector2(10.0, 10.0))
 	global_position = res["position"]
@@ -320,7 +341,9 @@ func _net_puppet(delta: float) -> void:
 		global_position += (hero.global_position - global_position).normalized() * 340.0 * delta
 		return
 	if grounded:
+		_bob_tick()
 		return
+	_drop_bob()
 	vel.y += 900.0 * delta
 	var res: Dictionary = World.move_body(global_position, vel * delta, Vector2(10.0, 10.0))
 	global_position = res["position"]
