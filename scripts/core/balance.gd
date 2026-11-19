@@ -128,6 +128,9 @@ const PHANTOMS: Dictionary = {
 ## кто ничего не строит, получает ту же ночь, что и раньше. Старые множители
 ## генератора и лампы сняты — их место у горелок, маяков и накопителей.
 const THREAT_DAY_CAP: int = 3
+## После сигнала смена в формуле растёт до 6 (#261, решение #254):
+## бесконечная игра не застывает на ночи 3. До победы — THREAT_DAY_CAP.
+const THREAT_DAY_CAP_POST_RELAY: int = 6
 const THREAT_PER_BURNER: float = 0.5   ## горящая горелка
 const THREAT_PER_PHAROS: float = 1.0   ## маяк под лучом (блока ещё нет — вклад 0)
 const THREAT_PER_ACCUM: float = 0.25   ## накопитель
