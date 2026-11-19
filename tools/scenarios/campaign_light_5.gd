@@ -40,6 +40,10 @@ func _won(id: String, t0: float) -> float:
 	ok("%s: пройдена за ≤ 120 с" % id, mission.result == Mission.Result.WON and dt <= LIMIT,
 			"итог %d за %.1f с" % [mission.result, dt])
 	print("  [замер] %s: %.1f с" % [id, dt])
+	if id == "sun":
+		print("  [пауза] глава 5: ночь %.0f с с синим — смотрим мороз, не кликаем (лимит интереса 30)" % LightLate.NIGHT_SEC)
+	elif id == "rainbow":
+		print("  [пауза] глава 6: удержание 45 с на скорости 1 — ночь видна, не ×2")
 	ok("%s: в профиле" % id, Profile.load_or_create().campaign_done.has(id))
 	return dt
 
@@ -164,13 +168,13 @@ func _sun() -> float:
 			"цвет %d" % (ph.color if ph != null else -1))
 	Engine.time_scale = 6.0
 	var done: bool = false
-	while Game.game_time - t_night < 80.0:
+	while Game.game_time - t_night < 40.0:
 		if mission.result != Mission.Result.RUNNING:
 			done = true
 			break
 		await get_tree().process_frame
 	Engine.time_scale = 1.0
-	ok("ночь 60 с — победа, постройки целы", done and mission.result == Mission.Result.WON, str(mission.result))
+	ok("ночь 28 с — победа, постройки целы", done and mission.result == Mission.Result.WON, str(mission.result))
 	ok("с синим маяком урона нет", float(mission.get("strike_at")) < 0.0,
 			"удар на %.1f с" % float(mission.get("strike_at")))
 	return await _won("sun", t0)
@@ -231,7 +235,7 @@ func _rainbow() -> float:
 	release(KEY_E)
 	ok("ядро запущено", launched)
 	ok("этап удержания", await wait_stage(3, 2.0), str(mission.stage))
-	ok("скорость удержания 2", is_equal_approx(Game.relay_speed, 2.0), str(Game.relay_speed))
+	ok("скорость удержания 1", is_equal_approx(Game.relay_speed, 1.0), str(Game.relay_speed))
 	drive_threat = true
 	var night: bool = await wait_until(func() -> bool: return Game.is_night(), 3.0)
 	ok("ночь осады", night)
@@ -242,13 +246,13 @@ func _rainbow() -> float:
 	Engine.time_scale = 8.0
 	var t_hold: float = Game.game_time
 	var done: bool = false
-	while Game.game_time - t_hold < 60.0:
+	while Game.game_time - t_hold < 55.0:
 		if mission.result != Mission.Result.RUNNING:
 			done = true
 			break
 		await get_tree().process_frame
 	Engine.time_scale = 1.0
-	ok("удержание 90 с — победа", done and mission.result == Mission.Result.WON,
+	ok("удержание 45 с — победа", done and mission.result == Mission.Result.WON,
 			"итог %d, держали %.1f" % [mission.result, float(mission.get("_held"))])
 	Game.relay_speed = 1.0
 	return await _won("rainbow", t0)
@@ -282,6 +286,7 @@ func _words() -> void:
 func _six(own: float) -> void:
 	var ids: Array = ["dig", "fire", "mirror", "colors", "sun", "rainbow"]
 	print("  [замер] главы 5–6: %.1f с; шесть в списке %s" % [own, str(_chapters_end_with(ids))])
+	print("  [пауза] сумма шести глав считается по логам campaign+late+5, лимит 600 с")
 	ok("шесть глав в CHAPTERS по порядку", _chapters_end_with(ids), str(Campaign.CHAPTERS))
 	ok("главы 5–6 ≤ 10 минут", own <= SIX and own > 0.0, "%.1f с" % own)
 

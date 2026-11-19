@@ -96,6 +96,7 @@ func _dig() -> void:
 		if broke:
 			dug += 1
 			_pick_near(c)
+	print("  [пауза] глава 1: копка без ожидания, действий подряд")
 	ok("накопано 5 угля", player.inv.count_of(IDs.I.COAL) >= 5, "уголь %d, клеток %d" % [
 			player.inv.count_of(IDs.I.COAL), dug])
 	# Карточку читаем до победы: последний этап закрывается в том же кадре,
@@ -172,15 +173,13 @@ func _fire() -> void:
 	ok("→ этап «Сумерки»", await wait_stage(2, 2.0), str(mission.stage))
 	var t_coal: float = Game.game_time
 	drive_threat = true
-	# До сумерек около 40 с игрового времени. Часы игры идут по process-кадрам.
+	# Эхо выходит с ночью, ночь — через ~12 с после угля. Часы — по process-кадрам.
 	Engine.time_scale = 8.0
-	var dusk: bool = await wait_until(func() -> bool: return Game.is_dusk() or Game.is_night(), 50.0)
+	var night: bool = await wait_until(func() -> bool: return Game.is_night(), 25.0)
 	var waited: float = Game.game_time - t_coal
-	# Эхо выходит ночью: днём оно само уходит в глубину. До ночи ещё ~14 с.
-	if not Game.is_night():
-		await wait_until(func() -> bool: return Game.is_night(), 20.0)
 	Engine.time_scale = 1.0
-	ok("сумерки через ~40 с", dusk and waited >= 30.0 and waited <= 55.0, "%.1f с" % waited)
+	print("  [пауза] глава 2: %.1f с от угля до ночи (лимит 15, без клика)" % waited)
+	ok("ночь и эхо через ~12 с", night and waited >= 8.0 and waited <= 16.0, "%.1f с" % waited)
 	var t_night: float = Game.game_time
 	# Герой в стороне: не перекрывает ход и не зовёт эхо шумом.
 	stand_at_cell(mark + Vector2i(3, 2))

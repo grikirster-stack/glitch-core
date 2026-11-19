@@ -38,6 +38,8 @@ var tail_phase: float = 0.0
 var kills: int = 0
 
 var _trail_t: float = 0.0
+## Тело на материале эмиссии: кот выходит ночью, CanvasModulate его не гасит.
+var _glow: Node2D = null
 var _path: Array[Vector2i] = []
 var _path_i: int = 0
 var _stuck: float = 0.0
@@ -66,6 +68,12 @@ func _ready() -> void:
 	if not net_puppet:
 		live = self
 		Sfx.play_at("cat_meow", global_position, -4.0, 1.15)
+	_glow = Node2D.new()
+	_glow.name = "Glow"
+	_glow.z_as_relative = false
+	_glow.z_index = 6
+	_glow.draw.connect(_paint_glow)
+	add_child(_glow)
 	queue_redraw()
 
 
@@ -115,7 +123,21 @@ func _process(delta: float) -> void:
 	if net_puppet:
 		tail_phase += delta
 		_drop_point(delta)
+	_sync_glow()
 	queue_redraw()
+
+
+## Материал эмиссии берём у слоя Emission (группа «emission»), как обводка отхода.
+func _sync_glow() -> void:
+	if _glow == null or _glow.material != null:
+		return
+	var tree: SceneTree = get_tree()
+	if tree == null:
+		return
+	var em: Node = tree.get_first_node_in_group("emission")
+	if em != null and em.get("glow_material") != null:
+		_glow.material = em.glow_material
+	_glow.queue_redraw()
 
 
 func _pick_target() -> void:
@@ -297,24 +319,54 @@ func net_apply(pos: Vector2, row: Dictionary) -> void:
 	alive = true
 
 
-## Цвет квадрата хвоста. Фаза растёт — цвет по кругу семи, смена чаще раза в секунду.
+## Цвет текущей полосы шлейфа. Фаза растёт — цвет по кругу семи.
+## Хвоста-квадрата больше нет: радуга — лента следа (WorldFX).
 func tail_color() -> Color:
 	return Beams.COLOR[1 + (int(tail_phase * 14.0) % 7)]
 
 
+const BODY: Color = Color(0.93, 0.94, 0.96)
+const OUTLINE: Color = Color(0.17, 0.13, 0.22)
+const EYE: Color = Color(0.12, 0.13, 0.16)
+const NOSE: Color = Color(0.94, 0.45, 0.55)
+
+
+## Тело на слое эмиссии: ночь не гасит ни контур, ни заливку.
+func _paint_glow() -> void:
+	_paint(_glow)
+
+
 func _draw() -> void:
+	if _glow != null and _glow.material != null:
+		return
+	_paint(self)
+
+
+## Кот лицом вправо: корпус 14×8, голова 6×6, уши 2×3, лапы 2×3 в противофазе.
+## Радуги на теле нет — она в ленте следа.
+func _paint(c: CanvasItem) -> void:
 	var flip: float = -1.0 if facing < 0 else 1.0
 	# Локальный ноль узла. Сдвиг на global_position удваивает позицию сцены.
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2(flip, 1.0))
+	c.draw_set_transform(Vector2.ZERO, 0.0, Vector2(flip, 1.0))
 	var bob: float = roundf(sin(tail_phase * 8.0))
-	# Серый кот 12×12: уши, корпус, лапы. Хвост — квадрат цвета фазы.
-	var body: Color = Color(0.93, 0.94, 0.96)
-	draw_rect(Rect2(-6.0, 6.0, 12.0, 2.0), Color(0, 0, 0, 0.55))
-	draw_rect(Rect2(-6.0, -4.0 + bob, 12.0, 10.0), body)
-	draw_rect(Rect2(-6.0, -8.0 + bob, 4.0, 4.0), body)
-	draw_rect(Rect2(2.0, -8.0 + bob, 4.0, 4.0), body)
-	draw_rect(Rect2(-2.0, -1.0 + bob, 2.0, 2.0), Color(0.12, 0.13, 0.16))
-	draw_rect(Rect2(3.0, -2.0 + bob, 2.0, 2.0), Color(0.95, 0.8, 0.25))
-	var wag: float = 2.0 if sin(tail_phase * 14.0) > 0.0 else 0.0
-	draw_rect(Rect2(-14.0, -3.0 + wag + bob, 8.0, 4.0), tail_color())
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var y: float = bob
+	# Бег: лапы в противофазе, шаг целым пикселем.
+	var step: float = 1.0 if sin(tail_phase * 14.0) > 0.0 else -1.0
+	# Контур 1 px — первым проходом, иначе на пастели кот сливается с фоном.
+	_box(c, Rect2(-7.0, -5.0 + y, 14.0, 8.0), OUTLINE, BODY)
+	_box(c, Rect2(5.0, -8.0 + y, 6.0, 6.0), OUTLINE, BODY)
+	_box(c, Rect2(6.0, -11.0 + y, 2.0, 3.0), OUTLINE, BODY)
+	_box(c, Rect2(9.0, -11.0 + y, 2.0, 3.0), OUTLINE, BODY)
+	_box(c, Rect2(-4.0, 3.0 + y + step, 2.0, 3.0), OUTLINE, BODY)
+	_box(c, Rect2(1.0, 3.0 + y - step, 2.0, 3.0), OUTLINE, BODY)
+	# Глаза и нос — на передней половине головы.
+	c.draw_rect(Rect2(8.0, -7.0 + y, 1.0, 1.0), EYE)
+	c.draw_rect(Rect2(10.0, -7.0 + y, 1.0, 1.0), EYE)
+	c.draw_rect(Rect2(9.0, -5.0 + y, 1.0, 1.0), NOSE)
+	c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Прямоугольник с контуром 1 px вокруг заливки.
+func _box(cv: CanvasItem, r: Rect2, edge: Color, fill: Color) -> void:
+	cv.draw_rect(r.grow(1.0), edge)
+	cv.draw_rect(r, fill)
