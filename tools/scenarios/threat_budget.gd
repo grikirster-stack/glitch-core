@@ -26,7 +26,7 @@ func run() -> void:
 	ok("ночь 1 — только эхо, не больше двух", r1.size() <= 2 and not r1.is_empty()
 			and r1.count("echo") == r1.size(), str(r1))
 	var r4: Array = Threat.plan_roster(Threat.night_budget(3.0, 4), 4, false)
-	ok("пустая смена 4 — без роя (нужны две горелки)", not r4.has("swarm")
+	ok("пустая смена 4 — без роя (нужны три горелки)", not r4.has("swarm")
 			and r4.count("echo") >= 1, str(r4))
 	var r6: Array = Threat.plan_roster(Threat.night_budget(3.0, 6), 6, false)
 	ok("свободная смена 6 — ровно один двойник", r6.count("doppel") == 1, str(r6))
