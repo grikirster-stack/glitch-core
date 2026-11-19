@@ -1,9 +1,9 @@
 extends ScenarioBase
 ## Ядро (ADR-005 § 6.3, #175, #212): шесть дуг → E 3 с у ядра → этап 6,
-## отсчёт Balance.RELAY_TIME (180 с) → победа, на финальном экране — эпилог Lore.
-## Ждать три минуты в тесте смысла нет: отсчёт ускоряется (Game.relay_speed).
+## отсчёт Balance.RELAY_TIME (90 с) → победа, на финальном экране — эпилог Lore.
+## Ждать полторы минуты в тесте смысла нет: отсчёт ускоряется (Game.relay_speed).
 
-const SPEED: float = 60.0          ## 180 с удержания — за 3 с реального времени
+const SPEED: float = 30.0          ## 90 с удержания — за 3 с реального времени
 
 
 func run() -> void:
@@ -36,7 +36,7 @@ func run() -> void:
 	var started: bool = await wait_until(func() -> bool: return Game.relay_active, 6.0)
 	release(KEY_E)
 	ok("ядро запущено", started)
-	ok("удержание — %d с" % int(Balance.RELAY_TIME), Balance.RELAY_TIME == 180.0
+	ok("удержание — %d с" % int(Balance.RELAY_TIME), is_equal_approx(Balance.RELAY_TIME, 90.0)
 			and absf(Game.relay_timer - Balance.RELAY_TIME) < 2.0, "%.1f с" % Game.relay_timer)
 	ok("этап цели 6 — удержать сигнал", Game.objective_stage == 6, Game.objective_text())
 

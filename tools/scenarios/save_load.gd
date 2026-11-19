@@ -53,7 +53,8 @@ func run() -> void:
 		World.set_tile(grate.x, grate.y, IDs.T.VENT_GRATE)
 		World.damage_grate(grate, 5.0)
 	Game.relay_active = true
-	Game.relay_timer = 170.0
+	# Внутри полоски: 170 с больше RELAY_TIME (90) и в файле выглядело бы как чужой отсчёт.
+	Game.relay_timer = Balance.RELAY_TIME * 0.5
 	Game.set_objective_stage(Game.OBJECTIVE_STAGES)
 	var burn0: float = burner.burn_left
 	var got: bool = await wait_until(func() -> bool:
