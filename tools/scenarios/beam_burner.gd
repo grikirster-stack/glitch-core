@@ -26,7 +26,11 @@ func run() -> void:
 	ok("луч красный на 1..24", _lane_color(origin, 1, 24, Beams.R), _lane_dump(origin, 26))
 	ok("25-я клетка пуста", World.beams.color_at(origin + Vector2i(25, 0)) == 0)
 	var light1: float = World.light_at(origin + Vector2i(10, 0))
-	ok("свет на 10-й клетке ≥ 1", light1 >= 1.0, "%.3f (было %.3f)" % [light1, light0])
+	var edge: float = World.light_at(origin + Vector2i(1, 0))
+	var tip: float = World.light_at(origin + Vector2i(24, 0))
+	var past: float = World.light_at(origin + Vector2i(25, 0))
+	print("  [свет] край %.2f середина %.2f конец %.2f за концом %.2f" % [edge, light1, tip, past])
+	ok("свет на 10-й клетке ≥ 0.55", light1 >= 0.55, "%.3f (было %.3f)" % [light1, light0])
 
 	# Стена на 8-й клетке луча: луч кончается на 7-й, сквозь породу не идёт.
 	var wall: Vector2i = origin + Vector2i(8, 0)

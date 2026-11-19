@@ -22,7 +22,12 @@ const START_TIME: float = 0.04         ## старт забега на расс�
 const BEAM_LEN: int = 24
 const BEAM_LEN_WHITE: int = 32
 const BEAM_BLOCK_COST: int = 2
-const BEAM_LIGHT: float = 1.0
+## Свет клетки луча. Радиус источника — BEAM_LIGHT_RADIUS: при 20 px соседи
+## складывались в 1.5, и полоска была забором не хуже маяка. При 10 px источник
+## один на клетку, край чуть ярче середины (1.1 против 0.7): эхо (порог 0.55)
+## отступает, копатель (0.80) — нет. Маяк жёлтый держит 2.0 (#B8).
+const BEAM_LIGHT: float = 0.7
+const BEAM_LIGHT_RADIUS: float = 10.0
 const BEAM_LIGHT_WHITE: float = 1.5
 const FUEL: Dictionary = {IDs.I.COAL: 45.0, IDs.I.COPPER_ORE: 30.0, IDs.I.CRYSTAL: 60.0}
 ## Запасная длительность угля, если предмет не в FUEL (шкала горелки, тень).
