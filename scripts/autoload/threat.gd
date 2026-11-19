@@ -415,17 +415,84 @@ func _shuffle(a: Array[String]) -> void:
 ## Поставить фантома в очередь появления: из вентиляции — с телеграфом,
 ## иначе сразу в пещере. false — места не нашлось.
 ## opts.harmless — эхо не бьёт (главы 1–3); директор его не передаёт.
+## Директорское эхо идёт к герою сквозь свет, пока его не видно (#268).
+## Глава зовёт spawn_phantom сама и этот флаг не получает.
+func _seek_opts(kind: String, opts: Dictionary) -> Dictionary:
+	if kind != "echo" or bool(opts.get("harmless", false)):
+		return opts
+	var o: Dictionary = opts.duplicate()
+	o["seek"] = true
+	return o
+
+
 func request_spawn(kind: String, opts: Dictionary = {}) -> bool:
 	var ppos: Vector2 = spawn_anchor()
-	var vent: Vector2i = pick_vent(ppos)
+	var vent: Vector2i = pick_vent(ppos, kind)
 	if vent.x >= 0:
+		opts = _seek_opts(kind, opts)
 		telegraph(vent, kind, opts)
 		return true
+	# Эхо: тёмной вентиляции нет, но устье лагеря залито. Выпуск в пещере
+	# (#268, замер) не связан с героем — путь 0, эхо кружит и не доходит.
+	# Тёмная клетка у этой вентиляции с путём к герою: эхо идёт сквозь свет
+	# до LOS, а спавнится уже в темноте. Гул сумерек вентиляцию не трогает.
+	if kind == "echo":
+		var mouth: Vector2i = _echo_mouth(ppos)
+		if mouth.x >= 0:
+			opts = _seek_opts(kind, opts)
+			telegraph(mouth, kind, opts)
+			return true
 	var cell: Vector2i = find_cave_cell(ppos)
 	if cell.x < 0:
 		return false
-	_spawn_now(kind, World.cell_to_world(cell), opts)
+	_spawn_now(kind, World.cell_to_world(cell), _seek_opts(kind, opts))
 	return true
+
+
+## Тёмная клетка у ближайшей вентиляции, откуда до героя есть путь.
+## Сама вентиляция может быть ярче порога — эхо выходит рядом, не из света.
+func _echo_mouth(ppos: Vector2) -> Vector2i:
+	var vents: Array[Vector2i] = nearest_vents(ppos)
+	if vents.is_empty():
+		return Vector2i(-1, -1)
+	var hero: Vector2i = World.world_to_cell(ppos)
+	var flee: float = float(Balance.PHANTOMS["echo"]["light_flee"])
+	var best: Vector2i = Vector2i(-1, -1)
+	var best_d: int = 999
+	for v in vents:
+		var cell: Vector2i = _dark_step(v, hero, flee)
+		if cell.x < 0:
+			continue
+		var d: int = absi(cell.x - v.x) + absi(cell.y - v.y)
+		if d < best_d:
+			best_d = d
+			best = cell
+	return best
+
+
+## Ближайшая к устью тёмная проходимая клетка, из которой A* доходит до героя.
+func _dark_step(vent: Vector2i, hero: Vector2i, flee: float) -> Vector2i:
+	var seen: Dictionary = {}
+	var q: Array[Vector2i] = [vent]
+	seen[vent] = true
+	var steps: int = 0
+	while not q.is_empty() and steps < 160:
+		var c: Vector2i = q.pop_front()
+		steps += 1
+		if c != vent and World.light_at(c) <= flee and not World.astar.is_point_solid(c):
+			if World.astar.get_id_path(c, hero).size() > 1:
+				return c
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = c + d
+			if seen.has(n) or not World.in_bounds(n.x, n.y):
+				continue
+			if absi(n.x - vent.x) + absi(n.y - vent.y) > 24:
+				continue
+			seen[n] = true
+			if World.astar.is_point_solid(n):
+				continue
+			q.append(n)
+	return Vector2i(-1, -1)
 
 
 ## Телеграф из заданной вентиляции: гул и пар, через VENT_TELEGRAPH с — фантом.
@@ -484,6 +551,10 @@ func spawn_phantom(kind: String, pos: Vector2, opts: Dictionary = {}) -> Array:
 		out.append(p)
 		spawned_total += 1
 		phantom_spawned.emit(p)
+		if bool(opts.get("seek", false)) and p.has_method("seek_until_seen"):
+			var hero := _player()
+			if hero != null:
+				p.seek_until_seen(90.0, hero.global_position)
 	return out
 
 
@@ -512,8 +583,18 @@ func nearest_vents(ppos: Vector2, count: int = Balance.VENT_SPAWN_COUNT) -> Arra
 
 
 ## Вентиляция для спавна: одна из трёх ближайших, вес — 1/дистанция.
-func pick_vent(ppos: Vector2) -> Vector2i:
+func pick_vent(ppos: Vector2, kind: String = "") -> Vector2i:
 	var vents: Array[Vector2i] = nearest_vents(ppos)
+	# Эхо не выходит из вентиляции ярче порога бегства (#268): устье лагеря
+	# залито кристаллами, и эхо сразу стоит. Гул сумерек эту вентиляцию
+	# по-прежнему берёт — фильтр только у спавна. Нет тёмной — пещера.
+	if kind == "echo":
+		var flee: float = float(Balance.PHANTOMS["echo"]["light_flee"])
+		var dark: Array[Vector2i] = []
+		for v in vents:
+			if World.light_at(v) <= flee:
+				dark.append(v)
+		vents = dark
 	if vents.is_empty():
 		return Vector2i(-1, -1)
 	var weights: Array[float] = []
