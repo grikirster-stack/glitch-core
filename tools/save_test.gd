@@ -315,7 +315,7 @@ class Runner extends Node:
 		game.tasks_done = 1
 		game.objective_stage = 6
 		game.relay_active = true          # удержание сигнала: этап 6
-		game.relay_timer = 151.5
+		game.relay_timer = Balance.RELAY_TIME * 0.5
 		if not world.terminals.is_empty():
 			world.terminals.remove_at(0)
 		tech.read_chapters = [0, 3]
