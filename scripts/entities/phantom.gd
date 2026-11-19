@@ -1305,6 +1305,7 @@ const DRILL_HI: Color = Color(0.78, 0.80, 0.84)
 const ECHO_SPORE_X: Array[float] = [-4.0, -1.0, 2.0, 4.0]	## Где споры отрываются от шлема эха.
 const BURROWER_SEG_H: Array[float] = [6.0, 9.0, 10.0, 8.0]	## Высоты сегментов копателя, хвост → голова.
 
+var _spark_t: float = 0.0			## Когда копатель сыпал крошку в последний раз (по jitter).
 var _name_w: float = 0.0			## Ширина имени двойника, px: меряется, когда имя сменилось.
 var _name_w_of: String = ""			## Для какого имени измерена _name_w.
 
@@ -1346,6 +1347,8 @@ func _draw_echo() -> void:
 	if stun > 0.0:
 		base = base.lerp(STUN_TINT, 0.55)
 	_face(facing < 0)
+	if stun > 0.0:
+		_draw_frost()
 	# Тень на земле — плоская полоса.
 	draw_rect(Rect2(-7.0, SIZE.y * 0.5, 14.0, 1.0), GROUND_SHADOW)
 	_sync_flee_outline()
@@ -1449,6 +1452,28 @@ func _flee_beam_color() -> Color:
 		if mask > 0 and mask < Beams.COLOR.size():
 			return Beams.COLOR[mask]
 	return Beams.COLOR[Beams.R]
+
+
+## Корка синего маяка: три квадрата цвета луча по контуру. Побледнения мало —
+## ребёнок должен видеть, что фантом замёрз, а не просто побледнел.
+func _draw_frost() -> void:
+	var ice: Color = Beams.COLOR[Beams.B]
+	draw_rect(Rect2(-6.0, -10.0, 3.0, 2.0), ice)
+	draw_rect(Rect2(3.0, -4.0, 3.0, 2.0), ice)
+	draw_rect(Rect2(-4.0, 6.0, 3.0, 2.0), ice)
+
+
+## Крошка породы у острия бура. Раз в 0.2 с, только в погоне: видно, что роет,
+## даже пока клетка ещё цела. Цвет — камень, не спора.
+func _sparks_at_bit(floor_y: float) -> void:
+	if jitter - _spark_t < 0.2:
+		return
+	_spark_t = jitter
+	var tip: Vector2 = global_position + Vector2(float(facing) * 12.0, floor_y - 4.0)
+	var fx: Node = get_tree().current_scene.get("world_fx") if get_tree().current_scene != null else null
+	if fx == null or not fx.has_method("spawn_chip"):
+		return
+	fx.spawn_chip(World.world_to_cell(tip), DB.pal("s_base"))
 
 
 ## Индикатор погони, полоса hp и искры оглушения — общие для всех типов.
@@ -1558,6 +1583,8 @@ func _draw_burrower() -> void:
 	for k in 4:
 		draw_rect(Rect2(7.0 + k, floor_y - 8.0 + k, 1.0, 8.0 - 2.0 * k), DRILL if (k + spin) % 2 == 0 else DRILL_DARK)
 	draw_rect(Rect2(11.0, floor_y - 5.0, 1.0, 2.0), DRILL_HI)
+	if state == St.CHASE and stun <= 0.0:
+		_sparks_at_bit(floor_y)
 	_face(false)
 	_draw_status(t, floor_y - 14.0)
 
