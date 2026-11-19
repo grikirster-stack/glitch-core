@@ -173,13 +173,15 @@ func _fire() -> void:
 	ok("→ этап «Сумерки»", await wait_stage(2, 2.0), str(mission.stage))
 	var t_coal: float = Game.game_time
 	drive_threat = true
-	# Эхо выходит с ночью, ночь — через ~12 с после угля. Часы — по process-кадрам.
+	# Эхо выходит с ночью, ночь — через DUSK_WAIT после угля. Часы — по process-кадрам.
 	Engine.time_scale = 8.0
 	var night: bool = await wait_until(func() -> bool: return Game.is_night(), 25.0)
 	var waited: float = Game.game_time - t_coal
 	Engine.time_scale = 1.0
-	print("  [пауза] глава 2: %.1f с от угля до ночи (лимит 15, без клика)" % waited)
-	ok("ночь и эхо через ~12 с", night and waited >= 8.0 and waited <= 16.0, "%.1f с" % waited)
+	var dusk: float = float(mission.DUSK_WAIT)
+	print("  [пауза] глава 2: %.1f с от угля до ночи (телеграф %.0f с, без клика)" % [waited, dusk])
+	ok("ночь и эхо через ~%.0f с" % dusk, night and waited >= dusk - 2.0 and waited <= dusk + 4.0, "%.1f с" % waited)
+	ok("DUSK_WAIT не больше 6 с", float(mission.DUSK_WAIT) <= 6.0, "%.1f с" % float(mission.DUSK_WAIT))
 	var t_night: float = Game.game_time
 	# Герой в стороне: не перекрывает ход и не зовёт эхо шумом.
 	stand_at_cell(mark + Vector2i(3, 2))

@@ -40,7 +40,9 @@ func _won(id: String, t0: float) -> void:
 	ok("%s: пройдена за ≤ 120 с" % id, mission.result == Mission.Result.WON and dt <= LIMIT,
 			"итог %d за %.1f с" % [mission.result, dt])
 	print("  [замер] %s: %.1f с игрового времени" % [id, dt])
-	print("  [пауза] %s: ночь главы 4 — %.0f с, удар эха внутри, дальше ждать нечем" % [id, 15.0])
+	if id == "colors":
+		print("  [пауза] %s: ночь главы 4 — %.0f с, удар эха внутри, дальше ждать нечем" % [id, mission.NIGHT_SEC])
+		ok("NIGHT_SEC не больше 8 с", float(mission.NIGHT_SEC) <= 8.0, "%.1f с" % float(mission.NIGHT_SEC))
 	ok("%s: в профиле" % id, Profile.load_or_create().campaign_done.has(id))
 
 
