@@ -160,7 +160,7 @@ const SWARM_SEEK_PX: float = 300.0     ## рой видит горящую го�
 const SWARM_BURNERS: int = 3
 const SWARM_PACK_SPREAD: int = 1       ## стая = pack ± это число (4–6)
 const SHADE_SEEK_PX: float = 640.0     ## тень чует горящую горелку в этом радиусе
-const SHADE_DRAIN_PERIOD: float = 3.0  ## тень у горелки сжигает одну единицу топлива за столько секунд
+const SHADE_DRAIN_PERIOD: float = 8.0  ## тень у горелки сжигает одну единицу топлива за столько секунд (было 3.0: ~30 за ночь, B2)
 const BURROWER_DIG_PERIOD: float = 0.6 ## копатель роет 1 клетку за столько секунд
 const BURROWER_HUNT_PX: float = 600.0  ## копатель чует игрока сквозь породу
 const DOPPEL_GAZE_PX: float = 200.0    ## двойник замирает под взглядом ближе этого
