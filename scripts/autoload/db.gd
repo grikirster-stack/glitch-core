@@ -1189,11 +1189,22 @@ func _paint_cap_slab(t: Image, top: bool, rng: RandomNumberGenerator) -> void:
 	for x in range(0, TILE_SIZE, 2):
 		t.set_pixel(x, CAP_H, d.darkened(0.15))
 	var spots: int = 3 if top else 1
+	var tips: Array[Vector2i] = []
+	var used: Array = []
 	for i in spots:
-		var sx: int = rng.randi_range(1, TILE_SIZE - 3)
-		var sy: int = rng.randi_range(2, CAP_H - 4)
+		var sx: int = 2 + i * 5
+		var sy: int = 3 if i != 1 else 5
+		if not top:
+			sx = 6
+			sy = 4
+		used.append(sx)
 		_rect(t, sx, sy, 2, 2, pal("fl3"))
 		t.set_pixel(sx + 1, sy + 1, pal("fl3").darkened(0.12))
+		tips.append(Vector2i(sx + 1, sy + 1))
+	# Споры — после всех пятен: соседнее пятно затирало бы угол. Ночью шейдер
+	# эмиссии зажигает пиксель bio, если слева и сверху розовая шляпка.
+	for tip in tips:
+		t.set_pixel(tip.x, tip.y, pal("bio"))
 
 
 # --------------------------------------------------- постройки

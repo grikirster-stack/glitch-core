@@ -143,11 +143,12 @@ static func layout(look: int, facing: int, walk: float, breath: float, move: flo
 	move = clampf(move, 0.0, 1.0)
 	var idle: float = clampf(1.0 - move * 2.8, 0.0, 1.0)
 	var sw: float = sin(walk)
-	# Шаг — целыми пикселями: ведущая нога на 1 px вперёд и приподнята.
+	# Шаг — целыми пикселями: ведущая нога на 2 px вперёд и приподнята.
+	# На 1 px фигура читалась стоящей: «скользит» (аудит анимаций, #juice).
 	var stride: int = 0
 	if move > 0.05:
-		var s: float = sw * move
-		stride = 1 if s > 0.35 else (-1 if s < -0.35 else 0)
+		var st: float = sw * move
+		stride = 1 if st > 0.35 else (-1 if st < -0.35 else 0)
 	# Подъём корпуса на 1 px: на шаге — когда ноги проходят друг мимо друга,
 	# в покое — на вдохе.
 	var up: float = 0.0
@@ -157,6 +158,8 @@ static func layout(look: int, facing: int, walk: float, breath: float, move: flo
 		elif sin(breath * 1.8) * idle > 0.5:
 			up = -1.0
 	var feet: float = SIZE.y * 0.5
+	# Корпус кренится на 1 px в сторону ведущей ноги: вес переносится.
+	var lean: float = float(stride) if not air else 0.0
 	var yt: float = -2.0 + up		# верх корпуса
 	var yh: float = yt - 9.0		# верх шлема
 	var leg_top: float = yt + 8.0
@@ -178,10 +181,10 @@ static func layout(look: int, facing: int, walk: float, breath: float, move: flo
 	var lay: Dictionary = {}
 	lay["facing"] = f
 	lay["body"] = Rect2(-SIZE.x * 0.5, yh, SIZE.x, feet - yh)
-	lay["torso"] = mirror(Rect2(-5.0, yt, 10.0, 8.0), f)
-	lay["helmet"] = mirror(Rect2(-5.0, yh, 10.0, 9.0), f)
-	lay["chest"] = mirror(Rect2(2.0, yt + 2.0, 3.0, 3.0), f)
-	lay["chest_led"] = mirror(Rect2(3.0, yt + 3.0, 1.0, 1.0), f)
+	lay["torso"] = mirror(Rect2(-5.0 + lean, yt, 10.0, 8.0), f)
+	lay["helmet"] = mirror(Rect2(-5.0 + lean, yh, 10.0, 9.0), f)
+	lay["chest"] = mirror(Rect2(2.0 + lean, yt + 2.0, 3.0, 3.0), f)
+	lay["chest_led"] = mirror(Rect2(3.0 + lean, yt + 3.0, 1.0, 1.0), f)
 	# Ноги и боты: задняя — с пяткой назад, передняя — носком вперёд.
 	lay["leg_back"] = mirror(Rect2(-4.0 + bx, leg_top, 4.0, feet - 2.0 - b_lift - leg_top), f)
 	lay["boot_back"] = mirror(Rect2(-5.0 + bx, feet - 2.0 - b_lift, 4.0, 2.0), f)
@@ -192,6 +195,7 @@ static func layout(look: int, facing: int, walk: float, breath: float, move: flo
 		lay["arm"] = mirror(Rect2(1.0, yt + 2.0, 6.0, 3.0), f)
 		lay["glove"] = mirror(Rect2(7.0, yt + 2.0, 2.0, 3.0), f)
 	else:
+		# На шаге рука в противофазе ноге: нога вперёд — рука назад, на 2 px.
 		var ax: float = -3.0 if air else -2.0 * float(stride)
 		lay["arm"] = mirror(Rect2(-1.0 + ax, yt + 1.0, 3.0, 5.0), f)
 		lay["glove"] = mirror(Rect2(-1.0 + ax, yt + 6.0, 3.0, 2.0), f)
@@ -256,6 +260,18 @@ static func mirror(r: Rect2, f: int) -> Rect2:
 
 ## Рисует героя на canvas (внутри его _draw) в локальных координатах героя.
 ## Преобразование холста не трогает: двойник отражает рисунок своим.
+## Присед перед прыжком: торс на 1 px ниже и на 1 px короче. Шлем, визор и
+## фонарь остаются — сжимается только корпус. Раскладка должна быть копией:
+## кэш layout общий.
+static func squash(lay: Dictionary) -> void:
+	for k in ["torso", "chest", "chest_led"]:
+		var r: Rect2 = lay[k]
+		r.position.y += 1.0
+		if k == "torso":
+			r.size.y -= 1.0
+		lay[k] = r
+
+
 static func draw(canvas: CanvasItem, lay: Dictionary, look: int, state: Dictionary) -> void:
 	var hiding: bool = state.get("hiding", false)
 	var flash: float = state.get("flash", 0.0)
