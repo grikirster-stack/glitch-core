@@ -10,6 +10,9 @@ class_name SaveTest
 ## Снимки должны совпасть побайтно (var_to_bytes) — целиком и по разделам, а
 ## файл — с кодировкой снимка после загрузки. После загрузки горелка жжёт уголь.
 ## Плюс: битый файл не загружается и не трогает мир.
+## На одном сиде (--test и --seed=): автосейв на рассвете пишет слот «dawn»,
+## строка «Запись легла.» один раз; повтор в ту же смену и перемотка смерти,
+## если рассвет уже был, файл не трогают.
 ##
 ## Отдельный запуск (три сида CI в одном процессе):
 ##   godot --headless --path . --script res://tools/save_test.gd
@@ -54,6 +57,9 @@ class Runner extends Node:
 	var _ms_load: Array = []
 	var _sizes: Array = []
 	var _raw_sizes: Array = []
+	var _dawn_notes: int = 0
+	var _dawn_mtime: int = 0
+	var _dawn_day: int = 0
 
 
 	func _init(p_host: Node = null) -> void:
@@ -95,6 +101,9 @@ class Runner extends Node:
 			1: _s_setup()
 			2: _s_save_and_load()
 			3: _s_running()
+			4: _s_dawn_save()
+			5: _s_dawn_again()
+			6: _s_dawn_death()
 			_: _finish()
 
 
@@ -221,13 +230,129 @@ class Runner extends Node:
 	func _after_round() -> void:
 		_round += 1
 		if _round > 1:
+			_dawn_once()
+			return
+		_next(1, 0.1)
+
+
+	## Один сид (первый раунд закрыт, второй не нужен): автосейв на рассвете.
+	## Отдельный слот, не selftest — тот ещё сверяется побайтно выше.
+	func _dawn_once() -> void:
+		# --test и --seed= передают один сид и к этому шагу уже его забрали.
+		# Отдельный прогон на трёх сидах CI автосейв не гоняет.
+		if _seeds.size() > 0:
 			_round = 0
+			_next(1, 0.1)
+			return
+		save_s.remove("dawn")
+		var ui: Node = scene.get_node("/root/UI")
+		# --test до этой секции уже пережил рассвет («Сутки»): отметка той смены
+		# не должна глушить проверку. Слот «1» того файла тест не читает.
+		ui._dawn_saved_day = -1
+		_dawn_notes = 0
+		if not game.notification.is_connected(_on_dawn_note):
+			game.notification.connect(_on_dawn_note)
+		var p = game.player
+		if p != null:
+			p.invuln = 1.0e9
+		game.state = game.State.PLAYING
+		game.mission = null
+		game.scenario_mode = false
+		# Глубокая ночь: кадры ожидания границу не пересекут, её пересечёт шаг ниже.
+		game.time_of_day = 0.80
+		_dawn_day = int(game.day_number)
+		save_s.slot = "dawn"
+		_next(4, 0.05)
+
+
+	func _on_dawn_note(text: String, _color: Color) -> void:
+		if text == "Запись легла.":
+			_dawn_notes += 1
+
+
+	## Рассвет пишет слот и показывает строку один раз.
+	func _s_dawn_save() -> void:
+		var ui: Node = scene.get_node("/root/UI")
+		game.advance_clock(0.25)
+		var path: String = save_s.path_for("dawn")
+		_ok("автосейв на рассвете: файл появился", FileAccess.file_exists(path)
+				and int(game.day_number) == _dawn_day + 1, path)
+		_ok("автосейв отметил эту смену", int(ui._dawn_saved_day) == int(game.day_number),
+				"смена %d" % int(ui._dawn_saved_day))
+		_ok("строка «Запись легла.» один раз", _dawn_notes == 1, "строк %d" % _dawn_notes)
+		var hud: Node = ui.get("hud")
+		var shown: bool = false
+		if hud != null:
+			for n in hud.notes:
+				if String(n.get("text", "")) == "Запись легла.":
+					shown = true
+		_ok("строка лежит в HUD", shown)
+		var loaded: Dictionary = save_s.decode(FileAccess.get_file_as_bytes(path))
+		_ok("в файле смена рассвета", int(loaded.get("game", {}).get("day_number", -1)) == int(game.day_number),
+				"файл %s" % str(loaded.get("game", {}).get("day_number", -1)))
+		_dawn_mtime = FileAccess.get_modified_time(path)
+		_dawn_notes = 0
+		# Та же смена: день не пересекаем, сигнал не должен прийти снова.
+		game.advance_clock(0.01)
+		_next(5, 0.05)
+
+
+	## Повтор в ту же смену файл не трогает. Перемотка смерти — один сейв, не два.
+	func _s_dawn_again() -> void:
+		var path: String = save_s.path_for("dawn")
+		_ok("в ту же смену автосейв молчит", _dawn_notes == 0
+				and FileAccess.get_modified_time(path) == _dawn_mtime,
+				"строк %d" % _dawn_notes)
+		var p = game.player
+		_ok("герой жив для перемотки", p != null and not bool(p.get("dead")))
+		if p == null:
+			_dawn_cleanup()
+			return
+		var main: Node = scene
+		p.dead = true
+		# Ночь за время смерти уже кончилась сама (смена выросла): перемотка
+		# не шлёт day_started второй раз — сейв не должен переписаться.
+		main.set("_nights_at_death", int(game.nights_survived) - 1)
+		_dawn_notes = 0
+		main._respawn()
+		_ok("перемотка смерти не дублирует автосейв", _dawn_notes == 0
+				and FileAccess.get_modified_time(path) == _dawn_mtime
+				and int(game.day_number) == _dawn_day + 1,
+				"строк %d, смена %d" % [_dawn_notes, int(game.day_number)])
+		# Следующая ночь ещё не прожита: смерть крутит часы и шлёт один рассвет.
+		game.time_of_day = 0.80
+		p.dead = true
+		main.set("_nights_at_death", int(game.nights_survived))
+		_dawn_notes = 0
+		var before: int = int(game.day_number)
+		main._respawn()
+		_ok("перемотка из ночи — один автосейв и одна строка", _dawn_notes == 1
+				and int(game.day_number) == before + 1
+				and FileAccess.get_modified_time(path) >= _dawn_mtime,
+				"строк %d, %d → %d" % [_dawn_notes, before, int(game.day_number)])
+		_next(6, 0.05)
+
+
+	func _s_dawn_death() -> void:
+		_dawn_cleanup()
+
+
+	func _dawn_cleanup() -> void:
+		if game.notification.is_connected(_on_dawn_note):
+			game.notification.disconnect(_on_dawn_note)
+		save_s.remove("dawn")
+		save_s.slot = SLOT
+		game.scenario_mode = true
+		_round = 0
 		_next(1, 0.1)
 
 
 	func _finish() -> void:
 		save_s.remove(SLOT)
+		save_s.remove("dawn")
 		save_s.slot = _slot0
+		if game.notification.is_connected(_on_dawn_note):
+			game.notification.disconnect(_on_dawn_note)
 		if not _ms_save.is_empty():
 			print("  [замер] сохранение: %s мс; загрузка: %s мс; файл: %s КБ (несжато %s КБ)"
 					% [_fmt(_ms_save), _fmt(_ms_load), _fmt_kb(_sizes), _fmt_kb(_raw_sizes)])
