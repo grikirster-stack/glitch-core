@@ -5,8 +5,11 @@ extends SceneTree
 ## line_ore_per_s, line_plate_per_s. Победа больше не «релей руками» (#212) —
 ## balance_hand в дефолт не входит, секундомер копки жив флагом --hand.
 ##
-## Для каждого сида запускает дочерний Godot со сценариями ночи, разбирает
-## строки «ключ=значение» и печатает таблицу. Коридоры потерь и uptime —
+## Для каждого сида гоняет каждый сценарий отдельным дочерним Godot (свой
+## --balance-out): один процесс на список сценариев тащит состояние между
+## ними, и автопилот после ночных сценариев не доходит до удержания.
+## Разбирает строки «ключ=значение» и печатает таблицу. Код сида ненулевой,
+## если упал хоть один дочерний процесс. Коридоры потерь и uptime —
 ## справочно, пока нет линии отсчёта: резать прогон ними значит снова красить
 ## зонд из-за констант, которые эта задача не трогает. Режут только то, что
 ## уже было приёмкой и не зависит от тюнинга: первая ночь, тихие смерти,
@@ -101,19 +104,24 @@ func _initialize() -> void:
 	var fails_run: Array = []
 	for s in seeds:
 		var t0: int = Time.get_ticks_msec()
-		var mfile: String = OS.get_user_data_dir().path_join("balance_probe_%d.txt" % int(s))
-		if FileAccess.file_exists(mfile):
-			DirAccess.remove_absolute(mfile)
-		var args: PackedStringArray = ["--headless", "--path", proj, "--",
-				"--scenario=" + ",".join(names), "--seed=%d" % int(s), "--balance-out=" + mfile]
-		var code: int = OS.execute(exe, args, [], true)
-		var text: String = FileAccess.get_file_as_string(mfile)
-		for line in text.split("\n", false):
-			var kv: PackedStringArray = line.strip_edges().split("=")
-			if kv.size() == 2 and kv[1] != "справ":
-				if not facts.has(kv[0]):
-					facts[kv[0]] = {}
-				facts[kv[0]][int(s)] = "NA" if kv[1] == "NA" else float(kv[1])
+		var code: int = 0
+		for name in names:
+			var mfile: String = OS.get_user_data_dir().path_join(
+					"balance_probe_%d_%s.txt" % [int(s), String(name)])
+			if FileAccess.file_exists(mfile):
+				DirAccess.remove_absolute(mfile)
+			var args: PackedStringArray = ["--headless", "--path", proj, "--",
+					"--scenario=" + String(name), "--seed=%d" % int(s), "--balance-out=" + mfile]
+			var child: int = OS.execute(exe, args, [], true)
+			var text: String = FileAccess.get_file_as_string(mfile)
+			for line in text.split("\n", false):
+				var kv: PackedStringArray = line.strip_edges().split("=")
+				if kv.size() == 2 and kv[1] != "справ":
+					if not facts.has(kv[0]):
+						facts[kv[0]] = {}
+					facts[kv[0]][int(s)] = "NA" if kv[1] == "NA" else float(kv[1])
+			if child != 0:
+				code = child
 		if code != 0:
 			fails_run.append(int(s))
 		print("сид %d: %.0f с, код %d" % [int(s), float(Time.get_ticks_msec() - t0) / 1000.0, code])
