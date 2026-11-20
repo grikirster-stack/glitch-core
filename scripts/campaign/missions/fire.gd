@@ -81,7 +81,7 @@ func stages() -> Array:
 		{"title": "Сумерки",
 			"hint": "Эхо подходит к лучу и отступает",
 			"say": ["Ждём сумерек. Эхо само подойдёт — и само уйдёт."],
-			"goals": [["Дождись сумерек", func() -> Vector2i:
+			"goals": [["Дождись эха", func() -> Vector2i:
 				return flag(_echo_retreated()),
 				IDs.I.BURNER, func() -> Vector2: return _burner_at()]]},
 	]
