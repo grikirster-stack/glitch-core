@@ -46,6 +46,10 @@ extends CanvasLayer
 ## Раскладка при 1280×720 (не перекрывает HUD): слева снизу — джойстик и «строить»;
 ## справа снизу — E, бег, прыжок (ниже уведомлений, правее хотбара); справа под
 ## миникартой — J, I, ниже — Q и V. Размер кнопки — не меньше MIN_MM на экране.
+## Портрет (тач и высота > 1.2 ширины, как HUD._compute_layout): стик слева внизу,
+## кнопки действий справа внизу, меню/журнал/инвентарь справа сверху — внутри
+## safe-area и выше полосы хотбара. Краевые элементы прижаты к DisplayServer
+## .get_display_safe_area(); на desktop/headless область = весь экран, отступы 0.
 ## Всё рисуется одним Control и только при смене видимого состояния.
 ##
 ## Сеть (#135): в сетевой игре с товарищами есть G — перекличка (NetTeam читает G через
@@ -136,6 +140,8 @@ var _pad: Control = null
 var _layout_size: Vector2 = Vector2.ZERO
 ## Размер интерфейса, под который посчитана раскладка (UI.ui_scale).
 var _layout_ui: float = 1.0
+## Отступы safe-area в px канваса, под которые посчитана раскладка.
+var _layout_insets: Vector4 = Vector4.ZERO
 ## Строк плашки команды, под которые сдвинута правая колонка (_team_rows; 0 — плашки нет).
 var _layout_team: int = 0
 ## NetTeam (без типа — цикл зависимостей, как в HUD); ищется только в сети.
@@ -273,7 +279,10 @@ func _rollcall_on() -> bool:
 
 
 ## Товарищей на плашке команды HUD (её рисует HUD при игроках > 1): 0 — плашки нет.
+## force_team_rows >= 0 — подстановка теста (headless сети не поднимает).
 func _team_rows() -> int:
+	if force_team_rows >= 0:
+		return force_team_rows
 	return mini(Game.players.size() - 1, HUD.TEAM_MAX) if Game.players.size() > 1 else 0
 
 
@@ -288,6 +297,11 @@ func _shown(id: String, blocking: bool) -> bool:
 
 ## Множитель раскладки, заданный тестом (> 0): окно headless — 64×64 px, по нему dpi не посчитать.
 var force_k: float = 0.0
+## Отступы safe-area, заданные тестом (лево, верх, право, низ), px канваса. Отрицательное —
+## читать DisplayServer. На desktop/headless безопасная область = весь экран.
+var force_insets: Vector4 = Vector4(-1, -1, -1, -1)
+## Строк плашки команды, заданных тестом. Отрицательное — считать по Game.players.
+var force_team_rows: int = -1
 
 
 ## Множитель раскладки: кнопка не меньше MIN_MM на экране этого устройства.
@@ -307,8 +321,49 @@ func _relayout() -> void:
 	_layout_size = get_viewport().get_visible_rect().size
 	_layout_ui = UI.ui_scale
 	_layout_team = _team_rows()
+	_layout_insets = safe_insets(_layout_size)
 	_layout(_layout_size)
 	_pad.queue_redraw()
+
+
+## Портрет — как HUD._compute_layout: тач и высота > 1.2 ширины. Иначе ландшафт.
+func _portrait(sz: Vector2) -> bool:
+	return UI.touch_on and sz.y > sz.x * 1.2
+
+
+## Отступы safe-area в px канваса контрола: (лево, верх, право, низ).
+## DisplayServer.get_display_safe_area() — экранные пиксели. В те же единицы
+## канваса: (окно / экран) × (канвас / окно) = канвас / экран — окно сокращается,
+## доли выреза от экрана переносятся на холст. На desktop/headless безопасная
+## область = весь экран — отступы нулевые. Тест подставляет force_insets.
+func safe_insets(canvas: Vector2) -> Vector4:
+	if force_insets.x >= 0.0:
+		return force_insets
+	var screen: Vector2i = DisplayServer.screen_get_size()
+	var safe: Rect2i = DisplayServer.get_display_safe_area()
+	if screen.x <= 0 or screen.y <= 0 or safe.size.x <= 0 or safe.size.y <= 0:
+		return Vector4.ZERO
+	var win: Vector2i = DisplayServer.window_get_size()
+	if win.x <= 0 or win.y <= 0:
+		win = get_window().size
+	if win.x <= 0 or win.y <= 0 or canvas.x <= 0.0 or canvas.y <= 0.0:
+		return Vector4.ZERO
+	# Экранные px → px окна (окно может быть меньше экрана), затем → px канваса.
+	var to_canvas: Vector2 = Vector2(canvas.x / float(win.x), canvas.y / float(win.y))
+	var win_over_screen: Vector2 = Vector2(float(win.x) / float(screen.x), float(win.y) / float(screen.y))
+	var s: Vector2 = win_over_screen * to_canvas
+	var left: float = maxf(0.0, float(safe.position.x) * s.x)
+	var top: float = maxf(0.0, float(safe.position.y) * s.y)
+	var right: float = maxf(0.0, float(screen.x - safe.end.x) * s.x)
+	var bottom: float = maxf(0.0, float(screen.y - safe.end.y) * s.y)
+	# Вырез больше канваса — не сдвигаем элементы за противоположный край.
+	if left + right >= canvas.x:
+		left = 0.0
+		right = 0.0
+	if top + bottom >= canvas.y:
+		top = 0.0
+		bottom = 0.0
+	return Vector4(left, top, right, bottom)
 
 
 func _layout(sz: Vector2) -> void:
@@ -317,15 +372,27 @@ func _layout(sz: Vector2) -> void:
 	var jr: float = JUMP_R * _k
 	var m: float = 24.0 * _k
 	var g: float = 14.0 * _k
+	var inset: Vector4 = safe_insets(sz)
+	_layout_insets = inset
 	stick_radius = STICK_R * _k
-	stick_center = Vector2(m + 10.0 * _k + stick_radius, sz.y - m - stick_radius)
-	var jump: Vector2 = Vector2(sz.x - m - jr, sz.y - m - jr)
-	var run: Vector2 = Vector2(jump.x - jr - g - r, sz.y - m - r)
+	var left: float = inset.x
+	var top_in: float = inset.y
+	var right: float = inset.z
+	var bottom: float = inset.w
+	if _portrait(sz):
+		_layout_portrait(sz, r, jr, m, g, left, top_in, right, bottom)
+		return
+	# Ландшафт: прежние формулы. Отступы нулевые на desktop — позиции не меняются.
+	stick_center = Vector2(left + m + 10.0 * _k + stick_radius, sz.y - bottom - m - stick_radius)
+	var jump: Vector2 = Vector2(sz.x - right - m - jr, sz.y - bottom - m - jr)
+	var run: Vector2 = Vector2(jump.x - jr - g - r, sz.y - bottom - m - r)
 	# Под правым столбцом HUD (миникарта, плашка команды: HUD.right_column_bottom) — I и J,
 	# под ними столбиком Q и V. В сети с товарищами и при размере интерфейса выше 100 % —
 	# Q, V и G (перекличка) одним рядом: колонка ниже налезла бы на уведомления и нижние кнопки.
-	var top: float = maxf(126.0, HUD.right_column_bottom(sz.x / UI.ui_scale, _layout_team) * UI.ui_scale + 8.0)
-	var inv: Vector2 = Vector2(sz.x - m - r, top + r)
+	# 126 — прежний якорь под миникартой; вырез только поднимает его, не опускает.
+	var top: float = maxf(126.0, top_in + m + r)
+	top = maxf(top, HUD.right_column_bottom(sz.x / UI.ui_scale, _layout_team) * UI.ui_scale + 8.0)
+	var inv: Vector2 = Vector2(sz.x - right - m - r, top + r)
 	var step: float = 2.0 * r + g
 	var q: Vector2 = Vector2(inv.x, inv.y + step)
 	var v: Vector2 = Vector2(inv.x, q.y + step)
@@ -342,7 +409,57 @@ func _layout(sz: Vector2) -> void:
 		"q": q,
 		"v": v,
 		"g": Vector2(v.x - step, q.y) if one_row else Vector2(q.x - step, q.y),
-		"build": Vector2(m + r, stick_center.y - stick_radius - g - r),
+		"build": Vector2(left + m + r, stick_center.y - stick_radius - g - r),
+	}
+	btn_radius = {}
+	for id in btn_center:
+		btn_radius[id] = jr if id == "jump" else r
+
+
+## Портрет: стик слева внизу, действия справа внизу, меню/пауза сверху справа.
+## Ряд меню — под правым столбцом HUD: миникарта и, в сети, плашка команды
+## (HUD.right_column_bottom). Нижний ряд — выше полосы хотбара (хотбар сидит
+## над верхом стика/кнопок). Q/V/G — справа, ниже карточки «Сейчас» (HUD кладёт
+## её под ряд меню): слева накрыли бы карточку, над стиком — полосу хотбара.
+func _layout_portrait(sz: Vector2, r: float, jr: float, m: float, g: float,
+		left: float, top_in: float, right: float, bottom: float) -> void:
+	var step: float = 2.0 * r + g
+	stick_center = Vector2(left + m + 10.0 * _k + stick_radius, sz.y - bottom - m - stick_radius)
+	var jump: Vector2 = Vector2(sz.x - right - m - jr, sz.y - bottom - m - jr)
+	var run: Vector2 = Vector2(jump.x, jump.y - jr - g - r)
+	var e: Vector2 = Vector2(jump.x - jr - g - r, jump.y)
+	var build: Vector2 = Vector2(e.x, run.y)
+	# Меню / журнал / инвентарь — правый верх, под вырезом и под правым столбцом
+	# HUD (миникарта, плашка команды: HUD.right_column_bottom — как ландшафт).
+	# При нуле товарищей низ столбца = низ миникарты, ряд не сдвигается. Карточка
+	# задания опускается под этот ряд сама.
+	var col_bottom: float = HUD.right_column_bottom(sz.x / UI.ui_scale, _layout_team) * UI.ui_scale
+	var row_y: float = maxf(top_in + m + r, col_bottom + 8.0 + r)
+	# Горизонталь — у правого края, не у выреза. Левый отступ safe-area (панель
+	# задач на desktop, вырез слева) сдвигал бы ряд на карточку «Сейчас»: HUD
+	# режет её только по миникарте и сам этот ряд не двигает. Верхний вырез
+	# поднимает ряд (row_y), правый — нижние действия.
+	var inv: Vector2 = Vector2(sz.x - m - r, row_y)
+	var journal: Vector2 = Vector2(inv.x - step, row_y)
+	var pause: Vector2 = Vector2(inv.x - 2.0 * step, row_y)
+	# Q, V, G — правый край, ниже карточки «Сейчас». HUD опускает её под ряд
+	# pause/journal/inv (низ круга + 4 лог. px, высота CARD_H_TOUCH) и сам
+	# этот ряд не двигает. Сразу под кругами кнопки накрыли бы карточку.
+	var card_end: float = row_y + r + (4.0 + HUD.CARD_H_TOUCH) * UI.ui_scale
+	var q: Vector2 = Vector2(inv.x, card_end + 8.0 * UI.ui_scale + r)
+	var v: Vector2 = Vector2(journal.x, q.y)
+	var gg: Vector2 = Vector2(pause.x, q.y)
+	btn_center = {
+		"jump": jump,
+		"run": run,
+		"e": e,
+		"inv": inv,
+		"journal": journal,
+		"pause": pause,
+		"q": q,
+		"v": v,
+		"g": gg,
+		"build": build,
 	}
 	btn_radius = {}
 	for id in btn_center:
@@ -735,8 +852,10 @@ func _ray(from: Vector2, to: Vector2, p: Player) -> Vector2i:
 # ------------------------------------------------------------------ РИСОВАНИЕ
 
 func _process(_delta: float) -> void:
-	if get_viewport().get_visible_rect().size != _layout_size or _team_rows() != _layout_team \
-			or UI.ui_scale != _layout_ui:
+	var vp_now: Vector2 = get_viewport().get_visible_rect().size
+	var insets_now: Vector4 = safe_insets(vp_now)
+	if vp_now != _layout_size or _team_rows() != _layout_team or UI.ui_scale != _layout_ui \
+			or not insets_now.is_equal_approx(_layout_insets):
 		_relayout()
 	_fill_key()
 	if _key != _last_key:
