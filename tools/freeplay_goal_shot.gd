@@ -7,7 +7,7 @@ extends SceneTree
 ##         --fixed-fps 60 --windowed --position -10000,-10000 --resolution 1280x720 \
 ##         --script res://tools/freeplay_goal_shot.gd -- --seed=31337
 ##
-## Одна короткая карточка «Прочитай терминал». Подсказки и хотбар на кадре погашены.
+## Одна короткая карточка «Поставь горелку». Подсказки и хотбар на кадре погашены.
 
 const OUT: String = "res://docs/img/shots/freeplay_goal.png"
 const HARD_LIMIT: float = 20.0
@@ -99,7 +99,7 @@ func _run() -> void:
 	print("снято: %s (%dx%d), код %d; карточка «%s» %d / %d" % [
 		OUT, img.get_width(), img.get_height(), err,
 		hud.get("card_text"), int(hud.get("card_have")), int(hud.get("card_need"))])
-	quit(0 if err == OK and String(hud.get("card_text")) == "Прочитай терминал" else 1)
+	quit(0 if err == OK and String(hud.get("card_text")) == "Поставь горелку" else 1)
 
 
 func _quiet(hud: Node) -> void:

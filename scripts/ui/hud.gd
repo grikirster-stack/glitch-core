@@ -657,8 +657,8 @@ func _compute_tracker() -> void:
 		1:
 			have = 0
 			need = 1
-			words = "Прочитай терминал"
-			tracker_detail = "лагерь · держи [E]"
+			words = "Поставь горелку"
+			tracker_detail = "камень и хлам · у базы"
 		2:
 			have = Game.stats_ore
 			need = Balance.FREE_ORE_NEED
@@ -743,7 +743,8 @@ func _compute_tutorial() -> void:
 	if player != null:
 		scrap = player.inv.count_of(IDs.I.SCRAP)
 	# Питания нет (#170): хлам → крафт горелки → поставить → терминал.
-	# Этап 2 теперь — добыча, терминал ещё впереди на этапе 1.
+	# Цепочку закрывает прочитанный терминал (tasks_done), а не этап 1:
+	# горелка ставится раньше, и шаг «держи E» должен успеть показаться.
 	if Game.tasks_done > 0 or Game.objective_stage >= 4:
 		lvl = Tut.DONE
 	elif player != null and _burner_near():
