@@ -1033,12 +1033,17 @@ func _draw_button(font: Font, id: String, glyph: String, cap: String, on: bool, 
 				var o: Vector2 = Vector2(float(i % 2) - 1.0, float(i / 2) - 1.0) * (q + 2.0 * _k)
 				_pad.draw_rect(Rect2(c + Vector2(0, dy) + o + Vector2(1.0, 1.0) * _k, Vector2(q, q)), ink)
 		"build":
-			# Кирка — «копать»: рукоять наискось и дуга головы.
-			var s: float = 13.0 * _k
+			# Свет из перчатки — «копать»: короткий столбик квадратов и вспышка.
+			var beam: float = 4.0 * _k
+			var gap: float = 2.0 * _k
 			var mid: Vector2 = c + Vector2(0, dy)
-			_pad.draw_line(mid + Vector2(-s, s), mid + Vector2(s * 0.55, -s * 0.55), ink, 3.5 * _k, true)
-			_pad.draw_arc(mid + Vector2(-s, s) * 0.4, s * 1.34, -PI * 0.25 - 0.85, -PI * 0.25 + 0.85, 16,
-					ink, 3.5 * _k, true)
+			var glove: Vector2 = mid + Vector2(-beam, beam * 1.5)
+			_pad.draw_rect(Rect2(glove, Vector2(beam, beam)), ink)
+			for i in 2:
+				var o: Vector2 = Vector2(float(i + 1) * (beam + gap), -float(i + 1) * (beam + gap))
+				_pad.draw_rect(Rect2(glove + o, Vector2(beam, beam)), ink)
+			var flare: Vector2 = glove + Vector2(3.0 * (beam + gap) - beam * 0.5, -3.0 * (beam + gap) - beam * 0.5)
+			_pad.draw_rect(Rect2(flare, Vector2(beam * 2.0, beam * 2.0)), ink)
 		"pause":
 			# Две полосы паузы.
 			var bh: float = 12.0 * _k

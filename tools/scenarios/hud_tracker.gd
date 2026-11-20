@@ -2,7 +2,7 @@ extends ScenarioBase
 ## HUD: трекер цели, отсчёт ночи, индикатор мощности, вентиляции на миникарте
 ## и FX угрозы (ADR-001 § 4.1, § 4.3, § 4.7; #34). Всё проверяется по
 ## состоянию HUD/WorldFX, а не по скриншоту:
-##  * карточка «Сейчас»: этап 0 — «Запитай терминалы базы» 0/2; смена этапа
+##  * карточка «Сейчас»: этап 1 — «Поставь горелку» 0/1; смена этапа
 ##    (Game.set_objective_stage, сигнал objective_changed) — новая карточка
 ##    в тот же кадр-два и перерисовка; текст каждой цели каждой главы ≤ 6 слов;
 ##  * отсчёт: в сумерках — целые секунды до ночи, днём и ночью — нет; HUD
@@ -43,8 +43,8 @@ func _frames(hud: HUD, n: int) -> void:
 # ------------------------------------------------------------ ТРЕКЕР
 
 func _tracker(hud: HUD) -> void:
-	ok("этап 1 — карточка «Прочитай терминал»", hud.tracker_stage == 1
-			and hud.card_text == "Прочитай терминал" and hud.card_have == 0 and hud.card_need == 1,
+	ok("этап 1 — карточка «Поставь горелку»", hud.tracker_stage == 1
+			and hud.card_text == "Поставь горелку" and hud.card_have == 0 and hud.card_need == 1,
 			"«%s» %d/%d" % [hud.card_text, hud.card_have, hud.card_need])
 	ok("текст карточки не длиннее 6 слов", hud.card_text.split(" ", false).size() <= 6, "«%s»" % hud.card_text)
 	var r0: int = hud.stat_redraws
@@ -79,7 +79,7 @@ func _tracker(hud: HUD) -> void:
 	Game.set_objective_stage(0)
 	await _frames(hud, 2)
 	ok("этап сброшен → снова карточка этапа 1", hud.tracker_stage == 1
-			and hud.card_text == "Прочитай терминал", "«%s»" % hud.card_text)
+			and hud.card_text == "Поставь горелку", "«%s»" % hud.card_text)
 	_card_words(hud)
 
 

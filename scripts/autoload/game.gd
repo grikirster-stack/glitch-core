@@ -65,7 +65,7 @@ var stats_deaths: int = 0              ## Смертей за забег (рес
 ## флаге волны не ведёт. Ставит main.gd.
 var scenario_mode: bool = false
 ## Этап цели свободной игры (ADR-005 § 6.3–6.4, #212):
-## 0 — не начато, 1 — запитать (терминал лагеря), 2 — добыть руду,
+## 0 — не начато, 1 — поставить горелку, 2 — добыть руду,
 ## 3 — пережить ночь, 4 — шесть дуг, 5 — запустить, 6 — удержать сигнал.
 var objective_stage: int = 0
 ## Глава кампании (Mission, scripts/campaign/) или null — свободная игра. Без типа —
@@ -352,7 +352,7 @@ func is_powered(_p: Vector2) -> bool:
 # ------------------------------------------------- ЦЕЛЬ И ЯДРО (ADR-005 § 6.3–6.4, #175, #212)
 ## Шесть этапов свободной игры. Этап выводится из состояния забега раз в
 ## OBJECTIVE_CHECK_INTERVAL и только растёт:
-##   1. Запитать — прочитать терминал лагеря (чертёж, не ТЭЦ).
+##   1. Поставить горелку — живая Burner на карте (или уже прочитанный терминал).
 ##   2. Добыть — сломать Balance.FREE_ORE_NEED клеток руды (не хлам и не камень).
 ##   3. Пережить ночь — рассвет после ночи, nights_survived ≥ FREE_NIGHTS_NEED.
 ##   4. Зажечь шесть дуг — луч чистого цвета в клетку ядра ставит бит core_arcs.
@@ -368,7 +368,7 @@ const OBJECTIVE_STAGES: int = 6
 const OBJECTIVE_CHECK_INTERVAL: float = 0.25
 ## Названия этапов для HUD и инвентаря (индекс — номер этапа).
 const OBJECTIVE_TITLES: Array = [
-	"", "ЗАПИТАЙ БАЗУ", "ДОБУДЬ РУДУ", "ПЕРЕЖИВИ НОЧЬ",
+	"", "ПОСТАВЬ ГОРЕЛКУ", "ДОБУДЬ РУДУ", "ПЕРЕЖИВИ НОЧЬ",
 	"ЗАЖГИ ДУГИ", "ЗАПУСТИ ЯДРО", "УДЕРЖИ СИГНАЛ",
 ]
 ## Имена семи дуг: индекс — бит core_arcs, значение — маска Beams.
@@ -421,7 +421,7 @@ func in_mission() -> bool:
 	return mission != null and is_instance_valid(mission)
 
 
-## Этап, до которого игрок дошёл. Раньше ядро — этапы 1–3 (запитать, добыть, ночь).
+## Этап, до которого игрок дошёл. Раньше ядро — этапы 1–3 (горелка, добыть, ночь).
 func objective_target() -> int:
 	if relay_active or state == State.WON:
 		return OBJECTIVE_STAGES
@@ -436,9 +436,18 @@ func objective_target() -> int:
 	return 5
 
 
-## Запитать: прочитан терминал (чертёж или задание). Питания ТЭЦ больше нет.
+## Этап 1: горелка стоит, или терминал уже прочитан (чертёж или задание).
+## Терминал остаётся достаточным — старые сейвы и сценарии без горелки.
 func free_powered() -> bool:
-	return tasks_done > 0 or not blueprints.is_empty()
+	return tasks_done > 0 or not blueprints.is_empty() or _free_burner_placed()
+
+
+## Живая горелка где угодно на карте. Радиуса нет: поставленная в стороне тоже закрывает этап.
+func _free_burner_placed() -> bool:
+	for m in World.machines.values():
+		if m != null and is_instance_valid(m) and String(m.kind) == "Burner":
+			return true
+	return false
 
 
 ## Добыть: руда руками, не хлам поверхности и не белый свет коллектора.
@@ -507,7 +516,7 @@ func objective_icon() -> int:
 		return -1
 	match clampi(objective_stage, 1, OBJECTIVE_STAGES):
 		1:
-			return -1
+			return IDs.I.BURNER
 		2:
 			return IDs.I.COAL
 		3:
@@ -516,12 +525,17 @@ func objective_icon() -> int:
 			return IDs.I.RAINBOW_CORE
 
 
-## Куда вести маркер карточки. Добыча — к устью ствола, ночь — к лагерю,
-## дуги и запуск — к ядру. Нет точки — Vector2.INF. В главе точку даёт цель.
+## Куда вести маркер карточки. Горелка — к сундуку лагеря (уголь там),
+## добыча — к устью ствола, ночь — к лагерю, дуги и запуск — к ядру.
+## Нет точки — Vector2.INF. В главе точку даёт цель.
 func objective_at() -> Vector2:
 	if in_mission():
 		return Vector2.INF
 	var st: int = clampi(objective_stage, 1, OBJECTIVE_STAGES)
+	if st == 1:
+		if World.camp_chest_cell.x >= 0:
+			return World.cell_to_world(World.camp_chest_cell)
+		return World.cell_to_world(World.beacon_cell)
 	if st == 2:
 		return World.cell_to_world(_shaft_mouth())
 	if st <= 3:
@@ -556,7 +570,7 @@ func _enter_stage(s: int) -> void:
 	var bp: Vector2 = _core_pos()
 	match s:
 		1:
-			notify("Цель 1/6: прочитай терминал лагеря. Держи E.", Color(0.5, 0.95, 0.8))
+			notify("Цель 1/6: поставь горелку.", Color(0.5, 0.95, 0.8))
 		2:
 			notify("Цель 2/6: накопай %d руды. Хлам не считается." % Balance.FREE_ORE_NEED,
 					Color(0.95, 0.85, 0.45))
@@ -810,11 +824,11 @@ func core_launch() -> bool:
 	return true
 
 
-## Чего не хватает до запуска: терминал, руда или ночь. Пусто — этапы 1–3 сданы.
+## Чего не хватает до запуска: горелка, руда или ночь. Пусто — этапы 1–3 сданы.
 func free_block_text() -> String:
 	var parts: Array = []
 	if not free_powered():
-		parts.append("прочитай терминал")
+		parts.append("поставь горелку")
 	if not free_mined():
 		parts.append("руда %d/%d" % [stats_ore, Balance.FREE_ORE_NEED])
 	if not free_night_done():

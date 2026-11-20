@@ -101,7 +101,6 @@ var _hit_flash: float = 0.0
 var _shake: float = 0.0
 var _noise_level: float = 0.0
 var _step_gap: float = 0.0
-var _mine_fx_t: float = 0.0
 ## Клавиши прошлого кадра: V и E срабатывают по фронту нажатия.
 var _v_prev: bool = false
 var _e_prev: bool = false
@@ -489,7 +488,6 @@ func _do_mining(cell: Vector2i, dt: float) -> void:
 		mining_cell = cell
 		mining_progress = 0.0
 	mining_progress += dt / maxf(0.15, DB.tile_hard(tid))
-	_mine_fx_t += dt
 	noise = maxf(noise, 46.0)
 	if fmod(mining_progress, 0.35) < dt:
 		_sfx_here("mine", -14.0, randf_range(0.85, 1.2))
@@ -1075,7 +1073,7 @@ func body_layout() -> Dictionary:
 
 
 ## Рука вытянута вперёд: копает клетку перед собой (или над/под собой) либо
-## чинит/читает терминал. Клетка за спиной — рука опущена, кирка тянется назад.
+## чинит/читает терминал. Клетка за спиной — рука опущена, луч тянется назад.
 func _works_ahead() -> bool:
 	if task_progress > 0.0:
 		return true
@@ -1091,14 +1089,15 @@ func _draw() -> void:
 	Avatar.draw(self, lay, look,
 			{"hiding": hiding, "flash": _hit_flash / HIT_FLASH, "breath": _breath})
 
-	# Индикатор копки живёт в мировых координатах (кирка смотрит на клетку
-	# сама) — его не зеркалим. Кирка — из перчатки.
+	# Индикатор копки живёт в мировых координатах (луч смотрит на клетку
+	# сам) — его не зеркалим. Луч — из перчатки.
 	_draw_mining_fx((lay["glove"] as Rect2).get_center())
 
 
-## Индикатор копки: контур клетки, полоса прогресса и дрожащая кирка.
+## Индикатор копки: контур клетки, полоса прогресса и резак-луч из перчатки.
 ## Читается за долю секунды: видно ЧТО копают и СКОЛЬКО осталось.
-## pivot — откуда растёт кирка (перчатка героя).
+## pivot — откуда растёт луч (центр перчатки). Рисунок только из mining_progress
+## и mining_cell: марионетка в сети видит тот же луч, что и копающий.
 func _draw_mining_fx(pivot: Vector2) -> void:
 	if mining_cell.x < 0 or mining_progress <= 0.0:
 		return
@@ -1113,14 +1112,72 @@ func _draw_mining_fx(pivot: Vector2) -> void:
 	var bar_y: float = cell_rect.end.y - 3.0
 	draw_rect(Rect2(bar_x, bar_y, bar_w, 2.5), Color(0.0, 0.0, 0.0, 0.65))
 	draw_rect(Rect2(bar_x, bar_y, bar_w * clampf(mining_progress, 0.0, 1.0), 2.5), Color(1.0, 0.78, 0.28))
-	# Дрожащая кирка — видно, что копает игрок.
+	# Резак-луч: квадраты от перчатки до центра клетки, без клампа длины.
+	var marks: Dictionary = _mine_beam_marks(pivot, cell_pos, mining_progress)
+	for m in marks["squares"]:
+		draw_rect(m["rect"], m["color"])
+	# Трещины — поверх тайла, под вспышкой удара.
+	for m in marks["cracks"]:
+		draw_rect(m["rect"], m["color"])
+	if not marks["flash"].is_empty():
+		draw_rect(marks["flash"]["rect"], marks["flash"]["color"])
+
+
+## Ритм удара света, доля прогресса. Тот же шаг, что у звука mine и крошки.
+const MINE_BEAT: float = 0.35
+## Свет луча. Трещины — тот же цвет, не цвет тайла: на светлом и тёмном читаются одинаково.
+const MINE_LIGHT: Color = Color(1.0, 0.93, 0.62)
+## Окно вспышки после бита, доля прогресса. Уголь (1,8 с) проходит его за ~0,07 с.
+const MINE_FLASH_WIN: float = 0.04
+
+
+## Квадраты резака, трещины и вспышка удара. Только из прогресса и двух точек:
+## сеть не шлёт фазу, марионетка считает то же самое. Длину не клампим —
+## луч дотягивается до клетки на всём REACH.
+## squares: 2 квадрата, с прогресса 0,5 — 3. Толщина 2, с 0,35 — 3, с 0,7 — 4.
+## На бите (остаток прогресса < MINE_FLASH_WIN) каждый квадрат, кроме последнего,
+## прыгает на 2 px к клетке, в клетке вспышка 4×4. Последний квадрат стоит
+## в центре клетки и на бите не двигается. Трещины: одна с 0,35, вторая с 0,7.
+func _mine_beam_marks(pivot: Vector2, cell_pos: Vector2, progress: float) -> Dictionary:
+	var p: float = clampf(progress, 0.0, 1.0)
+	var phase: float = fmod(p, MINE_BEAT)
+	var striking: bool = phase < MINE_FLASH_WIN
 	var to_cell: Vector2 = cell_pos - pivot
-	var ang: float = to_cell.angle() + sin(_mine_fx_t * 26.0) * 0.35
-	var reach: float = clampf(to_cell.length(), 10.0, 30.0)
-	var head: Vector2 = pivot + Vector2(cos(ang), sin(ang)) * reach
-	draw_line(pivot, head, Color(0.42, 0.32, 0.24), 2.0)
-	var perp: Vector2 = Vector2(-sin(ang), cos(ang))
-	draw_line(head - perp * 4.5, head + perp * 4.5, Color(0.78, 0.82, 0.88), 2.0)
+	var dist: float = to_cell.length()
+	var dir: Vector2 = to_cell / dist if dist > 0.001 else Vector2.RIGHT
+	var kick: float = 2.0 if striking else 0.0
+	var thick: float = 4.0 if p >= 0.7 else (3.0 if p >= MINE_BEAT else 2.0)
+	var n: int = 3 if p >= 0.5 else 2
+	var squares: Array = []
+	for i in n:
+		var t: float = float(i + 1) / float(n)
+		var sz: float = thick if i < n - 1 else thick + 1.0
+		# Рывок целиком на 2 px, не доля длины: иначе на REACH сдвиг меньше пикселя.
+		var c: Vector2 = pivot + dir * (dist * t + (kick if i < n - 1 else 0.0))
+		var a: float = 0.55 + 0.4 * t
+		squares.append({
+			"rect": Rect2(c - Vector2(sz, sz) * 0.5, Vector2(sz, sz)),
+			"color": Color(MINE_LIGHT.r, MINE_LIGHT.g, MINE_LIGHT.b, a),
+		})
+	var cracks: Array = []
+	# Два прямоугольника внутри клетки 16 px, не на полосе прогресса (низ клетки).
+	if p >= MINE_BEAT:
+		cracks.append({
+			"rect": Rect2(cell_pos + Vector2(-5.0, -4.0), Vector2(6.0, 2.0)),
+			"color": Color(MINE_LIGHT.r, MINE_LIGHT.g, MINE_LIGHT.b, 0.9),
+		})
+	if p >= 0.7:
+		cracks.append({
+			"rect": Rect2(cell_pos + Vector2(1.0, -1.0), Vector2(2.0, 5.0)),
+			"color": Color(MINE_LIGHT.r, MINE_LIGHT.g, MINE_LIGHT.b, 0.9),
+		})
+	var flash: Dictionary = {}
+	if striking:
+		flash = {
+			"rect": Rect2(cell_pos - Vector2(2.0, 2.0), Vector2(4.0, 4.0)),
+			"color": Color(1.0, 0.98, 0.82, 0.95),
+		}
+	return {"squares": squares, "cracks": cracks, "flash": flash, "kick": kick}
 
 
 func _make_slash_fx(p: Vector2) -> void:
@@ -1480,8 +1537,6 @@ func _net_puppet_tick(dt: float) -> void:
 	walk_anim += absf(vel.x) * dt * 0.08
 	_breath += dt * (2.0 if absf(vel.x) > 10.0 else 1.0)
 	_update_step(prev_phase, walk_anim, net_sprint)
-	if mining_progress > 0.0:
-		_mine_fx_t += dt
 	queue_redraw()
 
 
