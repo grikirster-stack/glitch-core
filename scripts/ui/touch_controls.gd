@@ -39,6 +39,9 @@ extends CanvasLayer
 ## тап как клик ЛКМ. Чтобы такой «клик» не копал мир под джойстиком, пока палец на
 ## экране, touch_input["mouse_buttons"] заменяет кнопки мыши целиком
 ## (Player._mouse_down), а клики по нашим кнопкам гасятся здесь, до панелей.
+## Плашки HUD (карточка «Сейчас», полосы, карта) мышь пропускают — тап, начатый
+## на них, сюда не доходит как клик и раньше копал мир под карточкой. Такой палец
+## гасится здесь и в мир не идёт.
 ##
 ## Раскладка при 1280×720 (не перекрывает HUD): слева снизу — джойстик и «строить»;
 ## справа снизу — E, бег, прыжок (ниже уведомлений, правее хотбара); справа под
@@ -529,6 +532,12 @@ func _finger_down(index: int, pos: Vector2) -> bool:
 		return true
 	if UI.blocking():
 		return false   # тап по панели — панели (эмулированным кликом)
+	# Карточка «Сейчас» и остальные плашки HUD не ловят касание (HUD пропускает мышь),
+	# но нарисованы поверх мира. Палец, начатый на них, не копает и не ставит.
+	var hud: HUD = UI.hud
+	if hud != null and hud.covers_screen(pos):
+		_fingers[index] = {"kind": "hud", "id": ""}
+		return true
 	var slot: int = hotbar_slot_at(pos)
 	if slot >= 0:
 		var inv: Inventory = _player().inv
@@ -581,7 +590,7 @@ func _finger_up(index: int) -> bool:
 				_fingers[other] = {"kind": "none", "id": ""}   # оставшийся палец не копает
 			_pinch_a = -1
 			_pinch_b = -1
-	return kind == "stick" or kind == "btn" or kind == "hotbar" or kind == "pinch"
+	return kind == "stick" or kind == "btn" or kind == "hotbar" or kind == "pinch" or kind == "hud"
 
 
 func _finger_move(index: int, pos: Vector2) -> bool:
@@ -597,7 +606,7 @@ func _finger_move(index: int, pos: Vector2) -> bool:
 	elif kind == "pinch":
 		_fingers[index]["pos"] = pos
 		_pinch_update()
-	return kind == "stick" or kind == "btn" or kind == "hotbar" or kind == "pinch"
+	return kind == "stick" or kind == "btn" or kind == "hotbar" or kind == "pinch" or kind == "hud"
 
 
 ## Палец по миру встал на новую клетку: допуск снова действует, постройка снова можно.

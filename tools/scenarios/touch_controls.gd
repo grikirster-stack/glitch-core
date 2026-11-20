@@ -17,6 +17,7 @@ extends ScenarioBase
 ## (ViewZoom) и ничего не копает и не ставит; короткий тап быстрее ожидания щипка
 ## всё равно ставит блок.
 ## В одиночной игре кнопки переклички G нет (#135; в сети её проверяет mp_doppel).
+## Тап по центру карточки «Сейчас» не копает и не ставит; тап мимо UI копает.
 ## Раскладка: ландшафт 1280×720 и портрет 1280×2844 (как tools/ui_scale_test.gd).
 ## Кнопки и стик внутри safe-rect, стик и действия не на полосе хотбара; в портрете
 ## зоны захвата стика и «строить» не пересекаются, меню и Q/V/G не на карточке
@@ -51,6 +52,7 @@ func run() -> void:
 	_layout_checks()
 	await _mining_with_stick_held()
 	await _walk_and_jump()
+	await _card_tap_does_not_dig()
 	await _smart_aim()
 	await _pinch_zoom()
 	await _windows_by_buttons()
@@ -334,6 +336,84 @@ func _walk_and_jump() -> void:
 	_touch(0, tc.stick_center, false)
 	ok("джойстик вверх — прыжок", rose, "%.1f px" % (y0 - player.global_position.y))
 	await wait_until(func() -> bool: return player.on_ground, 2.0)
+
+
+## Тап по центру карточки «Сейчас» не копает и не ставит — ни клетку под пальцем,
+## ни клетку по лучу к ней. Тап по тайлу мимо UI копает.
+func _card_tap_does_not_dig() -> void:
+	var base: int = stand_in_corridor(8)
+	# Зум 1 и без сглаживания: центр карточки — известная мировая точка рядом с героем.
+	# Иначе камера (зум 2.2, сглаживание) не догоняет, и тап целится мимо радиуса.
+	player.view_zoom.set_now(1.0)
+	player.camera.position_smoothing_enabled = false
+	_settle_camera()
+	await wait(0.3)
+	var logical: Rect2 = UI.hud.layout_rect("card")
+	ok("карточка «Сейчас» на экране", logical.size != Vector2.ZERO and UI.hud.card_text != "",
+			UI.hud.card_text)
+	var card: Rect2 = Rect2(logical.position * UI.ui_scale, logical.size * UI.ui_scale)
+	var center: Vector2 = card.get_center()
+	var screen_of_feet: Vector2 = _screen(player.global_position)
+	var under_world: Vector2 = player.global_position + (center - screen_of_feet) / player.camera.zoom.x
+	var under: Vector2i = World.world_to_cell(under_world)
+	var pc: Vector2i = World.world_to_cell(player.global_position)
+	# Воздух на луче от героя к центру карточки и рядом: проскочивший тап поставит камень.
+	for y in range(under.y, pc.y):
+		for x in range(mini(under.x, pc.x) - 1, maxi(under.x, pc.x) + 2):
+			if World.get_tile_v(Vector2i(x, y)) != IDs.T.AIR:
+				World.set_tile(x, y, IDs.T.AIR)
+	player.inv.slots[0] = ItemStack.new(IDs.I.STONE, 8)
+	player.inv.selected = 0
+	tc.build_mode = true
+	var stones: int = player.inv.slots[0].count
+	var snap: Dictionary = {}
+	for y in range(under.y - 1, pc.y + 1):
+		for x in range(pc.x - 8, pc.x + 8):
+			snap[Vector2i(x, y)] = World.get_tile_v(Vector2i(x, y))
+	_touch(1, center, true)
+	await wait(0.6)
+	var changed: Array = []
+	for c in snap:
+		if World.get_tile_v(c) != int(snap[c]):
+			changed.append(c)
+	var finger: String = String(tc._fingers.get(1, {}).get("kind", ""))
+	ok("тап по центру карточки не копает и не ставит", changed.is_empty()
+			and player.inv.slots[0].count == stones and player.mining_progress <= 0.0
+			and tc.aim_cell == TouchControls.NO_CELL and finger != "world",
+			"изменено %s, камней %d → %d, копка %.2f, цель %s, палец %s" % [str(changed),
+			stones, player.inv.slots[0].count, player.mining_progress, str(tc.aim_cell),
+			String(tc._fingers.get(1, {}).get("kind", ""))])
+	_touch(1, center, false)
+	await wait(0.2)
+	for c in changed:
+		World.set_tile(c.x, c.y, int(snap[c]))
+	# Тап мимо UI по камню рядом с героем — копает. Точка не на карточке и не на кнопке.
+	tc.build_mode = false
+	player.inv.selected = 0
+	player.inv.slots[0] = ItemStack.new()
+	pc = World.world_to_cell(player.global_position)
+	var free: Vector2i = Vector2i(pc.x + 2, base - 1)
+	World.set_tile(free.x, free.y, IDs.T.STONE)
+	var free_screen: Vector2 = _screen(World.cell_to_world(free))
+	ok("свободный тайл не под карточкой и не на кнопке",
+			not card.has_point(free_screen) and tc.control_at(free_screen) == "",
+			"%s экран %s карточка %s кнопка «%s»" % [str(free), str(free_screen), str(card),
+			tc.control_at(free_screen)])
+	_touch(1, free_screen, true)
+	await wait(0.35)
+	ok("тап по свободному тайлу мимо UI копает", player.mining_cell == free and player.mining_progress > 0.0,
+			"копается %s, прогресс %.2f, цель %s" % [str(player.mining_cell), player.mining_progress,
+			str(tc.aim_cell)])
+	_touch(1, free_screen, false)
+	await wait(0.15)
+	World.set_tile(free.x, free.y, IDs.T.AIR)
+	# Герой стоял под карточкой — возвращаем его в коридор, иначе следующие шаги
+	# целятся мимо экрана.
+	player.view_zoom.set_now(ViewZoom.DEFAULT)
+	player.camera.position_smoothing_enabled = true
+	stand_in_corridor(3)
+	_settle_camera()
+	await wait(0.3)
 
 
 ## Тап по хотбару выбирает слот и режим; умный прицел (#149) ставит и копает, даже

@@ -1322,6 +1322,26 @@ func layout_rect(key: String) -> Rect2:
 	return _lay.get(key, Rect2())
 
 
+## Блок раскладки на экране, px холста. Касания приходят в px холста, а не слоя UI
+## (как hotbar_slot_rect). Пустого блока нет — пустой Rect2.
+func layout_screen_rect(key: String) -> Rect2:
+	var r: Rect2 = layout_rect(key)
+	if r.size == Vector2.ZERO:
+		return Rect2()
+	return Rect2(r.position * UI.ui_scale, r.size * UI.ui_scale)
+
+
+## Палец лёг на нарисованную панель HUD, а не на мир. Карточка «Сейчас» кликабельна
+## только мышью (_card_hit), сам HUD мышь пропускает (MOUSE_FILTER_IGNORE) — тап
+## TouchControls иначе читает как мир и копает или ставит клетку под панелью.
+func covers_screen(pos: Vector2) -> bool:
+	for key in ["card", "hp", "emp", "day", "countdown", "map", "team", "hint", "notes", "status"]:
+		var r: Rect2 = layout_screen_rect(key)
+		if r.size != Vector2.ZERO and r.has_point(pos):
+			return true
+	return false
+
+
 const LAYOUT_RECTS: Array = ["hp", "emp", "card", "status", "day", "countdown", "map", "team", "hotbar",
 		"hint", "notes"]
 
