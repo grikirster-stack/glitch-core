@@ -19,6 +19,8 @@ const START_TIME: float = 0.04         ## старт забега на расс�
 ## Горелка бьёт на BEAM_LEN клеток; белый (коллектор или смесь W) — длиннее.
 ## Каждая постройка луча на пути съедает BEAM_BLOCK_COST клеток длины.
 ## Свет клетки луча — BEAM_LIGHT; белый ярче. Топливо горелки: предмет → секунды.
+## Вилка ночи 10–15 единиц (ADR-005 § 6). Замер 2026-11-20, `night_autopilot --fuel-cycle`:
+## ночь средней базы (две горелки) — 10 единиц, 9 сидов, запас не исчерпан.
 const BEAM_LEN: int = 24
 const BEAM_LEN_WHITE: int = 32
 const BEAM_BLOCK_COST: int = 2
@@ -29,9 +31,9 @@ const BEAM_BLOCK_COST: int = 2
 const BEAM_LIGHT: float = 0.7
 const BEAM_LIGHT_RADIUS: float = 10.0
 const BEAM_LIGHT_WHITE: float = 1.5
-const FUEL: Dictionary = {IDs.I.COAL: 45.0, IDs.I.COPPER_ORE: 30.0, IDs.I.CRYSTAL: 60.0}
+const FUEL: Dictionary = {IDs.I.COAL: 22.0, IDs.I.COPPER_ORE: 15.0, IDs.I.CRYSTAL: 60.0}
 ## Запасная длительность угля, если предмет не в FUEL (шкала горелки, тень).
-const COAL_BURN: float = 45.0
+const COAL_BURN: float = 22.0
 ## Накопитель хранит столько секунд луча одного цвета (ADR-005 § 4, #166).
 const ACCUMULATOR_CAP: float = 120.0
 ## Коллектор молчит, пока daylight() не выше этого (бывший порог солнечной панели).

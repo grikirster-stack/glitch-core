@@ -122,6 +122,34 @@ const CONTROLS_TOUCH: Array = [
 	"Тап к стене — копать / бить   блок в хотбаре — строить",
 	"«меню» или «Назад» — пауза и сохранение   I — инвентарь",
 ]
+## Одна строка в нижней плашке на телефоне, пока игрок не начал действовать.
+## CONTROLS_TOUCH на экране больше не рисуется — три строки закрывали карточку.
+const TOUCH_HINTS: Dictionary = {
+	HINT_TERMINAL: "[E] — выполнить задание",
+	HINT_TERMINAL_NO_POWER: "Терминал: нет питания — нужна ТЭЦ",
+	HINT_BEACON: "[E] — запустить ядро",
+	HINT_CHEST: "[E] — открыть сундук",
+	HINT_GEN_COAL: "[E] — уголь в ТЭЦ",
+	HINT_GEN_SWITCH: "[E] — рубильник ТЭЦ",
+	HINT_BURNER_FUEL: "[E] — топливо в горелку",
+	HINT_BURNER_SWITCH: "[E] — рубильник горелки",
+	HINT_ACCUMULATOR: "[E] — накопитель",
+	HINT_SOLAR_SWITCH: "[E] — рубильник",
+	HINT_INSERTER: "[E] — фильтр",
+	HINT_HIDING: "[V] — вылезти",
+	HINT_REPAIR: "[E] — починить",
+	HINT_LOAD: "[E] — загрузить",
+	HINT_SIREN: "[E] — сирену",
+	HINT_LENS: "[E] — линзу",
+}
+
+const INTRO_LINES: Array = [
+	"Джойстик — идти · вверх — прыжок",
+	"Тап — копать · хотбар — строить",
+	"«меню» — пауза · I — инвентарь",
+]
+const INTRO_STEP: float = 5.0
+const INTRO_TIME: float = 15.0
 const HINT_INSERTER: String = "ПКМ — повернуть · [E] с предметом — фильтр"
 const HINT_HIDING: String = "Вы в вентиляции. [V] — вылезть"
 const HINT_REPAIR: String = "[E] — починить хламом (удерживать)"
@@ -258,6 +286,9 @@ var _vent_sig: int = -1
 var _scan_cell: Vector2i = Vector2i(-9999, -9999)
 var _scan_machines: int = -1
 var _term_power: Dictionary = {}   # клетка терминала → под питанием (кэш на шаг)
+## Вводное обучение на телефоне пройдено: игрок пошёл, копнул, построил или спрятался,
+## либо прошло INTRO_TIME. На ПК не используется.
+var _intro_done: bool = false
 
 
 func _ready() -> void:
@@ -329,6 +360,7 @@ func _process(delta: float) -> void:
 		return
 
 	var th: int = Time.get_ticks_usec()
+	_update_intro()
 	_update_hint(delta)
 	_update_state(delta)
 	_update_mark()
@@ -439,6 +471,65 @@ func _update_hint(delta: float) -> void:
 	_set_hint(_compute_hint(pos))
 
 
+## Копает или строит: нижняя плашка мешает и гаснет. Прятки — отдельная подсказка
+## («[V] — вылезти»), плашку не прячут.
+func _player_acting() -> bool:
+	if player == null:
+		return false
+	# building_cell — клетка под прицелом каждый кадр, не «строит». Стройка — удержанный
+	# ПКМ (_place_cd > 0), копание — mining_progress.
+	return player.mining_progress > 0.0 or player._place_cd > 0.0
+
+
+## Вводная строка на телефоне больше не нужна: первое действие или INTRO_TIME.
+## Прятки и шаг тоже гасят ввод — но не нижнюю плашку (её прячет только _player_acting).
+func _update_intro() -> void:
+	if _intro_done or not UI.touch_on:
+		return
+	if Game.game_time >= INTRO_TIME or _player_acting():
+		_intro_done = true
+		return
+	if player == null:
+		return
+	if player.vel.length() > 1.0 or player.hiding:
+		_intro_done = true
+
+
+## Индекс вводной строки (0 на ПК и когда ввод уже погас). В ключе раскладки — чтобы
+## плашка сменилась, когда строка крутится.
+func _intro_index() -> int:
+	if not UI.touch_on or _intro_done or Game.game_time >= INTRO_TIME:
+		return 0
+	if INTRO_STEP <= 0.0:
+		return 0
+	return int(Game.game_time / INTRO_STEP) % INTRO_LINES.size()
+
+
+## Строка вводного обучения для нижней плашки или "" — ввод погас.
+func _intro_line() -> String:
+	if not UI.touch_on or _intro_done or Game.game_time >= INTRO_TIME:
+		return ""
+	return String(INTRO_LINES[_intro_index()])
+
+
+## Короткая подсказка телефона. hint_text не трогаем — его читают сценарии.
+func _touch_hint(text: String) -> String:
+	if text == "":
+		return ""
+	if TOUCH_HINTS.has(text):
+		return String(TOUCH_HINTS[text])
+	var s: String = text
+	# Разбор: «[E] (удерживать) — разобрать: предмет» → «[E] — разобрать: предмет».
+	if s.begins_with(HINT_DISMANTLE):
+		s = "[E] — разобрать" + s.substr(HINT_DISMANTLE.length())
+	var cut: int = s.find(" · ")
+	if cut >= 0:
+		s = s.substr(0, cut)
+	s = s.replace(" (удерживать 3 с)", "")
+	s = s.replace(" (удерживать)", "")
+	return s.strip_edges()
+
+
 func _set_hint(h: String) -> void:
 	if h == hint_text:
 		return
@@ -525,6 +616,7 @@ func _update_state(delta: float) -> void:
 	# Новый забег (перезапуск сцены): время игры пошло заново — обучение тоже.
 	if Game.game_time < _last_game_time:
 		tutorial_step = Tut.DIG
+		_intro_done = false
 		_state_t = 0.0
 	_last_game_time = Game.game_time
 	_state_t -= delta
@@ -1164,6 +1256,14 @@ const CARD_Y: float = 54.0
 const CARD_H: float = 64.0
 const CARD_ICON: float = 48.0
 const CARD_WORDS: int = 6
+## Телефон: карточка ниже и уже по шрифту — иначе на 2.5 она занимает треть HUD.
+const CARD_H_TOUCH: float = 48.0
+const CARD_ICON_TOUCH: float = 32.0
+## Зазор нижней плашки над хотбаром. На ПК — 4 (скриншоты README); на телефоне — 10.
+const HINT_GAP: float = 4.0
+const HINT_GAP_TOUCH: float = 10.0
+## Низ хотбара на телефоне ближе к краю: 12 px мира по центру. На ПК HOTBAR_BOTTOM не трогаем.
+const HOTBAR_BOTTOM_TOUCH: float = 20.0
 ## Клик по карточке показывает цель столько секунд, потом камера возвращается.
 const CARD_LOOK_SEC: float = 2.0
 ## Стрелка у края экрана: сторона квадрата и отступ от края, px.
@@ -1249,7 +1349,9 @@ func _layout_sig() -> int:
 		tsig = hash([tc.btn_center, tc.stick_center, tc.stick_radius])
 	return hash([size, UI.ui_scale, _state_hash, _hint_hash, _note_serial, notes.size(),
 			team_mates.size(), night_countdown, Game.day_number, Game.phase_name(), tsig,
-			player != null, _hotbar_count(), card_text, card_have, card_need, Game.signal_sent])
+			player != null, _hotbar_count(), card_text, card_have, card_need, Game.signal_sent,
+			1 if UI.touch_on else 0, 1 if _intro_done else 0, _intro_index(),
+			1 if _player_acting() else 0])
 
 
 ## Узел TouchControls, если сенсорное управление включено (иначе null).
@@ -1312,6 +1414,36 @@ static func right_column_bottom(w: float, n: int) -> float:
 	return MAP_OFFSET.y + MAP_SIZE.y
 
 
+## Текст нижней плашки. На ПК — hint_text как есть. На телефоне: действие прячет
+## плашку, иначе короткая контекстная, иначе одна вводная строка, иначе ничего.
+func _plate_text() -> String:
+	if not UI.touch_on:
+		return hint_text
+	if _player_acting():
+		return ""
+	var short: String = _touch_hint(hint_text)
+	if short != "":
+		return short
+	return _intro_line()
+
+
+## Высота карточки, сторона иконки и кегли заголовка и счётчика. На ПК — как было.
+func _card_h() -> float:
+	return CARD_H_TOUCH if UI.touch_on else CARD_H
+
+
+func _card_icon() -> float:
+	return CARD_ICON_TOUCH if UI.touch_on else CARD_ICON
+
+
+func _card_title_font() -> int:
+	return UI.FONT["body"] if UI.touch_on else UI.FONT["title"]
+
+
+func _card_sub_font() -> int:
+	return UI.FONT["small"] if UI.touch_on else UI.FONT["body"]
+
+
 func _compute_layout() -> Dictionary:
 	var L: Dictionary = {}
 	var w: float = size.x
@@ -1335,44 +1467,111 @@ func _compute_layout() -> Dictionary:
 		L["team"] = team_plate_rect(w, n_team)
 	var right_bottom: float = right_column_bottom(w, n_team)
 	# ---- Низ: хотбар по центру свободной полосы между джойстиком и кнопками справа.
+	# Портрет (высота > 1.2 ширины): полосы между джойстиком и E нет — хотбар по центру
+	# над нижним рядом кнопок. Геометрию TouchControls не двигаем.
+	var portrait: bool = UI.touch_on and h > w * 1.2
 	var lo: float = 0.0
 	var hi: float = w
-	if tb.has("stick") and tb.has("e"):
-		lo = (tb["stick"] as Rect2).end.x + PAD
-		hi = (tb["e"] as Rect2).position.x - PAD
 	var n_slots: int = _hotbar_count()
-	var slot_cap: float = SLOT_MAX
-	# 6 ячеек — крупнее: min(42 × 10 / n, 64), и всё равно вписываемся в свободную полосу.
-	if n_slots < SLOT_COUNT:
-		slot_cap = minf(SLOT_TOUCH * float(SLOT_COUNT) / float(n_slots), SLOT_TOUCH_MAX)
-	var slot: float = clampf(floorf((hi - lo) / float(n_slots)), 16.0, slot_cap)
-	var hb_w: float = slot * float(n_slots) - 4.0
-	var hx: float = clampf(w * 0.5 - hb_w * 0.5, lo, maxf(lo, hi - hb_w))
-	var hy: float = h - HOTBAR_BOTTOM - (slot - 4.0)
+	var slot: float = SLOT_MAX
+	var hb_w: float = 0.0
+	var hx: float = 0.0
+	var hy: float = 0.0
+	var hint_max: float = minf(w - 2.0 * PAD, 600.0)
+	if portrait:
+		var bottom_top: float = h - 140.0
+		var found_bottom: bool = false
+		for id in ["stick", "build", "e", "run", "jump"]:
+			if tb.has(id):
+				var top: float = (tb[id] as Rect2).position.y
+				bottom_top = top if not found_bottom else minf(bottom_top, top)
+				found_bottom = true
+		var slot_hi: float = 42.0 if n_slots < SLOT_COUNT else 46.0
+		slot = clampf(floorf((w - 2.0 * PAD) / float(n_slots)), 16.0, slot_hi)
+		hb_w = slot * float(n_slots) - 4.0
+		hx = (w - hb_w) * 0.5
+		hy = bottom_top - HINT_GAP_TOUCH - (slot - 4.0)
+		hint_max = w - 2.0 * PAD
+	else:
+		if tb.has("stick") and tb.has("e"):
+			lo = (tb["stick"] as Rect2).end.x + PAD
+			hi = (tb["e"] as Rect2).position.x - PAD
+		var slot_cap: float = SLOT_MAX
+		# 6 ячеек — крупнее: min(42 × 10 / n, 64). На телефоне потолок 42: 64 px
+		# на 2.5 съедает полосу мира.
+		if n_slots < SLOT_COUNT:
+			slot_cap = minf(SLOT_TOUCH * float(SLOT_COUNT) / float(n_slots), SLOT_TOUCH_MAX)
+			if UI.touch_on:
+				slot_cap = SLOT_TOUCH
+		slot = clampf(floorf((hi - lo) / float(n_slots)), 16.0, slot_cap)
+		hb_w = slot * float(n_slots) - 4.0
+		hx = clampf(w * 0.5 - hb_w * 0.5, lo, maxf(lo, hi - hb_w))
+		var bottom: float = HOTBAR_BOTTOM_TOUCH if UI.touch_on else HOTBAR_BOTTOM
+		hy = h - bottom - (slot - 4.0)
+		hint_max = minf(minf(w - 2.0 * PAD, 600.0), hi - lo)
 	L["slot"] = slot
 	L["hotbar"] = Rect2(hx, hy, hb_w, slot - 4.0)
 	var stack_top: float = hy
-	if hint_text != "":
-		var ht: String = _fit_text(hint_text, fb, minf(minf(w - 2.0 * PAD, 600.0), hi - lo) - 16.0)
-		L["hint_text"] = ht
-		var hw: float = _tw(ht, fb) + 16.0
-		var h_lo: float = maxf(PAD, lo)
-		var hcx: float = clampf(hx + hb_w * 0.5 - hw * 0.5, h_lo, maxf(h_lo, minf(w - PAD, hi) - hw))
-		L["hint"] = Rect2(hcx, hy - 4.0 - ROW_H, hw, ROW_H)
-		stack_top = hy - 4.0 - ROW_H
+	var gap: float = HINT_GAP_TOUCH if UI.touch_on else HINT_GAP
+	var plate: String = _plate_text()
+	if plate != "":
+		var hfont: int = fb
+		var ht: String = plate
+		if UI.touch_on:
+			# Вводную строку не режем «…»: полоса джойстик–E уже тела шрифта 14.
+			# Контекстная подсказка остаётся в этой полосе.
+			var intro: bool = _intro_line() != "" and plate == _intro_line()
+			var fit_w: float = (w - 2.0 * PAD - 16.0) if intro else (hint_max - 16.0)
+			if _fit_text(plate, fb, fit_w).ends_with("…"):
+				hfont = fs
+			ht = _fit_text(plate, hfont, fit_w)
+			if ht.ends_with("…"):
+				ht = ""
+		else:
+			ht = _fit_text(plate, fb, hint_max - 16.0)
+		if ht != "":
+			L["hint_text"] = ht
+			L["hint_font"] = hfont
+			var hw: float = _tw(ht, hfont) + 16.0
+			var h_lo: float = maxf(PAD, lo) if not portrait else PAD
+			var h_hi: float = hi if not portrait else w
+			# Ввод на всю ширину: полоса джойстик–E уже строки даже шрифтом 14.
+			if UI.touch_on and _intro_line() != "" and plate == _intro_line():
+				h_lo = PAD
+				h_hi = w
+			var hcx: float = clampf(hx + hb_w * 0.5 - hw * 0.5, h_lo, maxf(h_lo, minf(w - PAD, h_hi) - hw))
+			L["hint"] = Rect2(hcx, hy - gap - ROW_H, hw, ROW_H)
+			stack_top = hy - gap - ROW_H
 	# ---- Слева: карточка «Сейчас» (x=14, y=54), под ней — одна строка подсказки
 	# этапа. Мощность и старый трекер на экран не идут (#160).
 	var rows: Array = _status_rows()
 	var card_y: float = CARD_Y
+	var card_x: float = CARD_X
 	if L.has("emp"):
 		card_y = maxf(card_y, (L["emp"] as Rect2).end.y + 6.0)
+	# Портрет: ряд «меню» / журнал / инвентарь стоит под миникартой и накрывает карточку.
+	# Опускаем её под этот ряд, не ниже полосы мира в 40 px. TouchControls не двигаем.
+	if portrait:
+		var row_bottom: float = card_y
+		for id in ["pause", "journal", "inv"]:
+			if tb.has(id):
+				row_bottom = maxf(row_bottom, (tb[id] as Rect2).end.y + 4.0)
+		var room: float = stack_top - 40.0 - _card_h()
+		card_y = minf(row_bottom, maxf(card_y, room))
 	var y0: float = card_y
 	if player and card_text != "":
-		var cap: float = (L["map"] as Rect2).position.x - CARD_X - 8.0
+		var cap: float = (L["map"] as Rect2).position.x - card_x - 8.0
+		# На телефоне карточка не шире 65 % экрана: длинная цель не закрывает карту.
+		if UI.touch_on:
+			cap = minf(cap, w * 0.65)
+		var ch: float = _card_h()
 		var cw: float = minf(_card_width(), maxf(96.0, cap))
-		L["card"] = Rect2(CARD_X, card_y, cw, CARD_H)
-		y0 = card_y + CARD_H + 4.0
-	var s_limit: float = stack_top - 4.0
+		L["card"] = Rect2(card_x, card_y, cw, ch)
+		_fit_card_title(L, cw)
+		y0 = card_y + ch + 4.0
+	# На телефоне между низом верхнего стека и верхом нижней плашки — не меньше
+	# 40 логических px мира. На ПК зазор прежний (4).
+	var s_limit: float = stack_top - (40.0 if UI.touch_on else 4.0)
 	if not notes.is_empty():
 		s_limit -= ROW_H
 	if tb.has("build"):
@@ -1392,7 +1591,7 @@ func _compute_layout() -> Dictionary:
 	# Два варианта: у правого края (под миникартой и колонкой кнопок) и левее колонки кнопок
 	# (на низких экранах) — берём тот, куда влезает больше строк. Джойстик и «копать» обходятся.
 	var n_bottom: float = stack_top - 4.0
-	var rows_end: float = s_bottom if not rows.is_empty() else (CARD_Y + CARD_H if L.has("card") else 0.0)
+	var rows_end: float = s_bottom if not rows.is_empty() else (CARD_Y + _card_h() if L.has("card") else 0.0)
 	for id in tb:
 		if id == "e" or id == "run" or id == "jump":
 			n_bottom = minf(n_bottom, (tb[id] as Rect2).position.y - 4.0)
@@ -1451,7 +1650,8 @@ func _status_rows() -> Array:
 	var rows: Array = []
 	if tutorial_text != "" and Game.in_mission():
 		rows.append({"text": tutorial_text, "kind": "tutorial", "prio": 1,
-				"color": C_HAZARD.lerp(C_LINE, 0.35), "full": tutorial_text})
+				"color": C_HAZARD.lerp(C_LINE, 0.35), "full": tutorial_text,
+				"wide": UI.touch_on})
 	return rows
 
 
@@ -1465,6 +1665,7 @@ const STATUS_BAR_W: float = 128.0
 ## по prio. Возвращает низ блока.
 func _status_place(rows: Array, y0: float, limit: float, blockers: Array) -> float:
 	var fb: int = UI.FONT["body"]
+	var fs: int = UI.FONT["small"]
 	var y: float = y0
 	while true:
 		y = y0
@@ -1472,14 +1673,26 @@ func _status_place(rows: Array, y0: float, limit: float, blockers: Array) -> flo
 		for r in rows:
 			var bar: float = STATUS_BAR_W if r["kind"] == "power" else 0.0
 			var avail: float = size.x - 2.0 * PAD - 20.0
+			# Обучение на телефоне — на всю ширину под карточкой: карта кончается выше.
+			var wide: bool = bool(r.get("wide", false))
 			for b in blockers:
+				if wide:
+					continue
 				var br: Rect2 = b
 				if br.position.x > PAD + 40.0 and br.position.y < y + ROW_H and br.end.y > y:
 					avail = minf(avail, br.position.x - 2.0 * PAD - 20.0)
 			if avail - bar < 96.0:
 				continue   # справа кнопка вплотную: строка не поместится
-			r["text"] = _fit_text(String(r["full"]), fb, avail - bar)
-			r["w"] = _tw(String(r["text"]), fb) + bar
+			# Длинная подсказка обучения на телефоне: если в body не влезает, берём small —
+			# текст этапа обязан читаться целиком, а не обрываться «…».
+			var fsize: int = fb
+			var fit: String = _fit_text(String(r["full"]), fsize, avail - bar)
+			if wide and fit.ends_with("…"):
+				fsize = fs
+				fit = _fit_text(String(r["full"]), fsize, avail - bar)
+			r["text"] = fit
+			r["font"] = fsize
+			r["w"] = _tw(fit, fsize) + bar
 			r["y"] = y
 			y += ROW_H
 			kept.append(r)
@@ -1593,14 +1806,19 @@ func _draw() -> void:
 	# ---- Подсказки -----------------------------------------------------------
 	if _lay.has("hint"):
 		var hr: Rect2 = _lay["hint"]
+		var hf: int = int(_lay.get("hint_font", fb))
 		draw_rect(hr, C_PLATE)
-		draw_string(font, hr.position + Vector2(8, 18), String(_lay["hint_text"]),
-				HORIZONTAL_ALIGNMENT_LEFT, -1, fb, Color(C_INTERACT, 0.95))
+		# ПК: базовая линия на 18, как раньше. Телефон — по ascent выбранного кегля.
+		var hy: float = 18.0 if not UI.touch_on else 6.0 + font.get_ascent(hf)
+		draw_string(font, hr.position + Vector2(8, hy), String(_lay["hint_text"]),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, hf, Color(C_INTERACT, 0.95))
 
 	# ---- Подсказка управления (затухает) ------------------------------------
-	if Game.game_time < 22.0:
+	# На телефоне три строки CONTROLS_TOUCH закрывали карточку и мир: ввод —
+	# одна строка в нижней плашке (_intro_line). На ПК блок прежний.
+	if Game.game_time < 22.0 and not UI.touch_on:
 		var ta: float = clampf((22.0 - Game.game_time) / 6.0, 0.0, 1.0)
-		var lines: Array = CONTROLS_TOUCH if UI.touch_on else CONTROLS_KEYS
+		var lines: Array = CONTROLS_KEYS
 		var cw: float = minf(w - 2.0 * PAD, 640.0)
 		var cy: float = size.y * 0.30
 		for i in lines.size():
@@ -1614,16 +1832,51 @@ func _draw() -> void:
 	stat_us += Time.get_ticks_usec() - t0
 
 
-## Ширина карточки: иконка 48 и текст заголовка (не уже счётчика).
+## Ширина карточки: иконка и текст заголовка (не уже счётчика). На ПК формула прежняя
+## (иконка 48, зазор 8, заголовок title). На телефоне иконка 32, зазор 12, body/small.
+## Потолок по карте считает вызывающий.
 func _card_width() -> float:
-	var ft: int = UI.FONT["title"]
-	var fb: int = UI.FONT["body"]
+	var ft: int = _card_title_font()
+	var fb: int = _card_sub_font()
 	var tw: float = _tw(card_text, ft)
 	if card_need > 1:
 		tw = maxf(tw, _tw("%d / %d" % [card_have, card_need], fb))
 	if card_mix:
 		tw = maxf(tw, 92.0)
-	return CARD_ICON + 16.0 + tw + 12.0
+	if not UI.touch_on:
+		return CARD_ICON + 16.0 + tw + 12.0
+	return 8.0 + _card_icon() + 12.0 + tw + 12.0
+
+
+## Заголовок и счётчик, вписанные в карточку: title → body → «…». На телефоне счётчик
+## тоже подгоняется. Рисует _draw_card, читает тест. inner — ширина текста внутри рамки.
+func _fit_card_title(L: Dictionary, cw: float) -> void:
+	var inner: float = _card_inner(cw)
+	var ft: int = _card_title_font()
+	var title: String = card_text
+	if _fit_text(title, ft, inner).ends_with("…"):
+		var smaller: int = _card_sub_font() if UI.touch_on else UI.FONT["body"]
+		if smaller < ft:
+			ft = smaller
+	title = _fit_text(title, ft, inner)
+	L["card_title"] = title
+	L["card_font"] = ft
+	L["card_inner"] = inner
+	if card_need > 1:
+		var sf: int = _card_sub_font()
+		var counter: String = "%d / %d" % [card_have, card_need]
+		if UI.touch_on and _fit_text(counter, sf, inner).ends_with("…"):
+			counter = _fit_text(counter, sf, inner)
+		L["card_counter"] = counter
+		L["card_sub_font"] = sf
+
+
+## Ширина текста внутри карточки: слева поле и иконка, справа поле. На ПК зазор после
+## иконки 8 (как раньше), на телефоне 12.
+func _card_inner(cw: float) -> float:
+	if UI.touch_on:
+		return cw - 8.0 - _card_icon() - 12.0 - 12.0
+	return cw - 8.0 - CARD_ICON - 8.0 - 12.0
 
 
 ## Карточка «Сейчас»: плашка 64 px, картинка 48×48, ≤ 6 слов, счётчик если need > 1.
@@ -1639,7 +1892,14 @@ func _draw_card(font: Font) -> void:
 		_card_hit.size = r.size
 	draw_rect(r, C_PLATE)
 	draw_rect(r, Color(C_LINE, 0.35), false, 1.0)
-	var icon_r: Rect2 = Rect2(r.position + Vector2(8.0, 8.0), Vector2(CARD_ICON, CARD_ICON))
+	var touch: bool = UI.touch_on
+	var isz: float = _card_icon()
+	var icon_r: Rect2
+	if touch:
+		var iy: float = r.position.y + (r.size.y - isz) * 0.5
+		icon_r = Rect2(Vector2(r.position.x + 8.0, iy), Vector2(isz, isz))
+	else:
+		icon_r = Rect2(r.position + Vector2(8.0, 8.0), Vector2(CARD_ICON, CARD_ICON))
 	draw_rect(icon_r, C_PLATE_HI)
 	if card_icon >= 0:
 		var tex: ImageTexture = DB.item_texture(card_icon)
@@ -1647,15 +1907,29 @@ func _draw_card(font: Font) -> void:
 			draw_texture_rect(tex, icon_r.grow(-4.0), false)
 	else:
 		_draw_stage_glyph(icon_r, tracker_stage)
-	var tx: float = icon_r.end.x + 8.0
-	var ft: int = UI.FONT["title"]
-	_text_outlined(font, Vector2(tx, r.position.y + 8.0 + float(ft)), card_text, ft, C_LINE)
-	if card_mix:
-		_draw_mix_row(Vector2(tx, r.position.y + 8.0 + float(ft) + 6.0))
-	elif card_need > 1:
-		var fb: int = UI.FONT["body"]
-		_text_outlined(font, Vector2(tx, r.position.y + 8.0 + float(ft) + 4.0 + float(fb)),
-				"%d / %d" % [card_have, card_need], fb, C_BIO.lerp(C_LINE, 0.25))
+	var tx: float = icon_r.end.x + (12.0 if touch else 8.0)
+	var ft: int = int(_lay.get("card_font", _card_title_font()))
+	var title: String = String(_lay.get("card_title", card_text))
+	if touch:
+		var ascent: float = font.get_ascent(ft)
+		_text_outlined(font, Vector2(tx, r.position.y + 6.0 + ascent), title, ft, C_LINE)
+		if card_mix:
+			_draw_mix_row(Vector2(tx, r.position.y + 6.0 + ascent + 4.0))
+		elif card_need > 1:
+			var sf: int = int(_lay.get("card_sub_font", _card_sub_font()))
+			var counter: String = String(_lay.get("card_counter", "%d / %d" % [card_have, card_need]))
+			_text_outlined(font, Vector2(tx, r.position.y + 6.0 + ascent + 2.0 + font.get_ascent(sf)),
+					counter, sf, C_BIO.lerp(C_LINE, 0.25))
+	else:
+		# ПК: те же координаты, что были до телефона. Текст уже вписан, длинная цель не лезет на карту.
+		_text_outlined(font, Vector2(tx, r.position.y + 8.0 + float(ft)), title, ft, C_LINE)
+		if card_mix:
+			_draw_mix_row(Vector2(tx, r.position.y + 8.0 + float(ft) + 6.0))
+		elif card_need > 1:
+			var sf2: int = int(_lay.get("card_sub_font", UI.FONT["body"]))
+			var counter2: String = String(_lay.get("card_counter", "%d / %d" % [card_have, card_need]))
+			_text_outlined(font, Vector2(tx, r.position.y + 8.0 + float(ft) + 4.0 + float(sf2)),
+					counter2, sf2, C_BIO.lerp(C_LINE, 0.25))
 
 
 ## Три смеси на карточке: R+G, G+B, R+B. Квадраты, без букв и клавиш.
@@ -1746,7 +2020,8 @@ func _draw_status_block(font: Font) -> void:
 				bar_y0 = y
 			bar_y1 = y + ROW_H
 		var tx: float = x + 10.0
-		_text_on_plate(font, Vector2(tx, y + 19.0), String(r["text"]), fb, r["color"])
+		var fsize: int = int(r.get("font", fb))
+		_text_on_plate(font, Vector2(tx, y + 19.0), String(r["text"]), fsize, r["color"])
 	if bar_y0 >= 0.0:
 		draw_rect(Rect2(x, bar_y0, 4, bar_y1 - bar_y0), C_BIO)
 

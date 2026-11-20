@@ -2,7 +2,7 @@ extends ScenarioBase
 ## Горелка и луч (ADR-005 § 4–5, #164).
 ##
 ## Коридор у базы: горелка с одним углём бьёт красным на 24 клетки, 25-я пуста;
-## стена на 8-й клетке обрывает луч; 45 с — гаснет; сундук рядом кормит сам;
+## стена на 8-й клетке обрывает луч; уголь прогорает и луч гаснет; сундук рядом кормит сам;
 ## поворот уводит луч, старых клеток в карте нет. Замер rebuild() — 20 горелок.
 
 
@@ -43,14 +43,15 @@ func run() -> void:
 	_flush()
 	ok("без стены луч снова до 24", _lane_color(origin, 1, 24, Beams.R))
 
-	# 45 с игрового времени — уголь кончился, луч погас.
+	# Уголь кончился: порог — константа Balance.FUEL, не зашитое число.
+	var coal_s: float = float(Balance.FUEL[IDs.I.COAL])
 	var t0: float = Game.game_time
 	Engine.time_scale = 15.0
 	var burned: bool = await wait_until(func() -> bool:
-		return Game.game_time - t0 >= 45.5 and not burner.burning(), 50.0)
+		return Game.game_time - t0 >= coal_s + 0.5 and not burner.burning(), 50.0)
 	Engine.time_scale = 1.0
 	_flush()
-	ok("через 45 с луч гаснет", burned and World.beams.color_at(origin + Vector2i(1, 0)) == 0,
+	ok("через %.0f с луч гаснет" % coal_s, burned and World.beams.color_at(origin + Vector2i(1, 0)) == 0,
 			"время %.1f, горит %s" % [Game.game_time - t0, str(burner.burning())])
 
 	# Сундук с 6 углями рядом: горелка сама берёт и горит дальше.
