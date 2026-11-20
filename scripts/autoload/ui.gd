@@ -2,7 +2,9 @@ extends CanvasLayer
 ## Автозагрузка интерфейса: HUD, окно инвентаря, журнал (J), пауза (ESC, #119),
 ## проброс эффектов в мир. Телефон (#149): системная «Назад» Android — как ESC
 ## (go_back; само приложение не закрывается: application/config/quit_on_go_back = false),
-## свернули приложение — пауза и автосохранение (app_paused).
+## свернули приложение — пауза и автосохранение (app_paused). Одиночная игра
+## ещё пишет тот же слот на рассвете, если с прошлого сохранения прошла смена
+## (_on_dawn_save): одна строка «Запись легла.»
 
 var hud: HUD
 var panel: InventoryPanel
@@ -146,6 +148,7 @@ func _ready() -> void:
 	pause = PauseMenu.new()   # #119: свой CanvasLayer, работает и при паузе дерева
 	add_child(pause)
 	Game.notification.connect(_on_notification)
+	_ready_dawn_save()
 	get_viewport().size_changed.connect(_apply_scale)
 	_apply_scale()
 
@@ -177,6 +180,45 @@ func app_paused() -> void:
 	pause.open()
 	if pause.save_blocked() == "":
 		pause.save_run()
+
+
+## Автосохранение одиночной игры на рассвете (отчёт, пункт 8). Одна сессия —
+## день и ночь: на рассвете, если с прошлого сохранения прошла смена, забег
+## пишется в тот же слот, что F5, и один раз показывается строка. Не чаще раза
+## на смену. Сеть пишет сама (NetCoop, слот mp_*_auto) — здесь молчим, чтобы
+## не класть копию в слот F5. Глава кампании и хардкор сохранений не имеют.
+## Сценарии (--scenario) рассвет гоняют сами и слот игрока не трогают.
+const DAWN_SAVED: String = "Запись легла."
+const DAWN_SAVED_COLOR: Color = Color(0.6, 1.0, 0.75)
+## Смена, которую автосохранение уже записало (−1 — ещё ни одной).
+var _dawn_saved_day: int = -1
+
+
+func _ready_dawn_save() -> void:
+	Game.day_started.connect(_on_dawn_save)
+
+
+func _on_dawn_save(day: int) -> void:
+	if not _dawn_save_due(day):
+		return
+	# Смена уже отмечена: повторный day_started в ту же смену (перемотка смерти
+	# дописывает её, не шлёт сигнал второй раз) файл не перепишет.
+	_dawn_saved_day = day
+	if not Save.save_game():
+		_dawn_saved_day = -1
+		return
+	Game.notify(DAWN_SAVED, DAWN_SAVED_COLOR)
+
+
+## true — этот рассвет надо записать. Пустая причина save_blocker — можно.
+func _dawn_save_due(day: int) -> bool:
+	if day == _dawn_saved_day:
+		return false
+	if Net.is_online() or Game.in_mission() or hardcore() or Game.scenario_mode:
+		return false
+	if get_tree() != null and get_tree().paused:
+		return false
+	return Save.save_blocker() == ""
 
 
 func bind(p: Player) -> void:
