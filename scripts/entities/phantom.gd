@@ -118,6 +118,8 @@ var _drain_t: float = Balance.SHADE_DRAIN_PERIOD	## Таймер дренажа 
 var _dig_t: float = 0.0				## Таймер копания (копатель).
 var _buzz_t: float = 0.0			## Таймер жужжания роя.
 var _blocked_x: bool = false		## В прошлом кадре упёрлись в стену по горизонтали.
+## Клетка, из которой пеший отход только что вышел. Штраф против дёрганья.
+var _flee_left: Vector2i = Vector2i(-9999, -9999)
 ## Дочерний узел обводки отхода (#236). null — обводки нет.
 var _outline: Node2D = null
 var _outline_col: Color = Color(0, 0, 0, 0)
@@ -249,15 +251,17 @@ func _physics_process(delta: float) -> void:
 			wander_t = randf_range(1.5, 3.5)
 			target_pos = _wander_target()
 
-	# Путь ведёт только в погоне: в других состояниях фантом идёт по своей воле.
-	if state != St.CHASE and path.size() > 0:
+	# Путь — в погоне и в пешем отходе: иначе шаг в клетку за стеной не исполняется.
+	if state != St.CHASE and not (state == St.FLEE and not flying) and path.size() > 0:
 		path.clear()
 		path_i = 0
 		_stuck_t = 0.0
 		_stuck_best = INF
-	# Смена режима на погоню — перестраиваем путь сразу, а не через остаток таймера.
-	if state == St.CHASE and _prev_state != St.CHASE:
+	# Смена режима — путь сразу, а не через остаток таймера погони.
+	if (state == St.CHASE or (state == St.FLEE and not flying)) and _prev_state != state:
 		repath = 0.0
+		path.clear()
+		path_i = 0
 	_prev_state = state
 
 	# --- Двойник под взглядом -------------------------------------------------
@@ -284,7 +288,8 @@ func _physics_process(delta: float) -> void:
 
 	repath -= dt
 	var dir: Vector2 = Vector2.ZERO
-	if state == St.CHASE and repath <= 0.0 and not frozen:
+	var fleeing_walk: bool = state == St.FLEE and not flying
+	if (state == St.CHASE or fleeing_walk) and repath <= 0.0 and not frozen:
 		# Вдали от цели путь перестраиваем реже — цели похуже, а поиск дорог.
 		repath = REPATH_FAR if dist > REPATH_FAR_DIST else REPATH_NEAR
 		# Пересчитываем путь, только если цель заметно сдвинулась
@@ -386,30 +391,99 @@ func _flee_air() -> Vector2:
 	return global_position + away.normalized() * 90.0
 
 
-## Пеший отход: проходимый сосед, дальше от источника света и темнее.
-## Чистая вертикаль пешему не шаг — такие клетки в конце списка.
+## Пеший отход. Цель — тёмная клетка своего ряда, дальше от источника.
+## Сосед на одну клетку не годится: путь из одной клетки не обходит стену,
+## и эхо дёргается в светлом кармане. Вверх — только если вбок хода нет.
+## Вертикаль даёт vel.x = 0, диагональ вверх упирается в потолок.
 func _flee_step() -> Vector2:
-	var origin: Vector2 = _flee_from if _flee_from != Vector2.ZERO 			else World.cell_to_world(World.world_to_cell(global_position))
+	var origin: Vector2 = _flee_from if _flee_from != Vector2.ZERO \
+			else World.cell_to_world(World.world_to_cell(global_position))
 	var here: Vector2i = World.world_to_cell(global_position)
+	var best: Vector2i = _flee_dark_row(here, origin)
+	if best.x < 0:
+		var vertical: Array[Vector2i] = [Vector2i(-1, -1), Vector2i(1, -1), \
+				Vector2i(-1, 1), Vector2i(1, 1), Vector2i(0, -1), Vector2i(0, 1)]
+		best = _flee_best(here, vertical, origin, true)
+	if best.x < 0:
+		best = _flee_best(here, [Vector2i(-1, 0), Vector2i(1, 0)], origin, false)
+	if best.x >= 0:
+		if best != here:
+			_flee_left = here
+		return World.cell_to_world(best)
+	return global_position + Vector2(16.0 if facing >= 0 else -16.0, 0.0)
+
+
+## Дальняя тёмная клетка своего ряда. Стена в один тайл не обрыв:
+## за ней может быть ход, и пеший перепрыгивает её по пути.
+func _flee_dark_row(here: Vector2i, origin: Vector2) -> Vector2i:
 	var best: Vector2i = Vector2i(-1, -1)
 	var score: float = -INF
-	for d in [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(-1, -1), Vector2i(1, -1), \
-			Vector2i(-1, 1), Vector2i(1, 1), Vector2i(0, -1), Vector2i(0, 1)]:
+	for sx in [-1, 1]:
+		var walls: int = 0
+		var gap: int = 0
+		for step in range(1, 19):
+			var c: Vector2i = Vector2i(here.x + sx * step, here.y)
+			if not World.in_bounds(c.x, c.y):
+				break
+			if not _flee_open(c):
+				walls += 1
+				gap = 0
+				if walls > 2:
+					break
+				continue
+			walls = 0
+			gap += 1
+			# Клетка под потолком без пола рядом — не шаг: тело падает в шахту.
+			if gap < 2 and not _flee_floor(c):
+				continue
+			if c == _flee_left:
+				continue
+			var w: Vector2 = World.cell_to_world(c)
+			var light: float = World.light_at(c)
+			var s: float = w.distance_to(origin) - light * 48.0
+			# Темнее порога — и дальше не смотрим: цель уже вне кармана.
+			if light <= light_flee:
+				s += 400.0
+			if s > score:
+				score = s
+				best = c
+			if light <= light_flee and step >= 3:
+				break
+	return best
+
+
+## Под клеткой есть пол, на который пеший может встать.
+func _flee_floor(c: Vector2i) -> bool:
+	var below: Vector2i = c + Vector2i(0, 1)
+	if not World.in_bounds(below.x, below.y):
+		return false
+	return World.astar != null and World.astar.is_point_solid(below)
+
+
+## Лучшая открытая клетка среди сдвигов: темнее и дальше от origin.
+## skip_back — не возвращаться в клетку, из которой только что пришли.
+func _flee_best(here: Vector2i, deltas: Array[Vector2i], origin: Vector2, skip_back: bool) -> Vector2i:
+	var best: Vector2i = Vector2i(-1, -1)
+	var score: float = -INF
+	for d in deltas:
 		var c: Vector2i = here + d
-		if not World.in_bounds(c.x, c.y):
+		if not _flee_open(c):
 			continue
-		if World.astar != null and World.astar.is_point_solid(c):
+		if skip_back and c == _flee_left:
 			continue
 		var w: Vector2 = World.cell_to_world(c)
 		var s: float = w.distance_to(origin) - World.light_at(c) * 48.0
-		if d.x == 0:
-			s -= 32.0
 		if s > score:
 			score = s
 			best = c
-	if best.x >= 0:
-		return World.cell_to_world(best)
-	return global_position + Vector2(16.0 if facing >= 0 else -16.0, 0.0)
+	return best
+
+
+## Клетка, в которую пеший может шагнуть: в границах и не стена.
+func _flee_open(c: Vector2i) -> bool:
+	if not World.in_bounds(c.x, c.y):
+		return false
+	return World.astar == null or not World.astar.is_point_solid(c)
 
 
 func _decide(dt: float, dist: float, light: float) -> void:

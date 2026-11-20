@@ -1077,7 +1077,93 @@ class Runner extends Node:
 
 	## Копатель в погоне сыплет крошку: кадр рисунка вызывает тот же путь, что _draw.
 	func _a3_burrow() -> void:
+		# spawn_chip при переполнении вытесняет старейшие и размер не растёт.
+		# Освобождаем место заранее, иначе «+0» не отличить от «крошка не сыплется».
+		_a3_make_chip_room(CHIP_COUNT)
 		var chips0: int = world_fx.chips.size() if world_fx != null else 0
+		var p: Node = _a3_chase_burrower()
+		if p.has_method("picture"):
+			p.call("picture")
+		else:
+			p.call("_sparks_at_bit", 8.0)
+		var grew: int = world_fx.chips.size() - chips0 if world_fx != null else 0
+		var stone: Color = _a3_stone()
+		var tinted: int = _a3_tinted_since(chips0, stone)
+		_ok("копатель в погоне сыплет крошку", grew >= 4 and tinted == grew,
+				"чипов +%d, цветом камня %d" % [grew, tinted])
+		p.queue_free()
+		_a3_burrow_full()
+
+
+	## Тот же замер при полном массиве: крошка видна, даже когда лимит уже взят.
+	func _a3_burrow_full() -> void:
+		if world_fx == null or not world_fx.has_method("spawn_chip"):
+			_ok("крошка видна и при полном массиве частиц", false, "эффектов нет")
+			return
+		var saved: Array = world_fx.chips.duplicate()
+		var cap: int = _a3_chip_cap()
+		var filler: Color = Color(0.15, 0.15, 0.15, 1.0)
+		var cell: Vector2i = world.world_to_cell(player.global_position) if world != null else Vector2i.ZERO
+		while world_fx.chips.size() + CHIP_COUNT <= cap:
+			world_fx.spawn_chip(cell, filler)
+		# Ровно до лимита: хвост добиваем, не вызывая вытеснение раньше времени.
+		while world_fx.chips.size() < cap:
+			world_fx.chips.append({
+				"pos": Vector2.ZERO, "vel": Vector2.ZERO, "life": 1.0,
+				"color": filler, "size": 2.0,
+			})
+		_a3_make_chip_room(CHIP_COUNT)
+		var chips0: int = world_fx.chips.size()
+		var p: Node = _a3_chase_burrower()
+		if p.has_method("picture"):
+			p.call("picture")
+		else:
+			p.call("_sparks_at_bit", 8.0)
+		var grew: int = world_fx.chips.size() - chips0
+		var stone: Color = _a3_stone()
+		var tinted: int = _a3_tinted_since(chips0, stone)
+		_ok("крошка видна и при полном массиве частиц", grew == CHIP_COUNT and tinted == grew,
+				"чипов +%d, цветом камня %d (лимит %d)" % [grew, tinted, cap])
+		p.queue_free()
+		world_fx.chips = saved
+
+
+	## Место под n новых частиц — тем же вытеснением, что spawn_chip.
+	func _a3_make_chip_room(n: int) -> void:
+		if world_fx == null:
+			return
+		var cap: int = _a3_chip_cap()
+		var overflow: int = world_fx.chips.size() + n - cap
+		for _i in maxi(0, overflow):
+			if world_fx.chips.is_empty():
+				break
+			world_fx.chips.remove_at(0)
+
+
+	func _a3_chip_cap() -> int:
+		var wfx: GDScript = load("res://scripts/ui/world_fx.gd")
+		return int(wfx.get_script_constant_map().get("MAX_CHIPS", 160))
+
+
+	func _a3_stone() -> Color:
+		if db != null and db.has_method("pal"):
+			return db.pal("s_base")
+		return Color(0, 0, 0, 0)
+
+
+	func _a3_tinted_since(chips0: int, stone: Color) -> int:
+		if world_fx == null:
+			return 0
+		var tinted: int = 0
+		for i in range(chips0, world_fx.chips.size()):
+			var c: Color = world_fx.chips[i]["color"]
+			if c.is_equal_approx(stone):
+				tinted += 1
+		return tinted
+
+
+	## Копатель в погоне, готовый сыпануть крошку на первом кадре picture().
+	func _a3_chase_burrower() -> Node:
 		var ph: GDScript = load("res://scripts/entities/phantom.gd")
 		var p: Node = ph.new()
 		p.set("player", player)
@@ -1088,23 +1174,7 @@ class Runner extends Node:
 		p.set("facing", 1)
 		scene.add_child(p)
 		p.global_position = player.global_position + Vector2(48.0, 0.0)
-		if p.has_method("picture"):
-			p.call("picture")
-		else:
-			p.call("_sparks_at_bit", 8.0)
-		var grew: int = world_fx.chips.size() - chips0 if world_fx != null else 0
-		var stone: Color = Color(0, 0, 0, 0)
-		if db != null and db.has_method("pal"):
-			stone = db.pal("s_base")
-		var tinted: int = 0
-		if world_fx != null:
-			for i in range(chips0, world_fx.chips.size()):
-				var c: Color = world_fx.chips[i]["color"]
-				if c.is_equal_approx(stone):
-					tinted += 1
-		_ok("копатель в погоне сыплет крошку", grew >= 4 and tinted == grew,
-				"чипов +%d, цветом камня %d" % [grew, tinted])
-		p.queue_free()
+		return p
 
 
 	## Шаг: ведущая нога на 2 px вперёд (разница двух фаз), корпус кренится на 1 px.
