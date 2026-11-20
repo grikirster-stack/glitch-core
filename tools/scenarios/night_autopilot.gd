@@ -19,6 +19,14 @@ extends "res://tools/scenarios/balance_common.gd"
 ## Печатает пик живых, бюджет, cap, потери машин, топливо, секунды до первого
 ## удара, uptime луча, долю ночи под давлением. «Ночь не состоялась» — отдельно,
 ## не как зелёный ноль спавнов. S = B/D — справочно, порог прогон не режет.
+##
+## Расход топлива (ADR-005 § 6, пересчёт 2026-11-20) — ЕДИНИЦЫ, не секунды:
+## сколько единиц сожгли ВСЕ горелки за фазу (день / ночь). Единица сгорела,
+## когда топка её взяла в пламя (fuel_units упал) или тень съела запас.
+## Текущее пламя (burn_left) в единицы не переводится: недожог < 1 не считается
+## целой единицей, а «топливо с» в таблице — прежний замер секунд.
+## Добыча руками сюда не входит. Флаг --fuel-cycle печатает день и ночь
+## по типам (уголь / медь / кристалл) и не гоняет уровни угрозы.
 
 
 const NIGHT_SECS: float = 90.0
@@ -62,6 +70,10 @@ func run() -> void:
 	ok("первая ночь не раньше 140 с", dawn >= 140.0, "%.1f с" % dawn)
 
 	var rows: Array = []
+	if _flag("fuel-cycle"):
+		await _fuel_cycle()
+		finish()
+		return
 	if _flag("autopilot-post"):
 		rows.append(await _level_post(repeats))
 		_print_table(rows)
@@ -327,7 +339,11 @@ func _place_burner(c: Vector2i, item: int, n: int, dir: int) -> bool:
 		return false
 	var b: Burner = World.machines[c] as Burner
 	b.dir = dir
-	b.add_fuel(item, n)
+	# Стенд: весь запас в топке, мимо лимита FUEL_MAX. Иначе день+ночь
+	# выжигают 12 единиц посреди фазы, и «расход» — артефакт пустой топки.
+	# Сундук рядом не годится: снимок запаса его не видит.
+	b.fuel = [[item, n]]
+	b._ignite()
 	return b.burning()
 
 
@@ -573,6 +589,202 @@ func _fuel_seconds(machines: Array) -> float:
 				var item: int = int(e[0])
 				n += float(e[1]) * float(Balance.FUEL.get(item, Balance.COAL_BURN))
 	return n
+
+
+## Запас всех горелок мира: целые единицы в топке + 1, если пламя уже взято,
+## плюс топливо, которое машина высыпала на землю (разрушение — не сжигание).
+## Ключ 0 — «единица в огне» (тип уже сожжён при розжиге, предмет не вернуть).
+func _stock_units() -> Dictionary:
+	var out: Dictionary = {}
+	for c in World.machines.keys():
+		var m = World.machines[c]
+		if not (m is Burner) or not is_instance_valid(m):
+			continue
+		var b: Burner = m
+		for e in b.fuel:
+			var item: int = int(e[0])
+			out[item] = int(out.get(item, 0)) + int(e[1])
+		if b.burn_left > 0.0 and b.color != 0:
+			out[0] = int(out.get(0, 0)) + 1
+	var host = get_tree().current_scene
+	if host == null:
+		return out
+	for n in host.get_children():
+		if not (n is ItemEntity) or not is_instance_valid(n):
+			continue
+		var e: ItemEntity = n
+		if not Balance.FUEL.has(e.item_id) or e.count <= 0:
+			continue
+		out[e.item_id] = int(out.get(e.item_id, 0)) + e.count
+	return out
+
+
+## Сколько единиц ушло из запаса с прошлого снимка. Дозаправка сценария
+## (_refuel) между фазами в дельту не попадает: снимок берётся после неё.
+func _units_burned(before: Dictionary, after: Dictionary) -> Dictionary:
+	var out: Dictionary = {}
+	var keys: Array = before.keys()
+	for k in after.keys():
+		if not keys.has(k):
+			keys.append(k)
+	for k in keys:
+		var d: int = int(before.get(k, 0)) - int(after.get(k, 0))
+		if d > 0:
+			out[int(k)] = d
+	return out
+
+
+func _units_total(burned: Dictionary) -> int:
+	var n: int = 0
+	for k in burned.keys():
+		n += int(burned[k])
+	return n
+
+
+func _fuel_name(item: int) -> String:
+	if item == IDs.I.COAL:
+		return "уголь"
+	if item == IDs.I.COPPER_ORE:
+		return "медь"
+	if item == IDs.I.CRYSTAL:
+		return "кристалл"
+	if item == 0:
+		return "в огне"
+	return "предмет %d" % item
+
+
+## «уголь=2 медь=3 кристалл=1» — только то, что реально сгорело.
+func _fuel_line(burned: Dictionary) -> String:
+	var parts: PackedStringArray = []
+	for item in [IDs.I.COAL, IDs.I.COPPER_ORE, IDs.I.CRYSTAL, 0]:
+		if int(burned.get(item, 0)) <= 0:
+			continue
+		parts.append("%s=%d" % [_fuel_name(item), int(burned[item])])
+	if parts.is_empty():
+		return "0"
+	return " ".join(parts)
+
+
+## День, затем ночь: горелки горят сами, бот не копает и не дозаправляет.
+## Печатает единицы по типам. Это замер цели § 6, не проверка угрозы.
+func _fuel_cycle() -> void:
+	_wipe_built()
+	stand_next_to_beacon()
+	_put_lamp()
+	# 40 на горелку: день+ночь при укороченном топливе, с двукратным запасом.
+	var built: Dictionary = _build_seven(40)
+	ok("цикл: семь маяков под лучом", int(built["lit"]) == 7, "маяков %d" % int(built["lit"]))
+	ok("цикл: горят 2 горелки", int(built["burners"]) == 2, "%d" % int(built["burners"]))
+	var burners: int = 0
+	for c in World.machines.keys():
+		var m = World.machines[c]
+		if m is Burner and is_instance_valid(m) and (m as Burner).burning():
+			burners += 1
+	print("  цикл топлива: горящих горелок %d, запас %s" % [burners, _fuel_line(_stock_units())])
+	Game.day_number = 1
+	Game.time_of_day = Balance.START_TIME
+	Game.relay_active = false
+	drive_threat = false
+	var day_burned: Dictionary = await _phase_until(func() -> bool: return Game.is_night(), 200.0, "день")
+	_guard_fuel_left("день")
+	drive_threat = true
+	var night_burned: Dictionary = await _phase_until(func() -> bool: return not Game.is_night(), 140.0, "ночь")
+	_guard_fuel_left("ночь")
+	drive_threat = false
+	normal_speed()
+	# 20–30 в ADR — это добыча руками за день, а не сжигание; день печатаем справочно.
+	_print_fuel_phase("день", day_burned, 0, 0, "справочно; 20–30 по ADR — добыча руками, не сжигание")
+	_print_fuel_phase("ночь", night_burned, 10, 15)
+
+
+func _phase_until(done: Callable, limit: float, label: String) -> Dictionary:
+	speed_up(SPEED)
+	var before: Dictionary = _stock_units()
+	var t0: float = clock
+	var ok_wait: bool = await wait_game_until(done, limit)
+	var burned: Dictionary = _units_burned(before, _stock_units())
+	print("  фаза %s: %.1f с%s, единиц %d (%s)" % [
+			label, clock - t0, "" if ok_wait else " ОБРЫВ", _units_total(burned), _fuel_line(burned)])
+	if not ok_wait:
+		ok("фаза %s дошла до границы" % label, false, "лимит %.0f с" % limit)
+	return burned
+
+
+## Сторож: горящие горелки не должны выжечь уголь и медь до нуля.
+## Иначе «расход» фазы — артефакт пустой топки, а не устойчивое сжигание.
+func _guard_fuel_left(phase: String) -> void:
+	var coal_left: int = -1
+	var copper_left: int = -1
+	var burning: int = 0
+	for c in World.machines.keys():
+		var m = World.machines[c]
+		if not (m is Burner) or not is_instance_valid(m) or not (m as Burner).burning():
+			continue
+		burning += 1
+		var b: Burner = m
+		var left: Dictionary = _burner_left(b)
+		var chest: Dictionary = _chest_beside(b.cell)
+		var coal: int = int(left.get(IDs.I.COAL, 0)) + int(chest.get(IDs.I.COAL, 0))
+		var copper: int = int(left.get(IDs.I.COPPER_ORE, 0)) + int(chest.get(IDs.I.COPPER_ORE, 0))
+		# Горелка жжёт свой цвет. Сторож — по её топливу, не по сумме мира:
+		# чужой запас не кормит погасшую топку.
+		if b.color == Beams.R:
+			coal_left = coal if coal_left < 0 else mini(coal_left, coal)
+		elif b.color == Beams.G:
+			copper_left = copper if copper_left < 0 else mini(copper_left, copper)
+	var enough: bool = burning >= 2 and coal_left > 0 and copper_left > 0
+	ok("запас после фазы «%s» не исчерпан" % phase, enough,
+			"горелок %d, уголь=%d медь=%d" % [burning, coal_left, copper_left])
+
+
+## Остаток одной горелки: единицы в топке + та, что сейчас в огне.
+func _burner_left(b: Burner) -> Dictionary:
+	var out: Dictionary = {}
+	for e in b.fuel:
+		var item: int = int(e[0])
+		out[item] = int(out.get(item, 0)) + int(e[1])
+	if b.burn_left > 0.0 and b.color != 0:
+		var lit: int = _item_of_color(b.color)
+		if lit != 0:
+			out[lit] = int(out.get(lit, 0)) + 1
+	return out
+
+
+func _item_of_color(mask: int) -> int:
+	if mask == Beams.R:
+		return IDs.I.COAL
+	if mask == Beams.G:
+		return IDs.I.COPPER_ORE
+	if mask == Beams.B:
+		return IDs.I.CRYSTAL
+	return 0
+
+
+## Топливо в сундуках рядом с горелками — запас, который горелка ещё заберёт.
+func _chest_beside(burner_c: Vector2i) -> Dictionary:
+	var out: Dictionary = {}
+	for d in Burner.NEIGHBORS:
+		var m = World.machines.get(burner_c + d)
+		if not (m is Chest) or not is_instance_valid(m):
+			continue
+		for s in (m as Chest).slots:
+			if s.is_empty() or not Balance.FUEL.has(s.id):
+				continue
+			out[s.id] = int(out.get(s.id, 0)) + s.count
+	return out
+
+
+func _print_fuel_phase(phase: String, burned: Dictionary, lo: int, hi: int, note: String = "") -> void:
+	var total: int = _units_total(burned)
+	var tail: String = note
+	if tail == "":
+		tail = "цель %d–%d | %s" % [lo, hi, "в цели" if total >= lo and total <= hi else "вне цели"]
+	print("  РАСХОД %s: %d единиц (%s) | %s" % [phase, total, _fuel_line(burned), tail])
+	metric("fuel_%s_units" % ("day" if phase == "день" else "night"), float(total),
+			"единиц сожжено всеми горелками за %s" % phase)
+	for item in [IDs.I.COAL, IDs.I.COPPER_ORE, IDs.I.CRYSTAL]:
+		var key: String = "coal" if item == IDs.I.COAL else ("copper" if item == IDs.I.COPPER_ORE else "crystal")
+		metric("fuel_%s_%s" % [("day" if phase == "день" else "night"), key], float(burned.get(item, 0)))
 
 
 func _alive() -> int:
