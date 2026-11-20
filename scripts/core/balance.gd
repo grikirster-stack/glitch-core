@@ -52,11 +52,11 @@ const CAT_TRAIL_POINTS: int = 30
 const CAT_QUIET: float = 10.0
 
 # ------------------------------------------------------- Маяк (ADR-005 § 5, #167)
-## Красный жжёт как турель: 20 урона раз в 0.8 с, дальность 7 клеток, прямая
+## Красный жжёт как турель: 32 урона раз в 0.8 с (40 урона/с), дальность 7 клеток, прямая
 ## видимость. Жёлтый светит как прожектор (сила 2.0). Зелёный чинит +20 HP
 ## раз в 3 с всем постройкам в 3 клетках.
 const PHAROS_HP: float = 100.0
-const PHAROS_RED_DAMAGE: float = 20.0
+const PHAROS_RED_DAMAGE: float = 32.0
 const PHAROS_RED_PERIOD: float = 0.8
 const PHAROS_RANGE_TILES: float = 7.0
 const PHAROS_GREEN_PERIOD: float = 3.0

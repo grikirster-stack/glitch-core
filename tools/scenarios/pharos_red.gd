@@ -50,10 +50,10 @@ func run() -> void:
 	ok("эхо убито маяком за ≤ 5 с", dead and secs <= KILL_LIMIT,
 			"%.2f с, выстрелов %d" % [secs, pharos.shots])
 	var dps: float = float(pharos.shots) * Balance.PHAROS_RED_DAMAGE / maxf(secs, 0.01)
-	print("  [замер] урон/с маяка под красным: %.1f (выстрелов %d за %.2f с; цель 25)" % [dps, pharos.shots, secs])
+	print("  [замер] урон/с маяка под красным: %.1f (выстрелов %d за %.2f с; цель 40)" % [dps, pharos.shots, secs])
 	print("  [замер] урон/с героя: %.1f (38 урона / 0.45 с; цель 84)" % (38.0 / 0.45))
-	ok("маяк бьёт около 25 урона/с", dps >= 22.0 and dps <= 28.0, "%.1f" % dps)
-	ok("на эхо ушло 5 разрядов", pharos.shots == 5, "выстрелов %d" % pharos.shots)
+	ok("маяк бьёт около 40 урона/с", dps >= 37.0 and dps <= 43.0, "%.1f" % dps)
+	ok("на эхо ушло 4 разряда", pharos.shots == 4, "выстрелов %d" % pharos.shots)
 
 	# За стеной не бьётся: новый эхо за камнем, секунда тишины.
 	# Стена на 3 клетки вправо и на 3 ряда: луч видимости идёт по центрам и
