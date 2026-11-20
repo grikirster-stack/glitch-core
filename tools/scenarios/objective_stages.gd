@@ -1,6 +1,6 @@
 extends ScenarioBase
 ## Этапы цели (ADR-005 § 6.3–6.4, #175, #212): 1 → 2 → 3 → 4 → 5 → 6.
-##   1 → 2: прочитан терминал (чертёж).
+##   1 → 2: прочитан терминал (чертёж) или поставлена горелка.
 ##   2 → 3: добыто Balance.FREE_ORE_NEED руды. Хлам не считается.
 ##   3 → 4: пережита ночь (рассвет).
 ##   4 → 5: шесть дуг. Белый луч дугу не зажигает.
@@ -24,6 +24,23 @@ func run() -> void:
 			Game.objective_text())
 	ok("шесть дуг без этапов 1–3 запуск не дают", _feed(6) and not Game.core_launch()
 			and not Game.relay_active and Game.objective_stage == 1, Game.free_block_text())
+	ok("ни терминала, ни горелки — этап 1, запуск отказ",
+			Game.tasks_done == 0 and Game.blueprints.is_empty() and not Game.free_powered()
+			and Game.objective_stage == 1 and not Game.core_launch() and not Game.relay_active,
+			Game.free_block_text())
+
+	var burner_cell: Vector2i = _free_near(World.beacon_cell)
+	ok("горелка поставлена рядом с лагерем", burner_cell.x >= 0
+			and MachineBase.place_machine("Burner", burner_cell), str(burner_cell))
+	Game.update_objective()
+	ok("горелка без терминала → этап 2", Game.tasks_done == 0 and Game.blueprints.is_empty()
+			and Game.objective_stage == 2, Game.objective_text())
+	var burner = World.machines.get(burner_cell)
+	if burner != null:
+		burner.queue_free()
+		World.machines.erase(burner_cell)
+	Game.update_objective()
+	ok("снятая горелка этап не откатывает", Game.objective_stage == 2, Game.objective_text())
 
 	Game.tasks_done = 1
 	Game.update_objective()
@@ -60,6 +77,17 @@ func run() -> void:
 			and Game.objective_text().ends_with(" с"), Game.objective_text())
 	ok("этапы по порядку 1 → 6, по разу", _seen == [1, 2, 3, 4, 5, 6], str(_seen))
 	_end()
+
+
+
+## Свободная клетка воздуха без машины рядом с лагерем.
+func _free_near(origin: Vector2i) -> Vector2i:
+	for dy in range(-2, 3):
+		for dx in range(1, 8):
+			var c: Vector2i = origin + Vector2i(dx, dy)
+			if World.get_tile_v(c) == IDs.T.AIR and not World.machines.has(c):
+				return c
+	return Vector2i(-1, -1)
 
 
 func _feed(n: int) -> bool:
