@@ -5,7 +5,8 @@ extends Control
 ## (сид, хардкор галочкой), «Продолжить» (#119: последний забег одним тапом) и
 ## «Загрузить» (#132: список сохранений — секция «ЗАГРУЗКА» в конце), сетевые экраны (MP-H, #93: «Создать игру», «Найти игру»,
 ## «Подключиться по IP», подключение, лобби — секция «СЕТЕВЫЕ ЭКРАНЫ» в конце),
-## номер версии в углу.
+## номер версии в углу. Релизная сборка один раз спрашивает GitHub о новой
+## версии и, если она есть, делает строку ссылкой «скачать» (#300).
 ##
 ## Показ: main.gd открывает scenes/menu.tscn только при запуске без аргументов
 ## командной строки, не под --script и без сессии (Net.session) — тесты и CI
@@ -23,6 +24,10 @@ extends Control
 ## касаний включена), поле ввода на телефоне открывает экранную клавиатуру.
 
 const GAME_SCENE: String = "res://scenes/main.tscn"
+## Один тихий запрос при открытии меню (#300). Адрес официального репозитория.
+const UPDATE_URL: String = UpdateCheck.RELEASES_URL
+const UPDATE_TIMEOUT: float = 8.0
+const VERSION_COLOR: Color = Color(0.55, 0.6, 0.7)
 ## Масштаб героя в превью.
 const PREVIEW_SCALE: float = 6.0
 ## Высота площадки превью, px.
@@ -52,7 +57,9 @@ var hotbar_button: Button
 var single_button: Button
 var net_buttons: Array[Button] = []
 var status_label: Label
-var version_label: Label
+var version_label: LinkButton
+## Куда ведёт «скачать», когда нашлась более новая версия (#300). Пусто — ссылки нет.
+var update_url: String = ""
 var preview: AvatarPreview
 ## Подпись и стрелки каждой части вида (Profile.Look.COLOR..PACK).
 var look_labels: Array[Label] = []
@@ -81,6 +88,7 @@ func _ready() -> void:
 	profile = Profile.load_or_create(profile_path)
 	theme = make_theme()
 	_build()
+	_start_update_check()  # #300
 	_build_net_screens()   # MP-H (#93)
 	refresh_continue()     # #119
 	_refresh_look()
@@ -346,13 +354,69 @@ func _build() -> void:
 	status_label.custom_minimum_size = Vector2(COL_W, 22)
 	right.add_child(status_label)
 
-	version_label = _label("версия %s" % Profile.build_version(), 14, Color(0.55, 0.6, 0.7))
-	version_label.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	version_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	version_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	version_label.offset_right = -16
-	version_label.offset_bottom = -10
-	add_child(version_label)
+	var version_row: HBoxContainer = HBoxContainer.new()
+	version_row.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	version_row.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	version_row.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	version_row.offset_right = -16
+	version_row.offset_bottom = -10
+	version_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(version_row)
+	version_label = LinkButton.new()
+	version_label.text = "версия %s" % Profile.build_version()
+	version_label.add_theme_font_size_override("font_size", 14)
+	version_label.add_theme_color_override("font_color", VERSION_COLOR)
+	version_label.add_theme_color_override("font_hover_color", VERSION_COLOR)
+	version_label.add_theme_color_override("font_pressed_color", VERSION_COLOR)
+	version_label.add_theme_color_override("font_focus_color", VERSION_COLOR)
+	version_label.underline = LinkButton.UNDERLINE_MODE_NEVER
+	version_label.focus_mode = Control.FOCUS_NONE
+	version_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	version_label.pressed.connect(_open_update)
+	version_row.add_child(version_label)
+
+
+## Релизная сборка с окном: один запрос. Headless, «dev» и ошибка — строка как была.
+func _start_update_check() -> void:
+	if not UpdateCheck.should_check(Profile.build_version(), DisplayServer.get_name() == "headless"):
+		return
+	var req: HTTPRequest = HTTPRequest.new()
+	req.timeout = UPDATE_TIMEOUT
+	req.request_completed.connect(_on_update_completed)
+	add_child(req)
+	var headers: PackedStringArray = PackedStringArray([
+		"User-Agent: glitch-core-update-check",
+		"Accept: application/vnd.github+json",
+	])
+	req.request(UPDATE_URL, headers, HTTPClient.METHOD_GET)
+
+
+func _on_update_completed(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	if result != HTTPRequest.RESULT_SUCCESS or code < 200 or code >= 300:
+		return
+	var found: Dictionary = UpdateCheck.parse_release(body.get_string_from_utf8())
+	if found.is_empty() or not UpdateCheck.is_newer(Profile.build_version(), str(found["tag"])):
+		return
+	_apply_update(found)
+
+
+## Найденная версия: строка становится ссылкой. На телефоне — сразу APK, если он есть.
+func _apply_update(found: Dictionary) -> void:
+	var tag: String = str(found.get("tag", ""))
+	var html_url: String = str(found.get("html_url", ""))
+	var apk_url: String = str(found.get("apk_url", ""))
+	if tag == "" or html_url == "":
+		return
+	update_url = apk_url if OS.get_name() == "Android" and apk_url != "" else html_url
+	version_label.text = "версия %s · вышла %s — скачать" % [Profile.build_version(), tag]
+	version_label.underline = LinkButton.UNDERLINE_MODE_ON_HOVER
+	version_label.mouse_filter = Control.MOUSE_FILTER_STOP
+
+
+func _open_update() -> void:
+	if update_url == "":
+		return
+	OS.shell_open(update_url)
 
 
 func _refresh_ui_scale_button() -> void:

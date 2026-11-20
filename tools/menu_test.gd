@@ -8,6 +8,8 @@ class_name MenuTest
 ## только из Avatar.VARIANTS, меню строится и реагирует на ник/вид; сетевые экраны
 ## (MP-H, #93): разбор адреса «По IP», форма «Создать игру», формат и совместимость
 ## поиска (LanDiscovery), запрос/ответ на 127.0.0.1, кадр LOBBY, «Недавние» в профиле.
+## Проверка обновления (#300): разбор JSON релиза, сравнение версий и ссылка в меню
+## без сети.
 ## Скафандр «Кербер-9» (V4, MP-L #97): 16 цветов, 4 шлема, 4 аксессуара, 4 ранца,
 ## неизвестный индекс части рисуется как 0, раскладка каждого варианта полна.
 ## Отдельный запуск сверх того: «Одиночная игра» из меню запускает мир с сидом,
@@ -242,6 +244,7 @@ class Runner extends Node:
 		_check_avatar()
 		_check_profile()
 		_check_menu()
+		_check_update()        # проверка обновления (#300), без сети
 		_check_saves()         # «Загрузить» (#132)
 		_check_net_forms()     # MP-H (#93)
 		_check_discovery()     # MP-H (#93)
@@ -486,6 +489,93 @@ class Runner extends Node:
 		menu.queue_free()
 		_menu = null
 		DirAccess.remove_absolute(TestEnv.file(TMP_PROFILE))
+
+	# --- Проверка обновления (#300): чистые функции и ссылка в меню, без сети
+	func _check_update() -> void:
+		print("== Обновления ==")
+		var html: String = "https://github.com/grikirster-stack/glitch-core/releases/tag/v0.6.5"
+		var apk: String = "https://github.com/grikirster-stack/glitch-core/releases/download/v0.6.5/glitch-core-v0.6.5-android.apk"
+		var linux_url: String = "https://github.com/grikirster-stack/glitch-core/releases/download/v0.6.5/glitch-core-v0.6.5-linux-x86_64.zip"
+		var win_url: String = "https://github.com/grikirster-stack/glitch-core/releases/download/v0.6.5/glitch-core-v0.6.5-windows-x86_64.zip"
+		var body: String = JSON.stringify({
+			"tag_name": "v0.6.5",
+			"html_url": html,
+			"draft": false,
+			"prerelease": false,
+			"assets": [
+				{"name": "glitch-core-v0.6.5-android.apk", "browser_download_url": apk},
+				{"name": "glitch-core-v0.6.5-linux-x86_64.zip", "browser_download_url": linux_url},
+				{"name": "glitch-core-v0.6.5-windows-x86_64.zip", "browser_download_url": win_url},
+			],
+		})
+		var got: Dictionary = UpdateCheck.parse_release(body)
+		_ok("релиз с тремя ассетами: тег, страница, APK",
+				got == {"tag": "0.6.5", "html_url": html, "apk_url": apk}, str(got))
+		var no_apk: Dictionary = UpdateCheck.parse_release(JSON.stringify({
+			"tag_name": "v0.6.5", "html_url": html, "draft": false, "prerelease": false,
+			"assets": [{"name": "notes.txt", "browser_download_url": linux_url}],
+		}))
+		_ok("без APK ссылка на пакет пустая, страница остаётся",
+				no_apk == {"tag": "0.6.5", "html_url": html, "apk_url": ""}, str(no_apk))
+		var rejected: bool = true
+		var cases: Array = [
+			{"tag_name": "v0.6.5", "html_url": html, "draft": true, "prerelease": false, "assets": []},
+			{"tag_name": "v0.6.5", "html_url": html, "draft": false, "prerelease": true, "assets": []},
+			{"tag_name": "nightly", "html_url": html, "draft": false, "prerelease": false, "assets": []},
+			{"tag_name": "v1.2", "html_url": html, "draft": false, "prerelease": false, "assets": []},
+			{"tag_name": "v0.6.5", "html_url": "http://github.com/grikirster-stack/glitch-core/releases/tag/v0.6.5",
+					"draft": false, "prerelease": false, "assets": []},
+			{"tag_name": "v0.6.5", "html_url": "https://example.com/releases/tag/v0.6.5",
+					"draft": false, "prerelease": false, "assets": []},
+			["не словарь"],
+		]
+		for c in cases:
+			var text: String = JSON.stringify(c) if typeof(c) == TYPE_DICTIONARY else "[]"
+			if not UpdateCheck.parse_release(text).is_empty():
+				rejected = false
+		_ok("черновик, пререлиз, битый тег, http, чужой хост и не-словарь отброшены",
+				rejected and UpdateCheck.parse_release("не json").is_empty()
+				and UpdateCheck.parse_release("").is_empty())
+		var apk_alien: Dictionary = UpdateCheck.parse_release(JSON.stringify({
+			"tag_name": "v0.6.5", "html_url": html, "draft": false, "prerelease": false,
+			"assets": [{"name": "glitch-core-v0.6.5-android.apk",
+					"browser_download_url": "https://evil.example/glitch-core.apk"}],
+		}))
+		_ok("APK с чужого хоста не берём", apk_alien.get("apk_url", "x") == "", str(apk_alien))
+		_ok("версия: равно и старше — не новее, 0.6.10 новее 0.6.9, «dev» — нет",
+				not UpdateCheck.is_newer("0.6.5", "0.6.5")
+				and not UpdateCheck.is_newer("0.6.5", "0.6.4")
+				and UpdateCheck.is_newer("0.6.5", "0.6.6")
+				and UpdateCheck.is_newer("0.6.9", "0.6.10")
+				and not UpdateCheck.is_newer("0.6.10", "0.6.9")
+				and not UpdateCheck.is_newer("dev", "0.6.5")
+				and not UpdateCheck.is_newer("0.6.5", "dev")
+				and not UpdateCheck.is_newer("", "1.0.0")
+				and UpdateCheck.is_newer("0.6.5", "v0.7.0"))
+		_ok("спрашивать только релизную сборку с окном",
+				not UpdateCheck.should_check("0.6.4", true)
+				and not UpdateCheck.should_check("dev", false)
+				and not UpdateCheck.should_check("", false)
+				and not UpdateCheck.should_check("nightly", false)
+				and UpdateCheck.should_check("0.6.4", false))
+		var menu = load(MENU_SCENE).instantiate()
+		menu.set("profile_path", TestEnv.file(TMP_PROFILE))
+		add_child(menu)
+		var before: String = String(menu.version_label.text)
+		menu._apply_update({"tag": "0.6.5", "html_url": html, "apk_url": apk})
+		var want_url: String = apk if OS.get_name() == "Android" else html
+		_ok("найденное обновление меняет строку версии и хранит ссылку",
+				String(menu.version_label.text) == "версия %s · вышла 0.6.5 — скачать" % Profile.build_version()
+				and menu.update_url == want_url
+				and menu.version_label.mouse_filter == Control.MOUSE_FILTER_STOP
+				and before.contains(Profile.build_version()),
+				String(menu.version_label.text))
+		menu._apply_update({})
+		_ok("пустой ответ строку не портит", menu.update_url == want_url
+				and String(menu.version_label.text).contains("скачать"))
+		menu.queue_free()
+		DirAccess.remove_absolute(TestEnv.file(TMP_PROFILE))
+
 
 	# --- Сетевые экраны меню (MP-H, #93): переходы, поля по умолчанию, «Недавние»
 	func _check_net_screens(menu) -> void:
