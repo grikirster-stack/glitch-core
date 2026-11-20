@@ -1516,6 +1516,9 @@ func _compute_layout() -> Dictionary:
 		if tb.has("stick") and tb.has("e"):
 			lo = (tb["stick"] as Rect2).end.x + PAD
 			hi = (tb["e"] as Rect2).position.x - PAD
+			# «копать»/«строить» — слева от E и крупнее: полоса кончается у неё, не у E.
+			if tb.has("build"):
+				hi = minf(hi, (tb["build"] as Rect2).position.x - PAD)
 		var slot_cap: float = SLOT_MAX
 		# 6 ячеек — крупнее: min(42 × 10 / n, 64). На телефоне потолок 42: 64 px
 		# на 2.5 съедает полосу мира.
@@ -1528,6 +1531,19 @@ func _compute_layout() -> Dictionary:
 		hx = clampf(w * 0.5 - hb_w * 0.5, lo, maxf(lo, hi - hb_w))
 		var bottom: float = HOTBAR_BOTTOM_TOUCH if UI.touch_on else HOTBAR_BOTTOM
 		hy = h - bottom - (slot - 4.0)
+		# Ряд боя (E, бег, прыжок, «копать»/«строить») стоит у нижнего края и
+		# накрывал бы полосу у края. На телефоне хотбар — над верхом ряда, как
+		# в портрете. На ПК tb пуст: HOTBAR_BOTTOM и полоса у края не меняются.
+		if UI.touch_on:
+			var row_top: float = hy
+			var found_row: bool = false
+			for id in ["build", "e", "run", "jump"]:
+				if tb.has(id):
+					var top: float = (tb[id] as Rect2).position.y
+					row_top = top if not found_row else minf(row_top, top)
+					found_row = true
+			if found_row:
+				hy = row_top - HINT_GAP_TOUCH - (slot - 4.0)
 		hint_max = minf(minf(w - 2.0 * PAD, 600.0), hi - lo)
 	L["slot"] = slot
 	L["hotbar"] = Rect2(hx, hy, hb_w, slot - 4.0)
@@ -1613,7 +1629,7 @@ func _compute_layout() -> Dictionary:
 	var n_bottom: float = stack_top - 4.0
 	var rows_end: float = s_bottom if not rows.is_empty() else (CARD_Y + _card_h() if L.has("card") else 0.0)
 	for id in tb:
-		if id == "e" or id == "run" or id == "jump":
+		if id == "e" or id == "run" or id == "jump" or id == "build":
 			n_bottom = minf(n_bottom, (tb[id] as Rect2).position.y - 4.0)
 	var top_a: float = maxf(right_bottom, rows_end) + 4.0
 	var top_b: float = rows_end + 4.0

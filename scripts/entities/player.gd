@@ -398,14 +398,44 @@ func _mouse_pos() -> Vector2:
 func _slash_at(mouse: Vector2) -> bool:
 	if slash_cd > 0.0:
 		return false
+	# Сенсорный прицел берёт фантома в PHANTOM_GRAB (26 px), а взмах мыши — только
+	# ближе 20. Палец на 21–26 px от фантома прицел уже выбрал, но точка пальца
+	# до тела не достаёт. Бьём того, кого прицел взял, не ближайшего. Мышь и
+	# test_input порог 20 не теряют: у сценария свой «курсор».
+	if not test_input.has("mouse") and not test_input.has("mouse_buttons") \
+			and touch_input.has("mouse_buttons"):
+		var aimed: Node2D = _touch_aimed_phantom()
+		if aimed != null:
+			return _hit_phantom(aimed, aimed.global_position)
 	for p in get_tree().get_nodes_in_group("phantom"):
 		if p.global_position.distance_to(mouse) < 20.0:
-			slash_cd = 0.45
-			_sfx_here("hit", -6.0, 1.4)
-			p.take_damage(38.0, global_position)
-			_make_slash_fx(mouse)
-			return true
+			return _hit_phantom(p, mouse)
 	return false
+
+
+## Фантом, которого TouchControls уже взял в прицел (aim_foe, точка — его центр).
+## Нет узла или прицел смотрит в клетку — null: тогда действует порог 20 px.
+func _touch_aimed_phantom() -> Node2D:
+	var tc: Node = get_tree().get_first_node_in_group("touch_controls")
+	if tc == null or not bool(tc.get("aim_foe")):
+		return null
+	var point: Vector2 = tc.get("_aim_point")
+	var best: Node2D = null
+	var best_d: float = 8.0
+	for p in get_tree().get_nodes_in_group("phantom"):
+		var d: float = (p as Node2D).global_position.distance_to(point)
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
+
+
+func _hit_phantom(p: Node, at: Vector2) -> bool:
+	slash_cd = 0.45
+	_sfx_here("hit", -6.0, 1.4)
+	p.take_damage(38.0, global_position)
+	_make_slash_fx(at)
+	return true
 
 
 func _empulse() -> void:

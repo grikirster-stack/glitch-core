@@ -118,7 +118,7 @@ func _t_layout(scene: Node) -> void:
 		for canvas in canvases:
 			var win: Vector2 = Vector2(1080, 2400) if canvas.y > canvas.x else Vector2(canvas.x * 1.5, 1080)
 			var ppm: float = UI.px_per_mm(420, win, canvas)
-			var force_k: float = clampf(9.0 * ppm / (TouchControls.BTN_R * 2.0), 1.0, 1.6)
+			var force_k: float = clampf(TouchControls.MIN_MM * ppm / (TouchControls.BTN_R * 2.0), 1.0, 1.6)
 			for s in UI.SCALES:
 				UI.set_ui_scale(s, false)
 				hud.size = canvas / s
@@ -242,7 +242,7 @@ func _t_intro_plate(tc: TouchControls, hud: HUD) -> void:
 	var canvas: Vector2 = Vector2(1600, 720)
 	var win: Vector2 = Vector2(canvas.x * 1.5, 1080)
 	var ppm: float = UI.px_per_mm(420, win, canvas)
-	tc.force_k = clampf(9.0 * ppm / (TouchControls.BTN_R * 2.0), 1.0, 1.6)
+	tc.force_k = clampf(TouchControls.MIN_MM * ppm / (TouchControls.BTN_R * 2.0), 1.0, 1.6)
 	tc._layout(canvas)
 	UI.set_ui_scale(2.5, false)
 	hud.size = canvas / 2.5

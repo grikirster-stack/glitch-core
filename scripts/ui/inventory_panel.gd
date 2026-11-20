@@ -9,7 +9,9 @@ extends Control
 ## Понятность для новичка (#69):
 ##  * сундук и инвентарь: ЛКМ — взять/положить, ПКМ — половина/по одному,
 ##    Shift+ЛКМ — переложить стопку в другой контейнер, кнопки «Забрать всё»
-##    и «Сложить всё»; предмет «в руке» рисуется у курсора с количеством,
+##    и «Сложить всё»; на телефоне в том же ряду — «переложить» (тот же
+##    перенос стопки, что Shift+ЛКМ: палец защёлкивает, следующий тап по ячейке
+##    перекладывает); предмет «в руке» рисуется у курсора с количеством,
 ##    при закрытии панели он возвращается в инвентарь (не влез — в сундук,
 ##    потом на землю под ноги);
 ##  * рецепт: по наведению — подсказка с названиями входов, «есть N / нужно M»,
@@ -112,6 +114,9 @@ var _built: Dictionary = {}
 ## палец проехал по вертикали; _drag_acc — остаток до следующей строки прокрутки.
 var _tap_at: Vector2 = Vector2(-1, -1)
 var _drag_y: float = 0.0
+## Телефон: «переложить» защёлкнуто — следующий тап по ячейке идёт как Shift+ЛКМ.
+## Мышь Shift не теряет: защёлка читается только вместе с UI.touch_on.
+var _quick_latch: bool = false
 var _drag_acc: float = 0.0
 
 
@@ -126,6 +131,7 @@ func _ready() -> void:
 
 func open(p: Player) -> void:
 	_return_held()
+	_quick_latch = false
 	player = p
 	chest = null
 	_bind_seen(p)
@@ -135,6 +141,7 @@ func open(p: Player) -> void:
 
 func open_chest(p: Player, c: Chest) -> void:
 	_return_held()
+	_quick_latch = false
 	player = p
 	chest = c
 	_bind_seen(p)
@@ -149,6 +156,7 @@ func open_chest(p: Player, c: Chest) -> void:
 
 func close() -> void:
 	_return_held()
+	_quick_latch = false
 	if chest and Net.is_client():   # СЕТЬ (ADR-002): хост больше не шлёт этот сундук
 		InvOps.send(NetCodec.InvOp.CLOSE, {"cell": InvOps.cell_of(chest)})
 	visible = false
@@ -241,22 +249,47 @@ func _tab_rect(i: int) -> Rect2:
 
 
 func _chest_slot_rect(i: int) -> Rect2:
-	return Rect2(_panel_pos() + Vector2(16 + (i % CHEST_COLS) * SLOT, 100 + int(i / CHEST_COLS) * SLOT),
-			Vector2(SLOT - 4, SLOT - 4))
+	return Rect2(_panel_pos() + Vector2(16 + (i % CHEST_COLS) * SLOT,
+			_chest_grid_y() + int(i / CHEST_COLS) * SLOT), Vector2(SLOT - 4, SLOT - 4))
+
+
+## Верх сетки сундука. На ПК — 100. На телефоне ряд кнопок 48 px не влезает
+## в 42 px между низом сетки (210) и подписью «ВЫ» (252), поэтому сетка выше.
+func _chest_grid_y() -> float:
+	return 74.0 if UI.touch_on else 100.0
+
+
+## Высота кнопок сундука. На телефоне не меньше 48 логических px (NN/g, 1 см).
+## На ПК — 22: сценарий inventory_transfer бьёт в центр прежнего прямоугольника.
+func _chest_btn_h() -> float:
+	return 48.0 if UI.touch_on else 22.0
 
 
 func _take_all_rect() -> Rect2:
-	return Rect2(_panel_pos() + Vector2(16, 214), Vector2(147, 22))
+	if not UI.touch_on:
+		return Rect2(_panel_pos() + Vector2(16, 214), Vector2(147, 22))
+	return Rect2(_panel_pos() + Vector2(16, 184), Vector2(96, _chest_btn_h()))
 
 
 func _put_all_rect() -> Rect2:
-	return Rect2(_panel_pos() + Vector2(169, 214), Vector2(147, 22))
+	if not UI.touch_on:
+		return Rect2(_panel_pos() + Vector2(169, 214), Vector2(147, 22))
+	return Rect2(_panel_pos() + Vector2(116, 184), Vector2(96, _chest_btn_h()))
+
+
+## «Переложить»: тот же перенос стопки, что Shift+ЛКМ. Только на телефоне и
+## только при открытом сундуке — на ПК жест остаётся Shift+ЛКМ.
+func _move_rect() -> Rect2:
+	if not UI.touch_on or chest == null:
+		return Rect2()
+	return Rect2(_panel_pos() + Vector2(216, 184), Vector2(100, _chest_btn_h()))
 
 
 ## Верх сетки инвентаря игрока (подпись «ВЫ» — на 6 px выше, ячейки — на 6 ниже).
 ## Место сундука над ней есть всегда: без сундука там подсказка, как его открыть.
+## На телефоне ряд кнопок сундука кончается на 232 — сетка ниже, иначе накроет его.
 func _inv_y() -> float:
-	return 258.0
+	return 292.0 if UI.touch_on else 258.0
 
 
 ## Колонок в верхнем ряду — ровно хотбар; рюкзак всегда по 10 (#161).
@@ -456,7 +489,7 @@ func _draw_chest(origin: Vector2) -> void:
 			_text(origin + Vector2(28, y), line, 276, UI.FONT["small"], C_DIM, HORIZONTAL_ALIGNMENT_LEFT, box)
 			y += 18.0
 		return
-	_text(origin + Vector2(16, 92), _chest_title, 300, UI.FONT["small"], C_CHEST)
+	_text(origin + Vector2(16, _chest_grid_y() - 8.0), _chest_title, 300, UI.FONT["small"], C_CHEST)
 	for i in Chest.CAP:
 		_draw_slot(_chest_slot_rect(i), _shown(chest.slots, NetCodec.Box.CHEST, i), false)
 	var has_chest: bool = false
@@ -471,6 +504,8 @@ func _draw_chest(origin: Vector2) -> void:
 			break
 	_button(_take_all_rect(), "Забрать всё", has_chest)
 	_button(_put_all_rect(), "Сложить всё", has_pack)
+	if UI.touch_on:
+		_button(_move_rect(), "переложить", _quick_latch)
 
 
 func _button(r: Rect2, label: String, enabled: bool) -> void:
@@ -542,7 +577,9 @@ func _station_line(_station: String) -> Array:
 func _draw_goal(origin: Vector2) -> void:
 	if Game.in_mission():
 		return
-	var y: float = origin.y + 496.0
+	# На телефоне сетка инвентаря ниже на 34 (ряд кнопок сундука 48 px) и
+	# кончается на 524. Дуги уезжают под неё: панель 540, низ строки — 530.
+	var y: float = origin.y + (530.0 if UI.touch_on else 496.0)
 	var need: int = Game.arc_need()
 	var lit: int = Game.core_arcs & need
 	var label: String = "Дуги %d/%d" % [Game.core_arc_count(), Game.arc_need_count()]
@@ -730,6 +767,8 @@ func _hover_target() -> Dictionary:
 			return {"kind": "take_all"}
 		if _put_all_rect().has_point(p):
 			return {"kind": "put_all"}
+		if _move_rect().has_point(p):
+			return {"kind": "move"}
 	for i in player.inv.size:
 		if _inv_slot_rect(i).has_point(p):
 			return {"kind": "inv", "i": i}
@@ -772,6 +811,8 @@ func _tooltip_for(t: Dictionary) -> Array:
 			out.append(_line("Переложить всё из сундука в инвентарь (что влезет).", C_TEXT))
 		"put_all":
 			out.append(_line("Переложить весь рюкзак в сундук. Хотбар (верхний ряд) остаётся при тебе.", C_TEXT))
+		"move":
+			out.append(_line("Тап по ячейке переложит стопку, как Shift+ЛКМ. Ещё раз — отмена.", C_TEXT))
 		"tab":
 			var tips: Array = [
 				"Крафт руками: без станка, сразу в инвентарь.",
@@ -996,24 +1037,30 @@ func _click(pos: Vector2, right: bool, shift: bool = false) -> void:
 	if chest:
 		for i in Chest.CAP:
 			if _chest_slot_rect(i).has_point(pos):
-				if quick:
+				if quick or _consume_latch(right):
 					quick_move_chest(i)
 				else:
 					_click_chest(i, right)
 				queue_redraw()
 				return
 		if _take_all_rect().has_point(pos):
+			_quick_latch = false
 			take_all()
 			queue_redraw()
 			return
 		if _put_all_rect().has_point(pos):
+			_quick_latch = false
 			put_all()
+			queue_redraw()
+			return
+		if _move_rect().has_point(pos) and not right:
+			_quick_latch = not _quick_latch
 			queue_redraw()
 			return
 	# Инвентарь
 	for i in player.inv.size:
 		if _inv_slot_rect(i).has_point(pos):
-			if quick:
+			if quick or _consume_latch(right):
 				quick_move_inv(i)
 			else:
 				_click_inv(i, right)
@@ -1034,6 +1081,15 @@ func _click(pos: Vector2, right: bool, shift: bool = false) -> void:
 			scroll = 0
 			queue_redraw()
 			return
+
+
+## Защёлка «переложить» на телефоне: один тап по ячейке идёт как Shift+ЛКМ.
+## ПКМ и мышь без UI.touch_on защёлку не тратят.
+func _consume_latch(right: bool) -> bool:
+	if right or not UI.touch_on or not _quick_latch or not held.is_empty():
+		return false
+	_quick_latch = false
+	return true
 
 
 ## Shift+ЛКМ по ячейке сундука: вся стопка — в инвентарь (что влезет).
