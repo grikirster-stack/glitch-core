@@ -22,8 +22,10 @@ extends CanvasLayer
 ## PULSE_FRAMES кадров после отпускания. Пока щипок, третий палец по миру ничего не делает,
 ## отпущен один палец щипка — второй тоже молчит до отпускания.
 ##
-## Режим — кнопка над джойстиком: «копать» (свет) или «строить» (блок). Тап по
-## ячейке хотбара сам выбирает режим: блок или машина — «строить», остальное — «копать».
+## Режим — кнопка «копать»/«строить» в ряду боя справа (рядом с E, бегом и прыжком),
+## того же размера, что прыжок: над джойстиком она пересекала зону захвата стика.
+## Тап по ячейке хотбара сам выбирает режим: блок или машина — «строить», остальное —
+## «копать».
 ##
 ## Своей игровой логики здесь нет. Ввод идёт через тот же шов, что у сценариев:
 ## TouchControls заполняет Player.touch_input в формате test_input
@@ -43,9 +45,11 @@ extends CanvasLayer
 ## на них, сюда не доходит как клик и раньше копал мир под карточкой. Такой палец
 ## гасится здесь и в мир не идёт.
 ##
-## Раскладка при 1280×720 (не перекрывает HUD): слева снизу — джойстик и «строить»;
-## справа снизу — E, бег, прыжок (ниже уведомлений, правее хотбара); справа под
-## миникартой — J, I, ниже — Q и V. Размер кнопки — не меньше MIN_MM на экране.
+## Раскладка при 1280×720 (не перекрывает HUD): слева снизу — джойстик;
+## справа снизу — «копать»/«строить», E, бег, прыжок (ниже уведомлений, правее
+## хотбара); справа под миникартой — J, I, ниже — Q и V. Q и V рисуются, только
+## когда импульс готов и рядом вентиляция. Размер кнопки — не меньше MIN_MM
+## на экране (в портрете потолок k = 1.6 не даёт дотянуть до пола — P2).
 ## Портрет (тач и высота > 1.2 ширины, как HUD._compute_layout): стик слева внизу,
 ## кнопки действий справа внизу, меню/журнал/инвентарь справа сверху — внутри
 ## safe-area и выше полосы хотбара. Краевые элементы прижаты к DisplayServer
@@ -66,7 +70,8 @@ extends CanvasLayer
 ## Слой: над HUD и панелями (UI — 10), под экраном финала (EndScreen.LAYER — 20).
 const LAYER: int = 15
 ## Радиус обычной кнопки и кнопки прыжка, px при высоте экрана 720.
-## Диаметр 96 px на телефоне (720 логических px ≈ 70 мм) — около 9,5 мм.
+## Диаметр на экране — не меньше MIN_MM (пол 10 мм: NN/g «Touch Targets on
+## Touchscreens», 2019). На мониторе k = 1, кнопки не раздуваются.
 const BTN_R: float = 48.0
 const JUMP_R: float = 58.0
 ## Джойстик: радиус основания и ручки, px.
@@ -77,7 +82,9 @@ const STICK_GRAB: float = 1.3
 ## Кнопка ловит палец чуть шире нарисованного круга (доля радиуса).
 const BTN_GRAB: float = 1.12
 ## Минимальный диаметр кнопки на экране, мм. Крупнее BTN_R — раскладка растёт.
-const MIN_MM: float = 9.0
+## Пол 10 мм — NN/g «Touch Targets on Touchscreens» (2019); 9 мм был ниже него.
+## Портрет по-прежнему упирается в потолок k = 1.6 (P2): там диаметр около 7,8 мм.
+const MIN_MM: float = 10.0
 ## Мёртвая зона джойстика по горизонтали и порог «вверх — прыжок» (доля радиуса).
 const DEAD: float = 0.28
 const STICK_JUMP: float = 0.6
@@ -287,12 +294,39 @@ func _team_rows() -> int:
 
 
 ## Кнопку видно и она жмётся: G — только в сети, при открытой панели — только I и J.
+## Q и V в боевом ряду не живут: Q — пока импульс готов, V — пока рядом вентиляция
+## или герой уже в ней (выйти). Дырка в ряду, центры не едут. Клавиши Q и V на ПК
+## читает Player._key из Input — видимость кнопки их не глушит.
 func _shown(id: String, blocking: bool) -> bool:
 	if UI.pause != null and UI.pause.visible:
 		return false   # #119: в паузе — только её панель
 	if blocking and id != "inv" and id != "journal":
 		return false
+	if id == "q":
+		return _q_ready()
+	if id == "v":
+		return _v_ready()
 	return id != "g" or rollcall_shown()
+
+
+## Импульс готов: тот же emp_cd, что пускает Player._empulse. Героя нет — кнопку не рисуем.
+func _q_ready() -> bool:
+	var p: Player = _player()
+	return p != null and p.emp_cd <= 0.0
+
+
+## Вентиляция рядом — тот же порог 40 px, что у Player._toggle_hide. В укрытии кнопка
+## остаётся: иначе из вентиляции не выйти. Отдельного «рядом» в игре нет — не выдумываем.
+func _v_ready() -> bool:
+	var p: Player = _player()
+	if p == null:
+		return false
+	if p.hiding:
+		return true
+	for v in World.vents:
+		if World.cell_to_world(v).distance_to(p.global_position) < 40.0:
+			return true
+	return false
 
 
 ## Множитель раскладки, заданный тестом (> 0): окно headless — 64×64 px, по нему dpi не посчитать.
@@ -382,7 +416,8 @@ func _layout(sz: Vector2) -> void:
 	if _portrait(sz):
 		_layout_portrait(sz, r, jr, m, g, left, top_in, right, bottom)
 		return
-	# Ландшафт: прежние формулы. Отступы нулевые на desktop — позиции не меняются.
+	# Ландшафт. «копать»/«строить» — в ряду боя, не над стиком. Отступы нулевые
+	# на desktop — колонка I/J/паузы на прежних местах.
 	stick_center = Vector2(left + m + 10.0 * _k + stick_radius, sz.y - bottom - m - stick_radius)
 	var jump: Vector2 = Vector2(sz.x - right - m - jr, sz.y - bottom - m - jr)
 	var run: Vector2 = Vector2(jump.x - jr - g - r, sz.y - bottom - m - r)
@@ -399,21 +434,26 @@ func _layout(sz: Vector2) -> void:
 	var one_row: bool = _layout_team > 0 or UI.ui_scale > 1.0
 	if one_row:
 		v = Vector2(q.x - step, q.y)
+	var e: Vector2 = Vector2(run.x - step, run.y)
+	# «копать»/«строить» — четвёртая кнопка ряда боя, слева от E, размером с прыжок.
+	# Над стиком её круг захвата пересекал джойстик (зазор около −10 px при k=1).
+	# Центры I/J/паузы и Q/V/G не трогаем: сценарий стережёт колонку I.
+	var build: Vector2 = Vector2(e.x - r - g - jr, e.y)
 	btn_center = {
 		"jump": jump,
 		"run": run,
-		"e": Vector2(run.x - step, run.y),
+		"e": e,
 		"inv": inv,
 		"journal": Vector2(inv.x - step, inv.y),
 		"pause": Vector2(inv.x - 2.0 * step, inv.y),   # #119
 		"q": q,
 		"v": v,
 		"g": Vector2(v.x - step, q.y) if one_row else Vector2(q.x - step, q.y),
-		"build": Vector2(left + m + r, stick_center.y - stick_radius - g - r),
+		"build": build,
 	}
 	btn_radius = {}
 	for id in btn_center:
-		btn_radius[id] = jr if id == "jump" else r
+		btn_radius[id] = jr if id == "jump" or id == "build" else r
 
 
 ## Портрет: стик слева внизу, действия справа внизу, меню/пауза сверху справа.
@@ -697,8 +737,11 @@ func _physics_process(_dt: float) -> void:
 	_keys[KEY_SPACE] = held("jump")
 	_keys[KEY_SHIFT] = run_latched
 	_keys[KEY_E] = held("e")
-	_keys[KEY_Q] = held("q")
-	_keys[KEY_V] = held("v")
+	# Скрытая кнопка палец не держит и шов не жмёт. Клавиатура идёт мимо: Player._key
+	# читает Input, если шов не зажат.
+	var blocking: bool = UI.blocking()
+	_keys[KEY_Q] = _shown("q", blocking) and held("q")
+	_keys[KEY_V] = _shown("v", blocking) and held("v")
 	_keys[KEY_G] = held("g")
 	for id in _btn_pulse:
 		_btn_pulse[id] = maxi(0, int(_btn_pulse[id]) - 1)
@@ -888,6 +931,9 @@ func _fill_key() -> void:
 	_key[11] = int(p.task_progress * 24.0)
 	_key[12] = 1 if _world_finger >= 0 else 0
 	_key[13] = (1 if rollcall_shown() else 0) | (2 if _rollcall_on() else 0)
+	# Q и V появляются и пропадают, не сдвигая ряд: без этих бит дырка не перерисуется.
+	_key[14] = 1 if _q_ready() else 0
+	_key[15] = 1 if _v_ready() else 0
 
 
 func _draw_pad() -> void:
@@ -942,8 +988,8 @@ func _draw_aim(p: Player) -> void:
 func _draw_stick() -> void:
 	var c: Vector2 = stick_center
 	var r: float = stick_radius
-	_pad.draw_circle(c, r, Color(1, 1, 1, 0.08))
-	_pad.draw_arc(c, r, 0.0, TAU, 48, Color(1, 1, 1, 0.32), 2.0 * _k, true)
+	_pad.draw_circle(c, r, Color(1, 1, 1, 0.22))
+	_pad.draw_arc(c, r, 0.0, TAU, 48, Color(1, 1, 1, 0.62), 2.0 * _k, true)
 	# Стрелки: влево/вправо — идти, вверх — прыжок.
 	var a: Color = Color(1, 1, 1, 0.35)
 	var s: float = 9.0 * _k
@@ -954,7 +1000,7 @@ func _draw_stick() -> void:
 		_pad.draw_colored_polygon(PackedVector2Array([tip, back + side, back - side]), a)
 	var knob: Vector2 = c + stick_vec * (r - KNOB_R * _k * 0.5)
 	var held_now: bool = _stick_finger >= 0
-	_pad.draw_circle(knob, KNOB_R * _k, Color(0.75, 0.9, 1.0, 0.42 if held_now else 0.26))
+	_pad.draw_circle(knob, KNOB_R * _k, Color(0.75, 0.9, 1.0, 0.78 if held_now else 0.40))
 	_pad.draw_arc(knob, KNOB_R * _k, 0.0, TAU, 32, Color(1, 1, 1, 0.55), 2.0 * _k, true)
 
 

@@ -15,14 +15,16 @@ extends ScenarioBase
 ## паузу (#119); «Назад» Android закрывает окно, открывает и закрывает паузу, свернули
 ## приложение — пауза и сохранение (#149). Щипок двумя пальцами по миру ведёт зум
 ## (ViewZoom) и ничего не копает и не ставит; короткий тап быстрее ожидания щипка
-## всё равно ставит блок.
+## всё равно ставит блок. Тап по фантому на 21–26 px от тела бьёт его: прицел
+## берёт дальше, чем порог взмаха мыши.
 ## В одиночной игре кнопки переклички G нет (#135; в сети её проверяет mp_doppel).
 ## Тап по центру карточки «Сейчас» не копает и не ставит; тап мимо UI копает.
 ## Раскладка: ландшафт 1280×720 и портрет 1280×2844 (как tools/ui_scale_test.gd).
-## Кнопки и стик внутри safe-rect, стик и действия не на полосе хотбара; в портрете
-## зоны захвата стика и «строить» не пересекаются, меню и Q/V/G не на карточке
-## задания. Меню и пауза внутри safe-rect. Холст — аргумент _layout, окно не
-## трогаем: headless размер до кадра не применяет. Ландшафт не двигаем.
+## Кнопки и стик внутри safe-rect, стик и действия не на полосе хотбара; зоны
+## захвата стика и «строить» не пересекаются и в ландшафте (кнопка в ряду боя),
+## и в портрете. Меню и Q/V/G не на карточке задания. Меню и пауза внутри
+## safe-rect. Холст — аргумент _layout, окно не трогаем: headless размер до кадра
+## не применяет. Колонку I/J/паузы ландшафта не двигаем.
 
 var tc: TouchControls = null
 ## Холсты как в ui_scale_test: ландшафт 1280×720 и портрет 1280×2844
@@ -98,12 +100,13 @@ func _layout_checks() -> void:
 
 
 func _layout_on(canvas: Vector2, portrait: bool, tag: String) -> void:
-	# Портрет: dpi 420, окно 1080×2400 под холст 1280×2844 — кнопка не меньше 9 мм,
-	# k упирается в 1.6 (как ui_scale_test). Ландшафт 1280×720 — desktop/headless:
-	# dpi не раздувает кнопки, k = 1. Иначе колонка I уехала бы.
+	# Портрет: dpi 420, окно 1080×2400 под холст 1280×2844 — пол MIN_MM (10 мм),
+	# k упирается в 1.6 (как ui_scale_test): диаметр там около 7,8 мм, потолок
+	# не поднимаем. Ландшафт 1280×720 — desktop/headless: dpi не раздувает
+	# кнопки, k = 1. Иначе колонка I уехала бы.
 	var win: Vector2 = Vector2(1080, 2400) if portrait else canvas
 	var ppm: float = UI.px_per_mm(420, win, canvas) if portrait else 0.0
-	tc.force_k = clampf(9.0 * ppm / (TouchControls.BTN_R * 2.0), 1.0, 1.6) if ppm > 0.0 else 1.0
+	tc.force_k = clampf(TouchControls.MIN_MM * ppm / (TouchControls.BTN_R * 2.0), 1.0, 1.6) if ppm > 0.0 else 1.0
 	UI.ui_scale = 2.5 if portrait else 1.0
 	tc.set_enabled(true)
 	# _layout читает _layout_team, не _team_rows(): крючок надо положить до вызова.
@@ -160,11 +163,9 @@ func _layout_on(canvas: Vector2, portrait: bool, tag: String) -> void:
 	var build_r: float = float(tc.btn_radius["build"])
 	var gap: float = tc.stick_center.distance_to(tc.btn_center["build"]) \
 			- tc.stick_radius * TouchControls.STICK_GRAB - build_r * TouchControls.BTN_GRAB
-	# Ландшафт не трогаем: там зазор по старой формуле отрицательный (~-10 px при k=1).
-	# Портрет разводит стик и «строить» по углам — зазор обязан быть >= 0.
-	if portrait:
-		ok("%s: зоны захвата стика и «строить» не пересекаются (зазор ≥ 0)" % tag, gap >= 0.0,
-				"зазор %.1f, центры %.0f" % [gap, tc.stick_center.distance_to(tc.btn_center["build"])])
+	# «строить» в ряду боя справа, не над стиком: зазор >= 0 и в ландшафте, и в портрете.
+	ok("%s: зоны захвата стика и «строить» не пересекаются (зазор ≥ 0)" % tag, gap >= 0.0,
+			"зазор %.1f, центры %.0f" % [gap, tc.stick_center.distance_to(tc.btn_center["build"])])
 	if portrait:
 		ok("%s: стик слева внизу, действия справа внизу, меню сверху справа" % tag,
 				tc.stick_center.x < canvas.x * 0.4 and tc.stick_center.y > canvas.y * 0.7
@@ -222,25 +223,18 @@ func _portrait_card(canvas: Vector2) -> Rect2:
 	return Rect2(Vector2(HUD.CARD_X, card_y) * s, Vector2(cw, HUD.CARD_H_TOUCH) * s)
 
 
-## Полоса хотбара в px канваса — та же формула, что HUD._compute_layout.
-## Логические px × ui_scale. Верх нижнего ряда — верх стика и кнопок действий.
+## Полоса хотбара в px канваса — та же формула, что HUD._compute_layout на таче.
+## Логические px × ui_scale. И в портрете, и в ландшафте полоса сидит над верхом
+## стика и ряда боя: у края холста ряд боя её накрывал.
 func _hotbar_band(canvas: Vector2) -> Rect2:
 	var s: float = UI.ui_scale
 	var w: float = canvas.x / s
-	var h: float = canvas.y / s
 	var n_slots: int = 6
-	var slot: float = 0.0
-	var hy: float = 0.0
-	if tc._portrait(canvas):
-		var bottom_top: float = h
-		bottom_top = minf(bottom_top, (tc.stick_center.y - tc.stick_radius) / s)
-		for id in ["build", "e", "run", "jump"]:
-			bottom_top = minf(bottom_top, (tc.btn_center[id].y - float(tc.btn_radius[id])) / s)
-		slot = clampf(floorf((w - 16.0) / float(n_slots)), 16.0, 42.0)
-		hy = bottom_top - 10.0 - (slot - 4.0)
-	else:
-		slot = 42.0
-		hy = h - 20.0 - (slot - 4.0)
+	var bottom_top: float = (tc.stick_center.y - tc.stick_radius) / s
+	for id in ["build", "e", "run", "jump"]:
+		bottom_top = minf(bottom_top, (tc.btn_center[id].y - float(tc.btn_radius[id])) / s)
+	var slot: float = clampf(floorf((w - 16.0) / float(n_slots)), 16.0, 42.0)
+	var hy: float = bottom_top - 10.0 - (slot - 4.0)
 	var hb_w: float = slot * float(n_slots) - 4.0
 	var hx: float = (w - hb_w) * 0.5
 	return Rect2(Vector2(hx, hy) * s, Vector2(hb_w, slot - 4.0) * s)
@@ -486,6 +480,54 @@ func _smart_aim() -> void:
 	_touch(1, _screen(miss), false)
 	await wait(0.1)
 	World.set_tile(rock.x, rock.y, IDs.T.AIR)
+	await _phantom_off_finger()
+
+
+## Тап по фантому на 21–26 px от тела: прицел берёт его (PHANTOM_GRAB 26), взмах
+## мыши — только ближе 20. Удар обязан пройти. Шов test_input пуст: иначе ветка
+## мыши порог 20 не проверяет. Эхо за PINCH_WAIT (~67 мс) уходит на ~10 px и
+## выпадает из захвата — стоим на месте, пока ждём кадр удара.
+func _phantom_off_finger() -> void:
+	stand_in_corridor(6)
+	player.invuln = 1.0e9
+	player.slash_cd = 0.0
+	_settle_camera()
+	await wait(0.3)
+	ok("перед ударом шов сценария пуст", player.test_input.is_empty())
+	var foe_pos: Vector2 = player.global_position + Vector2(48.0, -20.0)
+	var ph: Node = spawn_phantom_at(foe_pos, "echo")
+	ok("эхо для удара с промахом пальца появилось", ph != null and is_instance_valid(ph))
+	if ph == null:
+		return
+	var off: Vector2 = Vector2(24.0, 0.0)
+	var tap: Vector2 = ph.global_position + off
+	ok("палец дальше порога мыши и внутри захвата прицела",
+			tap.distance_to(ph.global_position) > 20.0
+			and tap.distance_to(ph.global_position) <= TouchControls.PHANTOM_GRAB
+			and ph.global_position.distance_to(player.global_position) <= Player.REACH,
+			"до пальца %.1f, до героя %.1f" % [tap.distance_to(ph.global_position),
+			ph.global_position.distance_to(player.global_position)])
+	var hp0: float = ph.hp
+	# Эхо само ходит (160 px/с) и за PINCH_WAIT выходит из захвата 26 px.
+	# Держим точку, пока палец не дойдёт до удара: проверяем порог, не погоню.
+	ph.set_physics_process(false)
+	ph.global_position = foe_pos
+	ph.vel = Vector2.ZERO
+	_touch(1, _screen(tap), true)
+	var hit: bool = await wait_until(func() -> bool:
+		if is_instance_valid(ph):
+			ph.global_position = foe_pos
+			ph.vel = Vector2.ZERO
+		return is_instance_valid(ph) and ph.hp < hp0, 0.4)
+	if is_instance_valid(ph):
+		ph.set_physics_process(true)
+	_touch(1, _screen(tap), false)
+	ok("тап по фантому на 21–26 px — удар проходит", hit and player.slash_cd > 0.0,
+			"hp %.0f → %.0f, slash_cd %.2f, прицел %s" % [hp0,
+			ph.hp if is_instance_valid(ph) else -1.0, player.slash_cd, tc.aim_foe])
+	if is_instance_valid(ph):
+		ph.queue_free()
+	await wait(0.15)
 
 
 ## Щипок: второй палец лёг на мир чуть позже первого (как у человека) — оба ведут зум,
