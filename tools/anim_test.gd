@@ -119,6 +119,7 @@ class Runner extends Node:
 	var _cat: Node2D = null
 	var _cat_colors: Dictionary = {}
 	var _trail_age0: float = 0.0
+	var _trail_ref: Dictionary = {}
 	var _hp0: float = 0.0
 	var _jitter0: float = 0.0
 	var _task0: float = 0.0
@@ -883,7 +884,11 @@ class Runner extends Node:
 		_ok("кот рисуется", _cat != null and is_instance_valid(_cat) and _cat.is_inside_tree(),
 				"фаза %.2f" % (float(_cat.tail_phase) if _cat != null else -1.0))
 		_ok("хвост меняет цвет", n >= 2, "цветов %d" % n)
-		_trail_age0 = _trail_head_age()
+		# Голова следа обновляется каждые CAT_TRAIL_STEP (0.05 с) с t = 0.
+		# Запоминаем саму точку: Dictionary мутируется на месте в _advance_cat.
+		var pts0: Array = world_fx.cat_pts if world_fx != null else []
+		_trail_ref = pts0.back() if not pts0.is_empty() else {}
+		_trail_age0 = float(_trail_ref.get("t", -1.0))
 		_next(ST_CAT_TRAIL, 0.35)
 
 
@@ -902,8 +907,19 @@ class Runner extends Node:
 			if float(p["t"]) > life:
 				stale += 1
 		_ok("след кота разноцветный", colors.size() >= 2, "цветов %d" % colors.size())
-		var aged: float = _trail_head_age()
-		_ok("след кота стареет", aged > _trail_age0, "возраст %.3f -> %.3f" % [_trail_age0, aged])
+		var still: bool = not _trail_ref.is_empty() and world_fx != null and _trail_ref in world_fx.cat_pts
+		var aged: float = float(_trail_ref.get("t", -1.0)) if still else -1.0
+		var grew: float = aged - _trail_age0
+		var step_s: float = 0.05
+		if bal != null:
+			step_s = float(bal.get("CAT_TRAIL_STEP"))
+		var head_t: float = _trail_head_age()
+		# 0.35 с ожидания: допуск на границы кадров. Голова всегда моложе шага
+		# эмиссии — иначе снова меряем фазу, а не старение конкретной точки.
+		_ok("след кота стареет",
+				still and grew >= 0.30 and grew <= 0.45 and head_t < step_s + 0.02,
+				"возраст %.3f -> %.3f (+%.3f), голова %.3f%s" % [_trail_age0, aged, grew, head_t,
+				"" if still else ", точка вытеснена"])
 		_ok("старше 1.5 с точек следа нет", stale == 0, "просрочено %d" % stale)
 		game.time_of_day = 0.93
 		_next(ST_CAT_NIGHT, 0.3)
@@ -1163,17 +1179,23 @@ class Runner extends Node:
 
 
 	## Копатель в погоне, готовый сыпануть крошку на первом кадре picture().
+	## jitter/_spark_t/state — после add_child: Phantom._ready() затирает
+	## jitter случайным randf()*10, и при jitter < 0.2 гейт _sparks_at_bit молчит.
 	func _a3_chase_burrower() -> Node:
 		var ph: GDScript = load("res://scripts/entities/phantom.gd")
 		var p: Node = ph.new()
 		p.set("player", player)
 		p.set("kind", "burrower")
-		p.set("state", int(_ph_enum.get("CHASE", 2)))
-		p.set("jitter", 1.0)
-		p.set("_spark_t", 0.0)
 		p.set("facing", 1)
 		scene.add_child(p)
+		var chase: int = int(_ph_enum.get("CHASE", 2))
+		p.set("state", chase)
+		p.set("jitter", 1.0)
+		p.set("_spark_t", 0.0)
 		p.global_position = player.global_position + Vector2(48.0, 0.0)
+		assert(int(p.get("state")) == chase)
+		assert(is_equal_approx(float(p.get("jitter")), 1.0))
+		assert(is_equal_approx(float(p.get("_spark_t")), 0.0))
 		return p
 
 
