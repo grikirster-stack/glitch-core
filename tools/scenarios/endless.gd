@@ -8,7 +8,8 @@ extends ScenarioBase
 ##    SWARM_DROP_COPPER меди. Чёрный ящик не мешает: предметы лежат отдельно.
 ## 3. После сигнала. Победа → экран с кнопкой «Остаться на планете». Клик мышью
 ##    по stay_rect — то же, что C: PLAYING, signal_sent, ядро на месте, карточка
-##    «Смена N · Сигнал отправлен». Пока экран открыт, ЛКМ не копает мир под ним,
+##    зовёт к одному делу: непрочитанный терминал, иначе цвет маяка, иначе
+##    «Смени день». Пока экран открыт, ЛКМ не копает мир под ним,
 ##    а клик мимо кнопки игру не продолжает. Повторный запуск ядра доходит до
 ##    второй победы, в эпилоге — «вторая передача». Хардкор кнопки не даёт.
 
@@ -161,6 +162,7 @@ func _stay() -> void:
 	ok("карточка: «Смена %d · Сигнал отправлен»" % Game.day_number,
 			hud != null and hud.tracker_title == "Смена %d · Сигнал отправлен" % Game.day_number,
 			hud.tracker_title if hud != null else "нет HUD")
+	_card_after_signal(hud)
 	var again: bool = Game.try_finish(player)
 	ok("повторный запуск ядра возможен", again and Game.relay_active,
 			"relay_active=%s" % str(Game.relay_active))
@@ -181,6 +183,73 @@ func _stay() -> void:
 	await await_frame()
 	ok("хардкор: C не возвращает в игру", Game.state == Game.State.WON and es.visible)
 	scene.set("hardcore", false)
+
+
+## Карточка после сигнала зовёт к одному делу, а не констатирует ночь.
+## Приоритет: ближайший непрочитанный терминал → цвет маяка, которого ещё
+## не было → «Смени день». Рассвет карточку не сбрасывает.
+func _card_after_signal(hud: HUD) -> void:
+	if hud == null:
+		ok("карточка после сигнала", false, "нет HUD")
+		return
+	var term: Vector2i = hud._nearest_unread_terminal()
+	ok("после сигнала есть непрочитанный терминал", term.x >= 0, str(term))
+	var left: int = World.terminals.size()
+	ok("карточка зовёт прочитать терминал, не «ночь идёт»",
+			hud.card_text == "Прочитай терминал" and hud.card_have == Game.tasks_done
+			and hud.card_need == Game.tasks_done + left
+			and hud.card_at == World.cell_to_world(term)
+			and not hud.tracker_detail.contains("своим чередом"),
+			"«%s» %d/%d «%s»" % [hud.card_text, hud.card_have, hud.card_need, hud.tracker_detail])
+	ok("заголовок карточки не длиннее 6 слов", hud.card_text.split(" ", false).size() <= 6,
+			"«%s»" % hud.card_text)
+	# Терминалы кончились — карточка про цвет, которого на маяке ещё не было.
+	var saved: Array[Vector2i] = []
+	for t in World.terminals:
+		saved.append(t)
+	World.terminals.clear()
+	var cell: Vector2i = World.beacon_cell + Vector2i(4, 0)
+	World.set_tile(cell.x, cell.y, IDs.T.AIR)
+	var placed: bool = MachineBase.place_machine("Pharos", cell)
+	ok("маяк поставлен для проверки цвета", placed, str(cell))
+	hud._compute_tracker()
+	ok("без терминалов карточка зовёт зажечь красный маяк",
+			hud.card_text == "Зажги Красный маяк" and hud.card_icon == IDs.I.PHAROS
+			and hud.card_have == 0 and hud.card_need == 7,
+			"«%s» %d/%d иконка %d" % [hud.card_text, hud.card_have, hud.card_need, hud.card_icon])
+	var lamp = World.machines.get(cell)
+	_light_pharos(lamp, Beams.R)
+	hud._compute_tracker()
+	ok("красный уже был — карточка зовёт зелёный", hud.card_text == "Зажги Зелёный маяк"
+			and hud.card_have == 1,
+			"«%s» %d/%d" % [hud.card_text, hud.card_have, hud.card_need])
+	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M, Beams.W]:
+		_light_pharos(lamp, c)
+		hud._compute_tracker()
+	ok("все цвета были — «Смени день: рассвет сам не придёт»",
+			hud.card_text == "Смени день" and hud.tracker_detail == "рассвет сам не придёт"
+			and hud.card_at == Vector2.INF,
+			"«%s» «%s»" % [hud.card_text, hud.tracker_detail])
+	if lamp != null and is_instance_valid(lamp):
+		lamp.dismantle()
+	World.terminals = saved
+	hud._compute_tracker()
+	ok("терминал снова важнее цвета", hud.card_text == "Прочитай терминал", "«%s»" % hud.card_text)
+	# Рассвет смену считает, карточку не возвращает к «сигнал отправлен».
+	var day0: int = Game.day_number
+	Game.time_of_day = Balance.NIGHT_START + 0.01
+	Game.advance_clock(1.0 - Balance.NIGHT_START + Balance.NIGHT_END + 0.01)
+	hud._compute_tracker()
+	ok("рассвет прошёл, карточка всё ещё про терминал",
+			Game.day_number == day0 + 1 and hud.card_text == "Прочитай терминал"
+			and hud.tracker_title == "Смена %d · Сигнал отправлен" % Game.day_number,
+			"смена %d → %d, «%s»" % [day0, Game.day_number, hud.card_text])
+
+
+## Цвет, который уже горел: тот же путь, что луч (beam_receive), не голая запись.
+func _light_pharos(lamp, color: int) -> void:
+	if lamp != null and lamp.has_method("beam_receive"):
+		lamp.beam_receive(color)
 
 
 ## Клик ЛКМ в экранной точке. В headless вьюпорт мышь до контрола не доводит

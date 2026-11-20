@@ -289,6 +289,9 @@ var _term_power: Dictionary = {}   # клетка терминала → под 
 ## Вводное обучение на телефоне пройдено: игрок пошёл, копнул, построил или спрятался,
 ## либо прошло INTRO_TIME. На ПК не используется.
 var _intro_done: bool = false
+## Цвета, которые уже горели на маяке в этом забеге (бит = маска Beams).
+## Маяк держит один цвет: текущее стекло — не память. Между забегами не живёт.
+var _pharos_seen: int = 0
 
 
 func _ready() -> void:
@@ -618,6 +621,7 @@ func _update_state(delta: float) -> void:
 		tutorial_step = Tut.DIG
 		_intro_done = false
 		_state_t = 0.0
+		_pharos_seen = 0
 	_last_game_time = Game.game_time
 	_state_t -= delta
 	if _state_t <= 0.0:
@@ -637,12 +641,11 @@ func _compute_tracker() -> void:
 		_compute_mission()
 		return
 	mission_lines = []
-	# После сигнала новой цели нет (ADR-005 § 6.4): карточка считает смены.
+	# После сигнала — одно следующее дело в этом забеге, не «ночь идёт».
+	# Мета-прогресса между забегами нет (ADR-005 § 6.4). Пока ядро снова
+	# удерживают, карточка остаётся «Держись у ядра».
 	if Game.signal_sent and not Game.relay_active:
-		tracker_stage = Game.day_number
-		tracker_title = "Смена %d · Сигнал отправлен" % Game.day_number
-		tracker_detail = "ночь идёт своим чередом"
-		_set_card("Сигнал отправлен", Game.day_number, 1, -1, Vector2.INF)
+		_compute_after_signal()
 		return
 	var st: int = clampi(Game.objective_stage, 1, Game.OBJECTIVE_STAGES)
 	if Game.relay_active:
@@ -717,6 +720,119 @@ func _compute_mission() -> void:
 			int(open.get("icon", -1)), open.get("at", Vector2.INF))
 	# Глава «Радуга»: таблица смесей — три картинки, не слова клавиш.
 	card_mix = String(open.get("text", "")) == "Зажги семь дуг"
+
+
+## После сигнала: одно дело. Непрочитанный терминал (ближайший к герою,
+## иначе к лагерю) важнее цвета маяка, которого ещё не было. Нет ни того,
+## ни другого — честно про рассвет: часы сами смену не сменят.
+func _compute_after_signal() -> void:
+	tracker_stage = Game.day_number
+	var term: Vector2i = _nearest_unread_terminal()
+	if term.x >= 0:
+		var left: int = World.terminals.size()
+		# Счётчик — как у всех карточек: прочитано / всего, не remaining/remaining.
+		var total: int = Game.tasks_done + left
+		tracker_title = "Смена %d · Сигнал отправлен" % Game.day_number
+		# Место не пишем: имя руины длинное, маркер и так ведёт к ближайшему.
+		tracker_detail = "терминалов ещё %d" % left
+		_set_card("Прочитай терминал", Game.tasks_done, maxi(total, 1), -1,
+				World.cell_to_world(term))
+		return
+	var color: int = _unseen_pharos_color()
+	if color > 0:
+		var seen_n: int = _pharos_colors_count()
+		var name: String = Beams.NAME[color] if color < Beams.NAME.size() else "?"
+		tracker_title = "Смена %d · Сигнал отправлен" % Game.day_number
+		tracker_detail = "цветов %d/7 · маяк держит один цвет" % seen_n
+		_set_card("Зажги %s маяк" % name, seen_n, 7, IDs.I.PHAROS, _pharos_at())
+		return
+	tracker_title = "Смена %d · Сигнал отправлен" % Game.day_number
+	tracker_detail = "рассвет сам не придёт"
+	_set_card("Смени день", Game.day_number, 1, -1, Vector2.INF)
+
+
+## Ближайший непрочитанный терминал. Прочитанные уже вычеркнуты из World.terminals.
+## Героя нет — ближайший к лагерю. Нет ни одного — клетка (−1, −1).
+func _nearest_unread_terminal() -> Vector2i:
+	if World.terminals.is_empty():
+		return Vector2i(-1, -1)
+	var origin: Vector2 = World.cell_to_world(World.beacon_cell)
+	if player != null and is_instance_valid(player):
+		origin = player.global_position
+	var best: Vector2i = Vector2i(-1, -1)
+	var best_d: float = INF
+	for t in World.terminals:
+		var d: float = World.cell_to_world(t).distance_squared_to(origin)
+		if d < best_d:
+			best_d = d
+			best = t
+	return best
+
+
+## Цвета, которые уже горели на маяке в этом забеге (маска: бит = маска Beams).
+## Текущее стекло дописывается в память: погас — цвет не забывается.
+## Тёмное стекло (color == 0) в память не идёт.
+func _pharos_colors_seen() -> int:
+	for m in World.machines.values():
+		if m == null or not is_instance_valid(m) or String(m.get("kind")) != "Pharos":
+			continue
+		if not bool(m.get("active")):
+			continue
+		var c: int = int(m.get("color")) & 7
+		if c > 0:
+			_pharos_seen |= 1 << c
+	return _pharos_seen
+
+
+## Сколько разных цветов уже было на маяках. Для счётчика карточки, не маска.
+func _pharos_colors_count() -> int:
+	var mask: int = _pharos_colors_seen()
+	var n: int = 0
+	while mask != 0:
+		n += mask & 1
+		mask >>= 1
+	return n
+
+
+## Первый цвет маяка, которого ещё не было: красный, зелёный, синий, потом смеси.
+## 0 — все семь уже были (или маяка нет, тогда цвет не к чему вести).
+func _unseen_pharos_color() -> int:
+	var seen: int = _pharos_colors_seen()
+	if seen == 0 and not _pharos_exists():
+		return 0
+	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M, Beams.W]:
+		if (seen & (1 << c)) == 0:
+			return c
+	return 0
+
+
+func _pharos_exists() -> bool:
+	for m in World.machines.values():
+		if m != null and is_instance_valid(m) and String(m.get("kind")) == "Pharos":
+			return true
+	return false
+
+
+## Куда вести маркер цвета: к ближайшему маяку, иначе к ядру, иначе никуда.
+func _pharos_at() -> Vector2:
+	var origin: Vector2 = World.cell_to_world(World.beacon_cell)
+	if player != null and is_instance_valid(player):
+		origin = player.global_position
+	var best: Vector2 = Vector2.INF
+	var best_d: float = INF
+	for m in World.machines.values():
+		if m == null or not is_instance_valid(m) or String(m.get("kind")) != "Pharos":
+			continue
+		var p: Vector2 = m.global_position
+		var d: float = p.distance_squared_to(origin)
+		if d < best_d:
+			best_d = d
+			best = p
+	if best != Vector2.INF:
+		return best
+	if Game.core_placed():
+		return World.cell_to_world(Game.core_cell)
+	return Vector2.INF
 
 
 ## Записать карточку. Текст длиннее 6 слов режется — полный текст глав правит G*.

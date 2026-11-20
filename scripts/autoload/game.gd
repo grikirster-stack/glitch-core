@@ -121,6 +121,9 @@ func reset_run() -> void:
 	# --- Журнал и чертежи (#169): живут один забег.
 	Tech.reset()
 	_apply_blueprint_flag()
+	# Цвета маяка, которые карточка уже видела, тоже живут один забег.
+	if UI.hud != null:
+		UI.hud._pharos_seen = 0
 
 
 func _process(delta: float) -> void:
