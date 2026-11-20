@@ -933,6 +933,7 @@ class Runner extends Node:
 	## Каждая проверка читает раскладку или рисунок, не исходник.
 	func _s_a3() -> void:
 		_a3_flame()
+		_a3_mine_beam()
 		_a3_arcs()
 		_a3_frost()
 		_a3_burrow()
@@ -941,6 +942,39 @@ class Runner extends Node:
 		_a3_item()
 		_a3_spores()
 		_next(ST_GENERAL, 0.05)
+
+
+	## Резак копки: квадраты дотягиваются до клетки, на бите — вспышка и сдвиг ≥2 px.
+	## Читаем то, что герой нарисует (_mine_beam_marks), не исходник.
+	func _a3_mine_beam() -> void:
+		if player == null or not player.has_method("_mine_beam_marks"):
+			_ok("резак дотягивается до клетки", false, "шва нет")
+			return
+		var pivot: Vector2 = Vector2.ZERO
+		var cell: Vector2 = Vector2(80.0, 0.0)
+		var far: Dictionary = player.call("_mine_beam_marks", pivot, cell, 0.6)
+		var squares: Array = far["squares"]
+		var reaches: bool = squares.size() == 3
+		var far_x: float = 0.0
+		for m in squares:
+			var r: Rect2 = m["rect"]
+			far_x = maxf(far_x, r.get_center().x)
+			if r.position.x < 4.0 or r.get_center().x > cell.x + 1.0:
+				reaches = false
+		# Старая кирка обрывалась на 30 px. Последний квадрат обязан дойти до клетки.
+		reaches = reaches and far_x > 70.0
+		var quiet: Dictionary = player.call("_mine_beam_marks", pivot, cell, 0.2)
+		var beat: Dictionary = player.call("_mine_beam_marks", pivot, cell, 0.35)
+		var deep: Dictionary = player.call("_mine_beam_marks", pivot, cell, 0.95)
+		var q0: Rect2 = quiet["squares"][0]["rect"]
+		var b0: Rect2 = beat["squares"][0]["rect"]
+		var kicked: bool = q0.get_center().distance_to(b0.get_center()) >= 2.0 \
+				and float(beat["kick"]) >= 2.0 and float(quiet["kick"]) < 0.5
+		var flashed: bool = not beat["flash"].is_empty() and quiet["flash"].is_empty()
+		var cracks: bool = quiet["cracks"].is_empty() and beat["cracks"].size() == 1 \
+				and deep["cracks"].size() == 2
+		_ok("резак дотягивается до клетки", reaches and kicked and flashed and cracks,
+				"квадратов %d, сдвиг %.1f, трещин %d" % [squares.size(), float(beat["kick"]), deep["cracks"].size()])
 
 
 	## Языки топки: два момента с разницей 0.2 с дают разную высоту языков.
