@@ -17,8 +17,17 @@ extends ScenarioBase
 ## (ViewZoom) и ничего не копает и не ставит; короткий тап быстрее ожидания щипка
 ## всё равно ставит блок.
 ## В одиночной игре кнопки переклички G нет (#135; в сети её проверяет mp_doppel).
+## Раскладка: ландшафт 1280×720 и портрет 1280×2844 (как tools/ui_scale_test.gd).
+## Кнопки и стик внутри safe-rect, стик и действия не на полосе хотбара; в портрете
+## зоны захвата стика и «строить» не пересекаются, меню и Q/V/G не на карточке
+## задания. Меню и пауза внутри safe-rect. Холст — аргумент _layout, окно не
+## трогаем: headless размер до кадра не применяет. Ландшафт не двигаем.
 
 var tc: TouchControls = null
+## Холсты как в ui_scale_test: ландшафт 1280×720 и портрет 1280×2844
+## (1080×2400 при коэффициенте 2.5).
+const LANDSCAPE: Vector2 = Vector2(1280, 720)
+const PORTRAIT: Vector2 = Vector2(1280, 2844)
 
 
 func run() -> void:
@@ -39,6 +48,7 @@ func run() -> void:
 			and is_equal_approx(tc.btn_center["inv"].y, 126.0 + float(tc.btn_radius["inv"])),
 			"под пальцем «%s», I на y=%.0f" % [tc.control_at(tc.btn_center["g"]), tc.btn_center["inv"].y])
 
+	_layout_checks()
 	await _mining_with_stick_held()
 	await _walk_and_jump()
 	await _smart_aim()
@@ -52,6 +62,186 @@ func run() -> void:
 	ok("после сценария мышь отпущена и шов пуст",
 			not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and player.touch_input.is_empty())
 	finish()
+
+
+# ------------------------------------------------------------------ РАСКЛАДКА
+
+## Раскладка на двух канвасах. Холст — аргумент _layout, не окно: headless
+## root.size до кадра не применяет, а смена окна сдвинула бы следующие шаги.
+## Касаний нет. Safe-area подставляем сами: headless её не отдаёт.
+func _layout_checks() -> void:
+	var saved_k: float = tc.force_k
+	var saved_insets: Vector4 = tc.force_insets
+	var saved_team: int = tc.force_team_rows
+	var saved_scale: float = UI.ui_scale
+	tc.force_insets = Vector4.ZERO
+	tc.force_team_rows = 0
+	_layout_on(LANDSCAPE, false, "ландшафт")
+	_layout_on(PORTRAIT, true, "портрет")
+	# Вырез: краевые элементы уходят внутрь. На desktop отступы нулевые — ветка выше.
+	tc.force_insets = Vector4(40, 80, 24, 60)
+	_layout_on(PORTRAIT, true, "портрет с вырезом")
+	tc.force_insets = Vector4.ZERO
+	# Плашка команды: headless сети не поднимает, строки задаём крючком.
+	for n in [1, 4]:
+		tc.force_team_rows = n
+		_layout_on(PORTRAIT, true, "портрет, товарищей %d" % n)
+		_team_plate_clear(PORTRAIT, n)
+	tc.force_k = saved_k
+	tc.force_insets = saved_insets
+	tc.force_team_rows = saved_team
+	# Прямое поле, не set_ui_scale: тот двигает панели, а следующие шаги бьют по ячейкам.
+	UI.ui_scale = saved_scale
+	tc._relayout()
+
+
+func _layout_on(canvas: Vector2, portrait: bool, tag: String) -> void:
+	# Портрет: dpi 420, окно 1080×2400 под холст 1280×2844 — кнопка не меньше 9 мм,
+	# k упирается в 1.6 (как ui_scale_test). Ландшафт 1280×720 — desktop/headless:
+	# dpi не раздувает кнопки, k = 1. Иначе колонка I уехала бы.
+	var win: Vector2 = Vector2(1080, 2400) if portrait else canvas
+	var ppm: float = UI.px_per_mm(420, win, canvas) if portrait else 0.0
+	tc.force_k = clampf(9.0 * ppm / (TouchControls.BTN_R * 2.0), 1.0, 1.6) if ppm > 0.0 else 1.0
+	UI.ui_scale = 2.5 if portrait else 1.0
+	tc.set_enabled(true)
+	# _layout читает _layout_team, не _team_rows(): крючок надо положить до вызова.
+	tc._layout_team = tc._team_rows()
+	tc._layout(canvas)
+	var insets: Vector4 = tc.safe_insets(canvas)
+	var safe: Rect2 = Rect2(insets.x, insets.y, canvas.x - insets.x - insets.z,
+			canvas.y - insets.y - insets.w)
+	ok("%s: портрет определён как у HUD (h > w·1.2)" % tag, tc._portrait(canvas) == portrait,
+			"%.0f×%.0f" % [canvas.x, canvas.y])
+	ok("%s: safe-rect внутри канваса" % tag, safe.size.x > 0.0 and safe.size.y > 0.0
+			and Rect2(Vector2.ZERO, canvas).encloses(safe), str(safe))
+	var hotbar: Rect2 = _hotbar_band(canvas)
+	var outside: Array = []
+	var on_bar: Array = []
+	for id in tc.btn_center:
+		if not tc._shown(id, false):
+			continue
+		var rr: float = float(tc.btn_radius[id])
+		var br: Rect2 = Rect2(tc.btn_center[id] - Vector2(rr, rr), Vector2(rr, rr) * 2.0)
+		if not safe.encloses(br):
+			outside.append("%s %s" % [id, str(br)])
+		# Хотбар сидит над стиком и действиями. Верхние кнопки проверяем отдельно
+		# против карточки — на полосу хотбара они не претендуют.
+		if id in ["pause", "journal", "inv", "q", "v", "g"]:
+			pass
+		elif br.intersects(hotbar):
+			on_bar.append("%s %s" % [id, str(br)])
+	var sr: float = tc.stick_radius
+	var stick: Rect2 = Rect2(tc.stick_center - Vector2(sr, sr), Vector2(sr, sr) * 2.0)
+	if not safe.encloses(stick):
+		outside.append("stick %s" % str(stick))
+	if stick.intersects(hotbar):
+		on_bar.append("stick %s" % str(stick))
+	ok("%s: кнопки и стик внутри safe-rect" % tag, outside.is_empty(), ", ".join(outside))
+	ok("%s: стик и кнопки действий не на полосе хотбара" % tag, on_bar.is_empty(),
+			"%s; полоса %s" % [", ".join(on_bar), str(hotbar)])
+	var pause_r: float = float(tc.btn_radius["pause"])
+	var pause_br: Rect2 = Rect2(tc.btn_center["pause"] - Vector2(pause_r, pause_r),
+			Vector2(pause_r, pause_r) * 2.0)
+	ok("%s: меню/пауза внутри safe-rect" % tag, safe.encloses(pause_br), str(pause_br))
+	if portrait:
+		var card: Rect2 = _portrait_card(canvas)
+		var on_card: Array = []
+		for id in ["pause", "journal", "inv", "q", "v", "g"]:
+			if not tc._shown(id, false):
+				continue
+			var cr: float = float(tc.btn_radius[id])
+			var cbr: Rect2 = Rect2(tc.btn_center[id] - Vector2(cr, cr), Vector2(cr, cr) * 2.0)
+			if cbr.intersects(card):
+				on_card.append("%s %s" % [id, str(cbr)])
+		ok("%s: меню и Q/V/G не на карточке задания" % tag, on_card.is_empty(),
+				"%s; карточка %s" % [", ".join(on_card), str(card)])
+	var build_r: float = float(tc.btn_radius["build"])
+	var gap: float = tc.stick_center.distance_to(tc.btn_center["build"]) \
+			- tc.stick_radius * TouchControls.STICK_GRAB - build_r * TouchControls.BTN_GRAB
+	# Ландшафт не трогаем: там зазор по старой формуле отрицательный (~-10 px при k=1).
+	# Портрет разводит стик и «строить» по углам — зазор обязан быть >= 0.
+	if portrait:
+		ok("%s: зоны захвата стика и «строить» не пересекаются (зазор ≥ 0)" % tag, gap >= 0.0,
+				"зазор %.1f, центры %.0f" % [gap, tc.stick_center.distance_to(tc.btn_center["build"])])
+	if portrait:
+		ok("%s: стик слева внизу, действия справа внизу, меню сверху справа" % tag,
+				tc.stick_center.x < canvas.x * 0.4 and tc.stick_center.y > canvas.y * 0.7
+				and tc.btn_center["jump"].x > canvas.x * 0.6 and tc.btn_center["jump"].y > canvas.y * 0.7
+				and tc.btn_center["pause"].x > canvas.x * 0.5 and tc.btn_center["pause"].y < canvas.y * 0.35
+				and tc.btn_center["pause"].y < tc.btn_center["jump"].y * 0.5,
+				"стик %s, прыжок %s, меню %s" % [str(tc.stick_center), str(tc.btn_center["jump"]),
+				str(tc.btn_center["pause"])])
+	else:
+		# Прежняя ландшафтная формула: I на max(126, низ миникарты) + радиус, у правого края.
+		var r: float = float(tc.btn_radius["inv"])
+		var m: float = 24.0 * tc._k
+		var expect_y: float = maxf(126.0, HUD.right_column_bottom(canvas.x / UI.ui_scale, 0) * UI.ui_scale + 8.0) + r
+		var expect_x: float = canvas.x - m - r
+		ok("%s: колонка I на прежнем месте (ландшафт не сдвинут)" % tag,
+				is_equal_approx(tc.btn_center["inv"].y, expect_y)
+				and is_equal_approx(tc.btn_center["inv"].x, expect_x),
+				"I %s, ждали (%.0f, %.0f)" % [str(tc.btn_center["inv"]), expect_x, expect_y])
+
+## Круги меню и Q/V/G не садятся на плашку команды. Прямоугольник — HUD.team_plate_rect
+## в логических px, умноженный на ui_scale (как HUD._touch_rects переводит кнопки).
+func _team_plate_clear(canvas: Vector2, n: int) -> void:
+	var s: float = UI.ui_scale
+	var logical: Rect2 = HUD.team_plate_rect(canvas.x / s, n)
+	var plate: Rect2 = Rect2(logical.position * s, logical.size * s)
+	var hit: Array = []
+	var outside: Array = []
+	for id in ["pause", "journal", "inv", "q", "v", "g"]:
+		var rr: float = float(tc.btn_radius[id])
+		var br: Rect2 = Rect2(tc.btn_center[id] - Vector2(rr, rr), Vector2(rr, rr) * 2.0)
+		if br.intersects(plate):
+			hit.append("%s %s" % [id, str(br)])
+		if not Rect2(Vector2.ZERO, canvas).encloses(br):
+			outside.append("%s %s" % [id, str(br)])
+	ok("портрет, товарищей %d: меню и Q/V/G не на плашке команды" % n, hit.is_empty(),
+			"%s; плашка %s" % [", ".join(hit), str(plate)])
+	ok("портрет, товарищей %d: круги меню и Q/V/G внутри канваса" % n, outside.is_empty(),
+			", ".join(outside))
+
+
+## Карточка «Сейчас» в портрете, px канваса. HUD опускает её под ряд
+## pause/journal/inv (низ круга + 4 лог. px), не ниже полосы мира. Ширина —
+## до миникарты, не шире 65 % экрана (как HUD._compute_layout на таче).
+func _portrait_card(canvas: Vector2) -> Rect2:
+	var s: float = UI.ui_scale
+	var w: float = canvas.x / s
+	var row_bottom: float = HUD.CARD_Y
+	for id in ["pause", "journal", "inv"]:
+		var rr: float = float(tc.btn_radius[id])
+		row_bottom = maxf(row_bottom, (tc.btn_center[id].y + rr) / s + 4.0)
+	var card_y: float = row_bottom
+	var cap: float = (w - HUD.MAP_OFFSET.x) - HUD.CARD_X - 8.0
+	cap = minf(cap, w * 0.65)
+	var cw: float = maxf(96.0, cap)
+	return Rect2(Vector2(HUD.CARD_X, card_y) * s, Vector2(cw, HUD.CARD_H_TOUCH) * s)
+
+
+## Полоса хотбара в px канваса — та же формула, что HUD._compute_layout.
+## Логические px × ui_scale. Верх нижнего ряда — верх стика и кнопок действий.
+func _hotbar_band(canvas: Vector2) -> Rect2:
+	var s: float = UI.ui_scale
+	var w: float = canvas.x / s
+	var h: float = canvas.y / s
+	var n_slots: int = 6
+	var slot: float = 0.0
+	var hy: float = 0.0
+	if tc._portrait(canvas):
+		var bottom_top: float = h
+		bottom_top = minf(bottom_top, (tc.stick_center.y - tc.stick_radius) / s)
+		for id in ["build", "e", "run", "jump"]:
+			bottom_top = minf(bottom_top, (tc.btn_center[id].y - float(tc.btn_radius[id])) / s)
+		slot = clampf(floorf((w - 16.0) / float(n_slots)), 16.0, 42.0)
+		hy = bottom_top - 10.0 - (slot - 4.0)
+	else:
+		slot = 42.0
+		hy = h - 20.0 - (slot - 4.0)
+	var hb_w: float = slot * float(n_slots) - 4.0
+	var hx: float = (w - hb_w) * 0.5
+	return Rect2(Vector2(hx, hy) * s, Vector2(hb_w, slot - 4.0) * s)
 
 
 # ------------------------------------------------------------------ ШАГИ
