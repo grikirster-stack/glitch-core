@@ -95,7 +95,7 @@ func _plate_text_checks() -> void:
 	Game.objective_stage = 2
 	var help2: String = hud._plate_text()
 	ok("этап 2 без цели: плашка не пустая (регресс пустой плашки)",
-			help2 != "" and help2.contains("копай") and not help2.contains("\n")
+			help2 != "" and help2.to_lower().contains("копай") and not help2.contains("\n")
 			and not help2.contains("…"), "«%s»" % help2)
 	hud.hint_text = HUD.HINT_TERMINAL
 	ok("контекст важнее подсказки этапа",

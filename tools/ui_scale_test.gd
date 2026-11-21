@@ -525,7 +525,7 @@ func _t_touch_plate(tc: TouchControls, hud: HUD) -> void:
 	hud._compute_tracker()
 	var stage_help: String = hud._plate_text()
 	_ok("этап 2 без цели: плашка не пустая (stage help), старый код вернул бы \"\"",
-			stage_help != "" and stage_help.contains("копай") and not stage_help.contains("…")
+			stage_help != "" and stage_help.to_lower().contains("копай") and not stage_help.contains("…")
 			and not stage_help.contains("\n"), "«%s»" % stage_help)
 	# Контекст важнее stage help.
 	hud.hint_text = HUD.HINT_CHEST
@@ -594,6 +594,21 @@ func _t_touch_plate(tc: TouchControls, hud: HUD) -> void:
 		var card: Rect2 = named["card"]
 		var hint: Rect2 = named["hint"]
 		var ht: String = String(hud._lay.get("hint_text", ""))
+		# Живой ландшафт (как phone_hud_shot --state=stage): отрисованная строка,
+		# не _plate_text() до подгонки. «Руда в камне» — описание без действия.
+		if canvas.x > canvas.y:
+			var low: String = ht.to_lower()
+			var action: bool = low.contains("копай") or low.contains("тапом")
+			if not action or ht.contains("…") or ht == "Руда в камне":
+				bad.append("%s: отрисованная строка без действия «%s»" % [tag, ht])
+			if ht != stage_help:
+				bad.append("%s: подгонка срезала «%s» → «%s»" % [tag, stage_help, ht])
+			# Узкий слот живого кадра (~250 лог. px). Старый текст «Руда в камне —
+			# копай тапом по земле» здесь срезался до описания без глагола.
+			var fitted: String = hud._touch_plate_fit(stage_help, hud._slot_font(), 250.0)
+			var flow: String = fitted.to_lower()
+			if fitted != stage_help or not (flow.contains("копай") or flow.contains("тапом")):
+				bad.append("%s: слот 250 срезал «%s» → «%s»" % [tag, stage_help, fitted])
 		if card.position.y + 0.5 < band or hint.position.y + 0.5 < band:
 			bad.append("%s: выше трети card=%s hint=%s band=%.1f" % [tag, card, hint, band])
 		if card.intersects(hint):
@@ -624,7 +639,7 @@ func _t_touch_plate(tc: TouchControls, hud: HUD) -> void:
 	Game.objective_stage = 3
 	var after: String = hud._plate_text()
 	_ok("свободная игра после обучения: плашка — подсказка этапа, не пустая",
-			after != "" and after.contains("рассвет"), "«%s»" % after)
+			after != "" and after.contains("ночь") and after.contains("Пережди"), "«%s»" % after)
 	Game.objective_stage = old_stage
 	Game.game_time = old_time
 	Game.stats_ore = old_ore

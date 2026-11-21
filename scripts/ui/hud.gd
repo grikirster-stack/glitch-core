@@ -1766,33 +1766,50 @@ func _touch_tutorial() -> String:
 	return t.strip_edges()
 
 
-## Строка плашки, которая влезает в max_w без «…». Сначала как есть, потом
-## без хвоста после «—» / «·», потом по словам с конца. Пустую не возвращаем,
-## пока исходная не пуста: последняя попытка — первое слово.
+## Строка плашки, которая влезает в max_w без «…». Сначала как есть. Если не
+## влезла — хвост с глаголом, иначе короткая подсказка этапа. Фрагмент без
+## действия («Руда в камне») не возвращаем и плашку не прячем.
 func _touch_plate_fit(text: String, fs: int, max_w: float) -> String:
-	var t: String = text.strip_edges()
-	if t == "":
+	var line: String = text.strip_edges()
+	if line == "":
 		return ""
-	if max_w <= 8.0 or _tw(t, fs) <= max_w + 0.5:
-		return t
+	if max_w <= 8.0 or _tw(line, fs) <= max_w + 0.5:
+		return line
+	# Хвост после разделителя — только если в нём действие. Голову «Руда в камне»
+	# не возвращаем: это описание без глагола, игрок не знает, что нажать.
 	for sep in [" — ", " · ", ": "]:
-		var cut: int = t.find(sep)
-		if cut > 0:
-			var head: String = t.substr(0, cut).strip_edges()
-			if head != "" and _tw(head, fs) <= max_w + 0.5:
-				return head
-	var parts: PackedStringArray = t.split(" ", false)
+		var cut: int = line.find(sep)
+		if cut <= 0:
+			continue
+		var tail: String = line.substr(cut + sep.length()).strip_edges()
+		if _touch_has_action(tail) and _tw(tail, fs) <= max_w + 0.5:
+			return tail
+	var stage: String = _touch_stage_help()
+	if stage != "" and stage != line and _tw(stage, fs) <= max_w + 0.5:
+		return stage
+	var parts: PackedStringArray = line.split(" ", false)
 	while parts.size() > 1:
 		parts.resize(parts.size() - 1)
 		var joined: String = " ".join(parts)
-		if _tw(joined, fs) <= max_w + 0.5:
+		if _touch_has_action(joined) and _tw(joined, fs) <= max_w + 0.5:
 			return joined
-	return String(parts[0]) if parts.size() > 0 else t
+	if stage != "":
+		return stage
+	return line
 
 
 ## Короткая подсказка этапа, когда нет ни действия, ни ввода, ни шага обучения.
 ## Свободная игра — этапы 1–6; глава — подсказка этапа, иначе та же формула.
 ## Тексты сверены с _compute_tracker / Game.OBJECTIVE_TITLES, не с догадкой.
+## Есть ли в строке действие, а не только описание предмета.
+func _touch_has_action(text: String) -> bool:
+	var low: String = text.to_lower()
+	for verb in ["копай", "тап", "держи", "стой", "пережди", "крафт", "луч", "иди", "меню"]:
+		if low.contains(verb):
+			return true
+	return false
+
+
 func _touch_stage_help() -> String:
 	if Game.in_mission() and Game.mission != null:
 		var mh: String = _one_hint(String(Game.mission.hint))
@@ -1801,19 +1818,21 @@ func _touch_stage_help() -> String:
 	var st: int = clampi(Game.objective_stage, 1, Game.OBJECTIVE_STAGES)
 	if Game.relay_active:
 		st = Game.OBJECTIVE_STAGES
+	# Короткие строки с глаголом: живой ландшафтный слот ~250 лог. px при кегле 14.
+	# Длинный текст подгонка срезала до описания без действия.
 	match st:
 		1:
-			return "Хлам на горелку — крафт I, тап у базы"
+			return "Крафт I, тап у базы"
 		2:
-			return "Руда в камне — копай тапом по земле"
+			return "Копай тапом по земле"
 		3:
-			return "Ночь у базы — дождись рассвета"
+			return "Пережди ночь у базы"
 		4:
-			return "Луч цвета в ядро — белый не считается"
+			return "Луч в ядро — не белый"
 		5:
-			return "Держи [E] у ядра 3 с"
+			return "Держи [E] у ядра"
 		_:
-			return "Стой у ядра — держи сигнал"
+			return "Стой у ядра, держи сигнал"
 
 
 ## Высота карточки, сторона иконки и кегли заголовка и счётчика. На ПК — как было.
