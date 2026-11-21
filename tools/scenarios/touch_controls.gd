@@ -10,7 +10,8 @@ extends ScenarioBase
 ## пока первый держит джойстик (мультитач); тап по хотбару выбирает слот и режим
 ## (блок — «строить», пустая ячейка — «копать»); умный прицел (#149): тап по свободной
 ## клетке ставит один блок, тап за препятствием — блок со своей стороны, тап за радиусом
-## копает ближнюю стену по лучу, тап на полклетки мимо камня копает камень; кнопки I и J
+## копает ближнюю стену по лучу, тап на полклетки мимо камня копает камень; тап из ямы
+## по тайлу слева-сверху (герой на тайл ниже) начинает копку; кнопки I и J
 ## открывают и закрывают окна, тап по миру при этом не копает; кнопка «меню» открывает
 ## паузу (#119); «Назад» Android закрывает окно, открывает и закрывает паузу, свернули
 ## приложение — пауза и сохранение (#149). Щипок двумя пальцами по миру ведёт зум
@@ -56,6 +57,7 @@ func run() -> void:
 	await _walk_and_jump()
 	await _card_tap_does_not_dig()
 	await _smart_aim()
+	await _pit_step_dig()
 	await _pinch_zoom()
 	await _windows_by_buttons()
 	await _back_and_app_pause()
@@ -481,6 +483,75 @@ func _smart_aim() -> void:
 	await wait(0.1)
 	World.set_tile(rock.x, rock.y, IDs.T.AIR)
 	await _phantom_off_finger()
+
+
+## Герой на дне ямы, на тайл ниже цели; цель слева вплотную. Тап по центру
+## подсвеченной клетки (путь TouchControls → шов → Player._do_mining) начинает
+## копку. На старом коде луч из центра клетки героя в центр цели касается только
+## угла и отбрасывается: aim пуст, прогресса нет.
+func _pit_step_dig() -> void:
+	clear_input()
+	tc.build_mode = false
+	var floor_y: int = stand_in_corridor(5)
+	await wait(0.3)
+	var hx: int = int(floor(player.global_position.x / float(World.TILE)))
+	var feet: Vector2i = Vector2i(hx, floor_y)
+	var target: Vector2i = Vector2i(hx - 1, floor_y - 1)
+	for dx in range(-1, 3):
+		World.set_tile(hx + dx, floor_y - 1, IDs.T.AIR)
+		World.set_tile(hx + dx, floor_y - 2, IDs.T.AIR)
+	World.set_tile(feet.x, feet.y, IDs.T.AIR)
+	World.set_tile(target.x, target.y, IDs.T.STONE)
+	World.set_tile(feet.x, feet.y + 1, IDs.T.STONE)
+	World.set_tile(target.x, target.y + 1, IDs.T.STONE)
+	player.global_position = Vector2(float(feet.x * World.TILE) + 8.0,
+			float((feet.y + 1) * World.TILE) - 12.0)
+	player.vel = Vector2.ZERO
+	player.facing = -1
+	player.mining_progress = 0.0
+	player.mining_cell = Vector2i(-1, -1)
+	player.camera.position_smoothing_enabled = false
+	_settle_camera()
+	await wait(0.3)
+	var stood: Vector2i = World.world_to_cell(player.global_position)
+	ok("яма: герой на тайл ниже цели, цель слева вплотную",
+			stood == feet and target == feet + Vector2i(-1, -1)
+			and World.get_tile_v(target) == IDs.T.STONE and player.facing < 0,
+			"ноги %s цель %s" % [str(stood), str(target)])
+	# Палец в центр подсвеченного тайла. Луч из центра клетки героя идёт в этот
+	# центр через общий угол: пол под целью только касается угла и не должен
+	# перехватывать копку.
+	var tap: Vector2 = World.cell_to_world(target)
+	var origin: Vector2 = World.cell_to_world(stood)
+	var ray: Vector2i = World.first_solid_on_ray(origin, tap, true, true)
+	ok("луч в центр тайла ямы бьёт в него, а не в пол под ним",
+			ray == target, "луч %s, пол %s" % [str(ray), str(Vector2i(target.x, feet.y))])
+	_touch(1, _screen(tap), true)
+	await wait(0.35)
+	ok("тап по подсвеченному тайлу ямы начинает копку",
+			tc.aim_cell == target and player.mining_cell == target and player.mining_progress > 0.0,
+			"aim %s, копается %s, прогресс %.3f, луч %s" % [str(tc.aim_cell),
+			str(player.mining_cell), player.mining_progress, str(ray)])
+	var broke: bool = await wait_until(func() -> bool: return World.get_tile_v(target) == IDs.T.AIR, 6.0)
+	_touch(1, _screen(tap), false)
+	ok("удержание тапа выкапывает тайл ямы", broke, DB.tile_name(World.get_tile_v(target)))
+	await wait(0.15)
+	# ЛКМ в ту же точку не расходится с тапом: восстанавливаем тайл и целимся мышью.
+	World.set_tile(target.x, target.y, IDs.T.STONE)
+	player.mining_progress = 0.0
+	player.mining_cell = Vector2i(-1, -1)
+	aim(tap)
+	press_mouse(MOUSE_BUTTON_LEFT)
+	await wait(0.3)
+	ok("ЛКМ в ту же точку ямы тоже копает этот тайл",
+			player.mining_cell == target and player.mining_progress > 0.0,
+			"копается %s, прогресс %.3f" % [str(player.mining_cell), player.mining_progress])
+	release_mouse(MOUSE_BUTTON_LEFT)
+	clear_input()
+	player.camera.position_smoothing_enabled = true
+	stand_in_corridor(3)
+	_settle_camera()
+	await wait(0.2)
 
 
 ## Тап по фантому на 21–26 px от тела: прицел берёт его (PHANTOM_GRAB 26), взмах
