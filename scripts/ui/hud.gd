@@ -144,9 +144,9 @@ const TOUCH_HINTS: Dictionary = {
 }
 
 const INTRO_LINES: Array = [
-	"Джойстик — идти · вверх — прыжок",
-	"Тап — копать · хотбар — строить",
-	"«меню» — пауза · I — инвентарь",
+	"Джойстик — идти",
+	"Тап — копать",
+	"«меню» — пауза",
 ]
 const INTRO_STEP: float = 5.0
 const INTRO_TIME: float = 15.0
@@ -981,6 +981,15 @@ func _night_countdown() -> int:
 
 # ------------------------------------------------------------ МИНИКАРТА
 
+## Прямоугольник миникарты. На ПК — правый верх. На телефоне — из раскладки
+## (ужатая карта в нижней трети) или пусто, если в треть не влезла.
+func _map_rect_now() -> Rect2:
+	if UI.touch_on:
+		_ensure_layout()
+		return _lay.get("map", Rect2())
+	return Rect2(size.x - MAP_OFFSET.x, MAP_OFFSET.y, MAP_SIZE.x, MAP_SIZE.y)
+
+
 func _update_map(delta: float) -> void:
 	_map_check_t -= delta
 	if _map_check_t <= 0.0:
@@ -997,7 +1006,7 @@ func _update_map(delta: float) -> void:
 		_fog_dirty = false
 		_fog_tex.update(_fog_img)
 		_map.queue_redraw()
-	var r: Rect2 = Rect2(size.x - MAP_OFFSET.x, MAP_OFFSET.y, MAP_SIZE.x, MAP_SIZE.y)
+	var r: Rect2 = _map_rect_now()
 	if r != _map_rect:
 		_map_rect = r
 		_map.queue_redraw()
@@ -1049,9 +1058,18 @@ func _draw_map_layer() -> void:
 		return
 	var r: Rect2 = _map_rect
 	var c: Control = _map
+	if r.size.x < 1.0:
+		return
 	c.draw_rect(r, C_PLATE)
-	c.draw_texture(_map_tex, r.position)
-	c.draw_texture(_fog_tex, r.position)
+	# ПК: r == MAP_SIZE, rect совпадает с draw_texture. Тач: текстура вписана.
+	# Нативный размер (ПК, 186×52) — draw_texture: тест миникарты зовёт слой вне
+	# _draw, а draw_texture_rect там падает. Ужатая карта телефона — только в _draw.
+	if r.size == Vector2(MAP_SIZE):
+		c.draw_texture(_map_tex, r.position)
+		c.draw_texture(_fog_tex, r.position)
+	else:
+		c.draw_texture_rect(_map_tex, r, false)
+		c.draw_texture_rect(_fog_tex, r, false)
 	c.draw_rect(r, Color(C_LINE, 0.25), false, 1.0)
 	var sx: float = r.size.x / float(World.W)
 	var sy: float = r.size.y / float(World.H)
@@ -1381,6 +1399,20 @@ const HINT_GAP: float = 4.0
 const HINT_GAP_TOUCH: float = 10.0
 ## Низ хотбара на телефоне ближе к краю: 12 px мира по центру. На ПК HOTBAR_BOTTOM не трогаем.
 const HOTBAR_BOTTOM_TOUCH: float = 20.0
+## Ландшафт телефона: хотбар у самого края, чтобы над плашкой влезла карточка.
+const HOTBAR_BOTTOM_LAND: float = 4.0
+## Карточка телефона одной строкой: иконка 16, кегль small, без счётчика.
+const CARD_H_TOUCH_LINE: float = 24.0
+const CARD_ICON_LINE: float = 16.0
+## Телефон: весь HUD в нижней трети. Верх и центр — игровое поле.
+## Доля высоты, с которой блок может начинаться (position.y ≥ size.y * 2/3 − 0.5).
+const TOUCH_BAND: float = 2.0 / 3.0
+## Полосы здоровья и импульса на телефоне уже: в нижней трети рядом с карточкой.
+const HP_W_TOUCH: float = 96.0
+## Миникарта на телефоне уже и ниже: 186×52 в нижней трети не помещается.
+const MAP_SIZE_TOUCH: Vector2i = Vector2i(96, 28)
+## Отступ миникарты от правого края на телефоне, px.
+const MAP_RIGHT_TOUCH: float = 8.0
 ## Клик по карточке показывает цель столько секунд, потом камера возвращается.
 const CARD_LOOK_SEC: float = 2.0
 ## Стрелка у края экрана: сторона квадрата и отступ от края, px.
@@ -1404,6 +1436,12 @@ const SLOT_COUNT: int = 10
 ## На 6 ячейках шаг = min(42 × 10 / hotbar_size, 64) — ячейка крупнее 42 px (#161).
 const SLOT_TOUCH: float = 42.0
 const SLOT_TOUCH_MAX: float = 64.0
+## Портрет: полоса над рядом боя, шаг 82 (ячейка 78 + зазор 4). 78 лог. px при 250 %
+## на 1080×2400 ≈ 9.95 мм — пол MIN_MM. Уже 36 номер слота не рисуется (_draw_hotbar).
+const SLOT_PORTRAIT: float = 82.0
+const SLOT_DIGIT_MIN: float = 36.0
+## Кегль цифры слота и счётчика стака. Плашка подсказки не крупнее него.
+const SLOT_FONT: int = 14
 ## Низ хотбара над краем холста, px.
 const HOTBAR_BOTTOM: float = 32.0
 
@@ -1516,6 +1554,83 @@ func _touch_rects() -> Dictionary:
 	return out
 
 
+## Круги захвата пальца (BTN_GRAB / STICK_GRAB), не видимые круги. Блок HUD,
+## пересекающий захват, забирает тап у кнопки.
+## Верх захвата стика и нижнего ряда боя (прыжок, бег, E, копать), логические px.
+## Меню и Q/V/G сюда не входят: они выше и полосу хотбара не задают.
+func _combat_grab_top(h: float) -> float:
+	var top: float = h
+	var tc: Node = _touch()
+	if tc == null:
+		return top
+	var k: float = 1.0 / UI.ui_scale
+	for id in ["jump", "run", "e", "build"]:
+		if not tc.btn_center.has(id) or not tc._shown(id, false):
+			continue
+		var c: Vector2 = tc.btn_center[id] * k
+		var rad: float = float(tc.btn_radius[id]) * TouchControls.BTN_GRAB * k
+		top = minf(top, c.y - rad)
+	top = minf(top, tc.stick_center.y * k - float(tc.stick_radius) * TouchControls.STICK_GRAB * k)
+	return top
+
+
+func _grab_circles() -> Array:
+	var out: Array = []
+	var tc: Node = _touch()
+	if tc == null:
+		return out
+	var k: float = 1.0 / UI.ui_scale
+	for id in tc.btn_center:
+		if not tc._shown(id, false):
+			continue
+		out.append({"c": tc.btn_center[id] * k, "r": float(tc.btn_radius[id]) * TouchControls.BTN_GRAB * k})
+	out.append({"c": tc.stick_center * k, "r": float(tc.stick_radius) * TouchControls.STICK_GRAB * k})
+	return out
+
+
+func _hits_grab(r: Rect2, grabs: Array) -> bool:
+	for g in grabs:
+		var c: Vector2 = g["c"]
+		var closest := Vector2(clampf(c.x, r.position.x, r.end.x), clampf(c.y, r.position.y, r.end.y))
+		if c.distance_to(closest) < float(g["r"]) - 0.01:
+			return true
+	return false
+
+
+## Самый низкий y в [band, top], на котором полоса ширины need свободна от захватов.
+## Возвращает x и y; не влезла — пустой Rect2.
+func _grab_free_slot(grabs: Array, band: float, top: float, need: float, hgt: float) -> Rect2:
+	var w: float = size.x
+	var y: float = top - hgt
+	while y + 0.5 >= band:
+		var lo: float = PAD
+		var hi: float = w - PAD
+		for g in grabs:
+			var c: Vector2 = g["c"]
+			var rad: float = float(g["r"])
+			var dy: float = 0.0
+			if c.y < y:
+				dy = y - c.y
+			elif c.y > y + hgt:
+				dy = c.y - (y + hgt)
+			if dy >= rad:
+				continue
+			var dx: float = sqrt(rad * rad - dy * dy)
+			var left: float = c.x - dx
+			var right: float = c.x + dx
+			if right <= lo or left >= hi:
+				continue
+			if c.x >= (lo + hi) * 0.5:
+				hi = minf(hi, left)
+			else:
+				lo = maxf(lo, right)
+		if hi - lo + 0.5 >= need:
+			var x: float = clampf((w - need) * 0.5, lo, hi - need)
+			return Rect2(x, y, need, hgt)
+		y -= 1.0
+	return Rect2()
+
+
 ## Ширина строки шрифтом fs (в логических px).
 func _tw(text: String, fs: int) -> float:
 	return ThemeDB.fallback_font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
@@ -1588,25 +1703,28 @@ func _compute_layout() -> Dictionary:
 	var fb: int = UI.FONT["body"]
 	var fs: int = UI.FONT["small"]
 	var tb: Dictionary = _touch_rects()
-	# ---- Верх: здоровье, импульс (слева), сутки (справа), отсчёт до ночи (по центру).
-	if player:
-		L["hp"] = Rect2(PAD, 8.0, HP_W, HP_H)
-		L["emp"] = Rect2(PAD, 8.0 + HP_H + 4.0, HP_W, EMP_H)
-	var dw: float = maxf(_tw(day_label(), fs), STRIP_W)
-	L["day"] = Rect2(w - PAD - dw, 6.0, dw, 34.0)
-	if night_countdown >= 0:
-		var cw: float = _tw("НОЧЬ ЧЕРЕЗ %d с" % night_countdown, fb) + 24.0
-		L["countdown"] = Rect2((w - cw) * 0.5, 8.0, cw, 26.0)
-	# ---- Правый столбец: миникарта, команда.
-	L["map"] = Rect2(w - MAP_OFFSET.x, MAP_OFFSET.y, MAP_SIZE.x, MAP_SIZE.y)
+	var touch: bool = UI.touch_on
+	var portrait: bool = touch and h > w * 1.2
+	# На ПК верх экрана — здоровье, импульс, сутки, карта. На телефоне эти блоки
+	# кладёт _place_touch_top: верх и центр — игровое поле, HUD только в нижней трети.
+	if not touch:
+		if player:
+			L["hp"] = Rect2(PAD, 8.0, HP_W, HP_H)
+			L["emp"] = Rect2(PAD, 8.0 + HP_H + 4.0, HP_W, EMP_H)
+		var dw: float = maxf(_tw(day_label(), fs), STRIP_W)
+		L["day"] = Rect2(w - PAD - dw, 6.0, dw, 34.0)
+		if night_countdown >= 0:
+			var cw: float = _tw("НОЧЬ ЧЕРЕЗ %d с" % night_countdown, fb) + 24.0
+			L["countdown"] = Rect2((w - cw) * 0.5, 8.0, cw, 26.0)
+		L["map"] = Rect2(w - MAP_OFFSET.x, MAP_OFFSET.y, MAP_SIZE.x, MAP_SIZE.y)
 	var n_team: int = team_mates.size()
-	if n_team > 0:
+	if n_team > 0 and not touch:
 		L["team"] = team_plate_rect(w, n_team)
 	var right_bottom: float = right_column_bottom(w, n_team)
 	# ---- Низ: хотбар по центру свободной полосы между джойстиком и кнопками справа.
-	# Портрет (высота > 1.2 ширины): полосы между джойстиком и E нет — хотбар по центру
-	# над нижним рядом кнопок. Геометрию TouchControls не двигаем.
-	var portrait: bool = UI.touch_on and h > w * 1.2
+	# Портрет: щели между стиком и E нет — хотбар полосой над рядом боя,
+	# целиком выше захватов. Кнопки не двигаем. Ландшафт остаётся в щели:
+	# захват стика там доходит до ~59 % высоты, треть — только 96 px.
 	var lo: float = 0.0
 	var hi: float = w
 	var n_slots: int = _hotbar_count()
@@ -1616,19 +1734,29 @@ func _compute_layout() -> Dictionary:
 	var hy: float = 0.0
 	var hint_max: float = minf(w - 2.0 * PAD, 600.0)
 	if portrait:
-		var bottom_top: float = h - 140.0
-		var found_bottom: bool = false
-		for id in ["stick", "build", "e", "run", "jump"]:
-			if tb.has(id):
-				var top: float = (tb[id] as Rect2).position.y
-				bottom_top = top if not found_bottom else minf(bottom_top, top)
-				found_bottom = true
-		var slot_hi: float = 42.0 if n_slots < SLOT_COUNT else 46.0
-		slot = clampf(floorf((w - 2.0 * PAD) / float(n_slots)), 16.0, slot_hi)
+		# Щели между стиком и E нет: ячейка там сжималась до 27 px (3.4 мм).
+		# Полоса над рядом боя, шаг не от щели X. 6 слотов — SLOT_PORTRAIT
+		# (ячейка 78). 10 слотов — min(82, пол ширины / 10), ячейка не меньше
+		# 36, чтобы номер рисовался. Кнопки не двигаем.
+		var step: float = SLOT_PORTRAIT
+		if n_slots >= SLOT_COUNT:
+			step = minf(SLOT_PORTRAIT, floorf((w - 2.0 * PAD) / float(n_slots)))
+		slot = maxf(step, SLOT_DIGIT_MIN + 4.0)
 		hb_w = slot * float(n_slots) - 4.0
-		hx = (w - hb_w) * 0.5
-		hy = bottom_top - HINT_GAP_TOUCH - (slot - 4.0)
-		hint_max = w - 2.0 * PAD
+		hx = clampf((w - hb_w) * 0.5, PAD, maxf(PAD, w - PAD - hb_w))
+		var cell_h: float = slot - 4.0
+		# Низ полосы — у верхнего захвата стика и нижнего ряда боя
+		# (прыжок, бег, E, копать). Меню сверху и Q/V/G в захват не входят:
+		# иначе полоса уезжает к верхней трети.
+		var grab_top: float = _combat_grab_top(h)
+		hy = grab_top - cell_h
+		hy = grab_top - cell_h
+		var band_y: float = h * (2.0 / 3.0)
+		if hy + 0.5 < band_y:
+			hy = band_y
+		lo = PAD
+		hi = w - PAD
+		hint_max = hi - lo
 	else:
 		if tb.has("stick") and tb.has("e"):
 			lo = (tb["stick"] as Rect2).end.x + PAD
@@ -1641,60 +1769,71 @@ func _compute_layout() -> Dictionary:
 		# на 2.5 съедает полосу мира.
 		if n_slots < SLOT_COUNT:
 			slot_cap = minf(SLOT_TOUCH * float(SLOT_COUNT) / float(n_slots), SLOT_TOUCH_MAX)
-			if UI.touch_on:
+			if touch:
 				slot_cap = SLOT_TOUCH
 		slot = clampf(floorf((hi - lo) / float(n_slots)), 16.0, slot_cap)
 		hb_w = slot * float(n_slots) - 4.0
 		hx = clampf(w * 0.5 - hb_w * 0.5, lo, maxf(lo, hi - hb_w))
-		var bottom: float = HOTBAR_BOTTOM_TOUCH if UI.touch_on else HOTBAR_BOTTOM
+		var bottom: float = HOTBAR_BOTTOM_LAND if touch else HOTBAR_BOTTOM
 		hy = h - bottom - (slot - 4.0)
-		# Ряд боя (E, бег, прыжок, «копать»/«строить») стоит у нижнего края и
-		# накрывал бы полосу у края. На телефоне хотбар — над верхом ряда, как
-		# в портрете. На ПК tb пуст: HOTBAR_BOTTOM и полоса у края не меняются.
-		if UI.touch_on:
-			var row_top: float = hy
-			var found_row: bool = false
-			for id in ["build", "e", "run", "jump"]:
-				if tb.has(id):
-					var top: float = (tb[id] as Rect2).position.y
-					row_top = top if not found_row else minf(row_top, top)
-					found_row = true
-			if found_row:
-				hy = row_top - HINT_GAP_TOUCH - (slot - 4.0)
+		# На телефоне хотбар остаётся у нижнего края (HOTBAR_BOTTOM_LAND, 4 px).
+		# Ряд боя его не поднимает: поднятие сажало полосу на героя и выносило
+		# её из нижней трети. На ПК tb пуст — HOTBAR_BOTTOM не меняется.
 		hint_max = minf(minf(w - 2.0 * PAD, 600.0), hi - lo)
 	L["slot"] = slot
 	L["hotbar"] = Rect2(hx, hy, hb_w, slot - 4.0)
+	# Ландшафт: захват стика шире видимого круга и задевает хотбар у нижнего
+	# края. Сужаем по X, высоту не трогаем. Портрет уже выше всех захватов —
+	# сужение по X снова зажало бы ячейку до 27 px, его нет.
+	if touch and not portrait:
+		var hb_grabs: Array = _grab_circles()
+		if _hits_grab(L["hotbar"], hb_grabs):
+			var shrunk: Rect2 = _shrink_off_grabs(L["hotbar"], hb_grabs)
+			if shrunk.size.x >= 48.0:
+				L["hotbar"] = shrunk
+				hx = shrunk.position.x
+				hb_w = shrunk.size.x
 	var stack_top: float = hy
-	var gap: float = HINT_GAP_TOUCH if UI.touch_on else HINT_GAP
+	var gap: float = HINT_GAP_TOUCH if touch else HINT_GAP
 	var plate: String = _plate_text()
 	if plate != "":
 		var hfont: int = fb
 		var ht: String = plate
-		if UI.touch_on:
-			# Вводную строку не режем «…»: полоса джойстик–E уже тела шрифта 14.
-			# Контекстная подсказка остаётся в этой полосе.
-			var intro: bool = _intro_line() != "" and plate == _intro_line()
-			var fit_w: float = (w - 2.0 * PAD - 16.0) if intro else (hint_max - 16.0)
-			if _fit_text(plate, fb, fit_w).ends_with("…"):
-				hfont = fs
-			ht = _fit_text(plate, hfont, fit_w)
-			if ht.ends_with("…"):
-				ht = ""
+		if touch:
+			# Кегль плашки всегда small: не крупнее цифр ячеек хотбара.
+			# И ввод, и контекст — по ширине текста, в полосе джойстик–кнопки.
+			hfont = _slot_font()
+			# Полоса стик–кнопки. Не влезла целиком — без «…» не показываем:
+			# полная ширина накрывает «копать» и вылезает из нижней трети.
+			var hpad: float = 0.0 if portrait else 16.0
+			ht = plate if _tw(plate, hfont) <= hint_max - hpad else ""
 		else:
 			ht = _fit_text(plate, fb, hint_max - 16.0)
 		if ht != "":
 			L["hint_text"] = ht
 			L["hint_font"] = hfont
-			var hw: float = _tw(ht, hfont) + 16.0
-			var h_lo: float = maxf(PAD, lo) if not portrait else PAD
-			var h_hi: float = hi if not portrait else w
-			# Ввод на всю ширину: полоса джойстик–E уже строки даже шрифтом 14.
-			if UI.touch_on and _intro_line() != "" and plate == _intro_line():
-				h_lo = PAD
-				h_hi = w
-			var hcx: float = clampf(hx + hb_w * 0.5 - hw * 0.5, h_lo, maxf(h_lo, minf(w - PAD, h_hi) - hw))
-			L["hint"] = Rect2(hcx, hy - gap - ROW_H, hw, ROW_H)
-			stack_top = hy - gap - ROW_H
+			var hw: float = _tw(ht, hfont) + (0.0 if portrait else 16.0)
+			var grabs: Array = _grab_circles()
+			var slot_r: Rect2 = Rect2()
+			if portrait:
+				var hx0: float = clampf(hx + hb_w * 0.5 - hw * 0.5, PAD, maxf(PAD, w - PAD - hw))
+				slot_r = Rect2(hx0, hy - gap - ROW_H, hw, ROW_H)
+			elif not grabs.is_empty():
+				# Строго над хотбаром, в нижней трети. Зазор до хотбара может
+				# вырасти: захват E/стика выше видимого круга. Не влезла — скрыта.
+				slot_r = _grab_free_slot(grabs, h * (2.0 / 3.0), hy - gap, hw, ROW_H)
+			else:
+				var h_lo: float = maxf(PAD, lo)
+				var h_hi: float = hi
+				var hcx: float = clampf(hx + hb_w * 0.5 - hw * 0.5, h_lo, maxf(h_lo, minf(w - PAD, h_hi) - hw))
+				slot_r = Rect2(hcx, hy - gap - ROW_H, hw, ROW_H)
+			if slot_r.has_area() and not _hits_grab(slot_r, grabs):
+				L["hint"] = slot_r
+				stack_top = slot_r.position.y
+	if touch:
+		_place_touch_top(L, tb, h * (2.0 / 3.0), portrait, stack_top)
+		_drop_grab_hits(L)
+		return L
 	# ---- Слева: карточка «Сейчас» (x=14, y=54), под ней — одна строка подсказки
 	# этапа. Мощность и старый трекер на экран не идут (#160).
 	var rows: Array = _status_rows()
@@ -1702,21 +1841,9 @@ func _compute_layout() -> Dictionary:
 	var card_x: float = CARD_X
 	if L.has("emp"):
 		card_y = maxf(card_y, (L["emp"] as Rect2).end.y + 6.0)
-	# Портрет: ряд «меню» / журнал / инвентарь стоит под миникартой и накрывает карточку.
-	# Опускаем её под этот ряд, не ниже полосы мира в 40 px. TouchControls не двигаем.
-	if portrait:
-		var row_bottom: float = card_y
-		for id in ["pause", "journal", "inv"]:
-			if tb.has(id):
-				row_bottom = maxf(row_bottom, (tb[id] as Rect2).end.y + 4.0)
-		var room: float = stack_top - 40.0 - _card_h()
-		card_y = minf(row_bottom, maxf(card_y, room))
 	var y0: float = card_y
 	if player and card_text != "":
 		var cap: float = (L["map"] as Rect2).position.x - card_x - 8.0
-		# На телефоне карточка не шире 65 % экрана: длинная цель не закрывает карту.
-		if UI.touch_on:
-			cap = minf(cap, w * 0.65)
 		var ch: float = _card_h()
 		var cw: float = minf(_card_width(), maxf(96.0, cap))
 		L["card"] = Rect2(card_x, card_y, cw, ch)
@@ -1796,6 +1923,265 @@ func _compute_layout() -> Dictionary:
 	return L
 
 
+
+## Миникарта телефона: 96×28, в нижней трети, не на кнопках и не на захватах.
+## Сначала правый край, не влезла — карман над рядом боя. Кнопки не двигаем.
+func _touch_map_rect(tb: Dictionary, band: float, h: float, occupied: Array = []) -> Rect2:
+	var w: float = size.x
+	var mw: float = float(MAP_SIZE_TOUCH.x)
+	var mh: float = float(MAP_SIZE_TOUCH.y)
+	var candidates: Array = []
+	candidates.append(Rect2(w - MAP_RIGHT_TOUCH - mw, maxf(band + CARD_H_TOUCH_LINE + 4.0, h - HOTBAR_BOTTOM_TOUCH - mh - 6.0), mw, mh))
+	var row_top: float = h
+	var row_left: float = w
+	for id in ["build", "e", "run", "jump"]:
+		if tb.has(id):
+			var br: Rect2 = tb[id]
+			row_top = minf(row_top, br.position.y)
+			row_left = minf(row_left, br.position.x)
+	if row_top < h:
+		candidates.append(Rect2(maxf(row_left, w - MAP_RIGHT_TOUCH - mw), row_top - mh - 4.0, mw, mh))
+	var grabs: Array = _grab_circles()
+	for c in candidates:
+		var cr: Rect2 = c
+		if cr.position.y + 0.5 < band:
+			continue
+		if cr.end.y > h + 0.5 or cr.end.x > w - MAP_RIGHT_TOUCH + 0.5 or cr.position.x < 0.0:
+			continue
+		if _hits(cr, tb.values()) or _hits(cr, occupied) or _hits_grab(cr, grabs):
+			continue
+		return cr
+	return Rect2()
+
+
+func _place_touch_top(L: Dictionary, tb: Dictionary, band: float, portrait: bool, stack_top: float) -> void:
+	var w: float = size.x
+	var h: float = size.y
+	var fb: int = UI.FONT["body"]
+	var fs: int = UI.FONT["small"]
+	var taken: Array = []
+	for id in tb:
+		taken.append(tb[id])
+	var hint_top: float = stack_top
+	if L.has("hint"):
+		hint_top = (L["hint"] as Rect2).position.y
+	var ceiling: float = hint_top - 4.0
+	# Плашка команды на телефоне скрыта: team_plate_rect — якорь кнопок меню
+	# (TouchControls._layout). Сдвинуть её в нижнюю треть — сдвинуть I/J/паузу.
+	var room: float = ceiling - band
+	var y: float = band
+	# Карточка одной строкой (24 px). Сначала над плашкой; если 24 px над ней
+	# выходят за границу 2/3 — справа от плашки, в той же полосе. Полный
+	# заголовок не влез — карточка скрыта, без «…».
+	var line_h: float = CARD_H_TOUCH_LINE
+	if player and card_text != "" and _tw(card_text, fs) > 0.0:
+		var need_w: float = _card_width_line()
+		var spots: Array = []
+		if ceiling - band + 0.5 >= line_h:
+			var cap: float = minf(w - 2.0 * PAD, w * 0.65)
+			var cw0: float = minf(need_w, maxf(96.0, cap))
+			var cx0: float = PAD
+			if tb.has("stick"):
+				var stick0: Rect2 = tb["stick"]
+				if stick0.position.y < band + line_h and stick0.end.y > band:
+					cx0 = maxf(cx0, stick0.end.x + PAD)
+			if tb.has("build"):
+				var bx0: float = (tb["build"] as Rect2).position.x - PAD
+				if cx0 + cw0 > bx0:
+					cw0 = bx0 - cx0
+			spots.append(Rect2(cx0, band, cw0, line_h))
+		# Справа от плашки, в той же полосе. Над плашкой 24 px выходят за границу
+		# 2/3: на 6 ячейках плашка стоит у потолка нижней трети. Ширина — до
+		# видимой кнопки ряда боя, не до края экрана (иначе захваты). Не влезла
+		# целиком — скрыта, без «…».
+		if L.has("hint"):
+			var hr0: Rect2 = L["hint"]
+			var side_x: float = hr0.end.x + PAD
+			var side_hi: float = w - PAD
+			for id in tb:
+				var br0: Rect2 = tb[id]
+				if br0.position.x + 0.5 < side_x or br0.end.y <= band:
+					continue
+				side_hi = minf(side_hi, br0.position.x - PAD)
+			var side_w: float = minf(need_w, side_hi - side_x)
+			if side_w + 0.5 >= need_w and hr0.position.y + 0.5 >= band:
+				spots.append(Rect2(side_x, hr0.position.y, side_w, line_h))
+		for cr in spots:
+			if cr.size.x + 0.5 < 96.0 or cr.size.x + 0.5 < need_w:
+				continue
+			# Рядом с плашкой низ карточки ниже потолка над ней — та же полоса.
+			var beside: bool = L.has("hint") and cr.position.x + 0.5 >= (L["hint"] as Rect2).end.x
+			var top_limit: float = h if beside else ceiling
+			if cr.end.x > w - PAD + 0.5 or cr.end.y > top_limit + 0.5 or cr.position.y + 0.5 < band:
+				continue
+			if L.has("hint") and cr.intersects(L["hint"]):
+				continue
+			if _hits(cr, taken) or _hits_grab(cr, _grab_circles()):
+				continue
+			var inner: float = cr.size.x - 8.0 - CARD_ICON_LINE - 8.0 - 8.0
+			if _tw(card_text, fs) > inner + 0.5:
+				continue
+			L["card_line"] = true
+			L["card"] = cr
+			_fit_card_title(L, cr.size.x)
+			taken.append(cr)
+			if cr.position.y <= band + 0.5:
+				y = cr.end.y + 4.0
+				room = ceiling - y
+			break
+
+	# Карта после карточки: карточка важнее, карта берёт оставшийся карман.
+	# Карта — ужатая 96×28, в нижней трети, не на кнопках. Сначала правый край,
+	# не влезла — карман над рядом боя (кнопки не двигаем). 186×52 сюда не лезет.
+	var map_r: Rect2 = _touch_map_rect(tb, band, h, [L.get("hint", Rect2()), L.get("hotbar", Rect2()), L.get("card", Rect2())])
+	if map_r.has_area():
+		L["map"] = map_r
+		taken.append(map_r)
+	# Ландшафт: полоса HP 4 px сразу под хотбаром. Ниже края — скрыта.
+	if not portrait and player and L.has("hotbar"):
+		var hb: Rect2 = L["hotbar"]
+		var strip: Rect2 = Rect2(hb.position.x, hb.end.y, hb.size.x, 4.0)
+		if strip.end.y <= h + 0.5 and strip.position.y + 0.5 >= band and not _hits(strip, taken):
+			L["hp"] = strip
+			taken.append(strip)
+	# Здоровье и импульс — узкие полосы слева, под карточкой или вместо неё.
+	if not L.has("hp") and player and room + 0.5 >= HP_H + 4.0 + EMP_H:
+		var hp: Rect2 = Rect2(PAD, y, HP_W_TOUCH, HP_H)
+		var emp: Rect2 = Rect2(PAD, y + HP_H + 4.0, HP_W_TOUCH, EMP_H)
+		if emp.end.y <= ceiling + 0.5 and not _hits(hp, taken) and not _hits(emp, taken):
+			L["hp"] = hp
+			L["emp"] = emp
+			taken.append(hp)
+			taken.append(emp)
+			y = emp.end.y + 4.0
+			room = ceiling - y
+	# Строка этапа — под здоровьем, если осталась высота строки.
+	var rows: Array = _status_rows()
+	L["rows"] = []
+	if not rows.is_empty() and room + 0.5 >= ROW_H:
+		var s_bottom: float = _status_place(rows, y, ceiling, taken)
+		if not rows.is_empty():
+			var sw: float = 0.0
+			for r in rows:
+				sw = maxf(sw, float(r["w"]))
+			var sr: Rect2 = Rect2(PAD, y, sw + 20.0, s_bottom - y)
+			if sr.position.y + 0.5 >= band and not _hits(sr, taken):
+				L["rows"] = rows
+				L["status"] = sr
+				taken.append(sr)
+				y = sr.end.y + 4.0
+				room = ceiling - y
+	# Сутки — справа, над картой, если полоса 34 px влезает.
+	var dw: float = maxf(_tw(day_label(), fs), STRIP_W)
+	if room + 0.5 >= 34.0:
+		var dx: float = w - PAD - dw
+		if L.has("map"):
+			dx = minf(dx, (L["map"] as Rect2).position.x - 8.0 - dw)
+		var dr: Rect2 = Rect2(maxf(PAD, dx), y, dw, 34.0)
+		if dr.end.x <= w - PAD + 0.5 and dr.end.y <= ceiling + 0.5 and not _hits(dr, taken):
+			L["day"] = dr
+			taken.append(dr)
+			y = maxf(y, dr.end.y + 4.0)
+	if night_countdown >= 0:
+		var cw2: float = _tw("НОЧЬ ЧЕРЕЗ %d с" % night_countdown, fs) + 24.0
+		var cr2: Rect2 = Rect2((w - cw2) * 0.5, band, cw2, 26.0)
+		if cr2.end.y <= ceiling + 0.5 and not _hits(cr2, taken):
+			L["countdown"] = cr2
+			taken.append(cr2)
+	# Уведомления — над плашкой, в свободной полосе нижней трети. Не влезли — скрыты.
+	_place_touch_notes(L, tb, taken, band, ceiling)
+
+
+## Блок, чей прямоугольник пересекает захват кнопки, не рисуем: тап ушёл бы в кнопку.
+func _drop_grab_hits(L: Dictionary) -> void:
+	var grabs: Array = _grab_circles()
+	if grabs.is_empty():
+		return
+	var drop: Array = []
+	for id in ["hint", "card", "map", "hp", "emp", "day", "status", "countdown", "notes"]:
+		if L.has(id) and _hits_grab(L[id], grabs):
+			drop.append(id)
+	# Хотбар уже сужен до захватов выше. Здесь его не прячем: без него нет
+	# нижней полосы, и тест «хотбар у нижнего края» падает.
+	for id in drop:
+		L.erase(id)
+	if "status" in drop:
+		L["rows"] = []
+
+
+## Сузить прямоугольник по X, пока он не выйдет из кругов захвата. Высоту не трогаем.
+func _shrink_off_grabs(r: Rect2, grabs: Array) -> Rect2:
+	var lo: float = r.position.x
+	var hi: float = r.end.x
+	for g in grabs:
+		var c: Vector2 = g["c"]
+		var rad: float = float(g["r"])
+		var dy: float = 0.0
+		if c.y < r.position.y:
+			dy = r.position.y - c.y
+		elif c.y > r.end.y:
+			dy = c.y - r.end.y
+		if dy >= rad:
+			continue
+		var dx: float = sqrt(rad * rad - dy * dy)
+		if c.x < (lo + hi) * 0.5:
+			lo = maxf(lo, c.x + dx)
+		else:
+			hi = minf(hi, c.x - dx)
+	if hi - lo < 48.0:
+		return Rect2()
+	return Rect2(lo, r.position.y, hi - lo, r.size.y)
+
+
+func _hits(r: Rect2, taken: Array) -> bool:
+	for b in taken:
+		if (b as Rect2).intersects(r):
+			return true
+	return false
+
+
+## Уведомления телефона: одна-две строки над плашкой, не на кнопках и не выше нижней трети.
+func _place_touch_notes(L: Dictionary, tb: Dictionary, taken: Array, band: float, ceiling: float) -> void:
+	if notes.is_empty():
+		return
+	var w: float = size.x
+	var fb: int = UI.FONT["body"]
+	var top: float = band
+	for b in taken:
+		var br: Rect2 = b
+		if br.end.y > top and br.position.y < ceiling:
+			top = maxf(top, br.end.y + 4.0)
+	var n_bottom: float = ceiling
+	var left: float = PAD
+	var right: float = w - PAD
+	for id in tb:
+		var br2: Rect2 = tb[id]
+		if br2.end.y > top and br2.position.y < n_bottom:
+			if br2.position.x < w * 0.5:
+				left = maxf(left, br2.end.x + PAD)
+			else:
+				right = minf(right, br2.position.x - PAD)
+	if right - left < 120.0 or n_bottom - top < ROW_H:
+		return
+	var fit: int = int(floorf((n_bottom - top) / ROW_H))
+	var cnt: int = clampi(mini(notes.size(), fit), 0, notes.size())
+	var nw: float = 0.0
+	var lines: Array = []
+	for i in cnt:
+		var nt: Dictionary = notes[notes.size() - 1 - i]
+		var pad: float = 22.0 if int(nt.get("icon", 0)) > 0 else 0.0
+		var txt: String = _fit_text(String(nt["text"]), fb, minf(right - left, 620.0) - pad)
+		lines.append(txt)
+		nw = maxf(nw, _tw(txt, fb))
+	if cnt > 0:
+		var nr: Rect2 = Rect2(right - nw, n_bottom - float(cnt) * ROW_H, nw, float(cnt) * ROW_H)
+		if nr.position.y + 0.5 >= band and not _hits(nr, taken):
+			L["notes"] = nr
+			L["note_lines"] = lines
+
+
+
+
 ## Строки под карточкой: {text, kind, prio, color, w}. prio — порядок отбрасывания при
 ## нехватке места (больше — раньше). На экране — только подсказка этапа (в главе)
 ## и шаг обучения. Трекер, мощность и список задач карточка не дублирует (#160).
@@ -1840,9 +2226,13 @@ func _status_place(rows: Array, y0: float, limit: float, blockers: Array) -> flo
 			# текст этапа обязан читаться целиком, а не обрываться «…».
 			var fsize: int = fb
 			var fit: String = _fit_text(String(r["full"]), fsize, avail - bar)
-			if wide and fit.ends_with("…"):
-				fsize = fs
-				fit = _fit_text(String(r["full"]), fsize, avail - bar)
+			if fit.ends_with("…"):
+				if wide:
+					fsize = fs
+					fit = _fit_text(String(r["full"]), fsize, avail - bar)
+				# На телефоне «…» нет: не влезла целиком — строка скрыта, не обрезана.
+				if UI.touch_on and fit.ends_with("…"):
+					continue
 			r["text"] = fit
 			r["font"] = fsize
 			r["w"] = _tw(fit, fsize) + bar
@@ -1877,24 +2267,27 @@ func _draw() -> void:
 
 	# ---- Здоровье ------------------------------------------------------------
 	if player:
-		var hp_rect: Rect2 = _lay["hp"]
-		draw_rect(hp_rect, C_PLATE)
-		var frac: float = clampf(player.hp / 100.0, 0.0, 1.0)
-		# Здоровье — цвет скафандра; мало здоровья — цвет угрозы.
-		var hp_col: Color = C_HP if frac > 0.35 else C_DANGER
-		var hp_fill: Rect2 = Rect2(hp_rect.position + Vector2(2, 2), Vector2((hp_rect.size.x - 4) * frac, hp_rect.size.y - 4))
-		draw_rect(hp_fill, hp_col)
-		draw_rect(Rect2(hp_fill.position, Vector2(hp_fill.size.x, 2)), hp_col.lightened(0.3))
-		draw_rect(hp_rect, Color(C_LINE, 0.35), false, 1.0)
-		_text_outlined(font, hp_rect.position + Vector2(8, 19), "%d" % int(player.hp), fb, Color(C_LINE, 0.95))
+		if _lay.has("hp"):
+			var hp_rect: Rect2 = _lay["hp"]
+			draw_rect(hp_rect, C_PLATE)
+			var frac: float = clampf(player.hp / 100.0, 0.0, 1.0)
+			# Здоровье — цвет скафандра; мало здоровья — цвет угрозы.
+			var hp_col: Color = C_HP if frac > 0.35 else C_DANGER
+			var hp_fill: Rect2 = Rect2(hp_rect.position + Vector2(2, 2), Vector2((hp_rect.size.x - 4) * frac, hp_rect.size.y - 4))
+			draw_rect(hp_fill, hp_col)
+			draw_rect(Rect2(hp_fill.position, Vector2(hp_fill.size.x, 2)), hp_col.lightened(0.3))
+			draw_rect(hp_rect, Color(C_LINE, 0.35), false, 1.0)
+			if hp_rect.size.y >= 16.0:
+				_text_outlined(font, hp_rect.position + Vector2(8, 19), "%d" % int(player.hp), fb, Color(C_LINE, 0.95))
 
 		# Индикатор заряда импульса: подпись — на самой полосе.
-		var emp_rect: Rect2 = _lay["emp"]
-		draw_rect(emp_rect, C_PLATE)
-		var ef: float = 1.0 - player.emp_cd / player.emp_max
-		draw_rect(Rect2(emp_rect.position + Vector2(1, 1), Vector2((emp_rect.size.x - 2) * ef, emp_rect.size.y - 2)),
-				Color(C_BIO, 0.55))
-		_text_outlined(font, emp_rect.position + Vector2(6, 13), "ИМПУЛЬС [Q]", fs, Color(C_LINE, 0.95))
+		if _lay.has("emp"):
+			var emp_rect: Rect2 = _lay["emp"]
+			draw_rect(emp_rect, C_PLATE)
+			var ef: float = 1.0 - player.emp_cd / player.emp_max
+			draw_rect(Rect2(emp_rect.position + Vector2(1, 1), Vector2((emp_rect.size.x - 2) * ef, emp_rect.size.y - 2)),
+					Color(C_BIO, 0.55))
+			_text_outlined(font, emp_rect.position + Vector2(6, 13), "ИМПУЛЬС [Q]" if not UI.touch_on else "Q", fs, Color(C_LINE, 0.95))
 
 		# Карточка «Сейчас» и одна строка подсказки (#160)
 		_draw_card(font)
@@ -1903,20 +2296,23 @@ func _draw() -> void:
 	# ---- Время суток ---------------------------------------------------------
 	# Полоса суток с квадратной меткой (ADR-003): днём метка жёлтая, ночью —
 	# цвет угрозы. Метку ставим по квантованному времени — ровно тому, что в
-	# ключе перерисовки.
-	var day: Rect2 = _lay["day"]
-	var strip: Rect2 = Rect2(day.end.x - STRIP_W, 30.0, STRIP_W, 4)
-	draw_rect(strip.grow(1.0), C_PLATE)
-	draw_rect(strip, C_PLATE_HI)
-	var tq: float = float(int(Game.time_of_day * float(CLOCK_STEPS))) / float(CLOCK_STEPS)
-	var mx: float = roundf(strip.position.x + tq * strip.size.x)
+	# ключе перерисовки. night — на уровне функции: скобки в конце _draw
+	# читают ту же переменную и когда блока суток в раскладке нет.
 	var night: bool = Game.is_night()
 	var dl: float = Game.daylight()
-	var sun: Color = C_DANGER if night else C_PLATE_HI.lerp(C_HAZARD, 0.35 + 0.65 * dl)
-	draw_rect(Rect2(mx - 4, 26, 8, 12), C_PLATE)
-	draw_rect(Rect2(mx - 3, 27, 6, 10), sun)
-	_text_outlined(font, Vector2(day.end.x - _tw(day_label(), fs), 21.0), day_label(), fs,
-			C_DANGER.lerp(C_LINE, 0.35) if night else C_LINE)
+	if _lay.has("day"):
+		var day: Rect2 = _lay["day"]
+		# На ПК day.y = 6: полоса на 30, метка на 26, текст на 21 — те же пиксели.
+		var strip: Rect2 = Rect2(day.end.x - STRIP_W, day.position.y + 24.0, STRIP_W, 4)
+		draw_rect(strip.grow(1.0), C_PLATE)
+		draw_rect(strip, C_PLATE_HI)
+		var tq: float = float(int(Game.time_of_day * float(CLOCK_STEPS))) / float(CLOCK_STEPS)
+		var mx: float = roundf(strip.position.x + tq * strip.size.x)
+		var sun: Color = C_DANGER if night else C_PLATE_HI.lerp(C_HAZARD, 0.35 + 0.65 * dl)
+		draw_rect(Rect2(mx - 4, day.position.y + 20.0, 8, 12), C_PLATE)
+		draw_rect(Rect2(mx - 3, day.position.y + 21.0, 6, 10), sun)
+		_text_outlined(font, Vector2(day.end.x - _tw(day_label(), fs), day.position.y + 15.0), day_label(), fs,
+				C_DANGER.lerp(C_LINE, 0.35) if night else C_LINE)
 
 	# ---- Отсчёт до ночи (сумерки, § 4.1) -----------------------------------
 	if _lay.has("countdown"):
@@ -1988,6 +2384,9 @@ func _draw() -> void:
 ## Ширина карточки: иконка и текст заголовка (не уже счётчика). На ПК формула прежняя
 ## (иконка 48, зазор 8, заголовок title). На телефоне иконка 32, зазор 12, body/small.
 ## Потолок по карте считает вызывающий.
+func _card_width_line() -> float:
+	return 8.0 + CARD_ICON_LINE + 8.0 + _tw(card_text, UI.FONT["small"]) + 8.0
+
 func _card_width() -> float:
 	var ft: int = _card_title_font()
 	var fb: int = _card_sub_font()
@@ -2004,9 +2403,11 @@ func _card_width() -> float:
 ## Заголовок и счётчик, вписанные в карточку: title → body → «…». На телефоне счётчик
 ## тоже подгоняется. Рисует _draw_card, читает тест. inner — ширина текста внутри рамки.
 func _fit_card_title(L: Dictionary, cw: float) -> void:
-	var inner: float = _card_inner(cw)
+	var inner: float = cw - 8.0 - CARD_ICON_LINE - 8.0 - 8.0 if L.get("card_line", false) else _card_inner(cw)
 	var ft: int = _card_title_font()
 	var title: String = card_text
+	if L.get("card_line", false):
+		ft = UI.FONT["small"]
 	if _fit_text(title, ft, inner).ends_with("…"):
 		var smaller: int = _card_sub_font() if UI.touch_on else UI.FONT["body"]
 		if smaller < ft:
@@ -2046,7 +2447,8 @@ func _draw_card(font: Font) -> void:
 	draw_rect(r, C_PLATE)
 	draw_rect(r, Color(C_LINE, 0.35), false, 1.0)
 	var touch: bool = UI.touch_on
-	var isz: float = _card_icon()
+	var line: bool = bool(_lay.get("card_line", false))
+	var isz: float = CARD_ICON_LINE if line else _card_icon()
 	var icon_r: Rect2
 	if touch:
 		var iy: float = r.position.y + (r.size.y - isz) * 0.5
@@ -2060,19 +2462,12 @@ func _draw_card(font: Font) -> void:
 			draw_texture_rect(tex, icon_r.grow(-4.0), false)
 	else:
 		_draw_stage_glyph(icon_r, tracker_stage)
-	var tx: float = icon_r.end.x + (12.0 if touch else 8.0)
+	var tx: float = icon_r.end.x + (8.0 if line else (12.0 if touch else 8.0))
 	var ft: int = int(_lay.get("card_font", _card_title_font()))
 	var title: String = String(_lay.get("card_title", card_text))
-	if touch:
+	if line:
 		var ascent: float = font.get_ascent(ft)
-		_text_outlined(font, Vector2(tx, r.position.y + 6.0 + ascent), title, ft, C_LINE)
-		if card_mix:
-			_draw_mix_row(Vector2(tx, r.position.y + 6.0 + ascent + 4.0))
-		elif card_need > 1:
-			var sf: int = int(_lay.get("card_sub_font", _card_sub_font()))
-			var counter: String = String(_lay.get("card_counter", "%d / %d" % [card_have, card_need]))
-			_text_outlined(font, Vector2(tx, r.position.y + 6.0 + ascent + 2.0 + font.get_ascent(sf)),
-					counter, sf, C_BIO.lerp(C_LINE, 0.25))
+		_text_outlined(font, Vector2(tx, r.position.y + (r.size.y - float(ft)) * 0.5 + ascent), title, ft, C_LINE)
 	else:
 		# ПК: те же координаты, что были до телефона. Текст уже вписан, длинная цель не лезет на карту.
 		_text_outlined(font, Vector2(tx, r.position.y + 8.0 + float(ft)), title, ft, C_LINE)
@@ -2218,8 +2613,12 @@ func hotbar_slot_rect(i: int) -> Rect2:
 	return Rect2(r.position * UI.ui_scale, r.size * UI.ui_scale)
 
 
+func _slot_font() -> int:
+	return SLOT_FONT
+
+
 func _draw_hotbar(font: Font) -> void:
-	var fs: int = UI.FONT["small"]
+	var fs: int = _slot_font()
 	for i in _hotbar_count():
 		var r: Rect2 = hotbar_slot_logical(i)
 		var sel: bool = (player.inv.selected == i)
@@ -2240,7 +2639,7 @@ func _draw_hotbar(font: Font) -> void:
 			if st.count > 1:
 				_text_outlined(font, Vector2(r.end.x - _tw(str(st.count), fs) - 3.0, r.end.y - 4.0), str(st.count), fs,
 						Color(C_LINE, 0.95))
-		if r.size.x >= 36.0:   # в узкой ячейке номер налез бы на значок
+		if r.size.x >= SLOT_DIGIT_MIN:   # в узкой ячейке номер налез бы на значок
 			draw_string(font, r.position + Vector2(3, 13), str((i + 1) % 10),
 					HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(C_INTERACT, 0.8) if sel else Color(C_LINE, 0.45))
 
@@ -2365,7 +2764,9 @@ func _draw_team(font: Font, w: float) -> void:
 	var n: int = team_mates.size()
 	if n == 0:
 		return
-	var plate: Rect2 = team_plate_rect(w, n)
+	var plate: Rect2 = _lay.get("team", Rect2()) if UI.touch_on else team_plate_rect(w, n)
+	if plate.size.y < 1.0:
+		return
 	var x: float = plate.position.x
 	var y: float = plate.position.y
 	var win: int = _key[48]
@@ -2397,3 +2798,4 @@ func _draw_team(font: Font, w: float) -> void:
 			draw_rect(Rect2(x + 168, ry + 6, 8, 8), Avatar.ROLLCALL_GREEN)
 		elif not m.dead and win > 0:
 			draw_rect(Rect2(x + 168, ry + 6, 8, 8), Avatar.ROLLCALL_RED)
+
