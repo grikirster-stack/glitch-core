@@ -66,6 +66,13 @@ extends CanvasLayer
 ## (слева от J) открывает паузу (UI.toggle_pause); то же — системная «Назад» Android
 ## (UI.go_back, #149). Пока пауза открыта, кнопок и джойстика нет: панель паузы —
 ## обычные кнопки, тап по ним приходит кликом.
+##
+## Автоскрытие: после AUTO_HIDE_SEC без касания контролы плавно гаснут (fade
+## FADE_SEC), ввод выключается. Любое касание экрана возвращает их; этот первый
+## тап игрового действия не вызывает. Пока палец на стике или кнопке — не гаснут.
+## HUD (хотбар, полоса цели, подсказки) живёт в своём слое и не трогается. Пока
+## открыто модальное окно (инвентарь, журнал, пауза) или экран финала — не гаснут:
+## I и J в окне ещё нужны, а пауза глушит их сама.
 
 ## Слой: над HUD и панелями (UI — 10), под экраном финала (EndScreen.LAYER — 20).
 const LAYER: int = 15
@@ -107,6 +114,11 @@ const PULSE_FRAMES: int = 3
 const PINCH_WAIT: int = 4
 ## Длина ключа видимого состояния (см. _fill_key).
 const KEY_LEN: int = 16
+## Без касания столько секунд — контролы гаснут. Касание сбрасывает отсчёт.
+const AUTO_HIDE_SEC: float = 15.0
+## Плавное гашение и появление, с. Пока идёт fade, ввод ещё жив: палец, лёгший
+## в последнюю четверть секунды, не теряется.
+const FADE_SEC: float = 0.25
 
 ## Кнопки: id, клавиша шва (0 — действие без клавиши), подпись крупно и мелко.
 ## Раскладка — в _layout().
@@ -183,6 +195,16 @@ var _aim_dir: int = -1
 ## Пальцев на кнопке (id -> int) и оставшиеся кадры короткого нажатия (id -> int).
 var _btn_hold: Dictionary = {}
 var _btn_pulse: Dictionary = {}
+## Секунды без касания. AUTO_HIDE_SEC — пора гаснуть. Пока палец на стике или
+## кнопке, отсчёт стоит на нуле.
+var idle_sec: float = 0.0
+## 1 — контролы видны, 0 — скрыты. Между — плавное гашение или появление.
+var controls_alpha: float = 1.0
+## Контролы погасли и ввод выключен. Касание экрана их вернёт, само действие
+## не вызовет (reveal_armed).
+var controls_hidden: bool = false
+## Следующее касание только возвращает контролы и поглощается.
+var reveal_armed: bool = false
 ## Состояние шва: живут всё время, меняются только значения — без аллокаций.
 var _keys: Dictionary = {}
 var _mbtn: Dictionary = {MOUSE_BUTTON_LEFT: false, MOUSE_BUTTON_RIGHT: false}
@@ -194,6 +216,9 @@ func _ready() -> void:
 	layer = LAYER
 	name = "TouchControls"
 	add_to_group("touch_controls")
+	# Пауза ставит дерево на paused. Отсчёт бездействия и fade должны дотикать,
+	# иначе контролы зависнут полупрозрачными, пока меню открыто.
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	process_physics_priority = -10   # шов заполняем до Player._physics_process
 	_key.resize(KEY_LEN)
 	for b in BUTTONS:
@@ -223,11 +248,38 @@ func set_enabled(on: bool) -> void:
 	set_physics_process(on)
 	set_process_input(on)
 	release_all()
+	_show_controls()
 	var p: Player = _player()
 	if p != null:
 		p.touch_input = {"keys": _keys} if on else {}
 	if on:
 		_relayout()
+
+
+## Контролы видны и принимают ввод (не погасли по бездействию).
+func controls_shown() -> bool:
+	return enabled and not controls_hidden and controls_alpha > 0.0
+
+
+## Вернуть контролы сразу: альфа 1, отсчёт бездействия с нуля, ввод включён.
+func _show_controls() -> void:
+	idle_sec = 0.0
+	controls_alpha = 1.0
+	controls_hidden = false
+	reveal_armed = false
+	if _pad != null:
+		_pad.modulate = Color(1, 1, 1, 1)
+		_pad.queue_redraw()
+
+
+## Погасить до конца: альфа 0, ввод выключен, следующее касание только вернёт.
+func _hide_controls() -> void:
+	controls_alpha = 0.0
+	controls_hidden = true
+	reveal_armed = true
+	release_all()
+	if _pad != null:
+		_pad.modulate = Color(1, 1, 1, 0)
 
 
 ## Отпустить все пальцы: смерть, пауза приложения, выключение.
@@ -263,10 +315,24 @@ func _player() -> Player:
 	return p
 
 
-## Управление сейчас работает: герой жив, забег идёт.
+## Управление сейчас работает: герой жив, забег идёт. Автоскрытие сюда не входит:
+## рисунок и условные Q/V/пауза живут как раньше, ввод глушит controls_hidden.
 func _active() -> bool:
 	var p: Player = _player()
 	return enabled and p != null and not p.dead and Game.state == Game.State.PLAYING
+
+
+## Открыто окно, которое забирает ввод, или экран финала/смерти. Пока так —
+## контролы не гаснут: I и J в инвентаре и журнале ещё нужны, пауза глушит
+## кнопки сама (_shown), а финал живёт выше и тап по нему не наш.
+func _modal_open() -> bool:
+	if UI.blocking():
+		return true
+	var sc: Node = get_tree().current_scene if get_tree() != null else null
+	if sc == null:
+		return false
+	var end: Node = sc.get("end_screen")
+	return end != null and is_instance_valid(end) and bool(end.visible)
 
 
 # ------------------------------------------------------------------ РАСКЛАДКА
@@ -507,8 +573,10 @@ func _layout_portrait(sz: Vector2, r: float, jr: float, m: float, g: float,
 
 
 ## Что под пальцем: "stick", id кнопки или "". При открытой панели живы только I и J,
-## G — только в сети (_shown).
+## G — только в сети (_shown). Погасшие контролы палец не ловят.
 func control_at(pos: Vector2) -> String:
+	if controls_hidden or controls_alpha <= 0.0:
+		return ""
 	var blocking: bool = UI.blocking()
 	var best: String = ""
 	var best_d: float = INF
@@ -542,23 +610,34 @@ func hotbar_slot_at(pos: Vector2) -> int:
 # ------------------------------------------------------------------ КАСАНИЯ
 
 func _input(event: InputEvent) -> void:
+	if not enabled:
+		return
 	var eat: bool = false
 	if event is InputEventScreenTouch:
 		var st: InputEventScreenTouch = event
+		if st.pressed and (reveal_armed or controls_hidden):
+			# Первый тап после автоскрытия только возвращает контролы.
+			_show_controls()
+			get_viewport().set_input_as_handled()
+			return
+		idle_sec = 0.0
 		eat = _finger_down(st.index, st.position) if st.pressed else _finger_up(st.index)
 	elif event is InputEventScreenDrag:
+		if controls_hidden:
+			return
+		idle_sec = 0.0
 		var sd: InputEventScreenDrag = event
 		eat = _finger_move(sd.index, sd.position)
 	elif event is InputEventMouseButton:
 		# Клик (настоящий или эмулированный из касания) по нашей кнопке — не панелям.
-		eat = _active() and control_at((event as InputEventMouseButton).position) != ""
+		eat = controls_shown() and _active() and control_at((event as InputEventMouseButton).position) != ""
 	if eat:
 		get_viewport().set_input_as_handled()
 
 
 ## Палец коснулся экрана. true — касание наше (кнопка, джойстик, хотбар).
 func _finger_down(index: int, pos: Vector2) -> bool:
-	if not _active():
+	if not _active() or controls_hidden:
 		return false
 	var hit: String = control_at(pos)
 	if hit == "stick" and _stick_finger < 0:
@@ -721,11 +800,12 @@ func _pinch_update() -> void:
 
 # ------------------------------------------------------------------ ШОВ
 
-func _physics_process(_dt: float) -> void:
+func _physics_process(delta: float) -> void:
+	_tick_autohide(delta)
 	var p: Player = _player()
 	if p == null:
 		return
-	if not _active():
+	if not _active() or controls_hidden:
 		if not _fingers.is_empty() or bool(_keys.get(KEY_SHIFT, false)):
 			release_all()
 		return
@@ -894,7 +974,7 @@ func _ray(from: Vector2, to: Vector2, p: Player) -> Vector2i:
 
 # ------------------------------------------------------------------ РИСОВАНИЕ
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	var vp_now: Vector2 = get_viewport().get_visible_rect().size
 	var insets_now: Vector4 = safe_insets(vp_now)
 	if vp_now != _layout_size or _team_rows() != _layout_team or UI.ui_scale != _layout_ui \
@@ -906,6 +986,44 @@ func _process(_delta: float) -> void:
 		_pad.queue_redraw()
 	elif _world_finger >= 0 and _active():
 		_pad.queue_redraw()   # рамка цели и кольцо радиуса едут за камерой
+
+
+## Отсчёт бездействия и плавное гашение. Тикает в физике: сценарии ждут
+## sim_time, а headless не гарантирует кадры отрисовки. Палец на стике или
+## кнопке, открытое окно и выключенное управление отсчёт не двигают. Погасшие
+## контролы ждут касания (reveal_armed) и сами не возвращаются. Пока идёт fade,
+## ввод ещё жив.
+func _tick_autohide(delta: float) -> void:
+	if not enabled or controls_hidden:
+		return
+	var holding: bool = _stick_finger >= 0 or _btn_down()
+	if holding or _modal_open() or not _run_alive():
+		idle_sec = 0.0
+		return
+	idle_sec += delta
+	if idle_sec < AUTO_HIDE_SEC:
+		return
+	var step: float = delta / FADE_SEC
+	controls_alpha = move_toward(controls_alpha, 0.0, step)
+	if _pad != null:
+		_pad.modulate = Color(1, 1, 1, controls_alpha)
+	if controls_alpha <= 0.0:
+		_hide_controls()
+
+
+## Палец держит кнопку (не короткий импульс отпущенного тапа — тот отсчёт не держит).
+func _btn_down() -> bool:
+	for id in _btn_hold:
+		if int(_btn_hold[id]) > 0:
+			return true
+	return false
+
+
+## Забег идёт и герой жив. Мёртвый или финал — прятать контролы незачем, и
+## отсчёт тогда не копится: после респауна они на месте.
+func _run_alive() -> bool:
+	var p: Player = _player()
+	return p != null and not p.dead and Game.state == Game.State.PLAYING
 
 
 ## Ключ видимого состояния: перерисовываемся, только когда он сменился.
@@ -934,10 +1052,11 @@ func _fill_key() -> void:
 	# Q и V появляются и пропадают, не сдвигая ряд: без этих бит дырка не перерисуется.
 	_key[14] = 1 if _q_ready() else 0
 	_key[15] = 1 if _v_ready() else 0
+	# Альфа в ключе не нужна: modulate круга не зависит от _draw_pad.
 
 
 func _draw_pad() -> void:
-	if not _active():
+	if not _active() or controls_alpha <= 0.0:
 		return
 	var font: Font = ThemeDB.fallback_font
 	var blocking: bool = UI.blocking()
