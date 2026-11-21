@@ -112,7 +112,10 @@ func _t_layout(scene: Node) -> void:
 	var vp: Vector2 = get_viewport().get_visible_rect().size
 	var bad: Array = []
 	var phone_bad: Array = []
-	var canvases: Array = CANVASES
+	# 1600×720 и 1280×2844 уже есть в CANVASES: это холсты телефонов 2400×1080 и
+	# 1080×2400 при 250 %. Сырой экран 1080×2400 как холст даёт 432 лог. px — шесть
+	# ячеек туда не влезают, и это не раскладка HUD.
+	var canvases: Array = CANVASES.duplicate()
 	for touch in [false, true]:
 		if tc != null:
 			tc.set_enabled(touch)
@@ -156,7 +159,7 @@ func _t_layout(scene: Node) -> void:
 						for i in rects.size():
 							if _circle_hits((g["c"] as Vector2), float(g["r"]), (rects[i] as Rect2) ):
 								bad.append("%s: захват «%s» налезает на «%s»" % [tag, g["id"], keys[i]])
-					_phone_layout(hud, named, tag, phone_bad)
+					_phone_layout(hud, named, tc, tag, phone_bad)
 					_phone_band(hud, named, tc, s, tag)
 				var n_shown: int = hud._lay["note_lines"].size() if hud.layout_rect("notes").has_area() else 0
 				print("  ЗАМЕР: %s — блоков %d, строк статуса %d, уведомлений %d из 3" % [tag, rects.size(),
@@ -189,7 +192,7 @@ func _t_layout(scene: Node) -> void:
 
 ## Телефон: хотбар у нижнего края, плашка над ним без «…». Карточка, если влезла
 ## в нижнюю треть, — компактная (не выше 52, не шире 65 %). Весь HUD — в нижней трети.
-func _phone_layout(hud: HUD, named: Dictionary, tag: String, bad: Array) -> void:
+func _phone_layout(hud: HUD, named: Dictionary, tc: TouchControls, tag: String, bad: Array) -> void:
 	var sz: Vector2 = hud.size
 	var band_y: float = sz.y * (2.0 / 3.0)
 	if not named.has("hotbar"):
@@ -212,23 +215,59 @@ func _phone_layout(hud: HUD, named: Dictionary, tag: String, bad: Array) -> void
 			bad.append("%s: хотбар не выше захватов (низ %.1f, захват %.1f)" % [tag, hot.end.y, grab_top])
 		var ppm: float = UI.px_per_mm(420, Vector2(1080, 2400), Vector2(1280, 2844))
 		print("  ЗАМЕР портрет: %s ячейка %.1f лог. px = %.2f мм, верх захвата %.1f, хотбар %s" % [tag, cell, UI.size_mm(cell, UI.ui_scale, ppm), grab_top, str(hot)])
+	if hud.card_text != "" and not named.has("card"):
+		bad.append("%s: цель скрыта при непустом card_text" % tag)
 	if named.has("card"):
 		var card: Rect2 = named["card"]
 		if card.size.y > 52.0:
 			bad.append("%s: карточка выше 52 (%s)" % [tag, str(card.size)])
-		if card.size.x > sz.x * 0.65 + 0.5:
-			bad.append("%s: карточка шире 65 %% (%s)" % [tag, str(card.size)])
+		if card.size.y + 0.5 < 22.0 or card.size.y > 24.0 + 0.5:
+			bad.append("%s: полоса цели не 22–24 (%s)" % [tag, str(card.size)])
+		# Полоса может занять почти всю ширину нижней трети: 6 слов + этап + счётчик
+		# на 512 лог. px не влезают в поля 8. За край экрана не выходим.
+		if card.end.x > sz.x + 0.5 or card.position.x < -0.5:
+			bad.append("%s: карточка шире экрана (%s)" % [tag, str(card)])
 		if card.position.y + 0.5 < band_y:
 			bad.append("%s: карточка выше нижней трети (%s)" % [tag, str(card)])
 		if named.has("map") and card.intersects(named["map"]):
 			bad.append("%s: карточка на карте" % tag)
+		if named.has("hint") and card.intersects(named["hint"]):
+			bad.append("%s: карточка на плашке" % tag)
+		if named.has("hotbar") and card.intersects(named["hotbar"]):
+			bad.append("%s: карточка на хотбаре" % tag)
+		if named.has("hp") and card.intersects(named["hp"]):
+			bad.append("%s: карточка на здоровье" % tag)
+		if named.has("emp") and card.intersects(named["emp"]):
+			bad.append("%s: карточка на импульсе" % tag)
+		var hero: Rect2 = Rect2(sz * 0.5 - Vector2(24, 32), Vector2(48, 64))
+		if card.intersects(hero):
+			bad.append("%s: карточка на силуэте" % tag)
+		if named.has("hint"):
+			var above: float = (named["hint"] as Rect2).position.y - card.end.y
+			if card.end.y <= (named["hint"] as Rect2).position.y + 0.5 and above + 0.5 < HUD.HINT_GAP_TOUCH:
+				bad.append("%s: зазор цель–плашка %.1f < 10 card=%s hint=%s" % [tag, above, card, named["hint"]])
+		elif named.has("hotbar"):
+			var above_h: float = (named["hotbar"] as Rect2).position.y - card.end.y
+			if card.end.y <= (named["hotbar"] as Rect2).position.y + 0.5 and above_h + 0.5 < HUD.HINT_GAP_TOUCH:
+				bad.append("%s: зазор цель–хотбар %.1f < 10" % [tag, above_h])
 		var inner: float = float(hud._lay.get("card_inner", 0.0))
 		var title: String = String(hud._lay.get("card_title", ""))
-		var cfont: int = int(hud._lay.get("card_font", UI.FONT["body"]))
+		var cfont: int = int(hud._lay.get("card_font", UI.FONT["small"]))
 		if title == "" or hud._tw(title, cfont) > inner + 0.5:
-			bad.append("%s: заголовок не влезает в карточку «%s»" % [tag, title])
-		if title.ends_with("…"):
+			print("  ЗАМЕР цель: %s inner=%.1f pad=%s icon=%s hint=%s hot=%s" % [tag, inner, hud._lay.get("card_pad"), hud._lay.get("card_icon_px"), named.get("hint", Rect2()), named.get("hotbar", Rect2())])
+			var grabs: Array = _grab_circles(tc, UI.ui_scale)
+			var bits: PackedStringArray = []
+			for g in grabs:
+				bits.append("%s c=%s r=%.1f" % [g["id"], str(g["c"]), float(g["r"])])
+			bad.append("%s: заголовок не влезает tw=%.1f card=%s grabs=[%s]" % [tag, hud._tw(title, cfont), str(card), "; ".join(bits)])
+		if title.contains("…"):
 			bad.append("%s: заголовок обрезан «%s»" % [tag, title])
+		if not title.begins_with("%d/" % _goal_stage()):
+			bad.append("%s: строка не с этапа «%s»" % [tag, title])
+		if hud.card_need > 1 and not title.contains("%d / %d" % [hud.card_have, hud.card_need]):
+			bad.append("%s: нет счётчика «%s»" % [tag, title])
+		if title.contains("0 / 1"):
+			bad.append("%s: показан 0 / 1" % tag)
 	if named.has("hint"):
 		var hint: Rect2 = named["hint"]
 		var ht: String = String(hud._lay.get("hint_text", ""))
@@ -340,6 +379,18 @@ func _t_intro_plate(tc: TouchControls, hud: HUD) -> void:
 	hud._hint_hash = "".hash()
 	hud._intro_done = false
 	Game.game_time = 1.0
+	# Цикл раскладки выше оставляет 6 ячеек и шаг героя: шаг гасит ввод, а крупный
+	# хотбар поднимается и съедает ряд плашки. Здесь — как до цикла.
+	var scene: Node = hud.get_parent()
+	var old_vel: Vector2 = Vector2.ZERO
+	var had_vel: bool = scene != null and scene.get("player") != null
+	var old_slots: int = 10
+	if had_vel:
+		old_vel = scene.player.vel
+		scene.player.vel = Vector2.ZERO
+		if scene.player.inv != null:
+			old_slots = scene.player.inv.hotbar_size
+			scene.player.inv.hotbar_size = 10
 	hud._lay_sig = -1
 	var named: Dictionary = hud.layout_named()
 	var ht: String = String(hud._lay.get("hint_text", ""))
@@ -367,7 +418,21 @@ func _t_intro_plate(tc: TouchControls, hud: HUD) -> void:
 	hud._hint_hash = old_hash
 	hud._intro_done = old_done
 	Game.game_time = old_time
+	if had_vel:
+		scene.player.vel = old_vel
+		if scene.player.inv != null:
+			scene.player.inv.hotbar_size = old_slots
 	hud._lay_sig = -1
+
+
+## Текущий этап для строки цели: глава — stage+1, иначе clampi(objective_stage, 1, 6).
+func _goal_stage() -> int:
+	if Game.in_mission() and Game.mission != null:
+		return int(Game.mission.stage) + 1
+	var st: int = clampi(Game.objective_stage, 1, Game.OBJECTIVE_STAGES)
+	if Game.relay_active:
+		st = Game.OBJECTIVE_STAGES
+	return st
 
 
 ## Худшее состояние HUD для раскладки: длинные строки трекера, обучение, миссия,
@@ -382,9 +447,10 @@ func _worst_state(hud: HUD) -> Dictionary:
 	hud.tracker_title = "ЦЕЛЬ 2 · СВЕТ"
 	hud.tracker_detail = "Поставь горелку у входа в пещеру и зажги её углём — это длинная строка"
 	# 72 символа: _set_card режет до 6 слов, тест пишет card_text напрямую.
-	hud.card_text = "Положи медную катушку во вторую горелку у дальнего терминала базы"
-	hud.card_have = 0
-	hud.card_need = 2
+	# Шесть слов, как режет _set_card. Длиннее полоса телефона не обещает.
+	hud.card_text = "Положи медную катушку во вторую горелку"
+	hud.card_have = 3
+	hud.card_need = 8
 	hud.tutorial_text = "возьми уголь и положи в топку"
 	hud.hint_text = "[E] — загрузить уголь в ТЭЦ · удерживать [E] — разобрать"
 	hud._hint_hash = hud.hint_text.hash()
