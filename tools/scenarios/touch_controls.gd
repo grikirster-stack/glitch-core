@@ -56,6 +56,7 @@ func run() -> void:
 			"под пальцем «%s», I на y=%.0f" % [tc.control_at(tc.btn_center["g"]), tc.btn_center["inv"].y])
 
 	_layout_checks()
+	_plate_text_checks()
 	await _mining_with_stick_held()
 	await _walk_and_jump()
 	await _card_tap_does_not_dig()
@@ -72,6 +73,63 @@ func run() -> void:
 	ok("после сценария мышь отпущена и шов пуст",
 			not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and player.touch_input.is_empty())
 	finish()
+
+
+# ------------------------------------------------------------------ ПЛАШКА
+
+## Этап 2 без цели и после ввода: старый код отдавал пустую плашку.
+## Здесь только текст — раскладку и окно не трогаем, следующие шаги бьют по ячейкам.
+func _plate_text_checks() -> void:
+	var hud: HUD = UI.hud
+	var old_hint: String = hud.hint_text
+	var old_hash: int = hud._hint_hash
+	var old_tut: String = hud.tutorial_text
+	var old_done: bool = hud._intro_done
+	var old_time: float = Game.game_time
+	var old_stage: int = Game.objective_stage
+	hud.hint_text = ""
+	hud._hint_hash = "".hash()
+	hud.tutorial_text = ""
+	hud._intro_done = true
+	Game.game_time = 30.0
+	Game.objective_stage = 2
+	var help2: String = hud._plate_text()
+	ok("этап 2 без цели: плашка не пустая (регресс пустой плашки)",
+			help2 != "" and help2.contains("копай") and not help2.contains("\n")
+			and not help2.contains("…"), "«%s»" % help2)
+	hud.hint_text = HUD.HINT_TERMINAL
+	ok("контекст важнее подсказки этапа",
+			hud._plate_text() == hud._touch_hint(HUD.HINT_TERMINAL) and hud._plate_text() != help2,
+			"«%s»" % hud._plate_text())
+	hud.hint_text = ""
+	hud._intro_done = false
+	hud.tutorial_text = "1/4 Копай: тап по земле"
+	Game.game_time = 1.0
+	var a: String = hud._plate_text()
+	Game.game_time = 11.0
+	var b: String = hud._plate_text()
+	ok("ввод: одна строка, меняется, раньше туториала",
+			a == "Джойстик — идти" and b == "«меню» — пауза" and not a.contains("\n"),
+			"«%s» → «%s»" % [a, b])
+	Game.game_time = 20.0
+	hud._intro_done = true
+	ok("после ввода — одна строка tutorial_text",
+			hud._plate_text() == "1/4 Копай: тап по земле")
+	# Копание не прячет.
+	var old_mining: float = player.mining_progress
+	player.mining_progress = 0.5
+	ok("копание не прячет плашку", hud._plate_text() != "")
+	player.mining_progress = old_mining
+	tc.set_enabled(false)
+	hud.hint_text = ""
+	ok("десктоп: пустая подсказка остаётся пустой", hud._plate_text() == "")
+	tc.set_enabled(true)
+	hud.hint_text = old_hint
+	hud._hint_hash = old_hash
+	hud.tutorial_text = old_tut
+	hud._intro_done = old_done
+	Game.game_time = old_time
+	Game.objective_stage = old_stage
 
 
 # ------------------------------------------------------------------ РАСКЛАДКА

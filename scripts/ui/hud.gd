@@ -484,17 +484,13 @@ func _player_acting() -> bool:
 	return player.mining_progress > 0.0 or player._place_cd > 0.0
 
 
-## Вводная строка на телефоне больше не нужна: первое действие или INTRO_TIME.
-## Прятки и шаг тоже гасят ввод — но не нижнюю плашку (её прячет только _player_acting).
+## Ввод крутится первые INTRO_TIME секунд, по одной строке. Шаг и прятки его
+## не гасят: иначе игрок, который сразу пошёл, вводных строк не увидит.
+## Копание и стройка тоже не гасят — плашка остаётся, строка просто сменяется.
 func _update_intro() -> void:
 	if _intro_done or not UI.touch_on:
 		return
-	if Game.game_time >= INTRO_TIME or _player_acting():
-		_intro_done = true
-		return
-	if player == null:
-		return
-	if player.vel.length() > 1.0 or player.hiding:
+	if Game.game_time >= INTRO_TIME:
 		_intro_done = true
 
 
@@ -1395,8 +1391,14 @@ const CARD_WORDS: int = 6
 const CARD_H_TOUCH: float = 48.0
 const CARD_ICON_TOUCH: float = 32.0
 ## Зазор нижней плашки над хотбаром. На ПК — 4 (скриншоты README); на телефоне — 10.
+## Ландшафт телефона теснее: между верхом нижней трети и хотбаром ~54 лог. px,
+## и 10+24+10+24 не влезают. Там зазор 6, строка плашки 20, цель остаётся 22.
 const HINT_GAP: float = 4.0
 const HINT_GAP_TOUCH: float = 10.0
+const HINT_GAP_LAND: float = 6.0
+## Высота строки нижней плашки. Портрет — ROW_H (24). Ландшафт — 20, иначе
+## цель и подсказка не умещаются в нижней трети над хотбаром.
+const HINT_H_LAND: float = 20.0
 ## Низ хотбара на телефоне ближе к краю: 12 px мира по центру. На ПК HOTBAR_BOTTOM не трогаем.
 const HOTBAR_BOTTOM_TOUCH: float = 20.0
 ## Ландшафт телефона: хотбар у самого края, чтобы над плашкой влезла карточка.
@@ -1648,6 +1650,21 @@ func _grab_gap_slot(grabs: Array, band: float, top: float, need: float, hgt: flo
 	return Rect2()
 
 
+
+## Ряд плашки на фиксированной высоте: центр хотбара, иначе любой промежуток
+## между захватами той же высоты. Пустой — на этой высоте щели нет.
+func _hint_row(grabs: Array, y: float, need: float, hgt: float, prefer_x: float) -> Rect2:
+	var w: float = size.x
+	var cx: float = clampf(prefer_x - need * 0.5, PAD, maxf(PAD, w - PAD - need))
+	var centered: Rect2 = Rect2(cx, y, need, hgt)
+	if not _hits_grab(centered, grabs):
+		return centered
+	var gap_r: Rect2 = _grab_gap_slot(grabs, y, y + hgt, need, hgt)
+	if gap_r.has_area():
+		return Rect2(gap_r.position.x, y, need, hgt)
+	return Rect2()
+
+
 func _grab_free_slot(grabs: Array, band: float, top: float, need: float, hgt: float) -> Rect2:
 	var w: float = size.x
 	var y: float = top - hgt
@@ -1715,17 +1732,88 @@ static func right_column_bottom(w: float, n: int) -> float:
 	return MAP_OFFSET.y + MAP_SIZE.y
 
 
-## Текст нижней плашки. На ПК — hint_text как есть. На телефоне: действие прячет
-## плашку, иначе короткая контекстная, иначе одна вводная строка, иначе ничего.
+## Текст нижней плашки. На ПК — hint_text как есть (пустой, если цели нет).
+## На телефоне плашка не пустая в играбельном состоянии, одна строка без переноса:
+##   1. контекстная подсказка действия (_touch_hint);
+##   2. вводная строка — по одной, первые INTRO_TIME секунд (раньше туториала);
+##   3. шаг обучения (tutorial_text), одна строка;
+##   4. короткая подсказка этапа цели (_touch_stage_help).
+## Копание и стройка плашку не прячут: подсказка нужна и во время действия.
 func _plate_text() -> String:
 	if not UI.touch_on:
 		return hint_text
-	if _player_acting():
-		return ""
 	var short: String = _touch_hint(hint_text)
 	if short != "":
 		return short
-	return _intro_line()
+	var intro: String = _intro_line()
+	if intro != "":
+		return intro
+	var tut: String = _touch_tutorial()
+	if tut != "":
+		return tut
+	return _touch_stage_help()
+
+
+## Шаг обучения — одна короткая строка без переносов. Пусто, пока идёт ввод
+## (его отдаёт _plate_text раньше) или цепочка пройдена.
+func _touch_tutorial() -> String:
+	var t: String = tutorial_text.strip_edges()
+	if t == "":
+		return ""
+	var cut: int = t.find("\n")
+	if cut >= 0:
+		t = t.substr(0, cut)
+	return t.strip_edges()
+
+
+## Строка плашки, которая влезает в max_w без «…». Сначала как есть, потом
+## без хвоста после «—» / «·», потом по словам с конца. Пустую не возвращаем,
+## пока исходная не пуста: последняя попытка — первое слово.
+func _touch_plate_fit(text: String, fs: int, max_w: float) -> String:
+	var t: String = text.strip_edges()
+	if t == "":
+		return ""
+	if max_w <= 8.0 or _tw(t, fs) <= max_w + 0.5:
+		return t
+	for sep in [" — ", " · ", ": "]:
+		var cut: int = t.find(sep)
+		if cut > 0:
+			var head: String = t.substr(0, cut).strip_edges()
+			if head != "" and _tw(head, fs) <= max_w + 0.5:
+				return head
+	var parts: PackedStringArray = t.split(" ", false)
+	while parts.size() > 1:
+		parts.resize(parts.size() - 1)
+		var joined: String = " ".join(parts)
+		if _tw(joined, fs) <= max_w + 0.5:
+			return joined
+	return String(parts[0]) if parts.size() > 0 else t
+
+
+## Короткая подсказка этапа, когда нет ни действия, ни ввода, ни шага обучения.
+## Свободная игра — этапы 1–6; глава — подсказка этапа, иначе та же формула.
+## Тексты сверены с _compute_tracker / Game.OBJECTIVE_TITLES, не с догадкой.
+func _touch_stage_help() -> String:
+	if Game.in_mission() and Game.mission != null:
+		var mh: String = _one_hint(String(Game.mission.hint))
+		if mh != "":
+			return mh
+	var st: int = clampi(Game.objective_stage, 1, Game.OBJECTIVE_STAGES)
+	if Game.relay_active:
+		st = Game.OBJECTIVE_STAGES
+	match st:
+		1:
+			return "Хлам на горелку — крафт I, тап у базы"
+		2:
+			return "Руда в камне — копай тапом по земле"
+		3:
+			return "Ночь у базы — дождись рассвета"
+		4:
+			return "Луч цвета в ядро — белый не считается"
+		5:
+			return "Держи [E] у ядра 3 с"
+		_:
+			return "Стой у ядра — держи сигнал"
 
 
 ## Высота карточки, сторона иконки и кегли заголовка и счётчика. На ПК — как было.
@@ -1850,12 +1938,18 @@ func _compute_layout() -> Dictionary:
 				hb_w = shrunk.size.x
 	var stack_top: float = hy
 	var gap: float = HINT_GAP_TOUCH if touch else HINT_GAP
+	var hint_h: float = ROW_H
+	# Ландшафт: 54 лог. px между верхом нижней трети и хотбаром. Цель 22 + зазор 6
+	# + строка 20 + зазор 6 = 54. Портрет не сжимаем: там 24/10 и хотбар 78.
+	if touch and not portrait:
+		gap = HINT_GAP_LAND
+		hint_h = HINT_H_LAND
 	# Телефон: цель раньше плашки. На узком ландшафте единственная широкая щель —
 	# у границы нижней трети, выше стика. Плашка, севшая туда первой, прятала этап.
 	# Но вводной строке нужен свой ряд: иначе цель занимает щель над хотбаром и
 	# плашка пересекает карточку. Резерв — высота строки и зазор, не сама плашка.
 	if touch and _plate_text() != "":
-		stack_top -= ROW_H + gap
+		stack_top -= hint_h + gap
 	if touch:
 		_place_touch_top(L, tb, h * TOUCH_BAND, portrait, stack_top)
 		if L.has("card"):
@@ -1865,19 +1959,18 @@ func _compute_layout() -> Dictionary:
 		var hfont: int = fb
 		var ht: String = plate
 		if touch:
-			# Кегль плашки всегда small: не крупнее цифр ячеек хотбара.
-			# И ввод, и контекст — по ширине текста, в полосе джойстик–кнопки.
+			# Кегль плашки не крупнее цифр ячеек хотбара. Ширина = текст + поля,
+			# не на весь экран. Не влезла в щель — короче текст, плашку не прячем.
 			hfont = _slot_font()
-			# Полоса стик–кнопки. Не влезла целиком — без «…» не показываем:
-			# полная ширина накрывает «копать» и вылезает из нижней трети.
 			var hpad: float = 0.0 if portrait else 16.0
-			ht = plate if _tw(plate, hfont) <= hint_max - hpad else ""
+			ht = _touch_plate_fit(plate, hfont, hint_max - hpad)
 		else:
 			ht = _fit_text(plate, fb, hint_max - 16.0)
 		if ht != "":
 			L["hint_text"] = ht
 			L["hint_font"] = hfont
-			var hw: float = _tw(ht, hfont) + (0.0 if portrait else 16.0)
+			var side: float = 0.0 if portrait else 16.0
+			var hw: float = _tw(ht, hfont) + side
 			var grabs: Array = _grab_circles()
 			var slot_r: Rect2 = Rect2()
 			var hint_ceiling: float = stack_top
@@ -1885,43 +1978,31 @@ func _compute_layout() -> Dictionary:
 				hint_ceiling = minf(hint_ceiling, (L["card"] as Rect2).position.y - gap)
 			if portrait:
 				var hx0: float = clampf(hx + hb_w * 0.5 - hw * 0.5, PAD, maxf(PAD, w - PAD - hw))
-				slot_r = Rect2(hx0, hy - gap - ROW_H, hw, ROW_H)
+				slot_r = Rect2(hx0, hy - gap - hint_h, hw, hint_h)
 				# Цель уже над хотбаром — плашка уходит под неё, не на неё.
 				if L.has("card") and slot_r.intersects(L["card"]):
 					slot_r.position.y = (L["card"] as Rect2).end.y + gap
 				if slot_r.end.y > hy - gap + 0.5:
 					slot_r = Rect2()
 			elif not grabs.is_empty():
-				# Над хотбаром, в нижней трети, ниже уже поставленной цели.
-				# Зазор до хотбара может вырасти: захват E/стика выше видимого круга.
-				# Не влезла — скрыта. Цель не прячем.
-				var hint_top_y: float = minf(hy - gap, hint_ceiling)
-				slot_r = _grab_free_slot(grabs, h * TOUCH_BAND, hint_top_y, hw, ROW_H)
-				# Цель заняла щель у границы трети. Промежуток между захватами под ней
-				# (стик слева, Q справа) общий поиск не видит — он режет полосу с края.
-				if not slot_r.has_area() and L.has("card"):
-					slot_r = _grab_gap_slot(grabs, h * TOUCH_BAND, hy - gap, hw, ROW_H)
-				if slot_r.has_area() and L.has("card"):
-					var card_r: Rect2 = L["card"]
-					var floor_y: float = card_r.end.y + gap
-					if slot_r.position.y + 0.5 < floor_y:
-						var lift: float = floor_y - slot_r.position.y
-						var lifted: Rect2 = card_r
-						lifted.position.y -= lift
-						if lifted.position.y + 0.5 >= h * TOUCH_BAND and not _hits_grab(lifted, grabs):
-							card_r = lifted
-							L["card"] = card_r
-						else:
-							slot_r.position.y = floor_y
-					slot_r.size.y = minf(ROW_H, hy - gap - slot_r.position.y)
-					var min_gap: float = gap if card_r.end.y + gap + CARD_H_TOUCH_MIN <= hy - gap + 0.5 else 4.0
-					if slot_r.position.y + 0.5 < card_r.end.y + min_gap or slot_r.size.y + 0.5 < CARD_H_TOUCH_MIN or _hits_grab(slot_r, grabs):
-						slot_r = Rect2()
+				# Прямо над хотбаром, в нижней трети. Свободный поиск сажал плашку
+				# в щель у границы трети и вытеснял цель — здесь ряд фиксирован.
+				var y_hint: float = hy - gap - hint_h
+				if y_hint + 0.5 >= h * TOUCH_BAND:
+					slot_r = _hint_row(grabs, y_hint, hw, hint_h, hx + hb_w * 0.5)
+					if not slot_r.has_area():
+						var shorter: String = _touch_plate_fit(ht, hfont, maxf(48.0, hw * 0.55))
+						if shorter != "" and _tw(shorter, hfont) + side + 0.5 < hw:
+							hw = _tw(shorter, hfont) + side
+							ht = shorter
+							slot_r = _hint_row(grabs, y_hint, hw, hint_h, hx + hb_w * 0.5)
+				if slot_r.has_area():
+					L["hint_text"] = ht
 			else:
 				var h_lo: float = maxf(PAD, lo)
 				var h_hi: float = hi
 				var hcx: float = clampf(hx + hb_w * 0.5 - hw * 0.5, h_lo, maxf(h_lo, minf(w - PAD, h_hi) - hw))
-				slot_r = Rect2(hcx, hy - gap - ROW_H, hw, ROW_H)
+				slot_r = Rect2(hcx, hy - gap - hint_h, hw, hint_h)
 			if slot_r.has_area() and not _hits_grab(slot_r, grabs):
 				L["hint"] = slot_r
 				stack_top = minf(stack_top, slot_r.position.y)
@@ -2054,12 +2135,14 @@ func _touch_map_rect(tb: Dictionary, band: float, h: float, occupied: Array = []
 ## Пересечения с плашкой, хотбаром, HP, импульсом, силуэтом и захватом нет:
 ## если на выбранной высоте X занят — берём свободный промежуток той же полосы.
 func _place_touch_card(L: Dictionary, tb: Dictionary, band: float, hint_top: float) -> Rect2:
+	var portrait: bool = size.y > size.x * 1.2
 	var line: String = _card_line_text()
 	if line == "":
 		return Rect2()
 	var w: float = size.x
 	var line_h: float = CARD_H_TOUCH_LINE
-	var top: float = hint_top - HINT_GAP_TOUCH
+	var card_gap: float = HINT_GAP_LAND if not portrait else HINT_GAP_TOUCH
+	var top: float = hint_top - card_gap
 	if top - line_h + 0.5 < band:
 		line_h = CARD_H_TOUCH_MIN
 	var y0: float = top - line_h
@@ -2067,7 +2150,12 @@ func _place_touch_card(L: Dictionary, tb: Dictionary, band: float, hint_top: flo
 		y0 = band
 	var floor_y: float = size.y - line_h
 	if L.has("hotbar"):
-		floor_y = minf(floor_y, (L["hotbar"] as Rect2).position.y - HINT_GAP_TOUCH - line_h)
+		var hb_gap: float = card_gap if portrait else HINT_GAP_TOUCH
+		floor_y = minf(floor_y, (L["hotbar"] as Rect2).position.y - hb_gap - line_h)
+	# Ландшафт с плашкой: единственный ряд цели — над ней, у границы трети.
+	# Поиск снизу вверх сажает цель на хотбар или прячет. Ряд фиксируем.
+	if not portrait and hint_top + 0.5 < (L["hotbar"] as Rect2).position.y if L.has("hotbar") else false:
+		floor_y = minf(floor_y, maxf(band, hint_top - card_gap - line_h))
 	# Плашка ещё не стоит, но ввод её потребует: оставляем под целью ряд и зазор,
 	# иначе полоса садится на единственную широкую щель и ввод пропадает.
 	# Выше границы трети не поднимаем — цель должна остаться в нижней трети.
@@ -2080,12 +2168,20 @@ func _place_touch_card(L: Dictionary, tb: Dictionary, band: float, hint_top: flo
 	# Плашка ещё не стоит. Если под целью останется ряд и зазор, а строка цели
 	# всё ещё влезает выше — оставляем этот ряд плашке. Иначе цель как была.
 	if not L.has("hint") and _plate_text() != "" and L.has("hotbar"):
-		var plate_w: float = _tw(_plate_text(), _slot_font())
-		var plate_top: float = (L["hotbar"] as Rect2).position.y - HINT_GAP_TOUCH
-		var plate_slot: Rect2 = _grab_gap_slot(grabs, band, plate_top, plate_w, ROW_H)
-		var card_h: float = CARD_H_TOUCH_MIN if plate_slot.position.y - HINT_GAP_TOUCH - CARD_H_TOUCH_LINE + 0.5 < band else CARD_H_TOUCH_LINE
-		if plate_slot.has_area() and plate_slot.position.y + ROW_H + 0.5 >= band + HINT_GAP_TOUCH + card_h:
-			var raised: float = maxf(band, plate_slot.position.y - HINT_GAP_TOUCH - card_h)
+		var plate_w: float = _tw(_plate_text(), _slot_font()) + (0.0 if portrait else 16.0)
+		var plate_gap: float = HINT_GAP_LAND if not portrait else HINT_GAP_TOUCH
+		var plate_h: float = HINT_H_LAND if not portrait else ROW_H
+		var plate_top: float = (L["hotbar"] as Rect2).position.y - plate_gap
+		# Ландшафт: ряд плашки фиксирован над хотбаром. Не ищем щель выше —
+		# иначе цель отдаёт плашке верх трети и сама вытесняется.
+		var plate_slot: Rect2 = Rect2()
+		if not portrait:
+			plate_slot = _grab_gap_slot(grabs, plate_top - plate_h, plate_top, plate_w, plate_h)
+		else:
+			plate_slot = _grab_gap_slot(grabs, band, plate_top, plate_w, plate_h)
+		var card_h: float = CARD_H_TOUCH_MIN if plate_slot.position.y - plate_gap - CARD_H_TOUCH_LINE + 0.5 < band else CARD_H_TOUCH_LINE
+		if plate_slot.has_area() and plate_slot.position.y + 0.5 >= band + plate_gap + card_h:
+			var raised: float = maxf(band, plate_slot.position.y - plate_gap - card_h)
 			if _card_x_gap(raised, card_h, need, [], grabs, 0.0, w).size.x + 0.5 >= need:
 				floor_y = minf(floor_y, raised)
 				line_h = card_h
