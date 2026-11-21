@@ -1980,21 +1980,16 @@ func first_solid_on_ray(from: Vector2, to: Vector2, machines_block: bool = true,
 			var into_x: bool = _segment_enters_cell(from, to, side_x)
 			var into_y: bool = _segment_enters_cell(from, to, side_y)
 			if not into_x and not into_y:
-				# Луч только коснулся угла. Конец отрезка в диагональной клетке — это
-				# цель (герой в яме, тайл слева-сверху): её не должен перехватывать пол,
-				# который лишь касается того же угла. Середина луча сквозь угол не
-				# проходит, если сбоку твёрдая клетка, и не задевает камень на самой
-				# диагонали.
+				# Касание угла. Конец отрезка — сама цель, даже пустая: на точной
+				# диагонали DDA делает steps = |dx|+|dy| и перелетает b; провал к
+				# сторонам возвращает пол за целью. Щель закрыта, только если обе
+				# клетки по сторонам твёрдые. Одна сторона — луч скользит по углу.
 				if cell == b:
-					var end_hit: Vector2i = _solid_hit(cell, machines_block, diggable)
-					if end_hit.x >= 0:
-						return end_hit
+					return _solid_hit(cell, machines_block, diggable)
 				var gap_x: Vector2i = _solid_hit(side_x, machines_block, diggable)
-				if gap_x.x >= 0:
-					return gap_x
 				var gap_y: Vector2i = _solid_hit(side_y, machines_block, diggable)
-				if gap_y.x >= 0:
-					return gap_y
+				if gap_x.x >= 0 and gap_y.x >= 0:
+					return gap_x
 				continue
 			if into_x and into_y:
 				var cx_hit: Vector2i = _solid_hit(side_x, machines_block, diggable)
