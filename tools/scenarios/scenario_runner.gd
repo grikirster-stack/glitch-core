@@ -298,6 +298,11 @@ const REGISTRY: Dictionary = {
 		"title": "ПКМ ставит постройку",
 		"desc": "горелка в руке + ПКМ по свободной клетке — постройка на месте",
 	},
+	"machine_pickup": {
+		"file": "machine_pickup.gd",
+		"title": "забор машины",
+		"desc": "ЛКМ и короткий тап забирают свою машину и дают поставить её заново",
+	},
 	"chest_vs_terminal": {
 		"file": "chest_vs_terminal.gd",
 		"title": "сундук рядом с терминалом",

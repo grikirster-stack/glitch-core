@@ -315,9 +315,15 @@ func _handle_input(dt: float) -> void:
 
 	dig_cell = dig_target(mouse)
 	var lmb: bool = _mouse_down(MOUSE_BUTTON_LEFT)
+	var lmb_fresh: bool = lmb and not _lmb_was
 	dig_denied_t = maxf(0.0, dig_denied_t - dt)
 	if lmb:
 		if in_reach and _slash_at(mouse):
+			return
+		# Свежий клик по своей машине — забрать. Удержание копает стену за ней.
+		# Атака выше уже забрала кадр: удар по фантому приоритетнее забора.
+		if lmb_fresh and in_reach and _try_pickup(cell):
+			_lmb_was = true
 			return
 		_flag_denied(cell)
 		if dig_cell.x >= 0:
@@ -843,6 +849,25 @@ func _dismantle_node(tg: Dictionary, kind: String) -> MachineBase:
 	return m
 
 
+## Свежий ЛКМ или короткий тап по своей машине: забрать её сразу.
+## Пустая рука не нужна. Постоянная постройка базы и непустой сундук остаются
+## на месте — игроку говорят, почему. true — клик обработан (копать не надо).
+func _try_pickup(cell: Vector2i) -> bool:
+	var m = World.machines.get(cell)
+	if m == null or not is_instance_valid(m) or m.is_queued_for_deletion():
+		return false
+	if bool(m.permanent):
+		_notify("Это постройка базы — её нельзя забрать", Color(1.0, 0.6, 0.5))
+		return true
+	if m is Chest and not _chest_empty(m):
+		_notify("Сундук не пуст — сначала выгрузи", Color(1.0, 0.6, 0.5))
+		return true
+	if not _can_dismantle(m):
+		return false
+	_dismantle(m)
+	return true
+
+
 ## Разобрать постройку: предмет вернётся в инвентарь (нет места — под ноги).
 func _dismantle(m: MachineBase) -> void:
 	var had_lens: bool = m is Pharos and bool(m.get("lens"))
@@ -850,8 +875,11 @@ func _dismantle(m: MachineBase) -> void:
 	if item == IDs.I.NONE:
 		return
 	var left: int = inv.add(item, 1)
-	if left > 0:
+	var dropped: bool = left > 0
+	if dropped:
 		spawn_item(item, left, global_position)
+	else:
+		_select_item(item)
 	# Линза маяка (#172) возвращается вместе с башней, не остаётся в корпусе.
 	if had_lens:
 		var lens_left: int = inv.add(IDs.I.LENS, 1)
@@ -861,7 +889,35 @@ func _dismantle(m: MachineBase) -> void:
 	var back: String = DB.item_name(item)
 	if had_lens:
 		back += " и линза"
-	_notify("Разобрано: %s" % back, Color(0.8, 0.9, 0.75))
+	if dropped:
+		_notify("Рюкзак полон — %s у ног" % back, Color(1.0, 0.85, 0.45))
+	else:
+		_notify("Забрано: %s" % back, Color(0.8, 0.9, 0.75))
+	_arm_touch_build(item)
+
+
+## Выбрать в хотбаре слот, где лежит предмет (после забора — сразу в руке).
+func _select_item(item: int) -> void:
+	for i in mini(inv.hotbar_size, inv.slots.size()):
+		if inv.slots[i].id == item:
+			inv.selected = i
+			return
+
+
+## На телефоне забранный предмет сразу ставится следующим тапом.
+func _arm_touch_build(item: int) -> void:
+	if not touch_input.has("keys"):
+		return
+	var tc: Node = get_tree().get_first_node_in_group("touch_controls")
+	if tc == null or not bool(tc.get("enabled")):
+		return
+	if DB.item_place(item) == "":
+		return
+	# Короткий тап ещё пульсирует. Не дать ему тут же поставить машину обратно.
+	tc.set("_world_ghost", 0)
+	tc.set("_world_spent", true)
+	tc.set("aim_cell", Vector2i(-9999, -9999))
+	tc.set("build_mode", true)
 
 
 ## Терминал отработал (#169): глава журнала этого места, следующий чертёж

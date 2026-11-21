@@ -35,14 +35,13 @@ func run() -> void:
 		finish()
 		return
 	await wait(0.4)
-	ok("у горелки без топлива в руке — подсказка «рубильник»",
-			hud.hint_text == HUD.HINT_BURNER_SWITCH + HUD.HINT_DISMANTLE_TAIL,
-			"«%s»" % hud.hint_text)
+	ok("у горелки без топлива в руке — подсказка «забрать»",
+			hud.hint_text == HUD.HINT_PICKUP_BURNER, "«%s»" % hud.hint_text)
 	hold(KEY_2)
 	await wait(0.4)
 	release(KEY_2)
-	ok("уголь в руке — подсказка «загрузить топливо»", hud.hint_text == HUD.HINT_BURNER_FUEL,
-			"«%s»" % hud.hint_text)
+	ok("уголь в руке — подсказка «забрать», топка остаётся на [E]",
+			hud.hint_text == HUD.HINT_PICKUP_BURNER, "«%s»" % hud.hint_text)
 	hold(KEY_E)
 	await wait(0.3)
 	release(KEY_E)

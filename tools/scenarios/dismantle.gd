@@ -37,8 +37,8 @@ func run() -> void:
 	aim(World.cell_to_world(cell))
 	await wait(0.4)
 	ok("цель E — разбор постройки", _target_kind() == Player.ET_DISMANTLE, _target_kind())
-	ok("подсказка — разбор постройки",
-			hud.hint_text == "%s: %s" % [HUD.HINT_DISMANTLE, DB.item_name(item)],
+	ok("подсказка — забрать постройку",
+			hud.hint_text == HUD.HINT_PICKUP % DB.item_name(item),
 			"«%s»" % hud.hint_text)
 	ok("рамка HUD — на зеркале", _mark_on(hud, drill.global_position), str(hud.mark_rect))
 
@@ -93,8 +93,8 @@ func run() -> void:
 	player.inv.selected = _empty_slot()
 	aim(World.cell_to_world(ccell))
 	await wait(0.4)
-	ok("у пустого сундука — подсказка разбора",
-			hud.hint_text == "%s: %s" % [HUD.HINT_DISMANTLE, DB.item_name(citem)],
+	ok("у пустого сундука — подсказка забора",
+			hud.hint_text == HUD.HINT_PICKUP % DB.item_name(citem),
 			"«%s»" % hud.hint_text)
 	hold(KEY_E)
 	await wait(1.3)
@@ -140,8 +140,8 @@ func run() -> void:
 	player.inv.selected = _empty_slot()
 	aim(World.cell_to_world(gcell))
 	await wait(0.4)
-	ok("у горелки — подсказка рубильника с хвостом про разбор",
-			hud.hint_text == HUD.HINT_BURNER_SWITCH + HUD.HINT_DISMANTLE_TAIL, "«%s»" % hud.hint_text)
+	ok("у горелки — подсказка забора, рубильник остаётся на [E]",
+			hud.hint_text == HUD.HINT_PICKUP_BURNER, "«%s»" % hud.hint_text)
 	hold(KEY_E)
 	await wait(0.3)
 	release(KEY_E)
