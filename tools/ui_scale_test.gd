@@ -106,6 +106,9 @@ func _t_layout(scene: Node) -> void:
 	var tc: TouchControls = get_tree().get_first_node_in_group("touch_controls") as TouchControls
 	var touch0: bool = tc != null and tc.enabled
 	var saved: Dictionary = _worst_state(hud)
+	var slots0: int = 10
+	if scene.get("player") != null and scene.player.inv != null:
+		slots0 = scene.player.inv.hotbar_size
 	var vp: Vector2 = get_viewport().get_visible_rect().size
 	var bad: Array = []
 	var phone_bad: Array = []
@@ -115,6 +118,11 @@ func _t_layout(scene: Node) -> void:
 			tc.set_enabled(touch)
 		if touch and tc == null:
 			continue
+		# На телефоне Шифу 6 ячеек, не 10 по умолчанию. Десктопный прогон не трогаем.
+		if touch and scene.get("player") != null and scene.player.inv != null:
+			scene.player.inv.hotbar_size = 6
+		elif scene.get("player") != null and scene.player.inv != null:
+			scene.player.inv.hotbar_size = slots0
 		for canvas in canvases:
 			var win: Vector2 = Vector2(1080, 2400) if canvas.y > canvas.x else Vector2(canvas.x * 1.5, 1080)
 			var ppm: float = UI.px_per_mm(420, win, canvas)
@@ -143,23 +151,21 @@ func _t_layout(scene: Node) -> void:
 						if (rects[i] as Rect2).intersects(rects[j]):
 							bad.append("%s: «%s» %s налезает на «%s» %s" % [tag, keys[i], str(rects[i]), keys[j], str(rects[j])])
 				if touch and tc != null:
-					for id in tc.btn_center:
-						if not tc._shown(id, false):
-							continue
-						var c: Vector2 = tc.btn_center[id]
-						var rr: float = float(tc.btn_radius[id])
-						var br: Rect2 = Rect2(c - Vector2(rr, rr), Vector2(rr, rr) * 2.0)
+					var grabs: Array = _grab_circles(tc, s)
+					for g in grabs:
 						for i in rects.size():
-							var hr: Rect2 = Rect2((rects[i] as Rect2).position * s, (rects[i] as Rect2).size * s)
-							if br.intersects(hr):
-								bad.append("%s: кнопка «%s» налезает на «%s»" % [tag, id, keys[i]])
+							if _circle_hits((g["c"] as Vector2), float(g["r"]), (rects[i] as Rect2) ):
+								bad.append("%s: захват «%s» налезает на «%s»" % [tag, g["id"], keys[i]])
 					_phone_layout(hud, named, tag, phone_bad)
+					_phone_band(hud, named, tc, s, tag)
 				var n_shown: int = hud._lay["note_lines"].size() if hud.layout_rect("notes").has_area() else 0
 				print("  ЗАМЕР: %s — блоков %d, строк статуса %d, уведомлений %d из 3" % [tag, rects.size(),
 						hud._lay["rows"].size(), n_shown])
 	if tc != null:
 		tc.set_enabled(true)
 		_t_intro_plate(tc, hud)
+	if scene.get("player") != null and scene.player.inv != null:
+		scene.player.inv.hotbar_size = slots0
 	_restore_state(hud, saved)
 	UI.set_ui_scale(s0, false)
 	hud.size = vp / s0
@@ -170,7 +176,7 @@ func _t_layout(scene: Node) -> void:
 	_ok("HUD: при 100/150/200/250 % блоки (hp, импульс, статус, сутки, отсчёт, миникарта, хотбар, подсказка, "
 			+ "уведомления) не пересекаются и не выходят за экран; кнопки тач-раскладки их не накрывают",
 			bad.is_empty(), "\n       ".join(bad.slice(0, 8)))
-	_ok("телефон: карточка компактная, плашка без «…», полоса мира ≥ 40 px, хотбар в нижней половине",
+	_ok("телефон: HUD в нижней трети, плашка без «…», хотбар у нижнего края, карточка компактна если есть",
 			phone_bad.is_empty(), "\n       ".join(phone_bad.slice(0, 8)))
 	_ok("HUD: layout_rects() отдаёт блоки", hud.layout_rects().size() >= 5, str(hud.layout_rects().size()))
 	_ok("мир не меняется от коэффициента: камера и зум те же",
@@ -181,60 +187,140 @@ func _t_layout(scene: Node) -> void:
 			"scale %.1f, HUD %s" % [UI.scale.x, str(hud.size)])
 
 
-## Телефон: карточка компактная, плашка без «…», полоса мира не меньше 40 px.
+## Телефон: хотбар у нижнего края, плашка над ним без «…». Карточка, если влезла
+## в нижнюю треть, — компактная (не выше 52, не шире 65 %). Весь HUD — в нижней трети.
 func _phone_layout(hud: HUD, named: Dictionary, tag: String, bad: Array) -> void:
 	var sz: Vector2 = hud.size
-	if not named.has("card") or not named.has("hotbar"):
-		bad.append("%s: нет карточки или хотбара" % tag)
+	var band_y: float = sz.y * (2.0 / 3.0)
+	if not named.has("hotbar"):
+		bad.append("%s: нет хотбара" % tag)
 		return
-	var card: Rect2 = named["card"]
 	var hot: Rect2 = named["hotbar"]
-	if card.size.y > 52.0:
-		bad.append("%s: карточка выше 52 (%s)" % [tag, str(card.size)])
-	if card.size.x > sz.x * 0.65 + 0.5:
-		bad.append("%s: карточка шире 65 %% (%s)" % [tag, str(card.size)])
-	if card.end.y >= sz.y * 0.5:
-		bad.append("%s: карточка ниже середины (%s)" % [tag, str(card)])
-	if card.end.y >= sz.y * 0.45:
-		bad.append("%s: карточка не в верхней половине (%s)" % [tag, str(card)])
-	if named.has("map") and card.intersects(named["map"]):
-		bad.append("%s: карточка на карте" % tag)
-	var inner: float = float(hud._lay.get("card_inner", 0.0))
-	var title: String = String(hud._lay.get("card_title", ""))
-	var cfont: int = int(hud._lay.get("card_font", UI.FONT["body"]))
-	if title == "" or hud._tw(title, cfont) > inner + 0.5:
-		bad.append("%s: заголовок не влезает в карточку «%s»" % [tag, title])
-	if title.ends_with("…") and hud.card_text.length() < 40:
-		bad.append("%s: короткий заголовок обрезан" % tag)
-	if hot.size.y > 44.0:
+	if hot.size.y > 44.0 and not (sz.y > sz.x * 1.2):
 		bad.append("%s: хотбар выше 44 (%s)" % [tag, str(hot.size)])
-	if hot.position.y <= sz.y * 0.55:
-		bad.append("%s: хотбар не в нижней половине (%s)" % [tag, str(hot)])
+	if hot.position.y + 0.5 < band_y:
+		bad.append("%s: хотбар выше нижней трети (%s, треть %.1f)" % [tag, str(hot), band_y])
+	if sz.y > sz.x * 1.2:
+		var cell: float = float(hud._lay.get("slot", 0.0)) - 4.0
+		var n_slots: int = hud._hotbar_count()
+		if n_slots <= 6 and cell + 0.5 < 78.0:
+			bad.append("%s: ячейка портрета %.1f < 78" % [tag, cell])
+		if cell + 0.5 < HUD.SLOT_DIGIT_MIN:
+			bad.append("%s: ячейка %.1f < %d, номер слота не рисуется" % [tag, cell, int(HUD.SLOT_DIGIT_MIN)])
+		var grab_top: float = hud._combat_grab_top(sz.y)
+		if hot.end.y > grab_top + 0.5:
+			bad.append("%s: хотбар не выше захватов (низ %.1f, захват %.1f)" % [tag, hot.end.y, grab_top])
+		var ppm: float = UI.px_per_mm(420, Vector2(1080, 2400), Vector2(1280, 2844))
+		print("  ЗАМЕР портрет: %s ячейка %.1f лог. px = %.2f мм, верх захвата %.1f, хотбар %s" % [tag, cell, UI.size_mm(cell, UI.ui_scale, ppm), grab_top, str(hot)])
+	if named.has("card"):
+		var card: Rect2 = named["card"]
+		if card.size.y > 52.0:
+			bad.append("%s: карточка выше 52 (%s)" % [tag, str(card.size)])
+		if card.size.x > sz.x * 0.65 + 0.5:
+			bad.append("%s: карточка шире 65 %% (%s)" % [tag, str(card.size)])
+		if card.position.y + 0.5 < band_y:
+			bad.append("%s: карточка выше нижней трети (%s)" % [tag, str(card)])
+		if named.has("map") and card.intersects(named["map"]):
+			bad.append("%s: карточка на карте" % tag)
+		var inner: float = float(hud._lay.get("card_inner", 0.0))
+		var title: String = String(hud._lay.get("card_title", ""))
+		var cfont: int = int(hud._lay.get("card_font", UI.FONT["body"]))
+		if title == "" or hud._tw(title, cfont) > inner + 0.5:
+			bad.append("%s: заголовок не влезает в карточку «%s»" % [tag, title])
+		if title.ends_with("…"):
+			bad.append("%s: заголовок обрезан «%s»" % [tag, title])
 	if named.has("hint"):
 		var hint: Rect2 = named["hint"]
 		var ht: String = String(hud._lay.get("hint_text", ""))
-		if hint.end.y + 4.0 > hot.position.y + 0.01:
-			bad.append("%s: плашка касается хотбара %s / %s" % [tag, str(hint), str(hot)])
+		var gap: float = hot.position.y - hint.end.y
+		if gap + 0.5 < HUD.HINT_GAP_TOUCH:
+			bad.append("%s: зазор плашка–хотбар %.1f < %d" % [tag, gap, int(HUD.HINT_GAP_TOUCH)])
 		if ht.ends_with("…"):
 			bad.append("%s: плашка с «…» «%s»" % [tag, ht])
 		var screen: Rect2 = Rect2(Vector2.ZERO, sz).grow(0.5)
 		if not screen.encloses(hint):
 			bad.append("%s: плашка за экраном" % tag)
-	var top_end: float = card.end.y
+		var slot_fs: int = hud._slot_font()
+		if int(hud._lay.get("hint_font", 0)) > slot_fs:
+			bad.append("%s: кегль плашки %s > цифры %d" % [tag, hud._lay.get("hint_font"), slot_fs])
+	for nl in hud._lay.get("note_lines", []):
+		if String(nl).ends_with("…"):
+			bad.append("%s: уведомление с «…»" % tag)
 	if named.has("status0"):
-		top_end = maxf(top_end, (named["status0"] as Rect2).end.y)
 		var st: String = String(hud._lay["rows"][0]["text"]) if hud._lay["rows"].size() > 0 else ""
-		if st.ends_with("…") and hud.tutorial_text.length() < 60:
+		if st.ends_with("…"):
 			bad.append("%s: строка обучения обрезана «%s»" % [tag, st])
-	var bot_top: float = hot.position.y
-	if named.has("hint"):
-		bot_top = minf(bot_top, (named["hint"] as Rect2).position.y)
-	var band: float = bot_top - top_end
-	if band < 40.0:
-		bad.append("%s: полоса мира %.1f < 40 (верх %.1f, низ %.1f)" % [tag, band, top_end, bot_top])
-	if is_equal_approx(hud.size.y, 288.0) or (sz.y < 300.0 and sz.x < 700.0):
-		print("  ЗАМЕР 2.5: %s card %s hint %s hotbar %s row %s полоса %.1f" % [tag, str(card),
-				str(named.get("hint", Rect2())), str(hot), str(named.get("status0", Rect2())), band])
+	if band_y < 40.0:
+		bad.append("%s: полоса мира %.1f < 40" % [tag, band_y])
+	if sz.y < 300.0 or sz.x < 600.0:
+		var keys: Array = []
+		for kk in named:
+			if (named[kk] as Rect2).has_area():
+				keys.append(kk)
+		print("  ЗАМЕР 2.5: %s card %s hint %s hotbar %s map %s hp %s день %s треть %.1f есть %s" % [tag,
+				named.get("card", Rect2()), named.get("hint", Rect2()), hot,
+				named.get("map", Rect2()), named.get("hp", Rect2()), named.get("day", Rect2()),
+				band_y, ", ".join(keys)])
+		hud._lay_sig = -1
+
+
+## (а) силуэт героя в центре не пересекает блоки и кнопки.
+## (б) кегль плашки ≤ FONT.small. (в) каждый блок начинается в нижней трети.
+## (г) зазор плашка–хотбар ≥ HINT_GAP_TOUCH − 0.5.
+
+## Круги захвата в логических px HUD: кнопки × BTN_GRAB, стик × STICK_GRAB.
+func _grab_circles(tc: TouchControls, s: float) -> Array:
+	var out: Array = []
+	for id in tc.btn_center:
+		if not tc._shown(id, false):
+			continue
+		var mul: float = TouchControls.BTN_GRAB
+		out.append({"id": id, "c": tc.btn_center[id] / s, "r": float(tc.btn_radius[id]) * mul / s})
+	out.append({"id": "stick", "c": tc.stick_center / s, "r": tc.stick_radius * TouchControls.STICK_GRAB / s})
+	return out
+
+
+func _circle_hits(c: Vector2, rad: float, r: Rect2) -> bool:
+	var closest := Vector2(clampf(c.x, r.position.x, r.end.x), clampf(c.y, r.position.y, r.end.y))
+	return c.distance_to(closest) < rad - 0.01
+
+
+func _phone_band(hud: HUD, named: Dictionary, tc: TouchControls, s: float, tag: String) -> void:
+	var sz: Vector2 = hud.size
+	var band_y: float = sz.y * (2.0 / 3.0) - 0.5
+	var above: Array = []
+	for kk in named:
+		var r: Rect2 = named[kk]
+		if r.has_area() and r.position.y < band_y:
+			above.append("%s %s" % [kk, r])
+	_ok("тач: весь HUD в нижней трети", above.is_empty(), "%s %s" % [tag, ", ".join(above)])
+	var player: Rect2 = Rect2(sz * 0.5 - Vector2(24, 32), Vector2(48, 64))
+	var hit: Array = []
+	for kk in named:
+		var r2: Rect2 = named[kk]
+		if r2.has_area() and r2.intersects(player):
+			hit.append(kk)
+	for g in _grab_circles(tc, s):
+		if _circle_hits(g["c"], float(g["r"]), player):
+			hit.append("захват " + String(g["id"]))
+	_ok("тач: силуэт игрока не пересекает HUD и кнопки", hit.is_empty(),
+			"%s силуэт %s %s" % [tag, player, ", ".join(hit)])
+	var hf: int = int(hud._lay.get("hint_font", hud._slot_font()))
+	var slot_fs: int = hud._slot_font()
+	_ok("тач: кегль подсказки не больше цифры слота", hf <= slot_fs, "%s %d ≤ %d" % [tag, hf, slot_fs])
+	var gap_detail: String = "%s hint скрыт" % tag
+	var gap_ok: bool = true
+	if named.has("hint") and named.has("hotbar"):
+		var gap: float = (named["hotbar"] as Rect2).position.y - (named["hint"] as Rect2).end.y
+		gap_ok = gap + 0.5 >= HUD.HINT_GAP_TOUCH
+		gap_detail = "%s %.1f" % [tag, gap]
+		var plate: Rect2 = named["hint"]
+		var hero: Rect2 = Rect2(sz * 0.5 - Vector2(24, 32), Vector2(48, 64))
+		if plate.intersects(hero):
+			gap_ok = false
+			gap_detail += " плашка на игроке"
+	_ok("тач: зазор подсказка–хотбар ≥ 10", gap_ok, gap_detail)
+
 
 
 ## Ввод на телефоне: одна строка INTRO_LINES в нижней плашке, без «…», не на карточке и хотбаре.
@@ -257,8 +343,7 @@ func _t_intro_plate(tc: TouchControls, hud: HUD) -> void:
 	hud._lay_sig = -1
 	var named: Dictionary = hud.layout_named()
 	var ht: String = String(hud._lay.get("hint_text", ""))
-	var lines: Array = ["Джойстик — идти · вверх — прыжок", "Тап — копать · хотбар — строить",
-			"«меню» — пауза · I — инвентарь"]
+	var lines: Array = ["Джойстик — идти", "Тап — копать", "«меню» — пауза"]
 	var ok_line: bool = lines.has(ht) and not ht.ends_with("…")
 	var overlap: bool = false
 	if named.has("hint"):
@@ -268,6 +353,11 @@ func _t_intro_plate(tc: TouchControls, hud: HUD) -> void:
 		if named.has("hotbar") and hint.intersects(named["hotbar"]):
 			overlap = true
 		if hint.end.y + 4.0 > (named["hotbar"] as Rect2).position.y:
+			overlap = true
+		for g in _grab_circles(tc, 2.5):
+			if _circle_hits(g["c"], float(g["r"]), hint):
+				overlap = true
+		if int(hud._lay.get("hint_font", 99)) > hud._slot_font():
 			overlap = true
 	else:
 		ok_line = false

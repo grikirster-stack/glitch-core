@@ -140,6 +140,8 @@ func _run() -> void:
 	if hud.has_method("layout_named"):
 		hud.layout_named()
 	hud.queue_redraw()
+	# Первый кадр после ресайза — ещё прежний размер. Ждём следующий.
+	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	var src: Image = root.get_viewport().get_texture().get_image()
 	if src == null or src.is_empty():
