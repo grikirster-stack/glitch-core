@@ -167,6 +167,7 @@ func _t_layout(scene: Node) -> void:
 	if tc != null:
 		tc.set_enabled(true)
 		_t_intro_plate(tc, hud)
+		_t_touch_plate(tc, hud)
 	if scene.get("player") != null and scene.player.inv != null:
 		scene.player.inv.hotbar_size = slots0
 	_restore_state(hud, saved)
@@ -244,8 +245,9 @@ func _phone_layout(hud: HUD, named: Dictionary, tc: TouchControls, tag: String, 
 			bad.append("%s: карточка на силуэте" % tag)
 		if named.has("hint"):
 			var above: float = (named["hint"] as Rect2).position.y - card.end.y
-			if card.end.y <= (named["hint"] as Rect2).position.y + 0.5 and above + 0.5 < HUD.HINT_GAP_TOUCH:
-				bad.append("%s: зазор цель–плашка %.1f < 10 card=%s hint=%s" % [tag, above, card, named["hint"]])
+			var need_gap: float = HUD.HINT_GAP_LAND if sz.y <= sz.x * 1.2 else HUD.HINT_GAP_TOUCH
+			if card.end.y <= (named["hint"] as Rect2).position.y + 0.5 and above + 0.5 < need_gap:
+				bad.append("%s: зазор цель–плашка %.1f < %.0f card=%s hint=%s" % [tag, above, need_gap, card, named["hint"]])
 		elif named.has("hotbar"):
 			var above_h: float = (named["hotbar"] as Rect2).position.y - card.end.y
 			if card.end.y <= (named["hotbar"] as Rect2).position.y + 0.5 and above_h + 0.5 < HUD.HINT_GAP_TOUCH:
@@ -272,10 +274,15 @@ func _phone_layout(hud: HUD, named: Dictionary, tc: TouchControls, tag: String, 
 		var hint: Rect2 = named["hint"]
 		var ht: String = String(hud._lay.get("hint_text", ""))
 		var gap: float = hot.position.y - hint.end.y
-		if gap + 0.5 < HUD.HINT_GAP_TOUCH:
-			bad.append("%s: зазор плашка–хотбар %.1f < %d" % [tag, gap, int(HUD.HINT_GAP_TOUCH)])
-		if ht.ends_with("…"):
+		var need_gap: float = HUD.HINT_GAP_LAND if sz.y <= sz.x * 1.2 else HUD.HINT_GAP_TOUCH
+		if gap + 0.5 < need_gap:
+			bad.append("%s: зазор плашка–хотбар %.1f < %.0f" % [tag, gap, need_gap])
+		if ht.ends_with("…") or ht.contains("…"):
 			bad.append("%s: плашка с «…» «%s»" % [tag, ht])
+		if hint.size.x > sz.x * 0.9:
+			bad.append("%s: плашка во всю ширину %.1f" % [tag, hint.size.x])
+		if ht.contains("\n"):
+			bad.append("%s: плашка в несколько строк «%s»" % [tag, ht])
 		var screen: Rect2 = Rect2(Vector2.ZERO, sz).grow(0.5)
 		if not screen.encloses(hint):
 			bad.append("%s: плашка за экраном" % tag)
@@ -351,14 +358,15 @@ func _phone_band(hud: HUD, named: Dictionary, tc: TouchControls, s: float, tag: 
 	var gap_ok: bool = true
 	if named.has("hint") and named.has("hotbar"):
 		var gap: float = (named["hotbar"] as Rect2).position.y - (named["hint"] as Rect2).end.y
-		gap_ok = gap + 0.5 >= HUD.HINT_GAP_TOUCH
-		gap_detail = "%s %.1f" % [tag, gap]
+		var need_gap: float = HUD.HINT_GAP_LAND if sz.y <= sz.x * 1.2 else HUD.HINT_GAP_TOUCH
+		gap_ok = gap + 0.5 >= need_gap
+		gap_detail = "%s %.1f (нужно %.0f)" % [tag, gap, need_gap]
 		var plate: Rect2 = named["hint"]
 		var hero: Rect2 = Rect2(sz * 0.5 - Vector2(24, 32), Vector2(48, 64))
 		if plate.intersects(hero):
 			gap_ok = false
 			gap_detail += " плашка на игроке"
-	_ok("тач: зазор подсказка–хотбар ≥ 10", gap_ok, gap_detail)
+	_ok("тач: зазор подсказка–хотбар (портрет 10, ландшафт 6)", gap_ok, gap_detail)
 
 
 
@@ -478,6 +486,193 @@ func _restore_state(hud: HUD, saved: Dictionary) -> void:
 	hud.notes = saved["notes"]
 	hud.night_countdown = saved["cd"]
 	hud._note_serial += 1
+	hud._lay_sig = -1
+
+
+# --------------------------------------------------------------------------- плашка телефона
+
+## Холсты телефона из жалобы: 1280×2844 и 1600×720 при 250 %.
+const PHONE_CANVASES: Array = [Vector2(1280, 2844), Vector2(1600, 720)]
+
+
+## Старый код прятал плашку на этапе 2 без цели (интро истекло, hint пуст).
+## Новый обязан показать stage help, и цель, и плашку — без пересечений.
+func _t_touch_plate(tc: TouchControls, hud: HUD) -> void:
+	var saved: Dictionary = _snap_plate(hud)
+	var scene: Node = hud.get_parent()
+	var old_stage: int = Game.objective_stage
+	var old_time: float = Game.game_time
+	var old_ore: int = Game.stats_ore
+	var old_vel: Vector2 = Vector2.ZERO
+	var had_player: bool = scene != null and scene.get("player") != null
+	var old_slots: int = 6
+	var old_mining: float = 0.0
+	if had_player:
+		old_vel = scene.player.vel
+		scene.player.vel = Vector2.ZERO
+		old_mining = scene.player.mining_progress
+		scene.player.mining_progress = 0.0
+		if scene.player.inv != null:
+			old_slots = scene.player.inv.hotbar_size
+			scene.player.inv.hotbar_size = 6
+	Game.objective_stage = 2
+	Game.stats_ore = 0
+	hud.hint_text = ""
+	hud._hint_hash = "".hash()
+	hud.tutorial_text = ""
+	hud._intro_done = true
+	Game.game_time = 30.0
+	hud._compute_tracker()
+	var stage_help: String = hud._plate_text()
+	_ok("этап 2 без цели: плашка не пустая (stage help), старый код вернул бы \"\"",
+			stage_help != "" and stage_help.to_lower().contains("копай") and not stage_help.contains("…")
+			and not stage_help.contains("\n"), "«%s»" % stage_help)
+	# Контекст важнее stage help.
+	hud.hint_text = HUD.HINT_CHEST
+	hud._hint_hash = hud.hint_text.hash()
+	var ctx: String = hud._plate_text()
+	_ok("контекстная подсказка важнее stage help",
+			ctx == hud._touch_hint(HUD.HINT_CHEST) and ctx != stage_help, "«%s»" % ctx)
+	hud.hint_text = ""
+	hud._hint_hash = "".hash()
+	# Ввод — одна строка, раньше туториала, меняется по шагу.
+	hud._intro_done = false
+	hud.tutorial_text = "1/4 Копай: тап по земле — хлам 0/6 на горелку"
+	Game.game_time = 1.0
+	var intro_a: String = hud._plate_text()
+	Game.game_time = 6.0
+	var intro_b: String = hud._plate_text()
+	_ok("ввод: одна строка, раньше туториала, меняется со временем",
+			intro_a == "Джойстик — идти" and intro_b == "Тап — копать"
+			and intro_a != intro_b and not intro_a.contains("\n"),
+			"«%s» → «%s»" % [intro_a, intro_b])
+	# После INTRO_TIME — строка туториала, не stage help.
+	Game.game_time = 20.0
+	hud._intro_done = true
+	var tut: String = hud._plate_text()
+	_ok("после ввода tutorial_text — одна строка, не stage help",
+			tut == hud.tutorial_text and not tut.contains("\n") and tut != stage_help,
+			"«%s»" % tut)
+	# Копание не прячет плашку.
+	if had_player:
+		scene.player.mining_progress = 0.4
+		_ok("во время копания плашка остаётся", hud._plate_text() != "", "«%s»" % hud._plate_text())
+		scene.player.mining_progress = old_mining
+	# Десктоп: пустой hint остаётся пустым, ветка не стала stage help.
+	var touch0: bool = tc.enabled
+	tc.set_enabled(false)
+	hud.hint_text = ""
+	_ok("десктоп: пустой hint_text не подменяется stage help", hud._plate_text() == "")
+	hud.hint_text = HUD.HINT_CHEST + " · хвост"
+	_ok("десктоп: hint_text как есть, без укорочения телефона",
+			hud._plate_text() == HUD.HINT_CHEST + " · хвост")
+	tc.set_enabled(true)
+	# Раскладка: оба холста, цель и плашка вместе, без пересечений.
+	hud.hint_text = ""
+	hud._hint_hash = "".hash()
+	hud.tutorial_text = ""
+	hud._intro_done = true
+	Game.game_time = 30.0
+	hud.card_have = 0
+	hud.card_need = Balance.FREE_ORE_NEED
+	var bad: Array = []
+	for canvas in PHONE_CANVASES:
+		var win: Vector2 = Vector2(1080, 2400) if canvas.y > canvas.x else Vector2(canvas.x * 1.5, 1080)
+		var ppm: float = UI.px_per_mm(420, win, canvas)
+		tc.force_k = clampf(TouchControls.MIN_MM * ppm / (TouchControls.BTN_R * 2.0), 1.0, 1.6)
+		UI.set_ui_scale(2.5, false)
+		tc._layout(canvas)
+		hud.size = canvas / 2.5
+		hud._lay_sig = -1
+		var named: Dictionary = hud.layout_named()
+		var tag: String = str(canvas)
+		var sz: Vector2 = hud.size
+		var band: float = sz.y * HUD.TOUCH_BAND
+		if not named.has("card") or not named.has("hint"):
+			bad.append("%s: нет цели или плашки card=%s hint=%s" % [tag, named.has("card"), named.has("hint")])
+			continue
+		var card: Rect2 = named["card"]
+		var hint: Rect2 = named["hint"]
+		var ht: String = String(hud._lay.get("hint_text", ""))
+		# Живой ландшафт (как phone_hud_shot --state=stage): отрисованная строка,
+		# не _plate_text() до подгонки. «Руда в камне» — описание без действия.
+		if canvas.x > canvas.y:
+			var low: String = ht.to_lower()
+			var action: bool = low.contains("копай") or low.contains("тапом")
+			if not action or ht.contains("…") or ht == "Руда в камне":
+				bad.append("%s: отрисованная строка без действия «%s»" % [tag, ht])
+			if ht != stage_help:
+				bad.append("%s: подгонка срезала «%s» → «%s»" % [tag, stage_help, ht])
+			# Узкий слот живого кадра (~250 лог. px). Старый текст «Руда в камне —
+			# копай тапом по земле» здесь срезался до описания без глагола.
+			var fitted: String = hud._touch_plate_fit(stage_help, hud._slot_font(), 250.0)
+			var flow: String = fitted.to_lower()
+			if fitted != stage_help or not (flow.contains("копай") or flow.contains("тапом")):
+				bad.append("%s: слот 250 срезал «%s» → «%s»" % [tag, stage_help, fitted])
+		if card.position.y + 0.5 < band or hint.position.y + 0.5 < band:
+			bad.append("%s: выше трети card=%s hint=%s band=%.1f" % [tag, card, hint, band])
+		if card.intersects(hint):
+			bad.append("%s: цель на плашке" % tag)
+		var hot: Rect2 = named.get("hotbar", Rect2())
+		if hot.has_area() and (hint.intersects(hot) or card.intersects(hot)):
+			bad.append("%s: наезд на хотбар" % tag)
+		for g in _grab_circles(tc, 2.5):
+			if _circle_hits(g["c"], float(g["r"]), hint) or _circle_hits(g["c"], float(g["r"]), card):
+				bad.append("%s: захват %s" % [tag, g["id"]])
+				break
+		if hint.size.x >= sz.x * 0.9:
+			bad.append("%s: плашка во всю ширину %.1f / %.1f" % [tag, hint.size.x, sz.x])
+		if int(hud._lay.get("hint_font", 99)) > hud._slot_font():
+			bad.append("%s: кегль плашки больше слота" % tag)
+		if ht.contains("…") or ht.contains("\n") or ht == "":
+			bad.append("%s: текст плашки «%s»" % [tag, ht])
+		var title: String = String(hud._lay.get("card_title", ""))
+		if title.contains("…"):
+			bad.append("%s: цель обрезана «%s»" % [tag, title])
+		print("  ЗАМЕР плашка: %s card %s hint %s «%s» hotbar %s треть %.1f кегль %s" % [
+			tag, card, hint, ht, hot, band, hud._lay.get("hint_font")])
+	_ok("телефон 250 %%: цель и плашка в нижней трети, не пересекаются, плашка не во всю ширину",
+			bad.is_empty(), "\n       ".join(bad.slice(0, 6)))
+	# Свободная игра после обучения: туториал пуст, интро прошло — stage help жива.
+	hud.tutorial_text = ""
+	hud._intro_done = true
+	Game.objective_stage = 3
+	var after: String = hud._plate_text()
+	_ok("свободная игра после обучения: плашка — подсказка этапа, не пустая",
+			after != "" and after.contains("ночь") and after.contains("Пережди"), "«%s»" % after)
+	Game.objective_stage = old_stage
+	Game.game_time = old_time
+	Game.stats_ore = old_ore
+	if had_player:
+		scene.player.vel = old_vel
+		if scene.player.inv != null:
+			scene.player.inv.hotbar_size = old_slots
+	tc.force_k = 0.0
+	tc.set_enabled(touch0)
+	_restore_plate(hud, saved)
+
+
+func _snap_plate(hud: HUD) -> Dictionary:
+	return {
+		"ct": hud.card_text, "ch": hud.card_have, "cn": hud.card_need,
+		"tut": hud.tutorial_text, "hint": hud.hint_text, "hh": hud._hint_hash,
+		"done": hud._intro_done, "tt": hud.tracker_title, "td": hud.tracker_detail,
+		"icon": hud.card_icon, "at": hud.card_at,
+	}
+
+
+func _restore_plate(hud: HUD, saved: Dictionary) -> void:
+	hud.card_text = saved["ct"]
+	hud.card_have = saved["ch"]
+	hud.card_need = saved["cn"]
+	hud.tutorial_text = saved["tut"]
+	hud.hint_text = saved["hint"]
+	hud._hint_hash = saved["hh"]
+	hud._intro_done = saved["done"]
+	hud.tracker_title = saved["tt"]
+	hud.tracker_detail = saved["td"]
+	hud.card_icon = saved["icon"]
+	hud.card_at = saved["at"]
 	hud._lay_sig = -1
 
 

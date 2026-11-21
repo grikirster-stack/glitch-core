@@ -231,7 +231,9 @@ func _ready() -> void:
 	_pad.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_pad.draw.connect(_draw_pad)
 	add_child(_pad)
-	var forced: bool = OS.get_cmdline_user_args().has("--touch")
+	# --touch до разделителя -- (снимок HUD через --script) попадает в engine args,
+	# после -- в user args. Читаем оба, иначе плашка на кадре не включается.
+	var forced: bool = OS.get_cmdline_user_args().has("--touch") or OS.get_cmdline_args().has("--touch")
 	var touch: bool = DisplayServer.is_touchscreen_available()
 	if forced and not touch:
 		# Проверка на ПК: ЛКМ шлёт касание — кнопки и джойстик жмутся мышью.

@@ -12,6 +12,7 @@ extends SceneTree
 ## окно будет этого размера (холст всё равно считается растяжкой).
 ##
 ## --state=intro: свободная игра, game_time=1, вводная строка в нижней плашке.
+## --state=stage --stage=N: этап без цели рядом, интро истекло (по умолчанию N=2).
 ## --state=terminal: длинная подсказка терминала. Старый HUD без _intro_done
 ## тоже снимается (проверки на наличие полей — ниже).
 
@@ -24,6 +25,7 @@ var target_size: Vector2i = Vector2i(2400, 1080)
 var capture_size: Vector2i = Vector2i.ZERO
 var ui_scale: float = 2.5
 var shot_state: String = "terminal"
+var shot_stage: int = -1
 var forced_time: float = -1.0
 var keep_notes: bool = false
 var out_path: String = ""
@@ -47,6 +49,8 @@ func _initialize() -> void:
 			ui_scale = float(a.substr(11))
 		elif a.begins_with("--state="):
 			shot_state = a.substr(8)
+		elif a.begins_with("--stage="):
+			shot_stage = int(a.substr(8))
 		elif a.begins_with("--time="):
 			forced_time = float(a.substr(7))
 		elif a == "--keep-notes":
@@ -125,6 +129,20 @@ func _run() -> void:
 		hud._hint_hash = "".hash()
 		if hud.get("_intro_done") != null:
 			hud.set("_intro_done", false)
+	elif shot_state == "stage":
+		# Как на скрине владельца: этап без цели рядом, интро истекло, hint пуст.
+		var st: int = shot_stage if shot_stage > 0 else 2
+		game.set("objective_stage", st)
+		game.set("stats_ore", 0)
+		game.set("game_time", 30.0 if forced_time < 0.0 else forced_time)
+		p.vel = Vector2.ZERO
+		hud.hint_text = ""
+		hud._hint_hash = "".hash()
+		hud.tutorial_text = ""
+		if hud.get("_intro_done") != null:
+			hud.set("_intro_done", true)
+		if hud.has_method("_compute_tracker"):
+			hud._compute_tracker()
 	else:
 		var t: float = forced_time
 		if t < 0.0:
