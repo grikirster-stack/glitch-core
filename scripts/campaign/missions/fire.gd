@@ -87,6 +87,29 @@ func stages() -> Array:
 	]
 
 
+## Подсказка этапа 1 считается из мира: горелка не на метке — скажи забрать.
+func live_hint() -> String:
+	if stage != 0:
+		return super()
+	if _misplaced_burner():
+		return "Горелка не у входа — забери и поставь на метку" if not UI.touch_on \
+				else "Забери горелку и поставь на метку"
+	if _burner() == null:
+		return "Поставь горелку на метку у входа"
+	return super()
+
+
+## Непостоянная горелка стоит, но не на метке: её можно забрать и переставить.
+func _misplaced_burner() -> bool:
+	for m in World.machines.values():
+		if m == null or not is_instance_valid(m) or not (m is Burner):
+			continue
+		if bool(m.permanent) or m.cell == mark():
+			continue
+		return true
+	return false
+
+
 func on_tick(delta: float) -> void:
 	if stage != 2 or result != Result.RUNNING:
 		return

@@ -62,7 +62,7 @@ func run() -> void:
 	await wait(0.1)
 
 	var seen: Dictionary = stats["seen"]
-	var hint_gen: String = hud.burner_hint(gen)
+	var hint_gen: String = HUD.HINT_PICKUP_BURNER
 	ok("подсказка горелки появлялась у горелки", seen.has(hint_gen), "«%s»" % hint_gen)
 	ok("подсказка сундука появлялась у сундука", seen.has(HINT_CHEST))
 	ok("подсказка появляется и пропадает сразу", int(stats["max_lag"]) <= MAX_LAG_FRAMES,
@@ -100,7 +100,7 @@ func _walk(stats: Dictionary, gen: Node2D, chest: Node2D, done_cond: Callable, t
 func _check_mark(stats: Dictionary, want: String, gen: Node2D, chest: Node2D) -> void:
 	var hud: HUD = UI.hud
 	var tgt: Node2D = null
-	if want == hud.burner_hint(gen):
+	if want == HUD.HINT_PICKUP_BURNER:
 		tgt = gen
 	elif want == HINT_CHEST:
 		tgt = chest
@@ -115,7 +115,7 @@ func _check_mark(stats: Dictionary, want: String, gen: Node2D, chest: Node2D) ->
 
 ## Какая подсказка должна быть сейчас — по расстояниям, по правилу цели E
 ## (#116): ближайший к герою объект в своём радиусе (терминал 42, релей 56,
-## горелка и сундук 40). Курсор сценарий не наводит. Коридор базы может
+## горелка и сундук 40). У горелки — забор ЛКМ. Курсор сценарий не наводит. Коридор базы может
 ## задевать терминал — тогда ждём подсказку терминала. Питания нет (#170).
 func _want(gen: Node2D, chest: Node2D) -> String:
 	var p: Vector2 = player.global_position
@@ -142,7 +142,7 @@ func _want(gen: Node2D, chest: Node2D) -> String:
 	var gd: float = gen.global_position.distance_to(p)
 	if gd < DIST and gd < best_d:
 		best_d = gd
-		best = UI.hud.burner_hint(gen)
+		best = HUD.HINT_PICKUP_BURNER
 	var cd: float = chest.global_position.distance_to(p)
 	if cd < DIST and cd < best_d:
 		best_d = cd

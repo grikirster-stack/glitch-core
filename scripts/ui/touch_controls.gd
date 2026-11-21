@@ -678,6 +678,7 @@ func _finger_down(index: int, pos: Vector2) -> bool:
 		_world_wait = PINCH_WAIT
 		_world_ghost = 0
 		_world_aim_reset(pos)
+		aim_cell = NO_CELL   # новый тап не наследует клетку прошлого забора
 		_fingers[index] = {"kind": "world", "id": ""}
 	else:
 		_fingers[index] = {"kind": "none", "id": ""}
@@ -877,7 +878,13 @@ func _update_aim(p: Player) -> void:
 	if build_mode and _world_spent:
 		return
 	var tap: Vector2 = world_point(_world_screen)
+	# Обычный режим: короткий тап по своей машине забирает её (ЛКМ героя).
+	# В режиме постройки тап ставит, машину не забирает.
 	var t: Dictionary = place_target(p, tap) if build_mode else dig_target(p, tap, _world_loose)
+	if not build_mode and not t.has("foe"):
+		var grab: Dictionary = pickup_target(p, tap)
+		if not grab.is_empty():
+			t = grab
 	if t.is_empty():
 		return
 	aim_cell = t["cell"]
@@ -917,6 +924,19 @@ func dig_target(p: Player, tap: Vector2, loose: bool) -> Dictionary:
 				best_d = d
 				best = n
 	return _cell_target(best) if best != NO_CELL else {}
+
+
+## Своя разбираемая машина под пальцем: короткий тап забирает её.
+## Постоянная постройка базы и непустой сундук — тоже цель: герой скажет, почему нельзя.
+## {} — под пальцем машины нет (копаем или ставим как раньше).
+func pickup_target(p: Player, tap: Vector2) -> Dictionary:
+	var c: Vector2i = World.world_to_cell(tap)
+	if not _in_reach(p.global_position, c):
+		return {}
+	var m = World.machines.get(c)
+	if m == null or not is_instance_valid(m):
+		return {}
+	return _cell_target(c)
 
 
 ## Цель постройки: лента или манипулятор под пальцем (повернуть), свободная клетка под

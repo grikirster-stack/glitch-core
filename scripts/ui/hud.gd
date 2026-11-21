@@ -122,6 +122,18 @@ const CONTROLS_TOUCH: Array = [
 	"Тап к стене — копать / бить   блок в хотбаре — строить",
 	"«меню» или «Назад» — пауза и сохранение   I — инвентарь",
 ]
+## Явный забор: свежий ЛКМ или короткий тап. Имя подставляется.
+const HINT_PICKUP: String = "ЛКМ — забрать: %s"
+const HINT_PICKUP_BURNER: String = "ЛКМ — забрать горелку · [E] — рубильник"
+## После забора предмет в руке: куда его ставить.
+const HINT_PLACE: String = "ЛКМ — поставить · ПКМ — снять выбор"
+## Тач-плашка короче десктопа: точные строки, без хвоста « · ».
+const TOUCH_PICKUP: String = "Тапни — забрать: %s"
+const TOUCH_PICKUP_BURNER: String = "Тапни горелку — забрать"
+const TOUCH_PLACE: String = "Тапни клетку — поставить"
+const TOUCH_BURNER_FUEL: String = "Тапни — забрать · [E] — топка"
+const TOUCH_BURNER_SWITCH: String = "Тапни горелку — забрать · [E] — рубильник"
+
 ## Одна строка в нижней плашке на телефоне, пока игрок не начал действовать.
 ## CONTROLS_TOUCH на экране больше не рисуется — три строки закрывали карточку.
 const TOUCH_HINTS: Dictionary = {
@@ -131,8 +143,10 @@ const TOUCH_HINTS: Dictionary = {
 	HINT_CHEST: "[E] — открыть сундук",
 	HINT_GEN_COAL: "[E] — уголь в ТЭЦ",
 	HINT_GEN_SWITCH: "[E] — рубильник ТЭЦ",
-	HINT_BURNER_FUEL: "[E] — топливо в горелку",
-	HINT_BURNER_SWITCH: "[E] — рубильник горелки",
+	HINT_BURNER_FUEL: TOUCH_BURNER_FUEL,
+	HINT_BURNER_SWITCH: TOUCH_BURNER_SWITCH,
+	HINT_PICKUP_BURNER: TOUCH_PICKUP_BURNER,
+	HINT_PLACE: TOUCH_PLACE,
 	HINT_ACCUMULATOR: "[E] — накопитель",
 	HINT_SOLAR_SWITCH: "[E] — рубильник",
 	HINT_INSERTER: "[E] — фильтр",
@@ -517,6 +531,9 @@ func _touch_hint(text: String) -> String:
 		return ""
 	if TOUCH_HINTS.has(text):
 		return String(TOUCH_HINTS[text])
+	# «ЛКМ — забрать: Горелка» → «Тапни — забрать: Горелка». Хвост не отрезаем.
+	if text.begins_with("ЛКМ — забрать: "):
+		return "Тапни — забрать: " + text.substr("ЛКМ — забрать: ".length())
 	var s: String = text
 	# Разбор: «[E] (удерживать) — разобрать: предмет» → «[E] — разобрать: предмет».
 	if s.begins_with(HINT_DISMANTLE):
@@ -540,12 +557,18 @@ func _compute_hint(_pos: Vector2) -> String:
 	_hint_target = Rect2()
 	if player.hiding:
 		return HINT_HIDING
+	# Предмет в руке и клетка под прицелом свободна — куда его ставить.
+	var place: String = _place_hint()
 	# Цель E выбирает сам герой (Player.interact_target, #116): подсказка и рамка
 	# — у того объекта, который сработает по E (под курсором, иначе ближайший).
 	# Питание терминалов — через кэш HUD (_terminal_powered).
 	var tg: Dictionary = player.interact_target(_terminal_powered)
 	if tg.is_empty():
-		return ""
+		return place
+	# Прицел не на этой машине, а предмет уже в руке: ставить важнее чужой горелки базы.
+	if place != "" and tg.get("cell") != player.building_cell:
+		_hint_target = Rect2()
+		return place
 	# Виды цели — константы Player.ET_*, через экземпляр (класс Player здесь не
 	# называем — цикл зависимостей).
 	var kind: String = String(tg["kind"])
@@ -553,9 +576,9 @@ func _compute_hint(_pos: Vector2) -> String:
 		return HINT_TERMINAL
 	_hint_target = _cell_rect(tg["cell"])
 	if kind == player.ET_BURNER:
-		return burner_hint(tg["node"])
+		return _pickup_or(burner_hint(tg["node"]), tg["node"])
 	if kind == player.ET_ACCUMULATOR:
-		return HINT_ACCUMULATOR + _dismantle_tail(tg["node"])
+		return _pickup_or(HINT_ACCUMULATOR + _dismantle_tail(tg["node"]), tg["node"])
 	if kind == player.ET_SIREN:
 		return HINT_SIREN
 	if kind == player.ET_LENS:
@@ -565,15 +588,53 @@ func _compute_hint(_pos: Vector2) -> String:
 	if kind == player.ET_BEACON:
 		return HINT_BEACON
 	if kind == player.ET_CHEST:
-		return HINT_CHEST
+		return _pickup_or(HINT_CHEST, tg["node"])
 	if kind == player.ET_REPAIR:
 		return HINT_REPAIR
 	if kind == player.ET_LOAD:
 		return HINT_LOAD
 	if kind == player.ET_DISMANTLE:
-		return "%s: %s" % [HINT_DISMANTLE, DB.item_name(int(tg.get("item", 0)))]
+		return _pickup_line(tg["node"])
 	_hint_target = Rect2()
-	return ""
+	return place
+
+
+## Подсказка забора, если машину можно снять. Иначе — обычное действие E.
+func _pickup_or(fallback: String, m) -> String:
+	if _can_show_pickup(m):
+		return _pickup_line(m)
+	return fallback
+
+
+## Свою разбираемую машину можно забрать свежим ЛКМ (на тач — коротким тапом).
+func _can_show_pickup(m) -> bool:
+	if m == null or not is_instance_valid(m) or bool(m.permanent):
+		return false
+	if m is Chest and player != null and not player._chest_empty(m):
+		return false
+	return true
+
+
+func _pickup_line(m) -> String:
+	var name: String = DB.item_name(MachineBase.machine_item_id(String(m.kind)))
+	if m is Burner:
+		return HINT_PICKUP_BURNER
+	return HINT_PICKUP % name
+
+
+## Предмет в руке ставится: куда тапнуть или кликнуть. Пустая рука — пусто.
+func _place_hint() -> String:
+	if player == null:
+		return ""
+	var st: ItemStack = player.inv.selected_stack()
+	if st.is_empty() or DB.item_place(st.id) == "":
+		return ""
+	var cell: Vector2i = player.building_cell
+	if cell.x < 0 or not player.can_place_at(cell):
+		return ""
+	if World.cell_to_world(cell).distance_to(player.global_position) > Player.REACH:
+		return ""
+	return HINT_PLACE
 
 
 ## Хвост подсказки про разбор — только если постройку и правда можно снять.
@@ -601,9 +662,10 @@ func _terminal_powered(_t: Vector2i) -> bool:
 
 
 ## Подсказка у горелки: топливо в руке — топка, пустая рука — рубильник (#164).
+## Хвост про разбор — только если горелку можно снять (не постройка базы).
 func burner_hint(b) -> String:
 	if player != null and Balance.FUEL.has(player.inv.selected_stack().id):
-		return HINT_BURNER_FUEL
+		return HINT_BURNER_FUEL + _dismantle_tail(b)
 	return HINT_BURNER_SWITCH + _dismantle_tail(b)
 
 
@@ -841,11 +903,19 @@ func _set_card(text: String, have: int, need: int, icon: int, at: Vector2) -> vo
 	card_mix = false
 
 
+## Подсказка этапа. На тач длинная десктопная строка не влезает в плашку.
+func _mission_help() -> String:
+	var raw: String = String(Game.mission.hint)
+	if UI.touch_on and raw.contains("забери и поставь"):
+		return "Забери горелку и поставь на метку"
+	return _one_hint(raw)
+
+
 ## Шаг обучения: самый дальний выполненный признак (вперёд — сразу, назад — никогда).
 ## В главе кампании вместо цепочки — подсказка этапа (Mission.hint).
 func _compute_tutorial() -> void:
 	if Game.in_mission():
-		tutorial_text = _one_hint(String(Game.mission.hint))
+		tutorial_text = _mission_help()
 		return
 	if tutorial_step == Tut.DONE:
 		tutorial_text = ""
@@ -1812,7 +1882,7 @@ func _touch_has_action(text: String) -> bool:
 
 func _touch_stage_help() -> String:
 	if Game.in_mission() and Game.mission != null:
-		var mh: String = _one_hint(String(Game.mission.hint))
+		var mh: String = _mission_help()
 		if mh != "":
 			return mh
 	var st: int = clampi(Game.objective_stage, 1, Game.OBJECTIVE_STAGES)

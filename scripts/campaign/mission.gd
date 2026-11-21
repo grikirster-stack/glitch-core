@@ -104,6 +104,20 @@ func on_tick(_delta: float) -> void:
 	pass
 
 
+## Подсказка этапа из мира. По умолчанию — строка stages(); глава может
+## подменить её, если игрок застрял (горелка не на метке).
+func live_hint() -> String:
+	if stage < 0 or stage >= _stages.size():
+		return hint
+	return String(_stages[stage].get("hint", hint))
+
+
+func _refresh_hint() -> void:
+	var next: String = live_hint()
+	if next != hint:
+		hint = next
+
+
 func outro() -> String:
 	return ""
 
@@ -135,6 +149,7 @@ func _process(delta: float) -> void:
 		_tick_waves(delta)
 		_tick_direct_echo(delta)
 		on_tick(delta)
+		_refresh_hint()
 		_check_t -= delta
 		if _check_t <= 0.0:
 			_check_t = CHECK_SEC
