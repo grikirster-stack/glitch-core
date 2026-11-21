@@ -1972,13 +1972,29 @@ func first_solid_on_ray(from: Vector2, to: Vector2, machines_block: bool = true,
 		var cell: Vector2i = Vector2i(cx, cy)
 		if corner:
 			# Соседи по сторонам от угла, не диагональная клетка шага. Внутрь ни одной —
-			# касание угла, не попадание. Внутрь обеих — щель закрыта, если хотя бы одна
+			# касание угла, не попадание (щель между двумя твёрдыми остаётся закрытой
+			# только когда луч входит в обе). Внутрь обеих — стена, если хотя бы одна
 			# твёрдая. Иначе — та, куда луч вошёл.
 			var side_x: Vector2i = Vector2i(ox + sx, oy)
 			var side_y: Vector2i = Vector2i(ox, oy + sy)
 			var into_x: bool = _segment_enters_cell(from, to, side_x)
 			var into_y: bool = _segment_enters_cell(from, to, side_y)
 			if not into_x and not into_y:
+				# Луч только коснулся угла. Конец отрезка в диагональной клетке — это
+				# цель (герой в яме, тайл слева-сверху): её не должен перехватывать пол,
+				# который лишь касается того же угла. Середина луча сквозь угол не
+				# проходит, если сбоку твёрдая клетка, и не задевает камень на самой
+				# диагонали.
+				if cell == b:
+					var end_hit: Vector2i = _solid_hit(cell, machines_block, diggable)
+					if end_hit.x >= 0:
+						return end_hit
+				var gap_x: Vector2i = _solid_hit(side_x, machines_block, diggable)
+				if gap_x.x >= 0:
+					return gap_x
+				var gap_y: Vector2i = _solid_hit(side_y, machines_block, diggable)
+				if gap_y.x >= 0:
+					return gap_y
 				continue
 			if into_x and into_y:
 				var cx_hit: Vector2i = _solid_hit(side_x, machines_block, diggable)
@@ -2032,9 +2048,11 @@ func _segment_enters_cell(from: Vector2, to: Vector2, c: Vector2i) -> bool:
 		var tb2: float = (y1 - from.y) * invy
 		t0 = maxf(t0, minf(ta2, tb2))
 		t1 = minf(t1, maxf(ta2, tb2))
-	# Строгое неравенство: касание только угла (t0 == t1) — не вход внутрь.
-	# Допуск — погрешность float на границе клетки, не ширина клетки.
-	return t0 < t1 + 0.000001 and t1 >= -0.000001 and t0 <= 1.000001
+	# Касание только угла (t0 == t1) — не вход. Допуск нельзя прибавлять к t1:
+	# на границе клетки равенство ровно, и пол под диагональным тайлом проходил
+	# как стена. Порог — погрешность float, не ширина клетки: 0.0001 на отрезке
+	# в клетку это меньше 0.01 px. Конец луча в углу разбирает first_solid_on_ray.
+	return t1 - t0 > 0.0001 and t1 >= -0.000001 and t0 <= 1.000001
 
 
 func world_to_cell(p: Vector2) -> Vector2i:
