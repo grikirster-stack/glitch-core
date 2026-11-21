@@ -18,6 +18,9 @@ extends ScenarioBase
 ## (ViewZoom) и ничего не копает и не ставит; короткий тап быстрее ожидания щипка
 ## всё равно ставит блок. Тап по фантому на 21–26 px от тела бьёт его: прицел
 ## берёт дальше, чем порог взмаха мыши.
+## Автоскрытие: 15 с без касания — альфа 0 и ввод не проходит; касание возвращает,
+## первый тап действия не вызывает; удержание стика 15+ с не прячет; после отпускания
+## и 15 с — прячет. Открытый инвентарь отсчёт не копит.
 ## В одиночной игре кнопки переклички G нет (#135; в сети её проверяет mp_doppel).
 ## Тап по центру карточки «Сейчас» не копает и не ставит; тап мимо UI копает.
 ## Раскладка: ландшафт 1280×720 и портрет 1280×2844 (как tools/ui_scale_test.gd).
@@ -61,6 +64,7 @@ func run() -> void:
 	await _pinch_zoom()
 	await _windows_by_buttons()
 	await _back_and_app_pause()
+	await _autohide()
 
 	_lift_all()
 	await wait(0.1)
@@ -740,6 +744,86 @@ func _back_and_app_pause() -> void:
 	get_tree().paused = false
 	Save.remove(Save.slot)
 	await get_tree().process_frame
+
+
+## Автоскрытие контролов. Часы — игровые (wait), как у остального сценария:
+## headless не гарантирует частоту кадров. HUD при этом не гаснет.
+func _autohide() -> void:
+	tc.set_enabled(true)
+	_lift_all()
+	await wait(0.2)
+	ok("сразу после включения контролы видны", tc.controls_shown()
+			and is_equal_approx(tc.controls_alpha, 1.0) and tc.control_at(tc.btn_center["jump"]) == "jump",
+			"alpha %.2f hidden %s" % [tc.controls_alpha, tc.controls_hidden])
+	var hud_a: float = UI.hud.modulate.a
+	# Чуть меньше порога — ещё видны, ввод жив.
+	await wait(TouchControls.AUTO_HIDE_SEC - 0.4)
+	ok("за %.1f с бездействия контролы ещё видны" % (TouchControls.AUTO_HIDE_SEC - 0.4),
+			not tc.controls_hidden and tc.controls_alpha > 0.5
+			and tc.control_at(tc.btn_center["jump"]) == "jump",
+			"alpha %.2f idle %.2f" % [tc.controls_alpha, tc.idle_sec])
+	# Порог и fade. Ждём с запасом: fade идёт по кадрам отрисовки.
+	await wait(1.2)
+	ok("после %.0f с бездействия контролы скрыты, альфа 0, ввод не проходит" % TouchControls.AUTO_HIDE_SEC,
+			tc.controls_hidden and tc.controls_alpha <= 0.0 and not tc.controls_shown()
+			and tc.control_at(tc.btn_center["jump"]) == "" and tc.control_at(tc.stick_center) == "",
+			"alpha %.3f hidden %s idle %.2f" % [tc.controls_alpha, tc.controls_hidden, tc.idle_sec])
+	ok("скрылись контролы, не HUD", is_equal_approx(UI.hud.modulate.a, hud_a) and UI.hud.visible,
+			"hud alpha %.2f" % UI.hud.modulate.a)
+	await wait_until(func() -> bool: return player.on_ground, 1.5)
+	var y0: float = player.global_position.y
+	# Первый тап по прыжку только возвращает контролы и сам не прыгает.
+	_touch(2, tc.btn_center["jump"], true)
+	_touch(2, tc.btn_center["jump"], false)
+	await wait(0.35)
+	ok("касание возвращает контролы, первый тап прыжка не прыгает",
+			tc.controls_shown() and is_equal_approx(tc.controls_alpha, 1.0)
+			and player.global_position.y > y0 - 4.0 and not tc.held("jump"),
+			"alpha %.2f dy %.1f" % [tc.controls_alpha, y0 - player.global_position.y])
+	await wait_until(func() -> bool: return player.on_ground, 1.5)
+	y0 = player.global_position.y
+	_touch(2, tc.btn_center["jump"], true)
+	_touch(2, tc.btn_center["jump"], false)
+	var rose: bool = await wait_until(func() -> bool: return player.global_position.y < y0 - 8.0, 0.6)
+	ok("второй тап по прыжку уже прыгает", rose, "%.1f px" % (y0 - player.global_position.y))
+	await wait_until(func() -> bool: return player.on_ground, 2.0)
+	# Удержание стика дольше порога — не прячет.
+	_touch(0, tc.stick_center, true)
+	_drag(0, tc.stick_center + Vector2(tc.stick_radius * 0.9, 0.0))
+	await wait(TouchControls.AUTO_HIDE_SEC + 0.6)
+	ok("пока палец держит стик %.0f+ с, контролы не скрываются" % TouchControls.AUTO_HIDE_SEC,
+			not tc.controls_hidden and is_equal_approx(tc.controls_alpha, 1.0)
+			and tc.idle_sec < 0.05 and bool(player.touch_input.get("keys", {}).get(KEY_D, false)),
+			"alpha %.2f idle %.2f" % [tc.controls_alpha, tc.idle_sec])
+	_touch(0, tc.stick_center, false)
+	await wait(0.2)
+	ok("отпускание стика запускает отсчёт заново", tc.idle_sec < 1.0 and tc.controls_shown(),
+			"idle %.2f" % tc.idle_sec)
+	await wait(TouchControls.AUTO_HIDE_SEC + 0.8)
+	ok("после отпускания и %.0f с контролы снова скрыты" % TouchControls.AUTO_HIDE_SEC,
+			tc.controls_hidden and tc.controls_alpha <= 0.0
+			and not bool(player.touch_input.get("keys", {}).get(KEY_D, false)),
+			"alpha %.3f idle %.2f" % [tc.controls_alpha, tc.idle_sec])
+	# Открытый инвентарь отсчёт не копит: I и J в окне ещё нужны.
+	_touch(4, Vector2(8, 8), true)
+	_touch(4, Vector2(8, 8), false)
+	await wait(0.1)
+	ok("тап по пустому месту тоже возвращает и сам ничего не жмёт",
+			tc.controls_shown() and tc.control_at(tc.btn_center["jump"]) == "jump"
+			and not tc.held("jump") and not player.touch_input.has("mouse_buttons"),
+			"alpha %.2f" % tc.controls_alpha)
+	_tap(2, tc.btn_center["inv"])
+	await wait(0.2)
+	var idle_open: float = tc.idle_sec
+	await wait(2.0)
+	ok("открытый инвентарь отсчёт бездействия не копит", UI.panel.visible
+			and tc.controls_shown() and tc.idle_sec <= idle_open + 0.05,
+			"idle %.2f → %.2f" % [idle_open, tc.idle_sec])
+	_tap(2, tc.btn_center["inv"])
+	await wait(0.2)
+	ok("после закрытия инвентаря контролы на месте и отсчёт с нуля",
+			not UI.panel.visible and tc.controls_shown() and tc.idle_sec < 0.5,
+			"idle %.2f" % tc.idle_sec)
 
 
 # ------------------------------------------------------------------ КАСАНИЯ
