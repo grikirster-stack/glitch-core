@@ -881,8 +881,8 @@ func _update_aim(p: Player) -> void:
 	if build_mode and _world_spent:
 		return
 	var tap: Vector2 = world_point(_world_screen)
-	# Обычный режим: короткий тап по своей машине забирает её (ЛКМ героя).
-	# В режиме постройки тап ставит, машину не забирает.
+	# Тап по миру копает или ставит. Свою машину он не забирает: забор —
+	# тап по плашке «Забрать» в нижней трети, не по клетке машины.
 	var t: Dictionary = place_target(p, tap) if build_mode else dig_target(p, tap, _world_loose)
 	# Свою машину мир не забирает: забор — тап по плашке «Забрать» в нижней трети.
 	if t.is_empty():

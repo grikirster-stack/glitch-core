@@ -837,8 +837,7 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 				_read_terminal(cell)
 		ET_BEACON:
 			# Удержание у ядра — только запуск. Разбор ниже не трогает ядро:
-			# порог разбора 0.9 с, запуск копится 3 с. Причина — один тост,
-			# из Game (player._notify на локальном герое в журнал не пишет).
+			# порог разбора 0.9 с, запуск копится 3 с. Причина — один тост.
 			task_progress += dt / 3.0
 			if task_progress >= 1.0:
 				task_progress = 0.0
@@ -902,16 +901,18 @@ func _dismantle_node(tg: Dictionary, kind: String) -> MachineBase:
 
 ## Ядро не запустилось. Этапы, дуги и детали уже сказал Game.try_finish —
 ## и сам положил их в журнал. Здесь — только молчаливые отказы: не хост,
-## отсчёт уже идёт, ядра нет. player._notify на локальном герое журнал не пишет.
+## отсчёт уже идёт, ядра нет. Через _notify, не Game.notify: линт mp_feedback
+## пускает обратную связь только через обёртки, а для локального героя
+## _notify и есть Game.notify (HUD._on_note ← Game.notification).
 func _say_core_blocked() -> void:
 	if not Net.is_authority():
-		Game.notify("Запуск считает хост", Color(1.0, 0.6, 0.4))
+		_notify("Запуск считает хост", Color(1.0, 0.6, 0.4))
 		return
 	if Game.relay_active:
-		Game.notify("Отсчёт уже идёт", Color(0.4, 1.0, 0.8))
+		_notify("Отсчёт уже идёт", Color(0.4, 1.0, 0.8))
 		return
 	if not Game.core_placed():
-		Game.notify("Ядро не стоит", Color(1.0, 0.6, 0.4))
+		_notify("Ядро не стоит", Color(1.0, 0.6, 0.4))
 
 
 ## Явный забор своей машины (X или тап по плашке «Забрать»).
