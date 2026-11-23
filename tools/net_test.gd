@@ -18,8 +18,8 @@ extends SceneTree
 
 ## Схема протокола PROTO = SCHEMA_PROTO. Поменяли кодек, порядок IDs или таблицы DB —
 ## поднимите Net.PROTO и впишите сюда новый PROTO и хэш, который напечатает тест.
-const SCHEMA_PROTO: int = 19
-const SCHEMA_HASH: String = "05b3bb84708173e87ffbd50a3d4a399a"
+const SCHEMA_PROTO: int = 20
+const SCHEMA_HASH: String = "682486cfd50af35cc005386f55d47b56"
 
 const PORT_BASE: int = 24900
 const LOOP: String = "127.0.0.1"
@@ -202,6 +202,16 @@ func _codec() -> void:
 			and not back["keys"][KEY_D] and back["mouse_buttons"][MOUSE_BUTTON_RIGHT]
 			and not back["mouse_buttons"][MOUSE_BUTTON_LEFT] and (mask >> NetCodec.BIT_WINDOW) & 1 == 1)
 	ok("клавиша вне KEY_BITS по сети не ходит", NetCodec.key_bit(KEY_S) == -1)
+	ok("X — бит забора в конце KEY_BITS", NetCodec.key_bit(KEY_X) == NetCodec.KEY_BITS.size() - 1
+			and NetCodec.KEY_BITS[NetCodec.key_bit(KEY_X)] == KEY_X
+			and NetCodec.key_bit(KEY_X) < NetCodec.BIT_LMB)
+	var xmask: int = NetCodec.keys_mask({KEY_X: true})
+	var xback: Dictionary = NetCodec.mask_to_input(xmask)
+	ok("X туда-обратно: бит 12, шов ввода, ЛКМ и окно молчат",
+			xmask == (1 << NetCodec.key_bit(KEY_X)) and xback["keys"][KEY_X]
+			and not xback["keys"][KEY_G] and not xback["mouse_buttons"][MOUSE_BUTTON_LEFT]
+			and not xback["mouse_buttons"][MOUSE_BUTTON_RIGHT]
+			and (xmask >> NetCodec.BIT_WINDOW) & 1 == 0 and (xmask >> NetCodec.BIT_LMB) & 1 == 0)
 	var pr: int = 0
 	for i in 17:
 		pr = NetCodec.presses_bump(pr, 2)

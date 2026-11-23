@@ -17,6 +17,7 @@ var capture_size: Vector2i = Vector2i.ZERO
 var ui_scale: float = 2.5
 var out_dir: String = "/tmp/machine-pickup"
 var tag: String = "land"
+var _hold_mouse: Vector2 = Vector2(-1.0, -1.0)
 
 
 func _initialize() -> void:
@@ -71,6 +72,11 @@ func _boot() -> void:
 
 func _process(delta: float) -> bool:
 	_elapsed += delta
+	# После физики тача: он стирает шов, если пальца нет. Точка кадра — наша.
+	if _hold_mouse.x >= 0.0 and scene != null:
+		var pl: Node = scene.get("player")
+		if pl != null:
+			pl.touch_input["mouse"] = _hold_mouse
 	if _elapsed > HARD_LIMIT:
 		push_error("machine_pickup_shot: превышен лимит")
 		quit(2)
@@ -150,20 +156,32 @@ func _run() -> void:
 	var hud: Node = root.get_node("UI").get("hud")
 	_report("before", hud)
 	var before_ok: bool = await _shot("before")
-	var screen: Vector2 = root.get_viewport().get_canvas_transform() * world.cell_to_world(cell)
-	# Короткий тап: нажатие и отпускание в соседних кадрах, иначе ghost не успевает.
-	_touch(1, screen, true)
+	var plate: Rect2 = hud.layout_screen_rect("hint")
+	if not hud.pickup_plate_at(plate.get_center()):
+		push_error("machine_pickup_shot: плашка не «Забрать» «%s» %s" % [
+			String(hud._plate_text()), str(plate)])
+		quit(1)
+		return
+	# Короткий тап по плашке в нижней трети, не по клетке мира.
+	_touch(1, plate.get_center(), true)
 	await _frames(1)
-	_touch(1, screen, false)
+	_touch(1, plate.get_center(), false)
 	await _frames(16)
 	cam.position = Vector2.ZERO
 	cam.reset_smoothing()
 	cam.force_update_scroll()
 	# Прицел на свободную клетку справа — плашка «поставить».
-	# Курсор идёт через шов: building_cell каждый кадр пересчитывается из мыши.
+	# Курсор кадра — шов тача: экранная мышь после тапа по плашке остаётся на HUD
+	# и перекрывает клетку (ландшафт 2400×1080). Палец не держим: иначе тач
+	# пересчитает клетку из точки экрана и поставит блок до кадра.
 	var dest: Vector2i = Vector2i(cell.x + 3, cell.y)
 	var mouse: Vector2 = world.cell_to_world(dest)
-	p.test_input = {"mouse": mouse}
+	p.test_input = {}
+	# Физика тача каждый кадр переписывает шов из экранной мыши. Для кадра
+	# «поставить» её глушим и держим точку мира сами.
+	tc.set_physics_process(false)
+	_hold_mouse = mouse
+	p.touch_input["mouse"] = mouse
 	await _frames(8)
 	var hud_now: Node = root.get_node("UI").get("hud")
 	print("machine_pickup_shot aim: клетка %s building %s can_place %s hint «%s»" % [

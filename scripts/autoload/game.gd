@@ -827,6 +827,29 @@ func core_launch() -> bool:
 	return true
 
 
+## Почему ядро сейчас не запускается. Пусто — ворота открыты (или это не наш случай).
+## Белый луч в перечень не входит: свободной игре нужны шесть цветных дуг.
+func core_block_text() -> String:
+	if relay_active:
+		return "Отсчёт уже идёт"
+	if not core_placed():
+		return "Ядро не стоит"
+	if in_mission():
+		var missing: Array = []
+		for id in relay_req.keys():
+			var have: int = relay_count(id)
+			if have < int(relay_req[id]):
+				missing.append("%s (%d/%d)" % [DB.item_name(id), have, int(relay_req[id])])
+		if not missing.is_empty():
+			return "Релею не хватает: " + ", ".join(missing)
+		return ""
+	if not free_ready():
+		return free_block_text()
+	if (core_arcs & arc_need()) != arc_need():
+		return "Не хватает дуг: " + ", ".join(core_missing_names())
+	return ""
+
+
 ## Чего не хватает до запуска: горелка, руда или ночь. Пусто — этапы 1–3 сданы.
 func free_block_text() -> String:
 	var parts: Array = []

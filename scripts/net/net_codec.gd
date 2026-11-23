@@ -66,11 +66,14 @@ const HELLO_MAX: int = 512      ## рукопожатие длиннее — м�
 const NICK_MAX_BYTES: int = 64  ## 16 символов UTF-8 с запасом
 
 ## Биты клавиш пакета ввода (§ 4.2.3). Дописывать только в конец.
+## X — явный забор своей машины (#309). Индекс 12: длина INPUT не растёт (маска u32).
+## Номер бита — индекс в KEY_BITS. Прежние 12–14 (ЛКМ, ПКМ, окно) сдвинуты на 13–15:
+## отдельный бит 15 для X совпал бы с ЛКМ.
 const KEY_BITS: Array = [KEY_A, KEY_D, KEY_LEFT, KEY_RIGHT, KEY_W, KEY_UP, KEY_SPACE,
-		KEY_SHIFT, KEY_E, KEY_Q, KEY_V, KEY_G]
-const BIT_LMB: int = 12
-const BIT_RMB: int = 13
-const BIT_WINDOW: int = 14      ## у клиента открыто окно (инвентарь, журнал)
+		KEY_SHIFT, KEY_E, KEY_Q, KEY_V, KEY_G, KEY_X]
+const BIT_LMB: int = 13
+const BIT_RMB: int = 14
+const BIT_WINDOW: int = 15      ## у клиента открыто окно (инвентарь, журнал)
 
 ## Флаги игрока в STATE.
 const PF_FACING_LEFT: int = 1
@@ -530,7 +533,7 @@ static func decode_own(b: PackedByteArray) -> Dictionary:
 
 
 # ------------------------------------------------------------------ ВВОД КЛИЕНТА (26 Б)
-## seq u16 · клавиши u32 (KEY_BITS, BIT_LMB, BIT_RMB, BIT_WINDOW) · мышь 2×u16 ·
+## seq u16 · клавиши u32 (KEY_BITS 0–12, BIT_LMB 13, BIT_RMB 14, BIT_WINDOW 15) · мышь 2×u16 ·
 ## слот u8 · счётчики нажатий E/Q/V/G по 4 бита (u16) · позиция 2×f32 ·
 ## скорость 2×s16 · флаги u8 (1 — facing_left, 2 — on_ground).
 

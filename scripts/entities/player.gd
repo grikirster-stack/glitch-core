@@ -57,6 +57,7 @@ var dig_cell: Vector2i = Vector2i(-1, -1)
 var dig_denied_cell: Vector2i = Vector2i(-1, -1)
 var dig_denied_t: float = 0.0
 var _lmb_was: bool = false   ## ЛКМ была нажата в прошлом кадре
+var _x_prev: bool = false    ## X была нажата в прошлом кадре (забор — по фронту)
 var task_progress: float = 0.0
 var hiding: bool = false
 ## Сколько ещё можно сидеть в вентиляции, с (тикает от Balance.HIDE_MAX к нулю).
@@ -311,18 +312,21 @@ func _handle_input(dt: float) -> void:
 	var cell: Vector2i = World.world_to_cell(mouse)
 	building_cell = cell
 
+	# Карточка цели и плашки HUD не ловят мышь (опрос кнопки идёт мимо GUI).
+	# Клик по ним не копает, не бьёт и не ставит клетку мира под курсором.
+	if _pointer_on_hud():
+		_drop_world_aim()
+		return
+
 	var in_reach: bool = mouse.distance_to(global_position) <= REACH
 
 	dig_cell = dig_target(mouse)
 	var lmb: bool = _mouse_down(MOUSE_BUTTON_LEFT)
-	var lmb_fresh: bool = lmb and not _lmb_was
 	dig_denied_t = maxf(0.0, dig_denied_t - dt)
 	if lmb:
+		# Удар держится всё нажатие, включая перезарядку: кадр кулдауна не
+		# падает в копку и не забирает машину рядом с фантомом.
 		if in_reach and _slash_at(mouse):
-			return
-		# Свежий клик по своей машине — забрать. Удержание копает стену за ней.
-		# Атака выше уже забрала кадр: удар по фантому приоритетнее забора.
-		if lmb_fresh and in_reach and _try_pickup(cell):
 			_lmb_was = true
 			return
 		_flag_denied(cell)
@@ -347,6 +351,13 @@ func _handle_input(dt: float) -> void:
 	# Q — импульс
 	if _key(KEY_Q) and emp_cd <= 0.0:
 		_empulse()
+
+	# X — забрать свою машину. Не ЛКМ: удар и копка клетку под курсором не снимают.
+	# Бит 12 пакета ввода (KEY_BITS): у клиента LAN то же нажатие доходит до прокси.
+	var x_down: bool = _key(KEY_X)
+	if x_down and not _x_prev and in_reach:
+		_try_pickup(cell)
+	_x_prev = x_down
 
 	# E — взаимодействие
 	var e_down: bool = _key(KEY_E)
@@ -389,6 +400,33 @@ func _mouse_down(btn: int) -> bool:
 	return Input.is_mouse_button_pressed(btn)
 
 
+## Курсор (или палец) лежит на нарисованном HUD: карточка, плашка, хотбар.
+## Сценарий кладёт экранную точку в test_input["screen_mouse"] — мировой
+## курсор при этом остаётся на клетке, и клик не должен её копать.
+func _pointer_on_hud() -> bool:
+	var hud: Node = UI.hud
+	if hud == null:
+		return false
+	var screen: Vector2 = _screen_pointer()
+	if hud.covers_screen(screen):
+		return true
+	if hud.has_method("hotbar_screen_rect") and hud.hotbar_screen_rect().has_point(screen):
+		return true
+	return false
+
+
+func _screen_pointer() -> Vector2:
+	if test_input.has("screen_mouse"):
+		return test_input["screen_mouse"]
+	# Шов сценария подменяет мир, но не экран. Мышь окна в headless — (0, 0),
+	# а это угол карточки: без явной точки клик по миру не глотаем.
+	if not test_input.is_empty():
+		return Vector2(-1.0, -1.0)
+	if touch_input.has("screen"):
+		return touch_input["screen"]
+	return get_viewport().get_mouse_position()
+
+
 ## Позиция «курсора» в мире (см. _key).
 func _mouse_pos() -> Vector2:
 	if test_input.has("mouse"):
@@ -401,21 +439,29 @@ func _mouse_pos() -> Vector2:
 
 
 func _slash_at(mouse: Vector2) -> bool:
-	if slash_cd > 0.0:
+	var aimed: Node2D = null
+	var touch_swing: bool = not test_input.has("mouse") and not test_input.has("mouse_buttons") \
+			and touch_input.has("mouse_buttons")
+	if touch_swing:
+		aimed = _touch_aimed_phantom()
+	var foe: Node = aimed
+	if foe == null:
+		for p in get_tree().get_nodes_in_group("phantom"):
+			if p.global_position.distance_to(mouse) < 20.0:
+				foe = p
+				break
+	if foe == null:
 		return false
+	# Цель выбрана — нажатие принадлежит удару до отпускания, даже на кулдауне.
+	if slash_cd > 0.0:
+		return true
 	# Сенсорный прицел берёт фантома в PHANTOM_GRAB (26 px), а взмах мыши — только
 	# ближе 20. Палец на 21–26 px от фантома прицел уже выбрал, но точка пальца
 	# до тела не достаёт. Бьём того, кого прицел взял, не ближайшего. Мышь и
 	# test_input порог 20 не теряют: у сценария свой «курсор».
-	if not test_input.has("mouse") and not test_input.has("mouse_buttons") \
-			and touch_input.has("mouse_buttons"):
-		var aimed: Node2D = _touch_aimed_phantom()
-		if aimed != null:
-			return _hit_phantom(aimed, aimed.global_position)
-	for p in get_tree().get_nodes_in_group("phantom"):
-		if p.global_position.distance_to(mouse) < 20.0:
-			return _hit_phantom(p, mouse)
-	return false
+	if aimed != null:
+		return _hit_phantom(aimed, aimed.global_position)
+	return _hit_phantom(foe, mouse)
 
 
 ## Фантом, которого TouchControls уже взял в прицел (aim_foe, точка — его центр).
@@ -790,10 +836,14 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 				task_progress = 0.0
 				_read_terminal(cell)
 		ET_BEACON:
+			# Удержание у ядра — только запуск. Разбор ниже не трогает ядро:
+			# порог разбора 0.9 с, запуск копится 3 с. Причина — один тост.
 			task_progress += dt / 3.0
 			if task_progress >= 1.0:
 				task_progress = 0.0
-				Game.try_finish(self)   # запуск ядра: дуги готовы, иначе перечень (#175)
+				if not Game.try_finish(self):
+					_say_core_blocked()
+			return
 		ET_BURNER, ET_ACCUMULATOR, ET_SIREN:
 			# Горелка: топливо — топка, пустая рука — рубильник (#164);
 			# накопитель: рубильник «копить / отдавать» (#166);
@@ -849,9 +899,25 @@ func _dismantle_node(tg: Dictionary, kind: String) -> MachineBase:
 	return m
 
 
-## Свежий ЛКМ или короткий тап по своей машине: забрать её сразу.
+## Ядро не запустилось. Этапы, дуги и детали уже сказал Game.try_finish —
+## и сам положил их в журнал. Здесь — только молчаливые отказы: не хост,
+## отсчёт уже идёт, ядра нет. Через _notify, не Game.notify: линт mp_feedback
+## пускает обратную связь только через обёртки, а для локального героя
+## _notify и есть Game.notify (HUD._on_note ← Game.notification).
+func _say_core_blocked() -> void:
+	if not Net.is_authority():
+		_notify("Запуск считает хост", Color(1.0, 0.6, 0.4))
+		return
+	if Game.relay_active:
+		_notify("Отсчёт уже идёт", Color(0.4, 1.0, 0.8))
+		return
+	if not Game.core_placed():
+		_notify("Ядро не стоит", Color(1.0, 0.6, 0.4))
+
+
+## Явный забор своей машины (X или тап по плашке «Забрать»).
 ## Пустая рука не нужна. Постоянная постройка базы и непустой сундук остаются
-## на месте — игроку говорят, почему. true — клик обработан (копать не надо).
+## на месте — игроку говорят, почему. true — команда обработана.
 func _try_pickup(cell: Vector2i) -> bool:
 	var m = World.machines.get(cell)
 	if m == null or not is_instance_valid(m) or m.is_queued_for_deletion():
@@ -906,7 +972,7 @@ func _select_item(item: int) -> void:
 
 ## На телефоне забранный предмет сразу ставится следующим тапом.
 func _arm_touch_build(item: int) -> void:
-	if not touch_input.has("keys"):
+	if not UI.touch_on and not touch_input.has("keys"):
 		return
 	var tc: Node = get_tree().get_first_node_in_group("touch_controls")
 	if tc == null or not bool(tc.get("enabled")):
@@ -1104,6 +1170,8 @@ func respawn_at(pos: Vector2) -> void:
 	invuln = 2.0
 	_stun = 0.0
 	_regen = 0.0
+	# Зажатая до смерти X не должна снять машину на первом кадре после респауна.
+	_x_prev = _key(KEY_X)
 	stats_changed.emit()
 
 

@@ -104,6 +104,9 @@ var hint_text: String = ""
 const HINT_TERMINAL: String = "[E] — выполнить задание (удерживать)"
 const HINT_TERMINAL_NO_POWER: String = "Терминал: нет питания — поставьте рядом ТЭЦ"
 const HINT_BEACON: String = "[E] — запустить ядро (удерживать 3 с)"
+const HINT_BEACON_WAIT: String = "Рано запускать — ядро на месте"
+const HINT_BEACON_ARCS: String = "Не хватает дуг — запуск по [E]"
+const HINT_BEACON_HOLD: String = "Отсчёт идёт — держитесь у ядра"
 const HINT_CHEST: String = "[E] — открыть сундук"
 const HINT_GEN_COAL: String = "[E] — загрузить уголь в ТЭЦ"
 const HINT_GEN_SWITCH: String = "[E] — рубильник ТЭЦ (вкл/выкл) · уголь в руке + [E] — топка"
@@ -122,17 +125,17 @@ const CONTROLS_TOUCH: Array = [
 	"Тап к стене — копать / бить   блок в хотбаре — строить",
 	"«меню» или «Назад» — пауза и сохранение   I — инвентарь",
 ]
-## Явный забор: свежий ЛКМ или короткий тап. Имя подставляется.
-const HINT_PICKUP: String = "ЛКМ — забрать: %s"
-const HINT_PICKUP_BURNER: String = "ЛКМ — забрать горелку · [E] — рубильник"
-## После забора предмет в руке: куда его ставить.
-const HINT_PLACE: String = "ЛКМ — поставить · ПКМ — снять выбор"
-## Тач-плашка короче десктопа: точные строки, без хвоста « · ».
-const TOUCH_PICKUP: String = "Тапни — забрать: %s"
-const TOUCH_PICKUP_BURNER: String = "Тапни горелку — забрать"
+## Явный забор: [X] на ПК, тап по этой плашке на телефоне. Не ЛКМ и не тап по миру.
+const HINT_PICKUP: String = "[X] — забрать: %s"
+const HINT_PICKUP_BURNER: String = "[X] — забрать горелку · [E] — рубильник"
+## После забора предмет в руке: куда его ставить. Ставит ПКМ, не ЛКМ.
+const HINT_PLACE: String = "ПКМ — поставить"
+## Тач-плашка короче десктопа. «Забрать» — кнопка: тап по плашке, не по машине.
+const TOUCH_PICKUP: String = "Забрать: %s"
+const TOUCH_PICKUP_BURNER: String = "Забрать горелку"
 const TOUCH_PLACE: String = "Тапни клетку — поставить"
-const TOUCH_BURNER_FUEL: String = "Тапни — забрать · [E] — топка"
-const TOUCH_BURNER_SWITCH: String = "Тапни горелку — забрать · [E] — рубильник"
+const TOUCH_BURNER_FUEL: String = "Забрать · [E] — топка"
+const TOUCH_BURNER_SWITCH: String = "Забрать горелку · [E] — рубильник"
 
 ## Одна строка в нижней плашке на телефоне, пока игрок не начал действовать.
 ## CONTROLS_TOUCH на экране больше не рисуется — три строки закрывали карточку.
@@ -140,6 +143,9 @@ const TOUCH_HINTS: Dictionary = {
 	HINT_TERMINAL: "[E] — выполнить задание",
 	HINT_TERMINAL_NO_POWER: "Терминал: нет питания — нужна ТЭЦ",
 	HINT_BEACON: "[E] — запустить ядро",
+	HINT_BEACON_WAIT: "Рано запускать",
+	HINT_BEACON_ARCS: "Не хватает дуг",
+	HINT_BEACON_HOLD: "Отсчёт идёт",
 	HINT_CHEST: "[E] — открыть сундук",
 	HINT_GEN_COAL: "[E] — уголь в ТЭЦ",
 	HINT_GEN_SWITCH: "[E] — рубильник ТЭЦ",
@@ -531,9 +537,11 @@ func _touch_hint(text: String) -> String:
 		return ""
 	if TOUCH_HINTS.has(text):
 		return String(TOUCH_HINTS[text])
-	# «ЛКМ — забрать: Горелка» → «Тапни — забрать: Горелка». Хвост не отрезаем.
+	# «[X] — забрать: Зеркало» → «Забрать: Зеркало». Плашка сама и есть кнопка.
+	if text.begins_with("[X] — забрать: "):
+		return "Забрать: " + text.substr("[X] — забрать: ".length())
 	if text.begins_with("ЛКМ — забрать: "):
-		return "Тапни — забрать: " + text.substr("ЛКМ — забрать: ".length())
+		return "Забрать: " + text.substr("ЛКМ — забрать: ".length())
 	var s: String = text
 	# Разбор: «[E] (удерживать) — разобрать: предмет» → «[E] — разобрать: предмет».
 	if s.begins_with(HINT_DISMANTLE):
@@ -586,7 +594,7 @@ func _compute_hint(_pos: Vector2) -> String:
 	if kind == player.ET_TERMINAL:
 		return HINT_TERMINAL
 	if kind == player.ET_BEACON:
-		return HINT_BEACON
+		return _beacon_hint()
 	if kind == player.ET_CHEST:
 		return _pickup_or(HINT_CHEST, tg["node"])
 	if kind == player.ET_REPAIR:
@@ -599,6 +607,18 @@ func _compute_hint(_pos: Vector2) -> String:
 	return place
 
 
+## У ядра E только запускает. Подсказка говорит, готов ли запуск, а не «разобрать».
+func _beacon_hint() -> String:
+	if Game.relay_active:
+		return HINT_BEACON_HOLD
+	var why: String = Game.core_block_text()
+	if why == "":
+		return HINT_BEACON
+	if why.begins_with("Не хватает дуг"):
+		return HINT_BEACON_ARCS
+	return HINT_BEACON_WAIT
+
+
 ## Подсказка забора, если машину можно снять. Иначе — обычное действие E.
 func _pickup_or(fallback: String, m) -> String:
 	if _can_show_pickup(m):
@@ -606,7 +626,7 @@ func _pickup_or(fallback: String, m) -> String:
 	return fallback
 
 
-## Свою разбираемую машину можно забрать свежим ЛКМ (на тач — коротким тапом).
+## Свою разбираемую машину можно забрать: [X] или тап по плашке «Забрать».
 func _can_show_pickup(m) -> bool:
 	if m == null or not is_instance_valid(m) or bool(m.permanent):
 		return false
@@ -3075,6 +3095,28 @@ func hotbar_slot_logical(i: int) -> Rect2:
 ## (TouchControls, #81): касания приходят в px холста, а не слоя UI.
 func hotbar_slot_rect(i: int) -> Rect2:
 	var r: Rect2 = hotbar_slot_logical(i)
+	return Rect2(r.position * UI.ui_scale, r.size * UI.ui_scale)
+
+
+## Тап по плашке «Забрать» в нижней трети. Обычная подсказка тапом машину не снимает.
+func pickup_plate_at(pos: Vector2) -> bool:
+	if not UI.touch_on or not _plate_is_pickup():
+		return false
+	var r: Rect2 = layout_screen_rect("hint")
+	return r.size != Vector2.ZERO and r.has_point(pos)
+
+
+func _plate_is_pickup() -> bool:
+	var t: String = _plate_text()
+	return t.begins_with("Забрать")
+
+
+## Весь хотбар на экране, px холста. Клик по нему не должен копать мир.
+func hotbar_screen_rect() -> Rect2:
+	_ensure_layout()
+	if not _lay.has("hotbar"):
+		return Rect2()
+	var r: Rect2 = _lay["hotbar"]
 	return Rect2(r.position * UI.ui_scale, r.size * UI.ui_scale)
 
 
