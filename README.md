@@ -951,7 +951,8 @@ tools/                   автотесты, сценарии, замеры, г�
 docs/adr/                архитектурные решения
 ```
 
-**Тесты** описаны в [`tools/README_TESTS.md`](tools/README_TESTS.md). Основные команды
+**Тесты** описаны в [`tools/README_TESTS.md`](tools/README_TESTS.md). Для ручного
+прогона со снимками см. [свободную игру до эвакуации](docs/playtest-freeplay.md). Основные команды
 повторяют CI:
 
 ```bash
