@@ -650,6 +650,7 @@ const ET_LOAD: String = "load"                  ## предмет в руке п
 const ET_DISMANTLE: String = "dismantle"        ## разбор постройки (удержание E)
 const ET_SIREN: String = "siren"                ## сирена: E при полном заряде гонит рой
 const ET_LENS: String = "lens"                  ## линза в руке у маяка — вставить
+const ET_SPORE_BED: String = "spore_bed"        ## грядка: E забирает волокно с лотка
 
 ## Сколько секунд держать E над постройкой, чтобы разобрать её (DISMANTLE).
 const DISMANTLE_HOLD: float = 0.9
@@ -785,6 +786,8 @@ func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable,
 		elif m is Pharos and not sel.is_empty() and sel.id == IDs.I.LENS and d < E_MACHINE \
 				and not bool(m.get("lens")):
 			tg["kind"] = ET_LENS
+		elif m is SporeBed and int(m.get("tray")) > 0 and d < E_MACHINE:
+			tg["kind"] = ET_SPORE_BED
 		elif m is Chest and d < E_MACHINE and not _chest_empty(m):
 			tg["kind"] = ET_CHEST
 		elif not sel.is_empty() and d <= E_STATION and not (m is Chest or m is Burner) \
@@ -844,10 +847,11 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 				if not Game.try_finish(self):
 					_say_core_blocked()
 			return
-		ET_BURNER, ET_ACCUMULATOR, ET_SIREN:
+		ET_BURNER, ET_ACCUMULATOR, ET_SIREN, ET_SPORE_BED:
 			# Горелка: топливо — топка, пустая рука — рубильник (#164);
 			# накопитель: рубильник «копить / отдавать» (#166);
-			# сирена: E при полном заряде гонит фантомов (#172).
+			# сирена: E при полном заряде гонит фантомов (#172);
+			# грядка: E забирает волокно с лотка (#313).
 			tg["node"].interact(self)
 		ET_LENS:
 			if fresh:

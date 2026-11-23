@@ -75,6 +75,9 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 		# --- Радужное ядро (ADR-005 § 6.3, #175) ---
 		"RainbowCore":
 			m = RainbowCore.new()
+		# --- Споровая грядка (ADR-006 § 3.2, #313) ---
+		"SporeBed":
+			m = SporeBed.new()
 		_:
 			# Старый сейв: бур, лента, ТЭЦ и прочие снятые машины (#170).
 			return false
