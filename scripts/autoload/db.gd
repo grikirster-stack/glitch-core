@@ -246,6 +246,11 @@ func _build_item_defs() -> void:
 	_add_item_def(IDs.I.LENS, "Линза", Color(0.82, 0.92, 1.0), "lens", 5, "")
 	# Радужное ядро (ADR-005 § 6.3, #175): одно в сундуке лагеря, дальше — чертёж.
 	_add_item_def(IDs.I.RAINBOW_CORE, "Радужное ядро", Color(0.22, 0.24, 0.30), "rainbow_core", 5, "machine:RainbowCore")
+	# Живая база (ADR-006 § 3.2, #313). Волокно — выпуск грядки, панель — общий
+	# выход ручного рецепта и будущего пресса (#314). Грядка ставится руками.
+	_add_item_def(IDs.I.SPORE_FIBER, "Споровое волокно", Color(0.72, 0.86, 0.42), "fiber", 99, "")
+	_add_item_def(IDs.I.PANEL, "Панель", Color(0.78, 0.80, 0.74), "panel", 99, "")
+	_add_item_def(IDs.I.SPORE_BED, "Споровая грядка", Color(0.55, 0.72, 0.38), "spore_bed", 5, "machine:SporeBed")
 
 	# Требования релей-ядра — из Balance (§ 4.7).
 	relay_req = Balance.RELAY_REQ.duplicate()
@@ -329,6 +334,12 @@ func _build_recipes() -> void:
 	# Сирена — чертёж 7, линза — чертёж 8 (#172). Руками сразу, без станка.
 	_recipe(IDs.I.SIREN, 1, {IDs.I.COPPER_INGOT: 2, IDs.I.CRYSTAL: 1, IDs.I.GLASS: 1}, "hand", 0.0, "")
 	_recipe(IDs.I.LENS, 1, {IDs.I.GLASS: 3, IDs.I.CRYSTAL: 2}, "hand", 0.0, "")
+	# Споровая грядка — чертёж SPORE_BED (#313). Волокно → панели руками:
+	# тот же выход, что у будущего пресса, чтобы первый срез шёл без станка.
+	# Числа — Balance, не здесь.
+	_recipe(IDs.I.SPORE_BED, 1, {IDs.I.COPPER_INGOT: 1, IDs.I.LOG: 2}, "hand", 0.0, "")
+	_recipe(IDs.I.PANEL, Balance.SPORE_BED_PANEL_OUT,
+			{IDs.I.SPORE_FIBER: Balance.SPORE_BED_PANEL_IN}, "hand", 0.0, "", "seen")
 	# Фабрика снята (#170): плавильня, верстак, пластины, микросхемы, ТЭЦ,
 	# панели, буры, ленты, шлюз и блоки больше не крафтятся. Id остаются.
 
@@ -1717,6 +1728,34 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 			for y in range(6, 11):
 				_px(img, 7, y, Color.WHITE)
 				_px(img, 8, y, Color.WHITE)
+		"fiber":
+			# Свёрнутый пучок: выпуск грядки виден и в руке.
+			for y in range(3, 13):
+				_px(img, 6, y, c.darkened(0.15))
+				_px(img, 7, y, c)
+				_px(img, 9, y, c.lightened(0.12))
+			for x in range(5, 11):
+				_px(img, x, 4, c.lightened(0.25))
+				_px(img, x, 11, c.darkened(0.2))
+		"panel":
+			# Ребристая пластина: тот же предмет, что выйдет из пресса.
+			for y in range(4, 12):
+				for x in range(3, 13):
+					_px(img, x, y, c.lightened(0.16 if y == 4 else 0.0))
+			for y in range(5, 11, 2):
+				_px(img, 4, y, c.darkened(0.25))
+				_px(img, 8, y, c.darkened(0.25))
+				_px(img, 11, y, c.darkened(0.25))
+		"spore_bed":
+			# Лоток и росток: грядка узнаётся до установки.
+			for y in range(7, 13):
+				for x in range(3, 13):
+					_px(img, x, y, c.darkened(0.25))
+			for y in range(4, 8):
+				_px(img, 7, y, Color(0.62, 0.84, 0.38))
+				_px(img, 8, y, Color(0.78, 0.92, 0.48))
+			_px(img, 6, 5, Color(0.55, 0.78, 0.32))
+			_px(img, 9, 5, Color(0.55, 0.78, 0.32))
 		"bag":
 			for y in range(5, 14):
 				var half: int = 5 - int(absf(float(y) - 10.0) * 0.5)

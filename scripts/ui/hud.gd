@@ -161,6 +161,7 @@ const TOUCH_HINTS: Dictionary = {
 	HINT_LOAD: "[E] — загрузить",
 	HINT_SIREN: "[E] — сирену",
 	HINT_LENS: "[E] — линзу",
+	HINT_SPORE_BED: "[E] — волокно",
 }
 
 const INTRO_LINES: Array = [
@@ -181,6 +182,7 @@ const HINT_DISMANTLE_TAIL: String = " · удерживать [E] — разоб
 ## Сирена (#172): не больше шести слов — ребёнок читает кнопку, не абзац.
 const HINT_SIREN: String = "[E] — включить сирену"
 const HINT_LENS: String = "[E] — вставить линзу"
+const HINT_SPORE_BED: String = "[E] — забрать волокно"
 
 ## Цепочка обучения: шаги по порядку, TUT_DONE — пройдена (строка скрыта).
 enum Tut { DIG, CRAFT, PLACE, POWER, TERMINAL, DONE }
@@ -591,6 +593,8 @@ func _compute_hint(_pos: Vector2) -> String:
 		return HINT_SIREN
 	if kind == player.ET_LENS:
 		return HINT_LENS
+	if kind == player.ET_SPORE_BED:
+		return HINT_SPORE_BED
 	if kind == player.ET_TERMINAL:
 		return HINT_TERMINAL
 	if kind == player.ET_BEACON:

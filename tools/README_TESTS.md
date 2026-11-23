@@ -423,6 +423,20 @@ godot --headless --path . --script res://tools/save_test.gd
 Кадр `docs/img/shots/beam_diagonal.png` — `tools/beam_diagonal_shot.gd`, окно за экраном:
 `timeout 120 godot --path . --audio-driver Dummy --disable-vsync --fixed-fps 60 --windowed --position -10000,-10000 --resolution 1280x720 --script res://tools/beam_diagonal_shot.gd -- --seed=31337`.
 
+### Споровая грядка (ADR-006 § 3.2, #313)
+
+* `spore_bed` (`-- --scenario=spore_bed`) — коллектор днём бьёт белым в грядку,
+  за `Balance.SPORE_BED_SECONDS` (12 с) в лотке одно волокно. Обрыв луча долю не
+  сбрасывает и не тикает, подпись «Нет белого луча»; свет вернулся — волокно
+  дозревает с той же доли. Полный лоток (4) стоит, подпись «Выход полон»; после
+  забора выпуск продолжается. Save/load посреди волокна сохраняет долю, лоток и
+  сторону. Красный грядку не растит. Соседний сундук забирает волокно из лотка.
+  Ручной рецепт: 2 волокна → 4 панели (`IDs.I.PANEL`, тот же предмет, что возьмёт пресс).
+
+Кадр `docs/img/shots/spore_bed.png` — `tools/spore_bed_shot.gd`, окно за экраном
+2400×1080:
+`timeout 90 godot --path . --audio-driver Dummy --disable-vsync --fixed-fps 60 --windowed --position -10000,-10000 --resolution 2400x1080 --script res://tools/spore_bed_shot.gd -- --seed=31337`.
+
 ### Маяк, часть 1 (ADR-005 § 5, #167)
 
 Сценарии (`-- --scenario=pharos_red,pharos_yellow,pharos_green`):

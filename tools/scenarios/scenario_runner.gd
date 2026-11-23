@@ -394,6 +394,9 @@ const REGISTRY: Dictionary = {
 	# --scenario=all — CI роняет шаг на любом SCRIPT ERROR, включая Parse Error.
 	"load_guard": {"file": "load_guard.gd", "title": "битый сценарий в реестре",
 		"desc": "временный битый файл в реестре: явный FAIL и следующий сценарий продолжается"},
+	# --- Споровая грядка (ADR-006 § 3.2, #313) ---
+	"spore_bed": {"file": "spore_bed.gd", "title": "споровая грядка", "timeout_ms": 90000,
+		"desc": "белый растит волокно; тьма не сбрасывает долю; полный лоток стоит; save/load продолжает; волокно → панели"},
 	}
 
 var scene: Node = null
