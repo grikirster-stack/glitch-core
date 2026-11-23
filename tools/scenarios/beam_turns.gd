@@ -84,6 +84,9 @@ func _check_wall_break(origin: Vector2i) -> void:
 	ok("обрыв стены в break_points", not hit.is_empty(), _break_dump(br))
 	ok("цвет обрыва стены красный", int(hit.get("color", 0)) == Beams.R)
 	ok("маркер обрыва отдан наружу", _marker_of(hit))
+	var face: Vector2 = _break_face(wall)
+	ok("грань стены найдена", face != Vector2.ZERO, "face %s" % str(face))
+	ok("штрих искры длиннее нуля", _mark_arm() > 0.0, "arm %.2f" % _mark_arm())
 	ok("у стены нет сегмента нулевой длины", not _zero_seg())
 	ok("клетка перед стеной освещена", World.beams.color_at(wall + Vector2i(-1, 0)) == Beams.R)
 	ok("сквозь стену луч не прошёл", World.beams.color_at(wall + Vector2i(1, 0)) == 0)
@@ -113,6 +116,7 @@ func _check_budget_break(origin: Vector2i) -> void:
 	ok("обрыв бюджета помечен", not hit.is_empty(), _break_dump(br))
 	ok("цвет обрыва бюджета красный", int(hit.get("color", 0)) == Beams.R)
 	ok("маркер бюджетного обрыва отдан", _marker_of(hit))
+	ok("штрих бюджетного обрыва длиннее нуля", _mark_arm() > 0.0, "arm %.2f" % _mark_arm())
 	ok("после дальнего зеркала нет нулевого сегмента", not _zero_seg())
 	_gone(burner)
 	_gone(mirror)
@@ -130,6 +134,25 @@ func _marker_of(hit: Dictionary) -> bool:
 	if hit.is_empty():
 		return false
 	return str(hit.get("marker", "")) != ""
+
+
+## Та же геометрия, что рисует WorldFX._break_face: to сегмента уже на клетке
+## стены, to + step промахивается. Headless не рисует — проверяем данные.
+func _break_face(cell: Vector2i) -> Vector2:
+	for s in World.beams.segments:
+		var step: Vector2i = Beams.DIR[int(s["dir"]) & 7]
+		if s["to"] == cell:
+			return Vector2(step)
+	for s in World.beams.segments:
+		var step: Vector2i = Beams.DIR[int(s["dir"]) & 7]
+		if s["to"] + step == cell:
+			return Vector2(step)
+	return Vector2.ZERO
+
+
+## Экранная длина штриха. WorldFX.BREAK_MARK_PX — тот же крест, что на кадре.
+func _mark_arm() -> float:
+	return WorldFX.BREAK_MARK_PX
 
 
 func _break_dump(points: Array) -> String:
