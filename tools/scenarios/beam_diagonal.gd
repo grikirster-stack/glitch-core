@@ -86,7 +86,7 @@ func _check_corner(origin: Vector2i) -> void:
 	_flush()
 
 
-## Старый сейв: dir 0..3 отражает как раньше. «/» вправо → вверх, длина 24−2.
+## Старый сейв: dir 0..3 отражает как раньше. «/» вправо → вверх, плата — клетка зеркала.
 func _check_old_mirror(origin: Vector2i) -> void:
 	var burner: Burner = _burn(origin, IDs.I.COAL, 0)
 	var mirror_cell: Vector2i = origin + Vector2i(6, 0)
@@ -100,8 +100,8 @@ func _check_old_mirror(origin: Vector2i) -> void:
 	ok("сейв dir 1 остаётся «\\»", mirror.dir == 1)
 	mirror.dir = 0
 	_flush()
-	ok("старое «/»: вправо уходит вверх", _lane(mirror_cell, Vector2i(0, -1), 1, 17, Beams.R),
-			_dump(mirror_cell, Vector2i(0, -1), 19))
+	ok("старое «/»: вправо уходит вверх", _lane(mirror_cell, Vector2i(0, -1), 1, 18, Beams.R),
+			_dump(mirror_cell, Vector2i(0, -1), 20))
 	ok("старое зеркало не пускает насквозь", World.beams.color_at(mirror_cell + Vector2i(1, 0)) == 0)
 	# Восемь шагов: 0 → 1 → … и снова «/».
 	for _i in 8:
@@ -113,7 +113,7 @@ func _check_old_mirror(origin: Vector2i) -> void:
 
 
 ## Пологая «/» (dir 4): прямой луч вправо уходит вправо-вверх.
-## Обратно диагональ в то же зеркало выходит прямой. Длина 24−2.
+## Обратно диагональ в то же зеркало выходит прямой. Плата — клетка зеркала.
 func _check_mirror_to_diagonal(origin: Vector2i) -> void:
 	var burner: Burner = _burn(origin, IDs.I.COAL, 0)
 	var mirror_cell: Vector2i = origin + Vector2i(5, 0)
@@ -124,11 +124,11 @@ func _check_mirror_to_diagonal(origin: Vector2i) -> void:
 	mirror.dir = 4
 	_flush()
 	var up_right: Vector2i = Beams.DIR[7]
-	ok("прямой луч стал диагональю", _lane(mirror_cell, up_right, 1, 17, Beams.R),
-			_dump(mirror_cell, up_right, 19))
+	ok("прямой луч стал диагональю", _lane(mirror_cell, up_right, 1, 19, Beams.R),
+			_dump(mirror_cell, up_right, 21))
 	ok("за зеркалом по прямой пусто", World.beams.color_at(mirror_cell + Vector2i(1, 0)) == 0)
-	# 4 клетки до зеркала, плата 2, остаток 18. 19-я пуста.
-	ok("19-я клетка диагонали пуста", World.beams.color_at(mirror_cell + up_right * 19) == 0)
+	# 4 клетки до зеркала, зеркало — 5-я. Остаток 19, 20-я пуста.
+	ok("20-я клетка диагонали пуста", World.beams.color_at(mirror_cell + up_right * 20) == 0)
 	_gone(burner)
 	_gone(mirror)
 	_flush()

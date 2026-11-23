@@ -2324,6 +2324,8 @@ func _beams_tick() -> void:
 	beams.rebuild()
 	if beams.changed != before:
 		_apply_beam_lights()
+	# Сообщение смотрит на набор обрывов, не на changed: первый обрыв тоже говорят.
+	_note_beam_breaks()
 
 
 ## Свет луча: на каждую клетку — источник 20 px. Белый ярче. Старые ручки
@@ -2338,6 +2340,74 @@ func _apply_beam_lights() -> void:
 			continue
 		var power: float = Balance.BEAM_LIGHT_WHITE if mask == Beams.W else Balance.BEAM_LIGHT
 		_beam_lights[c] = add_light_source(cell_to_world(c), Balance.BEAM_LIGHT_RADIUS, power)
+
+
+## Подпись набора обрывов. Сообщение — только когда набор сменился, не каждый кадр.
+var _beam_break_sig: int = 0
+
+
+## Короткое сообщение, если луч упёрся в стену или не дотянулся.
+## Рядом с обрывом приёмник (маяк, сирена, ядро) — говорим, что он теряет свет.
+func _note_beam_breaks() -> void:
+	if beams == null:
+		return
+	var sig: int = _beam_break_signature()
+	if sig == _beam_break_sig:
+		return
+	_beam_break_sig = sig
+	if beams.break_points.is_empty():
+		return
+	var wall: bool = false
+	var budget: bool = false
+	var sink: String = ""
+	for p in beams.break_points:
+		if str(p.get("reason", "")) == "wall":
+			wall = true
+		else:
+			budget = true
+		if sink == "":
+			sink = _beam_sink_near(p["cell"])
+	var text: String = ""
+	var color: Color = Color(1.0, 0.78, 0.45)
+	if wall:
+		text = "Луч оборван: стена"
+		if sink != "":
+			text = "Луч оборван: стена. %s теряет свет" % sink
+	elif budget:
+		text = "Свет не дотянулся"
+		color = Color(0.45, 0.9, 0.85)
+		if sink != "":
+			text = "Свет не дотянулся. %s теряет свет" % sink
+	if text != "":
+		Game.notify(text, color)
+
+
+func _beam_break_signature() -> int:
+	var h: int = beams.break_points.size() * 53
+	for p in beams.break_points:
+		var c: Vector2i = p["cell"]
+		h = (h * 33) ^ (c.x * 73856093) ^ (c.y * 19349663) ^ int(p["color"])
+		h ^= 1 if str(p["reason"]) == "budget" else 2
+	return h
+
+
+## Приёмник в клетке обрыва или в соседней: он и есть тот, кто теряет свет.
+func _beam_sink_near(cell: Vector2i) -> String:
+	for d in [Vector2i.ZERO, Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var m = machines.get(cell + d)
+		if m == null or not is_instance_valid(m):
+			continue
+		if not m.has_method("beam_receive"):
+			continue
+		var kind: String = str(m.get("kind"))
+		if kind == "Pharos":
+			return "Маяк"
+		if kind == "Siren":
+			return "Сирена"
+		if kind == "RainbowCore":
+			return "Ядро"
+		return "Приёмник"
+	return ""
 
 
 ## Источник света от машины (прожектор). Возвращает ручку для remove_light_source.

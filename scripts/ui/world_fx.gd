@@ -593,7 +593,45 @@ func _draw_beams(view: Rect2) -> void:
 		# Одна линия 4 px: у источника альфа 1, к концу 0,35.
 		draw_line(a, mid, Color(col.r, col.g, col.b, head), 4.0)
 		draw_line(mid, b, Color(col.r, col.g, col.b, tail), 4.0)
+	_draw_beam_breaks(view, tile)
 	beam_draw_us = Time.get_ticks_usec() - t0
+
+
+## Искра обрыва: у стены — пунктир у грани, в воздухе — точка в последней клетке.
+## Не линия луча: квадрат 3 px и два штриха, чтобы обрыв читался отдельно.
+func _draw_beam_breaks(view: Rect2, tile: float) -> void:
+	for p in World.beams.break_points:
+		var cell: Vector2i = p["cell"]
+		var center: Vector2 = World.cell_to_world(cell)
+		if view.size != Vector2.ZERO and not view.grow(tile).has_point(center):
+			continue
+		var mask: int = int(p["color"])
+		if mask <= 0 or mask >= Beams.COLOR.size():
+			continue
+		var col: Color = Beams.COLOR[mask]
+		var reason: String = str(p["reason"])
+		if reason == "wall":
+			# Грань, в которую упёрся луч: штрихи снаружи клетки, искра на грани.
+			var face: Vector2 = _break_face(cell)
+			var edge: Vector2 = center + face * tile * 0.5
+			draw_rect(Rect2(edge.x - 1.0, edge.y - 1.0, 3.0, 3.0), Color(col.r, col.g, col.b, 1.0))
+			var side: Vector2 = Vector2(-face.y, face.x) * 3.0
+			draw_line(edge - side, edge - side * 0.35, Color(1.0, 1.0, 1.0, 0.95), 1.0)
+			draw_line(edge + side * 0.35, edge + side, Color(1.0, 1.0, 1.0, 0.95), 1.0)
+		else:
+			# Бюджет кончился в воздухе: яркая точка в последней освещённой клетке.
+			draw_rect(Rect2(center.x - 1.0, center.y - 1.0, 3.0, 3.0), Color(1.0, 0.95, 0.7, 1.0))
+			draw_rect(Rect2(center.x - 2.0, center.y, 1.0, 1.0), Color(col.r, col.g, col.b, 0.9))
+			draw_rect(Rect2(center.x + 2.0, center.y, 1.0, 1.0), Color(col.r, col.g, col.b, 0.9))
+
+
+## Откуда луч пришёл в клетку обрыва. Нет сегмента — искра по центру.
+func _break_face(cell: Vector2i) -> Vector2:
+	for s in World.beams.segments:
+		var step: Vector2i = Beams.DIR[int(s["dir"]) & 7]
+		if s["to"] + step == cell:
+			return Vector2(step)
+	return Vector2.ZERO
 
 
 ## Белый столб запуска (#175): от ядра до верха мира, 6 px, пока идёт удержание.
