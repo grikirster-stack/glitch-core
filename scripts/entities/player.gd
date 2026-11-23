@@ -353,7 +353,7 @@ func _handle_input(dt: float) -> void:
 		_empulse()
 
 	# X — забрать свою машину. Не ЛКМ: удар и копка клетку под курсором не снимают.
-	# Клавиши нет в пакете сети: у клиента LAN забор — тапом по плашке на своём экране.
+	# Бит 12 пакета ввода (KEY_BITS): у клиента LAN то же нажатие доходит до прокси.
 	var x_down: bool = _key(KEY_X)
 	if x_down and not _x_prev and in_reach:
 		_try_pickup(cell)
@@ -1169,6 +1169,8 @@ func respawn_at(pos: Vector2) -> void:
 	invuln = 2.0
 	_stun = 0.0
 	_regen = 0.0
+	# Зажатая до смерти X не должна снять машину на первом кадре после респауна.
+	_x_prev = _key(KEY_X)
 	stats_changed.emit()
 
 
