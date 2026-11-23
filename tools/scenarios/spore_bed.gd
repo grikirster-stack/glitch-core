@@ -1,10 +1,11 @@
 extends ScenarioBase
 ## Споровая грядка (ADR-006 § 3.2, #313).
 ##
-## Белый от коллектора даёт волокно. Без света прогресс стоит и не обнуляется.
-## Полный лоток останавливает выпуск. Save/load посреди выпуска продолжает
-## с той же доли. Ручной рецепт волокно → панели даёт Balance.SPORE_BED_PANEL_OUT.
-## Красный луч грядку не растит. Сундук у выхода забирает волокно из лотка.
+## Белый от коллектора даёт волокно. Обрыв — крыша в столбце коллектора, не флаг:
+## доля стоит и не обнуляется. Полный лоток останавливает выпуск. Save под светом,
+## load без луча: даже старый ключ lit не растит 1.2 с, затем beam_receive(7)
+## продолжает с той же доли. Красный луч грядку не растит. Сундук забирает лоток.
+## Ручной рецепт волокно → панели даёт Balance.SPORE_BED_PANEL_OUT.
 
 
 func run() -> void:
@@ -54,30 +55,50 @@ func _grows(origin: Vector2i) -> void:
 	_flush()
 
 
-## Обрыв луча: доля остаётся, секунды не тикают, подпись — «Нет белого луча».
+## Честный обрыв: белый от коллектора растит, крыша гасит луч, небо снова
+## открыто — доля продолжается. lit сценарий сам не пишет.
 func _holds_in_dark(origin: Vector2i) -> void:
-	ok("грядка без света", MachineBase.place_machine("SporeBed", origin))
-	var bed: SporeBed = World.machines.get(origin) as SporeBed
-	if bed == null:
+	var col_cell: Vector2i = origin
+	var bed_cell: Vector2i = origin + Vector2i(3, 0)
+	ok("коллектор для обрыва", MachineBase.place_machine("Collector", col_cell))
+	ok("грядка на белом для обрыва", MachineBase.place_machine("SporeBed", bed_cell))
+	var col: Collector = World.machines.get(col_cell) as Collector
+	var bed: SporeBed = World.machines.get(bed_cell) as SporeBed
+	if col == null or bed == null:
 		return
-	bed.lit = true
+	col.dir = 0
+	col._check_sky()
+	_flush()
+	var into: int = World.beams.color_at(bed_cell + Vector2i(-1, 0))
+	ok("белый луч дошёл до грядки до обрыва", bed.lit and into == Beams.W,
+			"lit %s, цвет перед входом %d" % [bed.lit, into])
+	# Долю задаём, чтобы не ждать полный цикл. Свет — только от луча.
 	bed.grow = Balance.SPORE_BED_SECONDS * 0.4
 	bed._sync_progress()
 	await wait(0.3)
 	var mid: float = bed.grow
-	ok("под светом доля растёт", mid > Balance.SPORE_BED_SECONDS * 0.4, "рост %.3f" % mid)
-	bed.lit = false
+	ok("под белым лучом доля растёт", mid > Balance.SPORE_BED_SECONDS * 0.4, "рост %.3f" % mid)
+	# Крыша в столбец коллектора: set_tile зовёт note_column, луч гаснет.
+	World.set_tile(col_cell.x, 0, IDs.T.STONE)
+	_flush()
+	ok("крыша погасила белый", not bed.lit and not col.emitting(),
+			"lit %s, коллектор светит %s" % [bed.lit, col.emitting()])
 	var frozen: float = bed.grow
 	await wait(1.2)
-	ok("без света прогресс стоит", absf(bed.grow - frozen) < 0.001, "было %.3f, стало %.3f" % [frozen, bed.grow])
-	ok("без света доля не обнулилась", bed.grow > 1.0, "рост %.3f" % bed.grow)
+	ok("погашенный луч прогресс заморозил", absf(bed.grow - frozen) < 0.001,
+			"было %.3f, стало %.3f" % [frozen, bed.grow])
+	ok("обрыв долю не обнулил", bed.grow > 1.0, "рост %.3f" % bed.grow)
 	ok("подпись «Нет белого луча»", bed.status_text() == SporeBed.ST_DARK, bed.status_text())
-	# Свет вернулся — продолжаем с той же доли, не с нуля.
-	bed.lit = true
+	World.set_tile(col_cell.x, 0, IDs.T.AIR)
+	col._check_sky()
+	_flush()
+	ok("небо снова открыто, белый вернулся", bed.lit and col.emitting(),
+			"lit %s, светит %s" % [bed.lit, col.emitting()])
 	var left: float = Balance.SPORE_BED_SECONDS - bed.grow
 	var got: bool = await wait_until(func() -> bool: return bed.made >= 1, left + 1.0)
-	ok("после возврата света волокно дозрело с сохранённой доли", got,
+	ok("после возврата луча волокно дозрело с сохранённой доли", got,
 			"лоток %d, рост %.3f" % [bed.tray, bed.grow])
+	_gone(col)
 	_gone(bed)
 	_flush()
 
@@ -88,7 +109,7 @@ func _stops_when_full(origin: Vector2i) -> void:
 	var bed: SporeBed = World.machines.get(origin) as SporeBed
 	if bed == null:
 		return
-	bed.lit = true
+	bed.beam_receive(Beams.W)
 	var cap: int = Balance.SPORE_BED_TRAY
 	# Три волокна уже в лотке, четвёртое почти дозрело: стоп проверяем за секунду,
 	# не за четыре полных цикла. Логика та же — место кончилось, секунды не копятся.
@@ -113,14 +134,23 @@ func _stops_when_full(origin: Vector2i) -> void:
 	_flush()
 
 
-## Посреди волокна: gather/apply сохраняет долю и лоток, выпуск продолжается.
+## Save под светом, load без луча: 1.2 с роста нет. Потом белый beam_receive(7)
+## — доля продолжается. Даже старый ключ lit в файле грядку не зажигает.
 func _save_mid_grow(origin: Vector2i) -> void:
-	ok("грядка в сохранение", MachineBase.place_machine("SporeBed", origin))
-	var bed: SporeBed = World.machines.get(origin) as SporeBed
-	if bed == null:
+	var col_cell: Vector2i = origin
+	var bed_cell: Vector2i = origin + Vector2i(3, 0)
+	ok("коллектор перед сохранением", MachineBase.place_machine("Collector", col_cell))
+	ok("грядка в сохранение", MachineBase.place_machine("SporeBed", bed_cell))
+	var col: Collector = World.machines.get(col_cell) as Collector
+	var bed: SporeBed = World.machines.get(bed_cell) as SporeBed
+	if col == null or bed == null:
 		return
+	col.dir = 0
+	col._check_sky()
+	_flush()
+	ok("перед сохранением грядка под белым", bed.lit,
+			"lit %s, цвет перед входом %d" % [bed.lit, World.beams.color_at(bed_cell + Vector2i(-1, 0))])
 	bed.dir = 1
-	bed.lit = true
 	bed.grow = Balance.SPORE_BED_SECONDS * 0.55
 	bed.tray = 2
 	bed.made = 2
@@ -128,24 +158,43 @@ func _save_mid_grow(origin: Vector2i) -> void:
 	var slot0: String = Save.slot
 	Save.slot = "spore"
 	Save.remove("spore")
-	var packed: PackedByteArray = var_to_bytes(Save.gather())
+	var packed_d: Dictionary = Save.gather()
+	# Старый сейв мог нести lit=true. Загрузка обязана его проигнорировать.
+	for rec in packed_d.get("machines", []):
+		if str(rec.get("kind", "")) == "SporeBed":
+			rec["lit"] = true
+	# Коллектор в файл не кладём: после apply луча быть не должно.
+	var kept: Array = []
+	for rec in packed_d.get("machines", []):
+		if str(rec.get("kind", "")) != "Collector":
+			kept.append(rec)
+	packed_d["machines"] = kept
+	var packed: PackedByteArray = var_to_bytes(packed_d)
+	# Источник жив до apply — иначе load не доказывает «без луча».
+	_gone(col)
+	_flush()
 	Save.apply(Save.decode(packed))
-	var back: SporeBed = World.machines.get(origin) as SporeBed
+	var back: SporeBed = World.machines.get(bed_cell) as SporeBed
 	ok("грядка загрузилась", back != null)
 	if back == null:
 		Save.remove("spore")
 		Save.slot = slot0
 		return
+	ok("после загрузки без луча грядка тёмная", not back.lit, "lit %s" % back.lit)
 	ok("доля, лоток и сторона те же",
 			back.dir == 1 and back.tray == 2 and absf(back.grow - Balance.SPORE_BED_SECONDS * 0.55) < 0.05,
 			"dir %d, лоток %d, рост %.3f" % [back.dir, back.tray, back.grow])
-	# Свет после загрузки Beams пересчитает сам, если источник жив. Здесь
-	# источника нет — lit из файла не должен сам растить без луча.
-	back.lit = true
-	var left: float = Balance.SPORE_BED_SECONDS - back.grow
+	var frozen: float = back.grow
 	var made0: int = back.made
+	await wait(1.2)
+	ok("1.2 с без луча роста нет", absf(back.grow - frozen) < 0.001 and back.made == made0,
+			"рост %.3f → %.3f, выпущено %d" % [frozen, back.grow, back.made])
+	# Реальный белый, не запись в lit. Коллектор в этот кадр уже снесён.
+	back.beam_receive(Beams.W)
+	ok("beam_receive(7) зажёг грядку", back.lit, "lit %s" % back.lit)
+	var left: float = Balance.SPORE_BED_SECONDS - back.grow
 	var got: bool = await wait_until(func() -> bool: return back.made > made0, left + 1.0)
-	ok("после загрузки выпуск продолжился с доли", got,
+	ok("после белого луча выпуск продолжился с доли", got,
 			"выпущено %d → %d, лоток %d" % [made0, back.made, back.tray])
 	Save.remove("spore")
 	Save.slot = slot0
@@ -188,7 +237,7 @@ func _chest_takes(origin: Vector2i) -> void:
 	if chest == null or bed == null:
 		return
 	bed.tray = 3
-	bed.lit = false
+	bed.beam_receive(0)
 	await await_frame()
 	await wait(0.1)
 	ok("сундук забрал волокно", bed.pushed >= 1 and bed.tray < 3, "лоток %d, отдано %d" % [bed.tray, bed.pushed])

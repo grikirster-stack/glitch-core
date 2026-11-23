@@ -5,6 +5,7 @@ extends SceneTree
 ##   flock /tmp/godot-stand.lock timeout 120 godot --path . --audio-driver Dummy \
 ##     --disable-vsync --fixed-fps 60 --windowed --position -10000,-10000 \
 ##     --resolution 2400x1080 --script res://tools/spore_bed_shot.gd -- --seed=31337
+## Запрошенные 2400×1080 дисплей обрезает: файл выходит 1850×1016.
 
 const OUT: String = "res://docs/img/shots/spore_bed.png"
 const HARD_LIMIT: float = 25.0

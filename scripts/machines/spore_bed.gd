@@ -250,11 +250,13 @@ func _draw_beam_mark() -> void:
 
 # ------------------------------------------------------------- СОХРАНЕНИЕ (#37)
 ## Добавочные ключи. Старый сейв их не имеет — .get оставляет нули.
+## lit не пишем и не читаем: после загрузки его ставит только beam_receive.
+## Старый файл с ключом lit тоже не зажигает грядку — Beams не обещает
+## beam_receive(0) до первого тика.
 func save_state() -> Dictionary:
 	var d: Dictionary = super()
 	d["tray"] = tray
 	d["grow"] = grow
-	d["lit"] = lit
 	d["made"] = made
 	return d
 
@@ -263,7 +265,8 @@ func load_state(d: Dictionary) -> void:
 	super(d)
 	tray = maxi(0, int(d.get("tray", 0)))
 	grow = maxf(0.0, float(d.get("grow", 0.0)))
-	lit = bool(d.get("lit", false))
+	lit = false
+	_mask = 0
 	made = maxi(0, int(d.get("made", 0)))
 	_sync_progress()
 	queue_redraw()
