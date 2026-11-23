@@ -658,6 +658,9 @@ func _finger_down(index: int, pos: Vector2) -> bool:
 	var hud: HUD = UI.hud
 	if hud != null and hud.covers_screen(pos):
 		_fingers[index] = {"kind": "hud", "id": ""}
+		# Плашка «Забрать» — кнопка в нижней трети. Тап по миру машину не снимает.
+		if hud.has_method("pickup_plate_at") and hud.pickup_plate_at(pos):
+			_pickup_from_plate()
 		return true
 	var slot: int = hotbar_slot_at(pos)
 	if slot >= 0:
@@ -881,10 +884,7 @@ func _update_aim(p: Player) -> void:
 	# Обычный режим: короткий тап по своей машине забирает её (ЛКМ героя).
 	# В режиме постройки тап ставит, машину не забирает.
 	var t: Dictionary = place_target(p, tap) if build_mode else dig_target(p, tap, _world_loose)
-	if not build_mode and not t.has("foe"):
-		var grab: Dictionary = pickup_target(p, tap)
-		if not grab.is_empty():
-			t = grab
+	# Свою машину мир не забирает: забор — тап по плашке «Забрать» в нижней трети.
 	if t.is_empty():
 		return
 	aim_cell = t["cell"]
@@ -926,17 +926,36 @@ func dig_target(p: Player, tap: Vector2, loose: bool) -> Dictionary:
 	return _cell_target(best) if best != NO_CELL else {}
 
 
-## Своя разбираемая машина под пальцем: короткий тап забирает её.
-## Постоянная постройка базы и непустой сундук — тоже цель: герой скажет, почему нельзя.
-## {} — под пальцем машины нет (копаем или ставим как раньше).
-func pickup_target(p: Player, tap: Vector2) -> Dictionary:
-	var c: Vector2i = World.world_to_cell(tap)
-	if not _in_reach(p.global_position, c):
-		return {}
-	var m = World.machines.get(c)
-	if m == null or not is_instance_valid(m):
-		return {}
-	return _cell_target(c)
+## Тап по плашке «Забрать»: снять машину под прицелом и сразу вооружить постановку.
+## Постоянная постройка и непустой сундук остаются — герой скажет, почему.
+func _pickup_from_plate() -> void:
+	var p: Player = _player()
+	if p == null or p.dead:
+		return
+	var cell: Vector2i = p.building_cell
+	if cell.x < 0 or not _in_reach(p.global_position, cell):
+		cell = _nearest_pickup(p)
+	if cell.x < 0:
+		return
+	p._try_pickup(cell)
+
+
+## Ближайшая своя машина в радиусе, если курсор смотрит мимо клетки.
+func _nearest_pickup(p: Player) -> Vector2i:
+	var best: Vector2i = NO_CELL
+	var best_d: float = Player.REACH + 1.0
+	var r: int = int(ceil(Player.REACH / float(World.TILE))) + 1
+	var pc: Vector2i = World.world_to_cell(p.global_position)
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			var c: Vector2i = pc + Vector2i(dx, dy)
+			if not World.machines.has(c) or not _in_reach(p.global_position, c):
+				continue
+			var d: float = World.cell_to_world(c).distance_to(p.global_position)
+			if d < best_d:
+				best_d = d
+				best = c
+	return best
 
 
 ## Цель постройки: лента или манипулятор под пальцем (повернуть), свободная клетка под

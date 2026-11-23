@@ -301,7 +301,7 @@ const REGISTRY: Dictionary = {
 	"machine_pickup": {
 		"file": "machine_pickup.gd",
 		"title": "забор машины",
-		"desc": "ЛКМ и короткий тап забирают свою машину и дают поставить её заново",
+		"desc": "[X] и тап по плашке «Забрать» снимают свою машину и дают поставить её заново",
 	},
 	"chest_vs_terminal": {
 		"file": "chest_vs_terminal.gd",
