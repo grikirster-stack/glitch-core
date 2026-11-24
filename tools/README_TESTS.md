@@ -35,6 +35,7 @@
 | `gallery_dump.gd` | иконки `docs/img/items/` и тайлы без окна; вид в мире и `shots/` — только с окном за экраном. Иконки света (горелка, маяк, зеркало, смеситель, призма, коллектор, накопитель, сирена, линза, ядро) пишет headless |
 | `beam_diagonal_shot.gd` | кадр диагонального луча в стену: окно за экраном, PNG `docs/img/shots/beam_diagonal.png` |
 | `room_parts_shot.gd` | кадр каркаса пристройки (#312): навес с открытой дверью и лучом, закрытая пристройка, обшивка фоном. Окно за экраном, PNG `docs/img/shots/room_parts.png` |
+| `press_shot.gd` | кадр пресса (#314): грядка → сундук → пресс → сундук, зелёная щель входа и светлая выхода. Окно за экраном. Широкий кадр `docs/img/shots/press.png`, телефонный угол `docs/img/shots/press_phone.png` |
 | `ingot_recipes_shot.gd` | кадр списка рецептов (#171): окно за экраном, PNG `docs/img/shots/ingot_recipes.png` |
 | `net_test.gd` | сеть, уровень 1 (ADR-002, #86): кодек, таблица рукопожатия, петля «хост + 3 клиента» в одном процессе, хэш схемы (§ 7) |
 | `mp/` | сеть, уровень 2: харнесс `mp_runner.gd` и сценарии `mp_*` — хост и клиенты отдельными headless-процессами (§ 7) |
@@ -443,6 +444,20 @@ godot --headless --path . --script res://tools/save_test.gd
 Кадр `docs/img/shots/spore_bed.png` — `tools/spore_bed_shot.gd`. Запрошено
 2400×1080, окно за экраном дисплей обрезал до фактических 1850×1016:
 `timeout 90 godot --path . --audio-driver Dummy --disable-vsync --fixed-fps 60 --windowed --position -10000,-10000 --resolution 2400x1080 --script res://tools/spore_bed_shot.gd -- --seed=31337`.
+
+### Пресс (ADR-006 § 3.2, #314)
+
+* `press` (`-- --scenario=press`) — две планировки (грядка → сундук → пресс → сундук
+  и лоток грядки прямо в пресс) выпускают панели. Полный буфер ждёт, не сжигая
+  волокно. Чужой предмет и выходная грань дают «Не та сторона». Save в середине
+  партии и старый сейв без полей пресса. Разбор возвращает волокно и панели.
+  Минута цепочки копит панели, два отрезка по 48 с дают больше, чем ремонт.
+
+Кадры `docs/img/shots/press.png` и `docs/img/shots/press_phone.png` —
+`tools/press_shot.gd`, окно за экраном, своя камера на прессе (зум 8).
+Широкий запрошен 1280×720 и лёг как есть. Телефонный угол запрошен 720×1280,
+дисплей обрезал до фактических 720×1016:
+`timeout 90 godot --path . --audio-driver Dummy --disable-vsync --fixed-fps 60 --windowed --position -10000,-10000 --resolution 720x1280 --script res://tools/press_shot.gd -- --seed=31337`.
 
 ### Каркас пристройки (ADR-006 § 3.1, #312)
 

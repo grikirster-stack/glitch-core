@@ -261,6 +261,8 @@ func _build_item_defs() -> void:
 	_add_item_def(IDs.I.DOOR, "Дверь", Color(0.72, 0.55, 0.28), "door", 20, "tile:%d" % IDs.T.DOOR)
 	_add_item_def(IDs.I.SHEATH, "Обшивка", Color(0.55, 0.62, 0.48), "sheath", 99, "sheath:1")
 	_add_item_def(IDs.I.SPORE_BED, "Споровая грядка", Color(0.55, 0.72, 0.38), "spore_bed", 5, "machine:SporeBed")
+	# Пресс (#314): только в конец, после грядки. Стак 5 — станок, не расходник.
+	_add_item_def(IDs.I.PRESS, "Пресс", Color(0.62, 0.48, 0.32), "press", 5, "machine:Press")
 
 	# Требования релей-ядра — из Balance (§ 4.7).
 	relay_req = Balance.RELAY_REQ.duplicate()
@@ -348,6 +350,8 @@ func _build_recipes() -> void:
 	# тот же выход, что у будущего пресса, чтобы первый срез шёл без станка.
 	# Числа — Balance, не здесь.
 	_recipe(IDs.I.SPORE_BED, 1, {IDs.I.COPPER_INGOT: 1, IDs.I.LOG: 2}, "hand", 0.0, "")
+	# Пресс — чертёж PRESS (#314). Панели руками остаются: тот же выход, что у станка.
+	_recipe(IDs.I.PRESS, 1, {IDs.I.IRON_INGOT: 2, IDs.I.LOG: 2}, "hand", 0.0, "")
 	_recipe(IDs.I.PANEL, Balance.SPORE_BED_PANEL_OUT,
 			{IDs.I.SPORE_FIBER: Balance.SPORE_BED_PANEL_IN}, "hand", 0.0, "", "seen")
 	# Фабрика снята (#170): плавильня, верстак, пластины, микросхемы, ТЭЦ,
@@ -1792,6 +1796,17 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 					_px(img, x, y, Color(c.r, c.g, c.b, 0.85))
 			for x in range(3, 13):
 				_px(img, x, 7, c.lightened(0.3))
+		"press":
+			# Плита со щелью: вход и выход читаются ещё в руке.
+			for y in range(4, 13):
+				for x in range(3, 13):
+					_px(img, x, y, c.darkened(0.2))
+			for x in range(4, 12):
+				_px(img, x, 8, Color(0.18, 0.16, 0.14))
+			_px(img, 2, 7, Color(0.72, 0.86, 0.42))
+			_px(img, 2, 8, Color(0.72, 0.86, 0.42))
+			_px(img, 13, 7, Color(0.86, 0.84, 0.72))
+			_px(img, 13, 8, Color(0.86, 0.84, 0.72))
 		"spore_bed":
 			# Лоток и росток: грядка узнаётся до установки.
 			for y in range(7, 13):

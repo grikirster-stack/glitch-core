@@ -78,6 +78,9 @@ static func place_machine(p_kind: String, c: Vector2i) -> bool:
 		# --- Споровая грядка (ADR-006 § 3.2, #313) ---
 		"SporeBed":
 			m = SporeBed.new()
+		# --- Пресс (ADR-006 § 3.2, #314) ---
+		"Press":
+			m = Press.new()
 		_:
 			# Старый сейв: бур, лента, ТЭЦ и прочие снятые машины (#170).
 			return false
