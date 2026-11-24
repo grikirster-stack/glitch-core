@@ -8,6 +8,9 @@ extends ScenarioBase
 ## Сигнал objective_changed уходит по разу на этап, по порядку.
 
 var _seen: Array = []
+## Добровольные запуски до этапа 6 поднимают удержание и сразу его гасят.
+## На это время слушатель молчит, чтобы фильтр не прятал настоящий двойной этап.
+var _ignore_spikes: bool = false
 
 
 func run() -> void:
@@ -22,12 +25,17 @@ func run() -> void:
 	MachineBase.place_machine("RainbowCore", cell)
 	ok("ядро без терминала — всё ещё этап 1", Game.objective_stage == 1 and Game.core_placed(),
 			Game.objective_text())
+	# Запуск поднимает цель на удержание. Слушатель глушим ДО запуска и до
+	# возврата этапа: всплеск добровольного запуска не должен прятать настоящий
+	# двойной этап. Фильтр записанного массива для этого не нужен.
+	_ignore_spikes = true
 	ok("шесть дуг без этапов 1–3 запуск дают", _feed(6) and Game.core_launch()
 			and Game.relay_active, Game.core_block_text())
-	# Запуск поднимает цель на удержание. Для порядка 1 → 6 отсчёт гасим и этап возвращаем.
 	Game.relay_active = false
 	Game.relay_timer = 0.0
 	Game.set_objective_stage(1)
+	_ignore_spikes = false
+	_ignore_spikes = true
 	ok("ни терминала, ни горелки — этап 1, но ворота открыты",
 			Game.tasks_done == 0 and Game.blueprints.is_empty() and not Game.free_powered()
 			and Game.objective_stage == 1 and Game.core_launch() and Game.relay_active,
@@ -35,6 +43,7 @@ func run() -> void:
 	Game.relay_active = false
 	Game.relay_timer = 0.0
 	Game.set_objective_stage(1)
+	_ignore_spikes = false
 
 	var burner_cell: Vector2i = _free_near(World.beacon_cell)
 	ok("горелка поставлена рядом с лагерем", burner_cell.x >= 0
@@ -59,11 +68,13 @@ func run() -> void:
 		Game.update_objective()
 	ok("руда %d → этап 3" % Balance.FREE_ORE_NEED, Game.objective_stage == 3
 			and Game.free_mined(), Game.objective_text())
+	_ignore_spikes = true
 	ok("до ночи шесть дуг запуск дают", Game.core_arcs == Game.CORE_ARCS_FREE
 			and Game.core_launch() and Game.relay_active, Game.core_block_text())
 	Game.relay_active = false
 	Game.relay_timer = 0.0
 	Game.set_objective_stage(3)
+	_ignore_spikes = false
 	# Соседний сценарий мог уже зажечь шесть дуг: ночь должна открыть этап 4, не 5.
 	Game.core_arcs = 0
 	Game.relay_active = false
@@ -85,20 +96,10 @@ func run() -> void:
 	ok("запуск ядра → этап 6", Game.core_launch() and Game.objective_stage == 6, Game.objective_text())
 	ok("строка цели с отсчётом", Game.objective_text().begins_with("ЦЕЛЬ 6/6")
 			and Game.objective_text().ends_with(" с"), Game.objective_text())
-	# Ранние запуски (ADR-006) на миг поднимают удержание и тут же возвращают этап.
-	# В порядок карточки эти всплески не входят.
 	var order: Array = []
 	for s in _seen:
 		if order.is_empty() or order[-1] != s:
 			order.append(s)
-	# Всплеск удержания от добровольного запуска: 6 и возврат на прежний этап.
-	var i: int = 1
-	while i < order.size() - 1:
-		if order[i] == 6 and order[i + 1] == order[i - 1] and order[i - 1] < 6:
-			order.remove_at(i)
-			order.remove_at(i)
-			continue
-		i += 1
 	ok("этапы по порядку 1 → 6, по разу", order == [1, 2, 3, 4, 5, 6], str(order))
 	_end()
 
@@ -142,4 +143,6 @@ func _end() -> void:
 
 
 func _on_stage(s: int) -> void:
+	if _ignore_spikes:
+		return
 	_seen.append(s)

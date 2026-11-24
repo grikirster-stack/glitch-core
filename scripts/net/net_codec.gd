@@ -619,9 +619,10 @@ static func presses_bump(presses: int, i: int) -> int:
 ## time f32 · смена u16 · состояние u8 · данные u16 (заглушка 0, #169: счётчик снят)
 ## · этап u8 · релей u8 + f32 · задания 2×u8 · угроза u8 + f32 · браун-аут u8 ·
 ## hash мира u32 · game_time f32 · дуги ядра u8 · клетка ядра u32 (idx, нет ядра —
-## 0xFFFFFFFF). 36 Б (#175, PROTO 15).
+## 0xFFFFFFFF) · передачи u16 · метка базы 2×u16 (0xFFFF — метки нет).
+## 42 Б (#315, PROTO 24). Потолок 63 в битах threat снят: счётчик полный.
 
-const GLOBAL_BYTES: int = 36
+const GLOBAL_BYTES: int = 42
 
 
 static func encode_global(d: Dictionary) -> PackedByteArray:
@@ -647,6 +648,11 @@ static func encode_global(d: Dictionary) -> PackedByteArray:
 	if cc.x >= 0 and cc.y >= 0:
 		idx = cell_idx(cc)
 	out.encode_u32(32, idx)
+	out.encode_u16(36, clampi(int(d.get("signal_sends", 0)), 0, 0xFFFF))
+	var mark: Vector2i = d.get("base_mark", Vector2i(-1, -1))
+	var set: bool = bool(d.get("base_mark_set", false)) and mark.x >= 0 and mark.y >= 0
+	out.encode_u16(38, clampi(mark.x, 0, 0xFFFF) if set else 0xFFFF)
+	out.encode_u16(40, clampi(mark.y, 0, 0xFFFF) if set else 0xFFFF)
 	return out
 
 
@@ -661,6 +667,9 @@ static func decode_global(b: PackedByteArray) -> Dictionary:
 		"threat_budget": b.decode_float(18), "brownout": b.decode_u8(22) != 0,
 		"hash": b.decode_u32(23), "game_time": b.decode_float(27),
 		"core_arcs": b.decode_u8(31) & 0x7F, "core_cell": _cell_or_none(b.decode_u32(32)),
+		"signal_sends": b.decode_u16(36),
+		"base_mark": _mark_cell(b.decode_u16(38), b.decode_u16(40)),
+		"base_mark_set": b.decode_u16(38) != 0xFFFF,
 	}
 
 
@@ -940,7 +949,8 @@ static func schema_sample() -> PackedByteArray:
 				"presses": 0x4321, "pos": Vector2(5000.5, 1400.25), "vel": Vector2(-248, 520), "flags": 3}),
 		encode_global({"time": 0.66, "day": 3, "state": 0, "research": 12, "stage": 2,
 				"relay_active": true, "relay_timer": 90.5, "tasks_done": 2, "tasks_total": 5,
-				"threat": 1, "threat_budget": 7.5, "brownout": true, "hash": 0xDEADBEEF, "game_time": 1234.5}),
+				"threat": 1, "threat_budget": 7.5, "brownout": true, "hash": 0xDEADBEEF, "game_time": 1234.5,
+				"signal_sends": 2, "base_mark": Vector2i(12, 34), "base_mark_set": true}),
 		encode_sound(Vector2(100, 200), 5, -6.0, 1.2),
 		encode_notify(Vector2(0, 0), "Рядом нет вентиляции", Color(1.0, 0.5, 0.25), 0),
 		encode_fx(Vector2(1, 2), 3, 4),
@@ -1196,6 +1206,13 @@ static func _cell_or_none(i: int) -> Vector2i:
 	if i == 0xFFFFFFFF or i < 0:
 		return Vector2i(-1, -1)
 	return idx_cell(i)
+
+
+## Метка базы: 0xFFFF по x — метки нет. Иначе клетка как есть (мир уже в u16).
+static func _mark_cell(x: int, y: int) -> Vector2i:
+	if x == 0xFFFF:
+		return Vector2i(-1, -1)
+	return Vector2i(x, y)
 
 
 ## Аргументы команды по её виду (поля словаря — в скобках):

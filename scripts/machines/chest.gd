@@ -86,6 +86,9 @@ func save_state() -> Dictionary:
 	for s in slots:
 		out.append([s.id, s.count])
 	d["slots"] = out
+	# -1 не пишем: старый файл без ключа читается как ничей.
+	if owner_uid >= 0:
+		d["owner_uid"] = owner_uid
 	return d
 
 
@@ -100,4 +103,27 @@ func load_state(d: Dictionary) -> void:
 			slots[i] = ItemStack.new(int(e[0]), int(e[1]))
 		else:
 			slots[i] = ItemStack.new()
+	# Ключа нет — сундук ничей, как до штампа.
+	owner_uid = int(d.get("owner_uid", -1))
 	queue_redraw()
+
+
+# ------------------------------------------------------------- СЕТЬ (PROTO 24, #315)
+## Хвост после базы: владелец u16. 0xFFFF — ничей (-1). Длина базы не меняется.
+
+
+func net_state() -> PackedByteArray:
+	var b: PackedByteArray = super()
+	var u: int = 0xFFFF if owner_uid < 0 else clampi(owner_uid, 0, 0xFFFE)
+	b.resize(b.size() + 2)
+	b.encode_u16(MachineBase.NET_BASE_BYTES, u)
+	return b
+
+
+func apply_net_state(b: PackedByteArray) -> int:
+	var n: int = super(b)
+	if n < 0 or b.size() < n + 2:
+		return n
+	var u: int = b.decode_u16(n)
+	owner_uid = -1 if u == 0xFFFF else u
+	return n + 2

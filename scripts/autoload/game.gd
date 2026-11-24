@@ -632,10 +632,12 @@ func _signal_finish() -> void:
 		set_state(State.WON)
 
 
-## Счётчик передач едет в свободных битах 2–7 поля threat. Размер пакета и PROTO не растут.
+## Счётчик и метка едут в GLOBAL сразу, не на следующем такте и не молча.
 func _publish_signal() -> void:
-	if Net.is_authority() and net_world != null and net_world.has_method("send_global"):
-		net_world.send_global()
+	if not Net.is_authority() or net_world == null:
+		return
+	if net_world.has_method("publish_global"):
+		net_world.publish_global()
 
 
 ## Клетка метки. Сундук снесён или метку ещё не ставили — капсула.
@@ -646,7 +648,10 @@ func base_mark_cell() -> Vector2i:
 
 
 ## Точка волны. Посреди налёта — клетка, которая была до переноса. Иначе — текущая метка.
+## Край ловим и здесь: сценарий гасит и снова включает налёт в одном кадре,
+## а _process этот переход не увидит.
 func base_mark_anchor() -> Vector2i:
+	_poll_raid()
 	if raid_active and base_mark_wave.x >= 0:
 		return base_mark_wave
 	return base_mark_cell()
@@ -659,11 +664,15 @@ func base_mark_move(cell: Vector2i, hero = null) -> bool:
 		return false
 	if not _own_chest(cell, hero):
 		return false
+	# Край налёта ловим здесь же: _poll_raid иначе увидит его только в следующем кадре,
+	# и перенос в том же кадре, что включение, сдвинет якорь текущей волны.
+	_poll_raid()
 	if not raid_active:
 		base_mark_wave = cell
 	base_mark = cell
 	base_mark_set = true
 	base_mark_pending = Vector2i(-1, -1)
+	_publish_signal()
 	return true
 
 
@@ -1209,12 +1218,14 @@ func net_global() -> Dictionary:
 	return {"time": time_of_day, "day": day_number, "state": state, "research": 0,
 			"stage": objective_stage, "relay_active": relay_active, "relay_timer": relay_timer,
 			"tasks_done": tasks_done, "tasks_total": tasks_total,
-			# бит 1 — сигнал уже отправлен (#174): отдельного поля в пакете нет, PROTO не растёт
-			# биты 2–7 — число передач 0–63. Размер пакета не меняется, PROTO не растёт.
-			"threat": (1 if Threat.active else 0) | (2 if signal_sent else 0) | ((mini(signal_sends, 63) & 63) << 2),
+			# бит 1 — сигнал уже отправлен (#174). Счётчик передач — своё поле (PROTO 24).
+			"threat": (1 if Threat.active else 0) | (2 if signal_sent else 0),
 			"threat_budget": Threat.budget,
 			"brownout": false, "game_time": game_time,
-			"core_arcs": core_arcs & CORE_ARCS_FULL, "core_cell": core_cell}
+			"core_arcs": core_arcs & CORE_ARCS_FULL, "core_cell": core_cell,
+			"signal_sends": signal_sends,
+			"base_mark": base_mark if base_mark_set else Vector2i(-1, -1),
+			"base_mark_set": base_mark_set}
 
 
 ## Клиент: глобальный пакет хоста. Рассвет и этап цели — с теми же уведомлениями,
@@ -1253,8 +1264,15 @@ func net_apply_global(d: Dictionary) -> void:
 	var th: int = int(d["threat"])
 	Threat.active = (th & 1) != 0
 	signal_sent = (th & 2) != 0
-	signal_sends = (th >> 2) & 63
+	if d.has("signal_sends"):
+		signal_sends = int(d["signal_sends"])
 	Threat.budget = float(d["threat_budget"])
+	if d.has("base_mark_set"):
+		base_mark_set = bool(d["base_mark_set"])
+		if base_mark_set and d.has("base_mark"):
+			base_mark = d["base_mark"]
+		elif not base_mark_set:
+			base_mark = Vector2i(-1, -1)
 	set_state(int(d["state"]))
 
 

@@ -664,6 +664,7 @@ func _do_place(cell: Vector2i, fresh: bool = true) -> void:
 		# «machine:» — 8 символов, вид машины начинается с девятого.
 		var kind: String = place.substr(8)
 		if MachineBase.place_machine(kind, cell):
+			_stamp_placed(kind, cell)
 			inv.remove_at(inv.selected, 1)
 			_sfx_here("place_machine", -8.0)
 		else:
@@ -1617,10 +1618,40 @@ func _feedback_hit(knock: Vector2) -> void:
 
 ## Сундук рядом по E: у прокси окно открывается у владельца — слой команд MP-G (#91).
 func _open_chest(c: Chest) -> void:
+	# E и тап сходятся здесь (тап держит KEY_E). Метка — до окна: отказ не молчит.
+	_try_mark_chest(c)
 	if net_role != NetRole.PROXY:
 		UI.open_chest(c)
 	else:
 		InvOps.host_open(self, c)
+
+
+## Свой сундук принимает метку базы. Чужой — отказ текстом, окно всё равно открывается.
+## Прокси не решает: метку ставит хост. Сообщение уходит тому, кто нажал E.
+func _try_mark_chest(c: Chest) -> void:
+	if c == null or not is_instance_valid(c):
+		return
+	if not Net.is_authority():
+		return
+	if Game.base_mark_move(c.cell, self):
+		_notify("Метка базы перенесена на этот сундук.", Color(0.45, 0.95, 0.7))
+		return
+	if c.cell == World.camp_chest_cell:
+		return
+	var owner: int = int(c.owner_uid)
+	var uid: int = int(net_uid) if get("net_uid") != null else 0
+	if owner >= 0 and owner != uid:
+		_notify("Чужой сундук. Метку базы ставит только хозяин.", Color(1.0, 0.55, 0.4))
+
+
+## Игрок поставил машину. Сундук запоминает, чей он: иначе чужой неотличим от своего.
+func _stamp_placed(kind: String, cell: Vector2i) -> void:
+	if kind != "Chest":
+		return
+	var m = World.machines.get(cell)
+	if m == null or not (m is Chest):
+		return
+	m.owner_uid = int(net_uid) if get("net_uid") != null else 0
 
 
 ## Владелец: удар с хоста (событие HIT) — отбрасывание, заморозка ввода, вспышка, тряска.

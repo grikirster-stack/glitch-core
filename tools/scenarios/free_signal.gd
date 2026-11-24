@@ -114,21 +114,30 @@ func _base_mark() -> void:
 	ok("свой сундук поставлен", chest.x >= 0, str(chest))
 	if chest.x < 0:
 		return
-	var moved: bool = Game.has_method("base_mark_move") and Game.base_mark_move(chest, player)
+	# Путь игрока, не прямой API: E и тап сходятся в _open_chest.
+	var box_own = World.machines.get(chest)
+	var stamped: bool = box_own != null and int(box_own.get("owner_uid")) == int(player.net_uid)
+	ok("поставленный сундук помнит хозяина", stamped, str(box_own.get("owner_uid") if box_own != null else "нет"))
+	var moved: bool = await _player_mark(chest)
 	var at: Vector2i = Game.base_mark_cell() if has_mark else Vector2i(-99, -99)
 	ok("метка перенесена на свой сундук", moved and at == chest, str(at))
+	ok("игрок услышал перенос", _heard("Метка базы перенесена"), str(_notes()))
+	ok("публикация не заглушка", Game.net_world != null and Game.net_world.has_method("publish_global")
+			and int(Game.net_world.get("globals_now")) >= 1,
+		str(Game.net_world.get("globals_now") if Game.net_world != null else "нет узла"))
 	# Чужой сундук: другой uid. Одиночный герой — uid 0, чужой — 7.
 	var foreign: Vector2i = _place_chest(World.beacon_cell + Vector2i(6, 0))
 	var box = World.machines.get(foreign)
 	if box != null:
-		box.set("owner_uid", 7)
-	var denied: bool = Game.has_method("base_mark_move") and not Game.base_mark_move(foreign, player)
+		box.owner_uid = 7
+	var denied: bool = await _player_mark(foreign)
 	at = Game.base_mark_cell() if Game.has_method("base_mark_cell") else Vector2i(-99, -99)
-	ok("чужой сундук метку не берёт", denied and at == chest, str(at))
+	ok("чужой сундук метку не берёт", not denied and at == chest, str(at))
+	ok("чужой сундук говорит отказом", _heard("Чужой сундук"), str(_notes()))
 	# Налёт: перенос влияет на следующую волну, не на текущую.
 	Game.set("raid_active", true)
 	var later: Vector2i = _place_chest(World.beacon_cell + Vector2i(8, 0))
-	var during: bool = Game.has_method("base_mark_move") and Game.base_mark_move(later, player)
+	var during: bool = await _player_mark(later)
 	var now_mark: Vector2i = Game.base_mark_cell() if Game.has_method("base_mark_cell") else Vector2i(-99, -99)
 	var anchor: Vector2i = Game.base_mark_anchor() if Game.has_method("base_mark_anchor") else Vector2i(-99, -99)
 	ok("перенос посреди налёта принят", during and now_mark == later, str(now_mark))
@@ -205,8 +214,8 @@ func _old_save() -> void:
 	# Свежий файл метку пишет — на свой сундук, не на ядро.
 	var wrote: bool = false
 	var chest: Vector2i = _place_chest(World.beacon_cell + Vector2i(-4, 0))
-	if Game.has_method("base_mark_move") and chest.x >= 0:
-		Game.base_mark_move(chest, player)
+	if chest.x >= 0 and player.has_method("_open_chest"):
+		await _player_mark(chest)
 		var written: Dictionary = Save.gather()
 		var wg: Dictionary = written.get("game", {})
 		wrote = wg.has("base_mark") and wg.get("base_mark") == chest
@@ -278,9 +287,43 @@ func _place_chest(cell: Vector2i) -> Vector2i:
 		World.set_tile(cell.x, cell.y, IDs.T.AIR)
 	if World.machines.has(cell):
 		return Vector2i(-1, -1)
+	# Как игрок: place_machine + штамп. Прямой base_mark_move сценарий не зовёт.
+	if not player.has_method("_stamp_placed"):
+		return Vector2i(-1, -1)
 	if not MachineBase.place_machine("Chest", cell):
 		return Vector2i(-1, -1)
+	player._stamp_placed("Chest", cell)
 	return cell
+
+
+## E по сундуку. Тап держит тот же KEY_E и сходится в _open_chest.
+func _player_mark(cell: Vector2i) -> bool:
+	if not player.has_method("_open_chest"):
+		return false
+	var box = World.machines.get(cell)
+	if box == null or not (box is Chest):
+		return false
+	var before: Vector2i = Game.base_mark_cell() if Game.has_method("base_mark_cell") else Vector2i(-99, -99)
+	player._open_chest(box)
+	await await_frame()
+	if not Game.has_method("base_mark_cell"):
+		return false
+	return Game.base_mark_cell() == cell and Game.base_mark_cell() != before
+
+
+func _notes() -> Array:
+	var hud = UI.hud if UI.get("hud") != null else null
+	if hud != null and hud.get("notes") != null:
+		return hud.notes
+	return []
+
+
+func _heard(part: String) -> bool:
+	for t in _notes():
+		var s: String = String(t["text"]) if t is Dictionary else String(t)
+		if s.contains(part):
+			return true
+	return false
 
 
 func _feed_six() -> void:
