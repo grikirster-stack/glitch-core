@@ -60,9 +60,12 @@ func _ready() -> void:
 		(decor as CanvasItem).material = tile_material
 	if UI.world_fx != null and UI.world_fx.has_method("set_glow_material"):
 		UI.world_fx.set_glow_material(glow_material)
-		# Луч рисуется на самом WorldFX: без материала ночь гасит линию.
+		# Луч и его полоса: без материала ночь гасит линию. all_emit не ставим.
 		if UI.world_fx.material == null:
 			UI.world_fx.material = tile_material
+		var line: Node = UI.world_fx.get_node_or_null("BeamLine")
+		if line is CanvasItem and (line as CanvasItem).material == null:
+			(line as CanvasItem).material = tile_material
 	_apply()
 
 

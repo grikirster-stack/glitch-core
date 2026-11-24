@@ -88,6 +88,7 @@ func _check_wall_break(origin: Vector2i) -> void:
 	ok("грань стены найдена", face != Vector2.ZERO, "face %s" % str(face))
 	ok("штрих искры длиннее нуля", _mark_arm() > 0.0, "arm %.2f" % _mark_arm())
 	ok("у стены нет сегмента нулевой длины", not _zero_seg())
+	_check_span_wall(wall)
 	ok("клетка перед стеной освещена", World.beams.color_at(wall + Vector2i(-1, 0)) == Beams.R)
 	ok("сквозь стену луч не прошёл", World.beams.color_at(wall + Vector2i(1, 0)) == 0)
 	World.set_tile(wall.x, wall.y, IDs.T.AIR)
@@ -118,6 +119,7 @@ func _check_budget_break(origin: Vector2i) -> void:
 	ok("маркер бюджетного обрыва отдан", _marker_of(hit))
 	ok("штрих бюджетного обрыва длиннее нуля", _mark_arm() > 0.0, "arm %.2f" % _mark_arm())
 	ok("после дальнего зеркала нет нулевого сегмента", not _zero_seg())
+	_check_span_budget(mirror_cell)
 	_gone(burner)
 	_gone(mirror)
 	_flush()
@@ -153,6 +155,54 @@ func _break_face(cell: Vector2i) -> Vector2:
 ## Экранная длина штриха. WorldFX.BREAK_MARK_PX — тот же крест, что на кадре.
 func _mark_arm() -> float:
 	return WorldFX.BREAK_MARK_PX
+
+
+## Геометрия линии без отрисовки. На 7a6cef9 хвост ноги имел альфу ~0.85,
+## а конец стены совпадал с центром клетки, не с гранью.
+func _fx() -> GDScript:
+	return load("res://scripts/ui/world_fx.gd")
+
+
+func _check_span_wall(wall: Vector2i) -> void:
+	var fx: GDScript = _fx()
+	var tile: float = float(World.TILE)
+	var found: bool = false
+	for s in World.beams.segments:
+		var span: Dictionary = fx.beam_span(s)
+		ok("альфа линии стены 1", is_equal_approx(float(span["alpha"]), 1.0),
+				"alpha %.3f" % float(span["alpha"]))
+		if s["to"] != wall:
+			continue
+		found = true
+		var step: Vector2 = Vector2(Beams.DIR[int(s["dir"]) & 7])
+		var face: Vector2 = World.cell_to_world(wall) - step * tile * 0.5
+		ok("конец стены на грани", span["b"].is_equal_approx(face),
+				"b %s грань %s" % [str(span["b"]), str(face)])
+		var mark: Vector2 = fx.break_mark_at(wall, "wall")
+		ok("крест стены на конце линии", mark.is_equal_approx(span["b"]),
+				"крест %s линия %s" % [str(mark), str(span["b"])])
+	ok("нога стены найдена", found)
+
+
+func _check_span_budget(cell: Vector2i) -> void:
+	var fx: GDScript = _fx()
+	var found: bool = false
+	for s in World.beams.segments:
+		var span: Dictionary = fx.beam_span(s)
+		ok("альфа линии бюджета 1", is_equal_approx(float(span["alpha"]), 1.0),
+				"alpha %.3f" % float(span["alpha"]))
+		var step: Vector2i = Beams.DIR[int(s["dir"]) & 7]
+		# Сегмент закрывается на последней освещённой: зеркало на 24-й — следующая.
+		if s["to"] + step != cell and s["to"] != cell:
+			continue
+		found = true
+		var center: Vector2 = World.cell_to_world(s["to"])
+		ok("конец бюджета в центре последней клетки", span["b"].is_equal_approx(center),
+				"b %s центр %s" % [str(span["b"]), str(center)])
+		var mark: Vector2 = fx.break_mark_at(cell, "budget")
+		ok("крест бюджета на конце линии", mark.is_equal_approx(span["b"]),
+				"крест %s линия %s" % [str(mark), str(span["b"])])
+	ok("нога бюджета найдена", found)
 
 
 func _break_dump(points: Array) -> String:
