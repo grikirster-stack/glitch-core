@@ -6,7 +6,8 @@ extends ScenarioBase
 ##
 ## Равный набор собирает открытый навес и закрытую пристройку с другим входом.
 ## Перестановка стены и двери меняет проход и луч. Обшивка меняет вид, не луч.
-## Save и снимок LAN возвращают оба состояния двери и фон. Фабричный шлюз
+## Save и снимок LAN возвращают оба состояния двери и фон. Обшивка на x≥256
+## не обрезается до байта. Фабричный шлюз
 ## старого файла становится камнем. Серия правок одного прохода меряется
 ## по кадрам и идёт через set_tile / _solid_tbl.
 
@@ -34,6 +35,8 @@ func run() -> void:
 	await _sheath(origin)
 	await _save_roundtrip(origin)
 	await _join_snapshot(origin)
+	await _far_sheath()
+	await _close_in_doorway()
 	await _burst(origin + Vector2i(12, 0))
 	finish()
 
@@ -420,6 +423,104 @@ func _press_place(c: Vector2i, item: int) -> bool:
 	release_mouse(MOUSE_BUTTON_RIGHT)
 	await wait(0.1)
 	return true
+
+
+## Обшивка за 256: байт режет x (300 → 44). После правки клетка жива и в файле,
+## и в снимке LAN, а на x−256 фантома нет. Старый шаг (версия 2) читается как был.
+func _far_sheath() -> void:
+	var far: Array[Vector2i] = [Vector2i(300, 40), Vector2i(639, 40)]
+	var ghosts: Array[Vector2i] = [Vector2i(300 - 256, 40), Vector2i(639 - 256, 40)]
+	for c in far:
+		World.set_tile(c.x, c.y, IDs.T.AIR)
+		World.set_sheath(c, World.SHEATH_BACK)
+	for g in ghosts:
+		World.set_sheath(g, World.SHEATH_NONE)
+	Save.remove(SLOT + "_far")
+	ok("сейв дальней обшивки", Save.save_game(SLOT + "_far"), Save.last_error)
+	for c in far:
+		World.set_sheath(c, World.SHEATH_NONE)
+	World.set_sheath(ghosts[0], World.SHEATH_BACK)
+	ok("загрузка дальней обшивки", Save.load_game(SLOT + "_far"), Save.last_error)
+	var back: bool = true
+	var detail: String = ""
+	for c in far:
+		var code: int = World.sheath_at(c)
+		detail += "%s=%d " % [str(c), code]
+		if code != World.SHEATH_BACK:
+			back = false
+	ok("обшивка на x≥256 пережила save→load", back, detail)
+	var phantom: bool = false
+	var ph: String = ""
+	for g in ghosts:
+		var code_g: int = World.sheath_at(g)
+		ph += "%s=%d " % [str(g), code_g]
+		if code_g != World.SHEATH_NONE:
+			phantom = true
+	ok("на x−256 фантома нет", not phantom, ph)
+	# Снимок LAN: encode/decode, не только словарь в памяти.
+	for c in far:
+		World.set_sheath(c, World.SHEATH_BACK)
+	for g in ghosts:
+		World.set_sheath(g, World.SHEATH_NONE)
+	var raw: PackedByteArray = Save.encode(Save.gather_join())
+	var decoded: Dictionary = Save.decode(raw)
+	for c in far:
+		World.set_sheath(c, World.SHEATH_NONE)
+	World.set_sheath(ghosts[0], World.SHEATH_BACK)
+	ok("снимок LAN дальней обшивки", not decoded.is_empty() and Save.apply_join(decoded), Save.last_error)
+	var snap_ok: bool = true
+	var snap_d: String = ""
+	for c in far:
+		var code_s: int = World.sheath_at(c)
+		snap_d += "%s=%d " % [str(c), code_s]
+		if code_s != World.SHEATH_BACK:
+			snap_ok = false
+	var snap_ph: bool = false
+	for g in ghosts:
+		if World.sheath_at(g) != World.SHEATH_NONE:
+			snap_ph = true
+		snap_d += "фантом %s=%d " % [str(g), World.sheath_at(g)]
+	ok("снимок вернул x≥256 без фантома", snap_ok and not snap_ph, snap_d)
+	# Версия 2: x и y по байту. Заголовок файла — 2, новый шаг из этих байтов не читаем.
+	for c in far:
+		World.set_sheath(c, World.SHEATH_NONE)
+	World.set_sheath(Vector2i(40, 40), World.SHEATH_NONE)
+	var legacy_d: Dictionary = Save.gather()
+	legacy_d["version"] = 2
+	(legacy_d["world"] as Dictionary)["sheath"] = PackedByteArray([40, 40, World.SHEATH_BACK, 0])
+	var legacy_bytes: PackedByteArray = Save.encode(legacy_d)
+	legacy_bytes.encode_u32(4, 2)
+	var legacy_path: String = Save.path_for(SLOT + "_v2sheath")
+	var legacy_f: FileAccess = FileAccess.open(legacy_path, FileAccess.WRITE)
+	legacy_f.store_buffer(legacy_bytes)
+	legacy_f.close()
+	ok("старый байтовый сейв читается", Save.load_game(SLOT + "_v2sheath"), Save.last_error)
+	ok("старый шаг кладёт клетку, а не фантом", World.sheath_at(Vector2i(40, 40)) == World.SHEATH_BACK
+			and World.sheath_at(Vector2i(300, 40)) == World.SHEATH_NONE
+			and World.sheath_at(Vector2i(44, 40)) == World.SHEATH_NONE)
+	World.set_sheath(Vector2i(40, 40), World.SHEATH_NONE)
+	Save.remove(SLOT + "_v2sheath")
+	Save.remove(SLOT + "_far")
+
+
+## Закрыть дверь, стоя в проёме: отказ, створка остаётся открытой.
+func _close_in_doorway() -> void:
+	var door: Vector2i = Vector2i(50, 34)
+	World.set_tile(door.x, door.y, IDs.T.DOOR_OPEN)
+	# Центр корпуса в клетке двери: stand_at_cell ставит ноги на пол под ней,
+	# и E берёт не проём. Радиус цели — 40 px.
+	player.global_position = World.cell_to_world(door)
+	player.vel = Vector2.ZERO
+	player.on_ground = true
+	player.building_cell = door
+	aim(World.cell_to_world(door))
+	hold(KEY_E)
+	await wait(0.3)
+	release(KEY_E)
+	await wait(0.1)
+	ok("в проёме дверь не закрывается", _last_note() == Player.DENY_HERO
+			and World.get_tile_v(door) == IDs.T.DOOR_OPEN, _last_note())
+	World.set_tile(door.x, door.y, IDs.T.AIR)
 
 
 func _open_door(c: Vector2i) -> void:

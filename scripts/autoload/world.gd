@@ -2267,7 +2267,8 @@ func _paint_sheath_cell(c: Vector2i, code: int) -> void:
 		sheathmap.set_cell(c, 0, _sheath_atlas)
 
 
-## Компактная запись: x u8, y u8, код u8, выравнивание. Мир 256×256 — байта хватает.
+## Компактная запись: x u16 LE, y u16 LE, код u8, выравнивание. Мир 640×180 —
+## байта на x не хватает (300 обрезалось до 44).
 func sheath_save() -> PackedByteArray:
 	var out: PackedByteArray = PackedByteArray()
 	if sheath.size() != W * H:
@@ -2278,15 +2279,19 @@ func sheath_save() -> PackedByteArray:
 			var code: int = sheath[row + x]
 			if code == SHEATH_NONE:
 				continue
-			out.append(x)
-			out.append(y)
+			out.append(x & 0xFF)
+			out.append((x >> 8) & 0xFF)
+			out.append(y & 0xFF)
+			out.append((y >> 8) & 0xFF)
 			out.append(code)
 			out.append(0)
 	return out
 
 
-## Старый файл без поля и пустой буфер — слой пуст. Чужой размер не роняет загрузку.
-func sheath_load(raw) -> void:
+## Пустой буфер и файл без поля — слой пуст. Клетка вне мира пропускается.
+## wide=false — сейв версии 2: x и y по байту. Новый шаг (6) из тех байтов
+## не читаем: 300 стало бы фантомом на x=44.
+func sheath_load(raw, wide: bool = true) -> void:
 	if sheath.size() != W * H:
 		sheath.resize(W * H)
 	sheath.fill(SHEATH_NONE)
@@ -2294,13 +2299,23 @@ func sheath_load(raw) -> void:
 		sheathmap.clear()
 	if not (raw is PackedByteArray) or raw.is_empty():
 		return
-	var n: int = raw.size() - (raw.size() % 4)
-	for i in range(0, n, 4):
-		var x: int = raw[i]
-		var y: int = raw[i + 1]
-		if not in_bounds(x, y):
-			continue
-		set_sheath(Vector2i(x, y), raw[i + 2])
+	if wide:
+		var n: int = raw.size() - (raw.size() % 6)
+		for i in range(0, n, 6):
+			var x: int = raw[i] | (raw[i + 1] << 8)
+			var y: int = raw[i + 2] | (raw[i + 3] << 8)
+			if not in_bounds(x, y):
+				continue
+			set_sheath(Vector2i(x, y), raw[i + 4])
+	else:
+		var n_old: int = raw.size() - (raw.size() % 4)
+		for i in range(0, n_old, 4):
+			var x_old: int = raw[i]
+			var y_old: int = raw[i + 1]
+			if not in_bounds(x_old, y_old):
+				continue
+			set_sheath(Vector2i(x_old, y_old), raw[i + 2])
+
 
 
 ## Вентиляции в пещерах: VENTS_RANDOM штук на полу пещер (воздух над твёрдым),
@@ -3264,7 +3279,7 @@ func load_state(d: Dictionary) -> bool:
 	elif ore_initial.is_empty():
 		_census_ores()
 	ore_regrow_dawns = int(d.get("ore_regrow_dawns", ore_regrow_dawns))
-	sheath_load(d.get("sheath", PackedByteArray()))
+	sheath_load(d.get("sheath", PackedByteArray()), int(d.get("sheath_wide", 1)) != 0)
 	return true
 
 

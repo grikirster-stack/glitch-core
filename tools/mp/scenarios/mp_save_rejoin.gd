@@ -58,7 +58,7 @@ func run_host() -> void:
 	var d: Dictionary = Save.decode(FileAccess.get_file_as_bytes(Save.path_for(SLOT)))
 	var players: Dictionary = d.get("players", {})
 	ok("файл версии %d: session и players по uid — все %d" % [Save.VERSION, 1 + clients],
-			int(d.get("version", 0)) == 2 and players.size() == 1 + clients
+			int(d.get("version", 0)) == Save.VERSION and players.size() == 1 + clients
 			and String((d.get("session", {}) as Dictionary).get("name", "")) == String(Net.session["session_name"])
 			and players.has(int(Net.local_profile["uid"])) and d.has("player"),
 			"версия %d, игроки %s" % [int(d.get("version", 0)), str(players.keys())])

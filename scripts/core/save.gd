@@ -33,8 +33,10 @@ extends RefCounted
 ## 2 — сетевая игра (ADR-002 § 4.9, MP-I #94): у хоста ещё session и players по uid;
 ## раздел player остался, поэтому версия 1 читается как раньше (одиночная).
 ## Фабрика снята внутри версии 2 (#170): конверсия по предметам и типам машин,
-## номер файла не поднимаем — иначе сломается проверка «версия 2».
-const VERSION: int = 2
+## номер тогда не поднимали — иначе сломалась бы проверка «версия 2».
+## 3 — обшивка (#312): x и y по u16. В версии 2 они были по байту, мир 640×180
+## это режет (300 → 44). Старый файл читаем старым шагом, новый из тех байтов — нет.
+const VERSION: int = 3
 const MAGIC: String = "GCSV"
 const HEADER_SIZE: int = 12
 
@@ -160,7 +162,12 @@ static func apply(d: Dictionary) -> bool:
 			World.tilemap.clear()
 		World.generate(sd)
 		_clear_world_nodes()   # сундуки тайников генерации — их заменят сундуки из файла
-	if not World.load_state(d.get("world", {})):
+	var wd_load: Dictionary = d.get("world", {})
+	if wd_load is Dictionary:
+		# 0 — байт на координату (версии 1–2). Иначе новый шаг зачитает
+		# младший байт x как клетку и положит обшивку не туда.
+		wd_load["sheath_wide"] = 1 if int(d.get("version", 0)) >= 3 else 0
+	if not World.load_state(wd_load):
 		last_error = "сетка мира в файле повреждена"
 		return false
 	var refund: Array = []
