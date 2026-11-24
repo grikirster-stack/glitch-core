@@ -453,11 +453,14 @@ godot --headless --path . --script res://tools/save_test.gd
   партии и старый сейв без полей пресса. Разбор возвращает волокно и панели.
   Минута цепочки копит панели, два отрезка по 48 с дают больше, чем ремонт.
 
-Кадры `docs/img/shots/press.png` и `docs/img/shots/press_phone.png` —
-`tools/press_shot.gd`, окно за экраном, своя камера на прессе (зум 8).
-Широкий запрошен 1280×720 и лёг как есть. Телефонный угол запрошен 720×1280,
-дисплей обрезал до фактических 720×1016:
-`timeout 90 godot --path . --audio-driver Dummy --disable-vsync --fixed-fps 60 --windowed --position -10000,-10000 --resolution 720x1280 --script res://tools/press_shot.gd -- --seed=31337`.
+Кадры — `tools/press_shot.gd`, окно за экраном, сид 31337. Оба пишет SubViewport,
+не текстура окна: дисплей режет портрет, а камера окна на этот ряд не смотрит.
+Широкий `docs/img/shots/press.png` — 1280×720, зум 8.
+Телефонный `docs/img/shots/press_phone.png` — 720×1280, зум 5 (на зуме 8 ряд
+из шести клеток не влезает в 720). Фон пещеры, пол, белый луч. Сдвиг на
+полпикселя, иначе щель входа (1 px) попадает на границу пикселя.
+Цепочка в обоих слева направо, вход пресса влево, как в сценарии. Флаг `--phone`:
+`flock /tmp/godot-stand.lock ~/godot-4.7.2/godot --path . --audio-driver Dummy --disable-vsync --fixed-fps 60 --windowed --position -10000,-10000 --resolution 1280x720 --script res://tools/press_shot.gd -- --seed=31337 --phone`.
 
 ### Каркас пристройки (ADR-006 § 3.1, #312)
 
