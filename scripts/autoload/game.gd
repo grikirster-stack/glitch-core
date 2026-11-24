@@ -118,6 +118,12 @@ func reset_run() -> void:
 	relay_unattended = false
 	signal_sent = false             # бесконечная игра (#174)
 	signal_sends = 0
+	# Метка базы (ADR-006 § 4, #315): другой мир — снова у капсулы.
+	base_mark = Vector2i(-1, -1)
+	base_mark_set = false
+	base_mark_pending = Vector2i(-1, -1)
+	base_mark_wave = Vector2i(-1, -1)
+	raid_active = false
 	# --- Журнал и чертежи (#169): живут один забег.
 	Tech.reset()
 	_apply_blueprint_flag()
@@ -130,6 +136,7 @@ func _process(delta: float) -> void:
 	if not Net.is_authority():   # СЕТЬ (ADR-002, § 4.2.6): у клиента — только свои часы
 		_net_client_process(delta)
 		return
+	_poll_raid()
 	if state != State.PLAYING:
 		return
 	game_time += delta
@@ -360,8 +367,9 @@ func is_powered(_p: Vector2) -> bool:
 ##   3. Пережить ночь — рассвет после ночи, nights_survived ≥ FREE_NIGHTS_NEED.
 ##   4. Зажечь шесть дуг — луч чистого цвета в клетку ядра ставит бит core_arcs.
 ##      Белый (маска 7) дугу не зажигает: это ясный свет шахты, не седьмой цвет.
-##   5. Запустить ядро — E 3 с у активного ядра. Релей не стартует, пока 1–3 не сданы
-##      и не горят шесть дуг. Белый луч сам этап добычи не закрывает.
+##   5. Запустить ядро — E 3 с у активного ядра. Релей стартует от поставленного
+##      ядра и шести дуг (ADR-006 § 2, #315). Этапы 1–3 карточку ведут, запуск не держат.
+##      Белый луч сам этап добычи не закрывает.
 ##   6. Удержать сигнал — Balance.RELAY_TIME с; директор угрозы в режиме релея
 ##      (cap RELAY_HOLD_CAP, двойник — сразу после разведчика). Победа → эпилог Lore.
 ## Старое сохранение: этап 1–3 (ядро / дуги / запуск) сдвигается на +3,
@@ -397,6 +405,19 @@ var _core_cat_hatched: bool = false
 var signal_sent: bool = false
 ## Сколько раз сигнал удержан до конца (эпилог «вторая передача» — со второй).
 var signal_sends: int = 0
+## Метка базы (ADR-006 § 4, #315). Одна на мир. Пока не переносили — капсула.
+## base_mark_set отличает «ещё у капсулы» от «игрок выбрал клетку»: старый файл
+## поля не пишет, и метка снова рождается у капсулы, а не в (0, 0).
+var base_mark: Vector2i = Vector2i(-1, -1)
+var base_mark_set: bool = false
+## Перенос посреди налёта: точка волны не двигается, метка встанет после волны.
+var base_mark_pending: Vector2i = Vector2i(-1, -1)
+## Якорь текущей волны. Налёта ещё нет (C2): поле ждёт Threat, волна его не трогает.
+var base_mark_wave: Vector2i = Vector2i(-1, -1)
+## Налёт идёт. Ставит будущий цикл налётов; пока его нет — только сценарий.
+var raid_active: bool = false
+## Край прошлого кадра: сценарий ставит raid_active через set, без сигнала.
+var _raid_was: bool = false
 
 
 func _tick_objective(delta: float) -> void:
@@ -463,7 +484,8 @@ func free_night_done() -> bool:
 	return nights_survived >= Balance.FREE_NIGHTS_NEED
 
 
-## Этапы 1–3 сданы. Пока нет — core_launch отказывает, релей не стартует.
+## Этапы 1–3 сданы. Карточка по ним ведёт новичка. Запуск ядра они больше не держат
+## (ADR-006 § 2, #315): поставленного ядра и шести дуг достаточно.
 func free_ready() -> bool:
 	return free_powered() and free_mined() and free_night_done()
 
@@ -591,6 +613,96 @@ func _enter_stage(s: int) -> void:
 			UI.flash_ring(bp, RELAY_COLOR)
 
 
+
+## Удержание дошло до нуля. Свободная игра пишет успех и не встаёт: часы и ввод
+## продолжаются, второй сигнал можно довести. Глава по-прежнему заканчивается
+## экраном — финал кампании не трогаем. Хардкор сигнал не кончает: одна жизнь — про смерть.
+func _signal_finish() -> void:
+	relay_timer = 0.0
+	relay_active = false
+	signal_sends += 1
+	var again: bool = signal_sent
+	signal_sent = true
+	if again:
+		notify("ВТОРАЯ ПЕРЕДАЧА. Сигнал снова ушёл на орбиту.", Color(0.4, 1.0, 0.7))
+	else:
+		notify("СИГНАЛ УШЁЛ. База остаётся.", Color(0.4, 1.0, 0.7))
+	_publish_signal()
+	if in_mission():
+		set_state(State.WON)
+
+
+## Счётчик передач едет в свободных битах 2–7 поля threat. Размер пакета и PROTO не растут.
+func _publish_signal() -> void:
+	if Net.is_authority() and net_world != null and net_world.has_method("send_global"):
+		net_world.send_global()
+
+
+## Клетка метки. Сундук снесён или метку ещё не ставили — капсула.
+func base_mark_cell() -> Vector2i:
+	if base_mark_set and _mark_target_alive(base_mark):
+		return base_mark
+	return World.beacon_cell
+
+
+## Точка волны. Посреди налёта — клетка, которая была до переноса. Иначе — текущая метка.
+func base_mark_anchor() -> Vector2i:
+	if raid_active and base_mark_wave.x >= 0:
+		return base_mark_wave
+	return base_mark_cell()
+
+
+## Перенос на свой сундук. Хост (и одиночная) решает сам. Чужой uid и капсульный
+## сундук лагеря не принимаются. Посреди налёта клетка волны не двигается.
+func base_mark_move(cell: Vector2i, hero = null) -> bool:
+	if not Net.is_authority():
+		return false
+	if not _own_chest(cell, hero):
+		return false
+	if not raid_active:
+		base_mark_wave = cell
+	base_mark = cell
+	base_mark_set = true
+	base_mark_pending = Vector2i(-1, -1)
+	return true
+
+
+func _mark_target_alive(cell: Vector2i) -> bool:
+	if cell.x < 0:
+		return false
+	var m = World.machines.get(cell)
+	return m != null and is_instance_valid(m) and not m.is_queued_for_deletion() and m is Chest
+
+
+## Свой сундук: Chest, не капсульный сундук лагеря. owner_uid < 0 — ещё ничей,
+## свой для просящего. Чужой uid (сценарий ставит 7) отказывает. Одиночный герой — uid 0.
+func _own_chest(cell: Vector2i, hero) -> bool:
+	if not _mark_target_alive(cell):
+		return false
+	if cell == World.camp_chest_cell:
+		return false
+	var box = World.machines.get(cell)
+	var uid: int = 0
+	if hero != null and hero.get("net_uid") != null:
+		uid = int(hero.net_uid)
+	var owner: int = int(box.owner_uid)
+	if owner < 0:
+		return true
+	return owner == uid
+
+
+## Край налёта. Сценарий и будущий налёт ставят raid_active напрямую, крючка нет:
+## замечаем переход сами. Волна замирает на клетке, которая была до налёта.
+func _poll_raid() -> void:
+	if raid_active == _raid_was:
+		return
+	if raid_active and not _raid_was:
+		base_mark_wave = base_mark if base_mark_set else World.beacon_cell
+	elif _raid_was and not raid_active:
+		base_mark_wave = base_mark if base_mark_set else Vector2i(-1, -1)
+	_raid_was = raid_active
+
+
 func _tick_relay(dt: float) -> void:
 	_hatch_cat_if_night()
 	if not _relay_hold_ok():   # СЕТЬ (ADR-002 § 4.7): у ядра никого — отсчёт стоит
@@ -601,16 +713,7 @@ func _tick_relay(dt: float) -> void:
 		if before > float(r) and relay_timer <= float(r) and relay_timer > 0.0:
 			notify("Сигнал: осталось %d с." % int(r), Color(0.6, 0.95, 1.0))
 	if relay_timer <= 0.0:
-		relay_timer = 0.0
-		relay_active = false
-		signal_sends += 1
-		var again: bool = signal_sent
-		signal_sent = true
-		if again:
-			notify("ВТОРАЯ ПЕРЕДАЧА. Сигнал снова ушёл на орбиту.", Color(0.4, 1.0, 0.7))
-		else:
-			notify("СИГНАЛ УШЁЛ НА ОРБИТУ. ЭВАКУАЦИЯ!", Color(0.4, 1.0, 0.7))
-		set_state(State.WON)
+		_signal_finish()
 
 
 # ------------------------------------------------- РАДУЖНЫЙ КОТ (#176)
@@ -801,16 +904,15 @@ func _relay_say(hero, text: String, color: Color, team: bool) -> void:
 		hero._notify(text, color)
 
 
-## Запуск ядра: этапы 1–3, нужные дуги, ядро стоит, отсчёт ещё не идёт.
-## Иначе — чего не хватает (терминал, руда, ночь, цвета). true — отсчёт пошёл.
-## Глава зовёт ту же функцию после своих задач: ворота свободной игры её не держат.
+## Запуск ядра: нужные дуги, ядро стоит, отсчёт ещё не идёт.
+## Свободная игра (ADR-006 § 2, #315): поставленного ядра и шести дуг достаточно.
+## Этапы 1–3 карточку ведут, запуск не держат. Глава зовёт ту же функцию после
+## своих задач: её ворота — детали, не горелка.
+## Иначе — чего не хватает (цвета, в главе — детали). true — отсчёт пошёл.
 func core_launch() -> bool:
 	if not Net.is_authority():   # СЕТЬ (ADR-002): ядро запускает хост
 		return false
 	if relay_active or not core_placed():
-		return false
-	if not in_mission() and not free_ready():
-		notify(free_block_text(), Color(1.0, 0.6, 0.4))
 		return false
 	if (core_arcs & arc_need()) != arc_need():
 		var missing: Array = core_missing_names()
@@ -843,8 +945,6 @@ func core_block_text() -> String:
 		if not missing.is_empty():
 			return "Релею не хватает: " + ", ".join(missing)
 		return ""
-	if not free_ready():
-		return free_block_text()
 	if (core_arcs & arc_need()) != arc_need():
 		return "Не хватает дуг: " + ", ".join(core_missing_names())
 	return ""
@@ -977,6 +1077,7 @@ const SAVE_FIELDS: Array[String] = [
 	"relay_have",                        # вклад деталей (глава и сеть, #94)
 	"core_arcs", "core_cell",            # дуги и активное ядро (#175)
 	"signal_sent", "signal_sends",       # бесконечная игра (#174)
+	"base_mark", "base_mark_set", "base_mark_pending", "base_mark_wave",  # метка базы (ADR-006, #315)
 	"blueprints",                        # чертежи команды (ADR-005 § 7.1, #169)
 ]
 
@@ -1027,6 +1128,20 @@ func load_state(d: Dictionary) -> void:
 			relay_req = (d["relay_req"] as Dictionary).duplicate()
 	else:
 		relay_req_update()
+	# Старый файл метки не знает. Оставить грязное значение нельзя: F9
+	# читает мир, который сценарий уже «испортил» текущей меткой.
+	if not d.has("base_mark_set"):
+		base_mark = Vector2i(-1, -1)
+		base_mark_set = false
+		base_mark_pending = Vector2i(-1, -1)
+		base_mark_wave = Vector2i(-1, -1)
+	else:
+		base_mark_set = bool(d["base_mark_set"])
+		if d.has("base_mark"):
+			base_mark = d["base_mark"]
+		base_mark_pending = d.get("base_mark_pending", Vector2i(-1, -1))
+		base_mark_wave = d.get("base_mark_wave", Vector2i(-1, -1))
+	_raid_was = raid_active
 	set_state(State.PLAYING)
 	_apply_blueprint_flag()         # --blueprints=all важнее файла: сценарии так и ждут
 
@@ -1095,7 +1210,8 @@ func net_global() -> Dictionary:
 			"stage": objective_stage, "relay_active": relay_active, "relay_timer": relay_timer,
 			"tasks_done": tasks_done, "tasks_total": tasks_total,
 			# бит 1 — сигнал уже отправлен (#174): отдельного поля в пакете нет, PROTO не растёт
-			"threat": (1 if Threat.active else 0) | (2 if signal_sent else 0),
+			# биты 2–7 — число передач 0–63. Размер пакета не меняется, PROTO не растёт.
+			"threat": (1 if Threat.active else 0) | (2 if signal_sent else 0) | ((mini(signal_sends, 63) & 63) << 2),
 			"threat_budget": Threat.budget,
 			"brownout": false, "game_time": game_time,
 			"core_arcs": core_arcs & CORE_ARCS_FULL, "core_cell": core_cell}
@@ -1137,6 +1253,7 @@ func net_apply_global(d: Dictionary) -> void:
 	var th: int = int(d["threat"])
 	Threat.active = (th & 1) != 0
 	signal_sent = (th & 2) != 0
+	signal_sends = (th >> 2) & 63
 	Threat.budget = float(d["threat_budget"])
 	set_state(int(d["state"]))
 

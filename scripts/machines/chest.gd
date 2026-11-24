@@ -5,6 +5,8 @@ extends MachineBase
 const CAP: int = 24
 
 var slots: Array[ItemStack] = []
+## Кто поставил. -1 — ещё ничей (свой для просящего перенос метки). Чужой uid отказывает.
+var owner_uid: int = -1
 
 
 func _init() -> void:
