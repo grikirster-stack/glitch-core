@@ -1172,7 +1172,7 @@ static func lobby_schema_sample() -> PackedByteArray:
 ## (encode_inv_args); итог — CMD_RESULT, свежий INV владельцу и CHEST подписчикам сундука.
 
 ## Команды CMD. Только дописывать в конец (иначе — поднять Net.PROTO).
-enum InvOp { NONE, MOVE, SPLIT, TAKE_ALL, PUT_ALL, CRAFT, DROP, SELECT, UNLOCK, CLOSE }
+enum InvOp { NONE, MOVE, SPLIT, TAKE_ALL, PUT_ALL, CRAFT, DROP, SELECT, UNLOCK, CLOSE, MARK }
 ## Контейнеры команд: инвентарь героя, открытый сундук, «рука» (окно, по сети не ходит).
 enum Box { INV, CHEST, HAND }
 ## События TECH. Только дописывать в конец.
@@ -1219,7 +1219,7 @@ static func _mark_cell(x: int, y: int) -> Vector2i:
 ##   MOVE, SPLIT — откуда u8 (from, Box) · слот u8 (fslot) · куда u8 (to) · слот u8 (tslot,
 ##       SLOT_AUTO — сам) · ожидаемый предмет u8 (id) · n u16 · флаги u8 (MOVE_SWAP) ·
 ##       клетка сундука u32 (cell, индекс cell_idx) — 12 Б;
-##   TAKE_ALL, PUT_ALL, CLOSE — клетка сундука u32 (cell);
+##   TAKE_ALL, PUT_ALL, CLOSE, MARK — клетка сундука u32 (cell);
 ##   CRAFT — рецепт u16 (recipe, индекс DB.recipes) · раз u8 (times);
 ##   DROP — откуда u8 · слот u8 · id u8 · n u16 · клетка u32;
 ##   SELECT — слот u8 (slot); UNLOCK — узел u8 (node, индекс Tech.ORDER).
@@ -1235,7 +1235,7 @@ static func encode_inv_args(op: int, d: Dictionary) -> PackedByteArray:
 			s.put_u16(clampi(int(d.get("n", 0)), 0, 0xFFFF))
 			s.put_u8(int(d.get("flags", 0)) & 0xFF)
 			s.put_u32(int(d.get("cell", CELL_NONE)) & 0xFFFFFFFF)
-		InvOp.TAKE_ALL, InvOp.PUT_ALL, InvOp.CLOSE:
+		InvOp.TAKE_ALL, InvOp.PUT_ALL, InvOp.CLOSE, InvOp.MARK:
 			s.put_u32(int(d.get("cell", CELL_NONE)) & 0xFFFFFFFF)
 		InvOp.CRAFT:
 			s.put_u16(int(d.get("recipe", 0)) & 0xFFFF)
@@ -1255,7 +1255,7 @@ static func encode_inv_args(op: int, d: Dictionary) -> PackedByteArray:
 
 ## Размер аргументов каждой команды, Б.
 const INV_ARGS_SIZE: Dictionary = {InvOp.MOVE: 12, InvOp.SPLIT: 12, InvOp.TAKE_ALL: 4,
-		InvOp.PUT_ALL: 4, InvOp.CLOSE: 4, InvOp.CRAFT: 3, InvOp.DROP: 9, InvOp.SELECT: 1,
+		InvOp.PUT_ALL: 4, InvOp.CLOSE: 4, InvOp.MARK: 4, InvOp.CRAFT: 3, InvOp.DROP: 9, InvOp.SELECT: 1,
 		InvOp.UNLOCK: 1}
 
 
@@ -1268,7 +1268,7 @@ static func decode_inv_args(op: int, b: PackedByteArray) -> Dictionary:
 		InvOp.MOVE, InvOp.SPLIT:
 			return {"from": s.get_u8(), "fslot": s.get_u8(), "to": s.get_u8(), "tslot": s.get_u8(),
 					"id": s.get_u8(), "n": s.get_u16(), "flags": s.get_u8(), "cell": s.get_u32()}
-		InvOp.TAKE_ALL, InvOp.PUT_ALL, InvOp.CLOSE:
+		InvOp.TAKE_ALL, InvOp.PUT_ALL, InvOp.CLOSE, InvOp.MARK:
 			return {"cell": s.get_u32()}
 		InvOp.CRAFT:
 			return {"recipe": s.get_u16(), "times": s.get_u8()}
@@ -1353,6 +1353,7 @@ static func inv_schema_sample() -> PackedByteArray:
 		encode_inv_args(InvOp.DROP, {"from": Box.INV, "fslot": 35, "id": 3, "n": 64, "cell": CELL_NONE}),
 		encode_inv_args(InvOp.SELECT, {"slot": 9}),
 		encode_inv_args(InvOp.UNLOCK, {"node": 5}),
+		encode_inv_args(InvOp.MARK, {"cell": 4242}),
 		encode_chest(cell_idx(Vector2i(320, 90)), CHEST_OPEN, [[9, 99], [0, 0], [255, 65535]]),
 		encode_tech(TechEv.UNLOCK, 12, 1),
 		encode_tech(TechEv.FRAGMENT, 0, 0, "…сигнал с глубины 40…"),

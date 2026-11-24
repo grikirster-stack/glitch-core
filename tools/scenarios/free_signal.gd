@@ -4,8 +4,9 @@ extends ScenarioBase
 ## Новый мир строится сразу: ядро запускается без горелки, руды и ночи.
 ## Успех пишет signal_sent и signal_sends, часы и ввод не встают, экран победы
 ## не открывается. Второй сигнал доходит до второй передачи.
-## Метка базы рождается у капсулы и переносится на свой сундук. Чужой сундук
-## и перенос посреди налёта точку этой волны не двигают.
+## Метка базы рождается у капсулы. Открытие сундука её не двигает: перенос —
+## кнопка «Сделать меткой базы» в окне. Чужой сундук и перенос посреди налёта
+## точку этой волны не двигают.
 ## Старый файл: идущий сигнал продолжает свой таймер, дуги и история на месте.
 ## Кампания и хардкор по-прежнему заканчивают забег экраном.
 ##
@@ -114,24 +115,36 @@ func _base_mark() -> void:
 	ok("свой сундук поставлен", chest.x >= 0, str(chest))
 	if chest.x < 0:
 		return
-	# Путь игрока, не прямой API: E и тап сходятся в _open_chest.
+	# Путь игрока: E открывает окно и метку не двигает. Перенос — кнопка в окне.
 	var box_own = World.machines.get(chest)
 	var stamped: bool = box_own != null and int(box_own.get("owner_uid")) == int(player.net_uid)
 	ok("поставленный сундук помнит хозяина", stamped, str(box_own.get("owner_uid") if box_own != null else "нет"))
+	var opened: bool = await _player_open(chest)
+	var still: Vector2i = Game.base_mark_cell() if has_mark else Vector2i(-99, -99)
+	ok("окно своего сундука открылось", opened, str(UI.panel.chest if UI.panel != null else "нет панели"))
+	ok("первое открытие метку не сдвинуло", still == born, "%s → %s" % [born, still])
+	var again: bool = await _player_open(chest)
+	still = Game.base_mark_cell() if has_mark else Vector2i(-99, -99)
+	ok("повторное открытие метку не сдвинуло", again and still == born, str(still))
+	ok("открытие не пишет про перенос", not _heard("Метка базы перенесена"), str(_notes()))
+	var g0: int = int(Game.net_world.get("globals_now")) if Game.net_world != null else -1
 	var moved: bool = await _player_mark(chest)
 	var at: Vector2i = Game.base_mark_cell() if has_mark else Vector2i(-99, -99)
-	ok("метка перенесена на свой сундук", moved and at == chest, str(at))
+	ok("кнопка перенесла метку на свой сундук", moved and at == chest, str(at))
 	ok("игрок услышал перенос", _heard("Метка базы перенесена"), str(_notes()))
 	ok("публикация не заглушка", Game.net_world != null and Game.net_world.has_method("publish_global")
-			and int(Game.net_world.get("globals_now")) >= 1,
-		str(Game.net_world.get("globals_now") if Game.net_world != null else "нет узла"))
+			and int(Game.net_world.get("globals_now")) > g0,
+		"%d → %s" % [g0, str(Game.net_world.get("globals_now") if Game.net_world != null else "нет узла")])
 	# Чужой сундук: другой uid. Одиночный герой — uid 0, чужой — 7.
 	var foreign: Vector2i = _place_chest(World.beacon_cell + Vector2i(6, 0))
 	var box = World.machines.get(foreign)
 	if box != null:
 		box.owner_uid = 7
+	var denied_open: bool = await _player_open(foreign)
+	var foreign_btn: bool = UI.panel != null and UI.panel.chest == box and UI.panel._mark_enabled()
 	var denied: bool = await _player_mark(foreign)
 	at = Game.base_mark_cell() if Game.has_method("base_mark_cell") else Vector2i(-99, -99)
+	ok("чужой сундук открылся, кнопки метки нет", denied_open and not foreign_btn, str(foreign_btn))
 	ok("чужой сундук метку не берёт", not denied and at == chest, str(at))
 	ok("чужой сундук говорит отказом", _heard("Чужой сундук"), str(_notes()))
 	# Налёт: перенос влияет на следующую волну, не на текущую.
@@ -147,6 +160,21 @@ func _base_mark() -> void:
 	anchor = Game.base_mark_anchor() if Game.has_method("base_mark_anchor") else Vector2i(-99, -99)
 	ok("после налёта точка — новая", Game.has_method("base_mark_anchor") and anchor == later,
 			str(anchor))
+	# F9 после переноса: метка на том сундуке, куда её поставила кнопка.
+	var f9_ok: bool = false
+	if UI.has_method("quick_save") and UI.has_method("quick_load"):
+		var slot_now: String = Save.slot
+		Save.slot = SLOT + "_f9"
+		Save.remove(Save.slot)
+		var saved: bool = UI.quick_save()
+		Game.set("base_mark", World.beacon_cell)
+		Game.set("base_mark_set", false)
+		var loaded_f9: bool = saved and UI.quick_load()
+		var back: Vector2i = Game.base_mark_cell() if Game.has_method("base_mark_cell") else Vector2i(-99, -99)
+		f9_ok = loaded_f9 and Game.get("base_mark_set") == true and back == later
+		Save.remove(Save.slot)
+		Save.slot = slot_now
+	ok("F9 после переноса — метка на месте", f9_ok, str(Game.base_mark_cell() if Game.has_method("base_mark_cell") else "нет"))
 	# Разрушенный сундук: волна держит последнюю точку, метка возвращается к капсуле.
 	Game.set("raid_active", true)
 	var gone = World.machines.get(later)
@@ -297,14 +325,27 @@ func _place_chest(cell: Vector2i) -> Vector2i:
 
 
 ## E по сундуку. Тап держит тот же KEY_E и сходится в _open_chest.
-func _player_mark(cell: Vector2i) -> bool:
+## true — окно открыто на этот сундук. Метку открытие не двигает.
+func _player_open(cell: Vector2i) -> bool:
 	if not player.has_method("_open_chest"):
 		return false
 	var box = World.machines.get(cell)
 	if box == null or not (box is Chest):
 		return false
-	var before: Vector2i = Game.base_mark_cell() if Game.has_method("base_mark_cell") else Vector2i(-99, -99)
 	player._open_chest(box)
+	await await_frame()
+	return UI.panel != null and UI.panel.chest == box
+
+
+## Кнопка «Сделать меткой базы» в уже открытом окне. На базе кнопки нет —
+## это красная проверка, не ошибка скрипта.
+func _player_mark(cell: Vector2i) -> bool:
+	if not await _player_open(cell):
+		return false
+	if UI.panel == null or not UI.panel.has_method("mark_base"):
+		return false
+	var before: Vector2i = Game.base_mark_cell() if Game.has_method("base_mark_cell") else Vector2i(-99, -99)
+	UI.panel.mark_base()
 	await await_frame()
 	if not Game.has_method("base_mark_cell"):
 		return false

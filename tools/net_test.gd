@@ -634,6 +634,7 @@ func _codec_inv() -> void:
 		[Op.SPLIT, {"from": NetCodec.Box.INV, "fslot": 0, "to": NetCodec.Box.INV, "tslot": 35, "id": 9, "n": 0,
 				"flags": 0, "cell": NetCodec.CELL_NONE}],
 		[Op.TAKE_ALL, {"cell": 4242}], [Op.PUT_ALL, {"cell": 0}], [Op.CLOSE, {"cell": NetCodec.CELL_NONE}],
+		[Op.MARK, {"cell": 4242}],
 		[Op.CRAFT, {"recipe": 34, "times": 3}],
 		[Op.DROP, {"from": NetCodec.Box.INV, "fslot": 35, "id": 3, "n": 64, "cell": NetCodec.CELL_NONE}],
 		[Op.SELECT, {"slot": 9}], [Op.UNLOCK, {"node": 5}],
@@ -647,7 +648,7 @@ func _codec_inv() -> void:
 			print("    расхождение: команда %d" % int(smp[0]))
 		if not NetCodec.decode_inv_args(int(smp[0]), b.slice(0, b.size() - 1)).is_empty():
 			bad_ok = false
-	ok("команды InvOps: аргументы туда-обратно (9 видов)", all_ok)
+	ok("команды InvOps: аргументы туда-обратно (10 видов)", all_ok)
 	ok("команды InvOps: короткий кадр — отказ", bad_ok and NetCodec.decode_inv_args(99, PackedByteArray([1])).is_empty())
 	var move: PackedByteArray = NetCodec.frame(NetCodec.Msg.CMD, NetCodec.encode_cmd(Op.MOVE, 1,
 			NetCodec.encode_inv_args(Op.MOVE, samples[0][1])))

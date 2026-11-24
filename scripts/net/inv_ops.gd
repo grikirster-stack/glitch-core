@@ -450,6 +450,8 @@ func _exec(p: Player, peer: int, op: int, a: Dictionary) -> Dictionary:
 				return res
 			var r: Dictionary = take_all(p.inv, ch) if op == Op.TAKE_ALL else put_all(p.inv, ch)
 			return {"ok": int(r["n"]) > 0, "text": String(r["text"]), "chest": ch}
+		Op.MARK:
+			return _exec_mark(p, int(a["cell"]))
 		Op.CRAFT:
 			var idx: int = int(a["recipe"])
 			if idx < 0 or idx >= DB.recipes.size():
@@ -567,6 +569,24 @@ static func _arr(p: Player, ch: Chest, box: int):
 		Box.CHEST:
 			return ch.slots if ch != null else null
 	return null
+
+
+## Хост: кнопка «Сделать меткой базы». Сундук рядом, свой — перенос и GLOBAL.
+## Чужой и капсульный — отказ текстом тому, кто нажал. Содержимое сундука не меняется.
+func _exec_mark(p: Player, cell: int) -> Dictionary:
+	var ch: Chest = _chest_near(p, cell)
+	if ch == null:
+		return {"ok": false, "text": "Сундук далеко.", "chest": _chest_at(cell)}
+	if Game.base_mark_move(ch.cell, p):
+		p._notify("Метка базы перенесена на этот сундук.", Color(0.45, 0.95, 0.7))
+		return {"ok": true, "text": "Метка базы перенесена на этот сундук.", "chest": null}
+	if ch.cell == World.camp_chest_cell:
+		return {"ok": false, "text": "Капсульный сундук меткой базы не становится.", "chest": null}
+	var owner: int = int(ch.owner_uid)
+	if owner >= 0 and owner != int(p.net_uid):
+		p._notify("Чужой сундук. Метку базы ставит только хозяин.", Color(1.0, 0.55, 0.4))
+		return {"ok": false, "text": "Чужой сундук. Метку базы ставит только хозяин.", "chest": null}
+	return {"ok": false, "text": "Этот сундук меткой базы не становится.", "chest": null}
 
 
 func _proxy(peer: int) -> Player:

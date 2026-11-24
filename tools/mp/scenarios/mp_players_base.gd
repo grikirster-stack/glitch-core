@@ -126,7 +126,14 @@ static func has_world_deltas() -> bool:
 # ------------------------------------------------------------------ ФАЙЛЫ ОБМЕНА
 
 func _share_port() -> int:
-	return mp().port if is_host_side() else int(Net.session.get("port", 0))
+	if is_host_side():
+		return mp().port
+	# Сессия дописывает порт после рукопожатия. До него он уже есть в --mp-join.
+	var from_session: int = int(Net.session.get("port", 0))
+	if from_session != 0:
+		return from_session
+	var joined: Dictionary = Net.parse_args(OS.get_cmdline_user_args())
+	return int(joined.get("join_port", 0))
 
 
 func _share_path(key: String) -> String:
