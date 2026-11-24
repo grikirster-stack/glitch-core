@@ -3,7 +3,7 @@ extends "res://tools/scenarios/campaign_common.gd"
 ## ПК идёт через шов игрока (test_input → Player._do_place / _do_interact).
 ## Телефон — через TouchControls (parse_input_event → touch_input → те же
 ## обработчики). Прямых burner.turn(), machine.interact() и pharos.interact() нет:
-## на базе dbcfeb8 глава от такого ввода не закрывается.
+## на базе 2cfa4ae команда не названа и E у маяка не гасит прожектор.
 
 
 func run() -> void:
@@ -20,9 +20,9 @@ func _fire_pc() -> void:
 		return
 	var t0: float = now()
 	var mark: Vector2i = mission.call("mark")
-	var said: String = await _wait_hint()
+	var said: String = await _wait_hint("ПКМ — поставь на метку")
 	ok("ПК «Огонь»: команда постановки видна до клика",
-			said.find("ПКМ") >= 0 or said.find("поставь") >= 0 or said.find("Поставь") >= 0,
+			said.find("ПКМ — поставь на метку") >= 0,
 			"«%s»" % said)
 	stand_at_cell(mark + Vector2i(2, 1))
 	player.inv.selected = _slot(IDs.I.BURNER)
@@ -45,13 +45,13 @@ func _fire_pc() -> void:
 		await wait(0.2)
 		taps += 1
 	print("  [замер] ПК «Огонь»: носик %d → %d за %d ПКМ" % [dir0, burner.dir, taps])
-	var aim_said: String = await _wait_hint()
+	var aim_said: String = await _wait_hint("ПКМ — носик вверх")
 	ok("ПК «Огонь»: носик вверх через ПКМ игрока, команда названа",
 			burner.dir == 3 and (aim_said.find("ПКМ") >= 0 or aim_said.find("вверх") >= 0),
 			"dir %d, «%s»" % [burner.dir, aim_said])
 	player.inv.selected = _slot(IDs.I.COAL)
 	aim(burner.global_position)
-	var fuel_said: String = await _wait_hint()
+	var fuel_said: String = await _wait_hint("Носик вверх. [E] — уголь")
 	ok("ПК «Огонь»: команда угля — [E], не прямой вызов",
 			fuel_said.find("[E]") >= 0 or fuel_said.find("E") >= 0, "«%s»" % fuel_said)
 	aim(burner.global_position)
@@ -90,9 +90,9 @@ func _fire_touch() -> void:
 	_tap(3, UI.hud.hotbar_slot_rect(_slot(IDs.I.BURNER)).get_center())
 	await wait(0.15)
 	ok("тач «Огонь»: горелка в хотбаре включает стройку", tc.build_mode, "слот %d" % player.inv.selected)
-	var said: String = await _wait_hint()
+	var said: String = await _wait_hint("Тапни клетку — поставить")
 	ok("тач «Огонь»: команда постановки — тап, не ПКМ",
-			said.find("ПКМ") < 0 and (said.find("Тап") >= 0 or said.find("тап") >= 0 or said.find("метк") >= 0),
+			said.find("Тапни клетку — поставить") >= 0 and said.find("ПКМ") < 0,
 			"«%s»" % said)
 	_touch(1, _screen(World.cell_to_world(mark)), true)
 	await wait(0.25)
@@ -179,7 +179,7 @@ func _colors_pc() -> void:
 			"цвет %d" % (pharos.color if pharos != null else -1))
 	await _stand_at_pharos()
 	player.inv.selected = 0
-	var lamp_said: String = await _wait_hint()
+	var lamp_said: String = await _wait_hint("[E] у маяка гасит прожектор")
 	ok("ПК «Цвета»: команда прожектора названа и это [E]",
 			lamp_said.find("[E]") >= 0 or lamp_said.find("прожектор") >= 0 or lamp_said.find("Погаси") >= 0,
 			"«%s»" % lamp_said)
@@ -275,8 +275,9 @@ func _colors_touch() -> void:
 	var pharos: Pharos = World.machines.get(pharos_c) as Pharos
 	await wait_until(func() -> bool:
 		return pharos != null and pharos.color == Beams.Y and pharos.active, 3.0)
-	var said: String = await _wait_hint()
-	ok("тач «Цвета»: команда прожектора без ПКМ", said.find("ПКМ") < 0, "«%s»" % said)
+	var said: String = await _wait_hint("[E] у маяка гасит прожектор")
+	ok("тач «Цвета»: команда прожектора без ПКМ",
+			said.find("[E] у маяка гасит прожектор") >= 0 and said.find("ПКМ") < 0, "«%s»" % said)
 	_touch(2, tc.btn_center["e"], true)
 	await wait(0.4)
 	_touch(2, tc.btn_center["e"], false)
@@ -377,12 +378,18 @@ func _rebuild_beams() -> void:
 
 
 ## Плашка копирует Mission.hint не чаще чем раз в STATE_RECHECK_SEC.
-func _wait_hint() -> String:
+## Ждём конкретную команду этой главы. Любой «[E]» или «метк» не годится:
+## в шарде 3/3 предыдущий сценарий оставляет «[E] — открыть сундук» и хвост
+## обучения «на горелку», и общий фильтр возвращался на чужой строке.
+## Если нужная строка уже висит — это она, ждать смены не нужно.
+## Если висит чужая — ждём, пока плашка сменится на нужную, а не на ту же чужую.
+func _wait_hint(need: String) -> String:
+	var before: String = _hint_or_card()
+	if before.find(need) >= 0:
+		return before
 	await wait_until(func() -> bool:
 		var s: String = _hint_or_card()
-		return s.find("ПКМ") >= 0 or s.find("Тап") >= 0 or s.find("тап") >= 0 \
-				or s.find("вверх") >= 0 or s.find("[E]") >= 0 or s.find("прожектор") >= 0 \
-				or s.find("Погаси") >= 0 or s.find("метк") >= 0, 1.2)
+		return s.find(need) >= 0 and s != before, 2.0)
 	return _hint_or_card()
 
 
