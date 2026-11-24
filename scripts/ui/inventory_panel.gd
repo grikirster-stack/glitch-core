@@ -11,11 +11,13 @@ extends Control
 ##    Shift+ЛКМ — переложить стопку в другой контейнер, кнопки «Забрать всё»
 ##    и «Сложить всё»; на телефоне в том же ряду — «переложить» (тот же
 ##    перенос стопки, что Shift+ЛКМ: палец защёлкивает, следующий тап по ячейке
-##    перекладывает); предмет «в руке» рисуется у курсора с количеством,
+##    перекладывает), «осмотр» и «закрыть»; ячейки крупнее и листаются
+##    пальцем (#310); предмет «в руке» рисуется у курсора с количеством,
 ##    при закрытии панели он возвращается в инвентарь (не влез — в сундук,
 ##    потом на землю под ноги);
 ##  * рецепт: по наведению — подсказка с названиями входов, «есть N / нужно M»,
-##    станцией, временем и причиной недоступности словами; после клика —
+##    станцией, временем и причиной недоступности словами; на телефоне то же
+##    без наведения — кнопка «осмотр»; после клика —
 ##    вспышка строки и строка обратной связи внизу панели (уведомления HUD
 ##    панель закрывает).
 ## Счётчик деталей релея (микросхема, энергоячейка, антенна) с панели снят
@@ -117,6 +119,11 @@ var _drag_y: float = 0.0
 ## Телефон: «переложить» защёлкнуто — следующий тап по ячейке идёт как Shift+ЛКМ.
 ## Мышь Shift не теряет: защёлка читается только вместе с UI.touch_on.
 var _quick_latch: bool = false
+## Телефон: «осмотр» показывает подсказку без наведения. Пусто — подсказки нет.
+var _inspect: Dictionary = {}
+## Телефон: сколько строк сетки инвентаря уехало вверх (крупные ячейки не
+## влезают все сразу левее рецептов).
+var _inv_scroll: int = 0
 var _drag_acc: float = 0.0
 
 
@@ -132,6 +139,8 @@ func _ready() -> void:
 func open(p: Player) -> void:
 	_return_held()
 	_quick_latch = false
+	_inspect = {}
+	_inv_scroll = 0
 	player = p
 	chest = null
 	_bind_seen(p)
@@ -142,6 +151,8 @@ func open(p: Player) -> void:
 func open_chest(p: Player, c: Chest) -> void:
 	_return_held()
 	_quick_latch = false
+	_inspect = {}
+	_inv_scroll = 0
 	player = p
 	chest = c
 	_bind_seen(p)
@@ -157,6 +168,8 @@ func open_chest(p: Player, c: Chest) -> void:
 func close() -> void:
 	_return_held()
 	_quick_latch = false
+	_inspect = {}
+	_inv_scroll = 0
 	if chest and Net.is_client():   # СЕТЬ (ADR-002): хост больше не шлёт этот сундук
 		InvOps.send(NetCodec.InvOp.CLOSE, {"cell": InvOps.cell_of(chest)})
 	visible = false
@@ -205,8 +218,19 @@ func _gui_input(event: InputEvent) -> void:
 		mouse_pos = (event as InputEventMouseMotion).position
 		queue_redraw()
 	elif event is InputEventScreenDrag:
+		var drag: InputEventScreenDrag = event
+		if _touch_grid() and _inv_grid_rect().has_point(drag.position):
+			_drag_acc += drag.relative.y
+			while _drag_acc >= TOUCH_CELL:
+				_drag_acc -= TOUCH_CELL
+				_inv_scroll = maxi(0, _inv_scroll - 1)
+			while _drag_acc <= -TOUCH_CELL:
+				_drag_acc += TOUCH_CELL
+				_inv_scroll = mini(_inv_scroll + 1, _inv_max_scroll())
+			queue_redraw()
+			return
 		# Палец листает список рецептов, как колесо: RECIPE_H px — строка (#81).
-		var dy: float = (event as InputEventScreenDrag).relative.y
+		var dy: float = drag.relative.y
 		_drag_y += dy
 		_drag_acc += dy
 		while _drag_acc >= RECIPE_H:
@@ -216,6 +240,14 @@ func _gui_input(event: InputEvent) -> void:
 			_drag_acc += RECIPE_H
 			scroll = mini(scroll + 1, _max_scroll())
 		queue_redraw()
+
+
+## Сетка инвентаря на телефоне: тут палец листает крупные ячейки.
+func _inv_grid_rect() -> Rect2:
+	if not _touch_grid():
+		return Rect2()
+	return Rect2(_panel_pos() + Vector2(12, _inv_y()),
+			Vector2(TOUCH_COLS * TOUCH_CELL + 8, _touch_vis_rows() * TOUCH_CELL + 8))
 
 
 ## Список рецептов: тут палец листает (#81).
@@ -285,11 +317,53 @@ func _move_rect() -> Rect2:
 	return Rect2(_panel_pos() + Vector2(216, 184), Vector2(100, _chest_btn_h()))
 
 
+## «Осмотр» и «закрыть» — только на телефоне. На ПК подсказка по наведению,
+## закрытие — I / Esc; прямоугольники пустые, клик их не ловит.
+func _inspect_rect() -> Rect2:
+	if not UI.touch_on:
+		return Rect2()
+	var y: float = 236.0 if chest != null else 78.0
+	return Rect2(_panel_pos() + Vector2(16, y), Vector2(148, 48))
+
+
+func _close_rect() -> Rect2:
+	if not UI.touch_on:
+		return Rect2()
+	var y: float = 236.0 if chest != null else 78.0
+	return Rect2(_panel_pos() + Vector2(172, y), Vector2(148, 48))
+
+
+## Крупная ячейка телефона: 48 логических px, 6 колонок. ПК остаётся на INV_SLOT.
+const TOUCH_CELL: int = 48
+const TOUCH_COLS: int = 6
+
+
+func _touch_grid() -> bool:
+	return UI.touch_on
+
+
+func _touch_rows() -> int:
+	if not _touch_grid() or player == null:
+		return 0
+	return int(ceil(float(player.inv.size) / float(TOUCH_COLS)))
+
+
+## Сколько строк крупной сетки видно между подписью и низом панели.
+func _touch_vis_rows() -> int:
+	return 3
+
+
+func _inv_max_scroll() -> int:
+	return maxi(0, _touch_rows() - _touch_vis_rows())
+
+
 ## Верх сетки инвентаря игрока (подпись «ВЫ» — на 6 px выше, ячейки — на 6 ниже).
 ## Место сундука над ней есть всегда: без сундука там подсказка, как его открыть.
 ## На телефоне ряд кнопок сундука кончается на 232 — сетка ниже, иначе накроет его.
 func _inv_y() -> float:
-	return 292.0 if UI.touch_on else 258.0
+	if not UI.touch_on:
+		return 258.0
+	return 292.0 if chest != null else 134.0
 
 
 ## Колонок в верхнем ряду — ровно хотбар; рюкзак всегда по 10 (#161).
@@ -302,6 +376,12 @@ func _hotbar_cols() -> int:
 ## Ячейка i инвентаря: верхний ряд — хотбар (hotbar_size ячеек), рюкзак ниже на HOTBAR_GAP
 ## рядами по 10. Индекс слота не меняется: ячейки 6…9 при хотбаре 6 — уже рюкзак.
 func _inv_slot_rect(i: int) -> Rect2:
+	if _touch_grid():
+		var col_t: int = i % TOUCH_COLS
+		var row_t: int = int(i / TOUCH_COLS) - _inv_scroll
+		var y_t: float = _inv_y() + 6 + row_t * TOUCH_CELL
+		return Rect2(_panel_pos() + Vector2(16 + col_t * TOUCH_CELL, y_t),
+				Vector2(TOUCH_CELL - 4, TOUCH_CELL - 4))
 	var cols: int = _hotbar_cols()
 	var row: int = 0
 	var col: int = i
@@ -311,6 +391,14 @@ func _inv_slot_rect(i: int) -> Rect2:
 		col = k % Inventory.HOTBAR_MAX
 	var y: float = _inv_y() + 6 + row * INV_SLOT + (HOTBAR_GAP if row > 0 else 0)
 	return Rect2(_panel_pos() + Vector2(16 + col * INV_SLOT, y), Vector2(INV_SLOT - 4, INV_SLOT - 4))
+
+
+## Видимая ячейка телефона: прокрученные за край строки не ловят тап.
+func _inv_slot_hit(i: int) -> bool:
+	if not _touch_grid():
+		return true
+	var row_t: int = int(i / TOUCH_COLS) - _inv_scroll
+	return row_t >= 0 and row_t < _touch_vis_rows()
 
 
 ## Строка рецепта row (0…RECIPE_ROWS-1) на экране.
@@ -484,8 +572,9 @@ func _draw_chest(origin: Vector2) -> void:
 		_text(origin + Vector2(28, 108), "СУНДУК НЕ ОТКРЫТ", 276, UI.FONT["small"], Color(C_CHEST, 0.7),
 				HORIZONTAL_ALIGNMENT_LEFT, box)
 		var y: float = 132.0
-		for line in _wrap("Подойди к сундуку или тайнику руины и нажми E — его ячейки появятся здесь. "
-				+ "Shift+ЛКМ перекладывает стопку между сундуком и инвентарём.", 276, UI.FONT["small"], 5):
+		var hint: String = "Подойди к сундуку или тайнику руины и нажми E — его ячейки появятся здесь. "
+		hint += "«переложить» переносит стопку." if UI.touch_on else "Shift+ЛКМ перекладывает стопку между сундуком и инвентарём."
+		for line in _wrap(hint, 276, UI.FONT["small"], 5):
 			_text(origin + Vector2(28, y), line, 276, UI.FONT["small"], C_DIM, HORIZONTAL_ALIGNMENT_LEFT, box)
 			y += 18.0
 		return
@@ -506,6 +595,8 @@ func _draw_chest(origin: Vector2) -> void:
 	_button(_put_all_rect(), "Сложить всё", has_pack)
 	if UI.touch_on:
 		_button(_move_rect(), "переложить", _quick_latch)
+		_button(_inspect_rect(), "осмотр", not _inspect.is_empty())
+		_button(_close_rect(), "закрыть", true)
 
 
 func _button(r: Rect2, label: String, enabled: bool) -> void:
@@ -519,6 +610,24 @@ func _button(r: Rect2, label: String, enabled: bool) -> void:
 func _draw_inventory(origin: Vector2) -> void:
 	_tag = "inv"
 	var inv_y: float = _inv_y()
+	if _touch_grid():
+		_text(origin + Vector2(16, inv_y - 6), "ВЫ · палец листает", 280, UI.FONT["small"], C_HEAD)
+		if chest == null:
+			_button(_inspect_rect(), "осмотр", not _inspect.is_empty())
+			_button(_close_rect(), "закрыть", true)
+		var clip: Rect2 = Rect2(origin + Vector2(12, inv_y), Vector2(TOUCH_COLS * TOUCH_CELL + 8, _touch_vis_rows() * TOUCH_CELL + 8))
+		draw_rect(clip, Color(1, 1, 1, 0.04), false, 1.0)
+		for i in player.inv.size:
+			if not _inv_slot_hit(i):
+				continue
+			var rt: Rect2 = _inv_slot_rect(i)
+			_draw_slot(rt, _shown(player.inv.slots, NetCodec.Box.INV, i), i < player.inv.hotbar_size)
+			if i < player.inv.hotbar_size:
+				_str(rt.position + Vector2(3, 11), str((i + 1) % 10), UI.FONT["small"], Color(0.75, 0.88, 1.0, 0.55))
+		if _inv_max_scroll() > 0:
+			_text(origin + Vector2(16, inv_y + _touch_vis_rows() * TOUCH_CELL + 16),
+					"%d / %d" % [_inv_scroll + 1, _inv_max_scroll() + 1], 120, UI.FONT["small"], C_DIM)
+		return
 	var cols: int = _hotbar_cols()
 	var keys: String = "1-0" if cols >= Inventory.HOTBAR_MAX else "1-%d" % cols
 	var w: float = _text(origin + Vector2(16, inv_y - 6), "ВЫ", 40, UI.FONT["small"], C_HEAD)
@@ -623,6 +732,8 @@ func _draw_bottom(origin: Vector2) -> void:
 	if not held.is_empty():
 		parts = ["В руке: %s ×%d" % [DB.item_name(held.id), held.count], "ЛКМ по ячейке — положить",
 				"ПКМ — положить 1", "закроешь панель — вернётся в инвентарь"]
+	elif UI.touch_on:
+		parts = ["осмотр — что это", "переложить — стопка" if chest else "тап — взять", "закрыть — убрать панель"]
 	else:
 		parts = ["ЛКМ — взять/положить", "ПКМ — половина"]
 		parts.append("Shift+ЛКМ — переложить в сундук/инвентарь" if chest else "Shift+ЛКМ — хотбар/рюкзак")
@@ -769,8 +880,12 @@ func _hover_target() -> Dictionary:
 			return {"kind": "put_all"}
 		if _move_rect().has_point(p):
 			return {"kind": "move"}
+	if _inspect_rect().has_point(p):
+		return {"kind": "inspect"}
+	if _close_rect().has_point(p):
+		return {"kind": "close"}
 	for i in player.inv.size:
-		if _inv_slot_rect(i).has_point(p):
+		if _inv_slot_hit(i) and _inv_slot_rect(i).has_point(p):
 			return {"kind": "inv", "i": i}
 	for i in TABS.size():
 		if _tab_rect(i).has_point(p):
@@ -813,6 +928,10 @@ func _tooltip_for(t: Dictionary) -> Array:
 			out.append(_line("Переложить весь рюкзак в сундук. Хотбар (верхний ряд) остаётся при тебе.", C_TEXT))
 		"move":
 			out.append(_line("Тап по ячейке переложит стопку, как Shift+ЛКМ. Ещё раз — отмена.", C_TEXT))
+		"inspect":
+			out.append(_line("Тап по ячейке или рецепту покажет, что это и хватает ли. Ещё раз — спрятать.", C_TEXT))
+		"close":
+			out.append(_line("Закрыть инвентарь. Предмет в руке вернётся в ячейку.", C_TEXT))
 		"tab":
 			var tips: Array = [
 				"Крафт руками: без станка, сразу в инвентарь.",
@@ -853,8 +972,23 @@ func _recipe_tooltip(rec: Dictionary) -> Array:
 	return out
 
 
+## Куда прислонить подсказку осмотра, если палец уже убран.
+func _inspect_anchor() -> Vector2:
+	var kind: String = String(_inspect.get("kind", ""))
+	if kind == "inv" and _inspect.has("i"):
+		return _inv_slot_rect(int(_inspect["i"])).get_center()
+	if kind == "chest" and _inspect.has("i"):
+		return _chest_slot_rect(int(_inspect["i"])).get_center()
+	if kind == "recipe":
+		return _panel_pos() + Vector2(500, 200)
+	return _inspect_rect().get_center()
+
+
 func _draw_tooltip() -> void:
-	var lines: Array = _tooltip_for(_hover_target())
+	var target: Dictionary = _hover_target()
+	if target.is_empty() and not _inspect.is_empty():
+		target = _inspect
+	var lines: Array = _tooltip_for(target)
 	if lines.is_empty():
 		return
 	_tag = "tip"
@@ -871,10 +1005,13 @@ func _draw_tooltip() -> void:
 			rows.append([parts[k], l["c"], icon if k == 0 else IDs.I.NONE, indent])
 			max_w = maxf(max_w, _w(parts[k], fs_tip) + indent)
 	var box_size: Vector2 = Vector2(minf(max_w + 16.0, TIP_W), rows.size() * LH + 10.0)
-	var pos: Vector2 = mouse_pos + Vector2(18, 18)
+	var anchor: Vector2 = mouse_pos
+	if anchor.x < 0.0 and not _inspect.is_empty():
+		anchor = _inspect_anchor()
+	var pos: Vector2 = anchor + Vector2(18, 18)
 	pos.x = clampf(pos.x, 4.0, size.x - box_size.x - 4.0)
 	if pos.y + box_size.y > size.y - 4.0:
-		pos.y = mouse_pos.y - box_size.y - 10.0
+		pos.y = anchor.y - box_size.y - 10.0
 	pos.y = maxf(pos.y, 4.0)
 	var box: Rect2 = Rect2(pos, box_size)
 	draw_rect(box, Color(0.04, 0.05, 0.08, 0.97))
@@ -1037,6 +1174,8 @@ func _click(pos: Vector2, right: bool, shift: bool = false) -> void:
 	if chest:
 		for i in Chest.CAP:
 			if _chest_slot_rect(i).has_point(pos):
+				if _arm_inspect("chest", i, right):
+					return
 				if quick or _consume_latch(right):
 					quick_move_chest(i)
 				else:
@@ -1057,9 +1196,21 @@ func _click(pos: Vector2, right: bool, shift: bool = false) -> void:
 			_quick_latch = not _quick_latch
 			queue_redraw()
 			return
+	if _close_rect().has_point(pos) and not right:
+		close()
+		return
+	if _inspect_rect().has_point(pos) and not right:
+		if _inspect.is_empty():
+			_inspect = {"kind": "armed"}
+		else:
+			_inspect = {}
+		queue_redraw()
+		return
 	# Инвентарь
 	for i in player.inv.size:
-		if _inv_slot_rect(i).has_point(pos):
+		if _inv_slot_hit(i) and _inv_slot_rect(i).has_point(pos):
+			if _arm_inspect("inv", i, right):
+				return
 			if quick or _consume_latch(right):
 				quick_move_inv(i)
 			else:
@@ -1071,7 +1222,10 @@ func _click(pos: Vector2, right: bool, shift: bool = false) -> void:
 	var first: int = mini(scroll, _max_scroll())
 	for i in range(first, mini(recipes.size(), first + RECIPE_ROWS)):
 		if _recipe_row_rect(i - first).has_point(pos):
-			_craft(recipes[i])
+			if String(_inspect.get("kind", "")) == "armed":
+				_inspect = {"kind": "recipe", "rec": recipes[i]}
+			else:
+				_craft(recipes[i])
 			queue_redraw()
 			return
 	# Вкладки
@@ -1081,6 +1235,16 @@ func _click(pos: Vector2, right: bool, shift: bool = false) -> void:
 			scroll = 0
 			queue_redraw()
 			return
+
+
+## Защёлка «осмотр»: тап по ячейке показывает, что в ней, и стопку не берёт.
+## ПКМ и мышь без защёлки по-прежнему берут. true — клик съеден осмотром.
+func _arm_inspect(kind: String, index: int, right: bool) -> bool:
+	if right or String(_inspect.get("kind", "")) != "armed":
+		return false
+	_inspect = {"kind": kind, "i": index}
+	queue_redraw()
+	return true
 
 
 ## Защёлка «переложить» на телефоне: один тап по ячейке идёт как Shift+ЛКМ.

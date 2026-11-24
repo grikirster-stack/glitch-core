@@ -18,9 +18,10 @@ extends ScenarioBase
 ## (ViewZoom) и ничего не копает и не ставит; короткий тап быстрее ожидания щипка
 ## всё равно ставит блок. Тап по фантому на 21–26 px от тела бьёт его: прицел
 ## берёт дальше, чем порог взмаха мыши.
-## Автоскрытие: 15 с без касания — альфа 0 и ввод не проходит; касание возвращает,
-## первый тап действия не вызывает; удержание стика 15+ с не прячет; после отпускания
-## и 15 с — прячет. Открытый инвентарь отсчёт не копит.
+## Автоскрытие: 15 с без касания — альфа 0 и ввод не проходит; касание возвращает.
+## Первый тап по видимой кнопке срабатывает сразу (#310); тап по пустому месту
+## только возвращает. Удержание стика 15+ с не прячет; после отпускания и 15 с —
+## прячет. Открытый инвентарь отсчёт не копит.
 ## В одиночной игре кнопки переклички G нет (#135; в сети её проверяет mp_doppel).
 ## Тап по центру карточки «Сейчас» не копает и не ставит; тап мимо UI копает.
 ## Раскладка: ландшафт 1280×720 и портрет 1280×2844 (как tools/ui_scale_test.gd).
@@ -495,20 +496,26 @@ func _smart_aim() -> void:
 	ok("рядом пустые клетки под постройку", World.get_tile_v(near) == IDs.T.AIR
 			and World.get_tile_v(a) == IDs.T.AIR, "%s %s" % [str(near), str(a)])
 
-	# Короткий тап по свободной клетке — блок; палец держится — второй не ставится.
+	# Короткий тап по свободной клетке — блок на отпускании (#310). Пока палец
+	# держит клетку, рамка есть, камень цел, второй блок не встаёт.
 	var stones: int = player.inv.slots[5].count
 	_touch(1, _screen(World.cell_to_world(a)), true)
-	var placed: bool = await wait_until(func() -> bool: return World.get_tile_v(a) == IDs.T.STONE, 0.6)
-	await wait(0.5)
+	await wait(0.2)
+	ok("пока палец держит клетку, блок не ставится",
+			tc.aim_cell == a and player.inv.slots[5].count == stones
+			and World.get_tile_v(a) == IDs.T.AIR,
+			"aim %s камней %d" % [tc.aim_cell, player.inv.slots[5].count])
 	_touch(1, _screen(World.cell_to_world(a)), false)
-	ok("тап по свободной клетке ставит один блок (палец держится — второй не встаёт)",
+	var placed: bool = await wait_until(func() -> bool: return World.get_tile_v(a) == IDs.T.STONE, 0.6)
+	ok("отпускание ставит один блок",
 			placed and player.inv.slots[5].count == stones - 1 and World.get_tile_v(near) == IDs.T.AIR,
 			"камней %d → %d" % [stones, player.inv.slots[5].count])
 
-	# Тап далеко за камнем (за радиусом): блок встаёт перед камнем, со своей стороны.
+	# Тап далеко за камнем (за радиусом): на отпускании блок встаёт перед камнем.
 	_touch(1, _screen(World.cell_to_world(far)), true)
-	placed = await wait_until(func() -> bool: return World.get_tile_v(near) == IDs.T.STONE, 0.6)
+	await wait(0.15)
 	_touch(1, _screen(World.cell_to_world(far)), false)
+	placed = await wait_until(func() -> bool: return World.get_tile_v(near) == IDs.T.STONE, 0.6)
 	ok("тап за препятствием и радиусом ставит блок со своей стороны", placed,
 			DB.tile_name(World.get_tile_v(near)))
 
@@ -524,7 +531,7 @@ func _smart_aim() -> void:
 	await wait(0.1)
 	ok("пустая ячейка хотбара включает «копать»", player.inv.selected == 4 and not tc.build_mode)
 	_touch(1, _screen(World.cell_to_world(far)), true)
-	await wait(0.1)
+	await wait(0.2)
 	ok("тап за радиусом целит в ближнюю стену по лучу", tc.aim_cell == near, str(tc.aim_cell))
 	var dug: bool = await wait_until(func() -> bool: return World.get_tile_v(near) == IDs.T.AIR, 6.0)
 	_touch(1, _screen(World.cell_to_world(far)), false)
@@ -830,13 +837,13 @@ func _autohide() -> void:
 			"hud alpha %.2f" % UI.hud.modulate.a)
 	await wait_until(func() -> bool: return player.on_ground, 1.5)
 	var y0: float = player.global_position.y
-	# Первый тап по прыжку только возвращает контролы и сам не прыгает.
+	# Первый тап по прыжку возвращает контролы и сам прыгает (#310).
 	_touch(2, tc.btn_center["jump"], true)
 	_touch(2, tc.btn_center["jump"], false)
-	await wait(0.35)
-	ok("касание возвращает контролы, первый тап прыжка не прыгает",
+	var rose_first: bool = await wait_until(func() -> bool: return player.global_position.y < y0 - 8.0, 0.6)
+	ok("касание возвращает контролы, первый тап прыжка прыгает",
 			tc.controls_shown() and is_equal_approx(tc.controls_alpha, 1.0)
-			and player.global_position.y > y0 - 4.0 and not tc.held("jump"),
+			and rose_first and not tc.held("jump"),
 			"alpha %.2f dy %.1f" % [tc.controls_alpha, y0 - player.global_position.y])
 	await wait_until(func() -> bool: return player.on_ground, 1.5)
 	y0 = player.global_position.y

@@ -12,8 +12,9 @@ extends CanvasLayer
 ## тапом — удар по нему. Постройка: свободная клетка под пальцем, иначе последняя
 ## свободная по тому же лучу — блок встаёт со своей стороны препятствия. Цель обведена
 ## рамкой, пока палец на экране; вокруг героя — кольцо радиуса. Удержание копает по
-## лучу дальше, но не дальше пальца; постройка — одна на клетку под пальцем, ведёшь
-## пальцем — ставишь линией. Долгого тапа больше нет: он спорил с копкой.
+## лучу дальше, но не дальше пальца. Постройка не ставит линию: палец только
+## показывает клетку и стрелку, блок встаёт на отпускании (#310). Долгого тапа
+## больше нет: он спорил с копкой.
 ##
 ## Зум — щипок двумя пальцами по миру (ViewZoom.set_now): второй палец лёг на мир, пока
 ## первый там, — оба ведут зум, а не копку. Чтобы щипок не успел копнуть или поставить
@@ -36,6 +37,11 @@ extends CanvasLayer
 ## ПК; без сенсорного экрана мышь тогда шлёт касания — Input.emulate_touch_from_mouse).
 ## Без того и другого узел спит: ни _process, ни _input, Player.touch_input пуст.
 ##
+## Стройка (#310): пока палец на мире, видна клетка и стрелка ориентации, материалы
+## не тратятся и машины не двигаются. ПКМ шва — только на отпускании (PULSE_FRAMES).
+## Щипок, в том числе второй палец после ожидания, отменяет ещё не подтверждённое.
+## Копка по-прежнему идёт, пока палец держит клетку: щипок её тоже снимает.
+##
 ## Эмуляция мыши из касаний (input_devices/pointing/emulate_mouse_from_touch,
 ## в проекте по умолчанию включена) остаётся: панели инвентаря и журнала получают
 ## тап как клик ЛКМ. Чтобы такой «клик» не копал мир под джойстиком, пока палец на
@@ -47,8 +53,9 @@ extends CanvasLayer
 ##
 ## Раскладка при 1280×720 (не перекрывает HUD): слева снизу — джойстик;
 ## справа снизу — «копать»/«строить», E, бег, прыжок (ниже уведомлений, правее
-## хотбара); справа под миникартой — J, I, ниже — Q и V. Q и V рисуются, только
-## когда импульс готов и рядом вентиляция. Размер кнопки — не меньше MIN_MM
+## хотбара); справа под миникартой — J, I, ниже — Q и V. Q рисуется всегда: на
+## перезарядке — дуга по кромке, шов её не жмёт. V — только рядом с вентиляцией.
+## Размер кнопки — не меньше MIN_MM
 ## на экране (в портрете потолок k = 1.6 не даёт дотянуть до пола — P2).
 ## Портрет (тач и высота > 1.2 ширины, как HUD._compute_layout): стик слева внизу,
 ## кнопки действий справа внизу, меню/журнал/инвентарь справа сверху — внутри
@@ -68,11 +75,12 @@ extends CanvasLayer
 ## обычные кнопки, тап по ним приходит кликом.
 ##
 ## Автоскрытие: после AUTO_HIDE_SEC без касания контролы плавно гаснут (fade
-## FADE_SEC), ввод выключается. Любое касание экрана возвращает их; этот первый
-## тап игрового действия не вызывает. Пока палец на стике или кнопке — не гаснут.
-## HUD (хотбар, полоса цели, подсказки) живёт в своём слое и не трогается. Пока
-## открыто модальное окно (инвентарь, журнал, пауза) или экран финала — не гаснут:
-## I и J в окне ещё нужны, а пауза глушит их сама.
+## FADE_SEC), ввод выключается. Касание возвращает их. Тап по месту кнопки
+## (прыжок, E, импульс) срабатывает сразу — кнопка после простоя не пропадает
+## из-под пальца (#310). Тап по пустому месту только возвращает контролы.
+## Пока палец на стике или кнопке — не гаснут. HUD живёт в своём слое.
+## Пока открыто модальное окно (инвентарь, журнал, пауза) или экран финала —
+## не гаснут: I и J в окне ещё нужны, а пауза глушит их сама.
 
 ## Слой: над HUD и панелями (UI — 10), под экраном финала (EndScreen.LAYER — 20).
 const LAYER: int = 15
@@ -200,10 +208,10 @@ var _btn_pulse: Dictionary = {}
 var idle_sec: float = 0.0
 ## 1 — контролы видны, 0 — скрыты. Между — плавное гашение или появление.
 var controls_alpha: float = 1.0
-## Контролы погасли и ввод выключен. Касание экрана их вернёт, само действие
-## не вызовет (reveal_armed).
+## Контролы погасли и ввод выключен. Касание экрана их вернёт. Тап по месту
+## кнопки срабатывает сразу (#310); тап по пустому месту только возвращает.
 var controls_hidden: bool = false
-## Следующее касание только возвращает контролы и поглощается.
+## Следующее касание возвращает контролы. Кнопку под пальцем оно же и жмёт.
 var reveal_armed: bool = false
 ## Состояние шва: живут всё время, меняются только значения — без аллокаций.
 var _keys: Dictionary = {}
@@ -274,7 +282,7 @@ func _show_controls() -> void:
 		_pad.queue_redraw()
 
 
-## Погасить до конца: альфа 0, ввод выключен, следующее касание только вернёт.
+## Погасить до конца: альфа 0, ввод выключен, следующее касание вернёт.
 func _hide_controls() -> void:
 	controls_alpha = 0.0
 	controls_hidden = true
@@ -362,22 +370,21 @@ func _team_rows() -> int:
 
 
 ## Кнопку видно и она жмётся: G — только в сети, при открытой панели — только I и J.
-## Q и V в боевом ряду не живут: Q — пока импульс готов, V — пока рядом вентиляция
-## или герой уже в ней (выйти). Дырка в ряду, центры не едут. Клавиши Q и V на ПК
+## Q на месте всегда: перезарядка — дуга, не дырка. V — пока рядом вентиляция
+## или герой уже в ней (выйти). Дырка V не сдвигает ряд. Клавиши Q и V на ПК
 ## читает Player._key из Input — видимость кнопки их не глушит.
 func _shown(id: String, blocking: bool) -> bool:
 	if UI.pause != null and UI.pause.visible:
 		return false   # #119: в паузе — только её панель
 	if blocking and id != "inv" and id != "journal":
 		return false
-	if id == "q":
-		return _q_ready()
 	if id == "v":
 		return _v_ready()
 	return id != "g" or rollcall_shown()
 
 
-## Импульс готов: тот же emp_cd, что пускает Player._empulse. Героя нет — кнопку не рисуем.
+## Импульс готов: тот же emp_cd, что пускает Player._empulse. Кнопку рисуем и
+## на перезарядке — иначе дуга не видна. Шов Q не жмёт, пока это ложь.
 func _q_ready() -> bool:
 	var p: Player = _player()
 	return p != null and p.emp_cd <= 0.0
@@ -575,10 +582,18 @@ func _layout_portrait(sz: Vector2, r: float, jr: float, m: float, g: float,
 
 
 ## Что под пальцем: "stick", id кнопки или "". При открытой панели живы только I и J,
-## G — только в сети (_shown). Погасшие контролы палец не ловят.
+## G — только в сети (_shown). Погасшие контролы палец не ловят: альфа 0 —
+## control_at пуст, даже если кнопка ждёт первого тапа. Этот тап бьёт геометрию
+## (_hit_shown) сам, до _show_controls (#310).
 func control_at(pos: Vector2) -> String:
 	if controls_hidden or controls_alpha <= 0.0:
 		return ""
+	return _hit_shown(pos)
+
+
+## Геометрия кнопки или стика, без проверки альфы. Только первый тап после
+## автоскрытия: control_at в этот момент ещё пуст.
+func _hit_shown(pos: Vector2) -> String:
 	var blocking: bool = UI.blocking()
 	var best: String = ""
 	var best_d: float = INF
@@ -618,12 +633,20 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		var st: InputEventScreenTouch = event
 		if st.pressed and (reveal_armed or controls_hidden):
-			# Первый тап после автоскрытия только возвращает контролы.
+			# Первый тап после автоскрытия возвращает контролы. Кнопка под
+			# пальцем срабатывает сразу: после 15 с она не должна молчать (#310).
+			# control_at ещё пуст — геометрию берём отдельно. Пустое место и стик
+			# только возвращают: случайный шаг не нужен.
+			var reveal_hit: String = _hit_shown(st.position)
 			_show_controls()
-			get_viewport().set_input_as_handled()
-			return
+			if reveal_hit != "" and reveal_hit != "stick":
+				eat = _finger_down(st.index, st.position)
+			else:
+				get_viewport().set_input_as_handled()
+				return
 		idle_sec = 0.0
-		eat = _finger_down(st.index, st.position) if st.pressed else _finger_up(st.index)
+		if not eat:
+			eat = _finger_down(st.index, st.position) if st.pressed else _finger_up(st.index)
 	elif event is InputEventScreenDrag:
 		if controls_hidden:
 			return
@@ -703,10 +726,15 @@ func _finger_up(index: int) -> bool:
 			_btn_hold[id] = maxi(0, int(_btn_hold.get(id, 0)) - 1)
 		"world":
 			_world_finger = -1
-			if _world_wait > 0:
-				_world_ghost = PULSE_FRAMES   # короткий тап: отработает и отпущенный
-				_world_wait = 0
-			else:
+			# Стройка подтверждается отпусканием: короткий тап и удержание
+			# одинаково ставят один раз. Копка идёт, пока палец держит клетку,
+			# и на отпускании не повторяется. Щипок уже снял этот палец.
+			if build_mode and not _world_spent:
+				_world_ghost = PULSE_FRAMES
+			elif _world_wait > 0 and not build_mode:
+				_world_ghost = PULSE_FRAMES   # короткий тап копки: отработает и отпущенный
+			_world_wait = 0
+			if _world_ghost <= 0:
 				aim_cell = NO_CELL
 				aim_foe = false
 		"pinch":
@@ -781,7 +809,8 @@ func _zoom() -> ViewZoom:
 	return p.view_zoom if p != null and p.view_zoom != null and p.view_zoom.allowed() else null
 
 
-## Второй палец лёг на мир, пока первый там: оба — щипок, копка первого отменяется.
+## Второй палец лёг на мир, пока первый там: оба — щипок. Копка и ещё не
+## подтверждённая стройка отменяются — материалы и направление машин целы (#310).
 func _pinch_start(index: int, pos: Vector2) -> void:
 	_pinch_a = _world_finger
 	_pinch_b = index
@@ -789,8 +818,13 @@ func _pinch_start(index: int, pos: Vector2) -> void:
 	_fingers[_pinch_b] = {"kind": "pinch", "id": "", "pos": pos}
 	_world_finger = -1
 	_world_wait = 0
+	_world_ghost = 0
+	_world_spent = true
 	aim_cell = NO_CELL
 	aim_foe = false
+	_aim_dir = -1
+	_mbtn[MOUSE_BUTTON_LEFT] = false
+	_mbtn[MOUSE_BUTTON_RIGHT] = false
 	_pinch_dist = maxf(_world_screen.distance_to(pos), 1.0)
 	_pinch_zoom = _zoom().current
 
@@ -826,7 +860,8 @@ func _physics_process(delta: float) -> void:
 	# Скрытая кнопка палец не держит и шов не жмёт. Клавиатура идёт мимо: Player._key
 	# читает Input, если шов не зажат.
 	var blocking: bool = UI.blocking()
-	_keys[KEY_Q] = _shown("q", blocking) and held("q")
+	# Q на экране и на перезарядке, но шов жмёт только готовый импульс.
+	_keys[KEY_Q] = _shown("q", blocking) and held("q") and _q_ready()
 	_keys[KEY_V] = _shown("v", blocking) and held("v")
 	_keys[KEY_G] = held("g")
 	for id in _btn_pulse:
@@ -839,13 +874,17 @@ func _physics_process(delta: float) -> void:
 		return
 	var waiting: bool = _world_finger >= 0 and _world_wait > 0
 	if waiting:
-		_world_wait -= 1   # ждём второй палец щипка: мир пока не трогаем
-	var world: bool = (_world_finger >= 0 and not waiting) or _world_ghost > 0
+		_world_wait -= 1   # ждём второй палец щипка: копка пока не идёт
+	# Клетку считаем и в ожидании: иначе после PINCH_WAIT aim_cell остаётся
+	# пустым и удержание так и не копает. ЛКМ — только когда ожидание кончилось.
+	var world: bool = _world_finger >= 0 or _world_ghost > 0
 	if world:
 		_update_aim(p)
-	var aimed: bool = world and aim_cell != NO_CELL
+	var aimed: bool = world and aim_cell != NO_CELL and not waiting
+	# Копка — пока палец на клетке. Стройка — только подтверждение отпусканием
+	# (_world_ghost): удержание показывает клетку и стрелку, не тратит стопку.
 	_mbtn[MOUSE_BUTTON_LEFT] = aimed and not build_mode
-	_mbtn[MOUSE_BUTTON_RIGHT] = aimed and build_mode
+	_mbtn[MOUSE_BUTTON_RIGHT] = aimed and build_mode and _world_ghost > 0
 	p.touch_input["mouse_buttons"] = _mbtn
 	if aimed:
 		p.touch_input["mouse"] = _aim_point
@@ -867,18 +906,22 @@ func _update_aim(p: Player) -> void:
 	# Цель прошлого кадра отработана: выкопана — дальше копаем только строго по лучу;
 	# поставлено или повёрнуто — ждём, пока палец уйдёт на другую клетку.
 	if aim_cell != NO_CELL and not aim_foe:
-		if build_mode:
+		if build_mode and _world_ghost > 0:
+			# Трата считается только на подтверждении. Пока палец держит клетку,
+			# стрелка показывает будущий поворот — это не «уже повёрнуто».
 			var m = World.machines.get(aim_cell)
 			if _aim_dir >= 0:
-				_world_spent = m == null or int(m.dir) != _aim_dir
+				_world_spent = m == null or int(m.dir) == _aim_dir
 			else:
 				_world_spent = not p.can_place_at(aim_cell)
-		elif not diggable(aim_cell):
+		elif not build_mode and not diggable(aim_cell):
 			_world_loose = false
 	aim_cell = NO_CELL
 	aim_foe = false
 	_aim_dir = -1
-	if build_mode and _world_spent:
+	# Удержание стройки только показывает клетку: «уже поставлено» не глушит
+	# рамку. Трата — на отпускании, один раз (Player._place_cd и fresh).
+	if build_mode and _world_spent and _world_ghost <= 0:
 		return
 	var tap: Vector2 = world_point(_world_screen)
 	# Тап по миру копает или ставит. Свою машину он не забирает: забор —
@@ -892,7 +935,9 @@ func _update_aim(p: Player) -> void:
 	aim_foe = t.has("foe")
 	var turn: MachineBase = World.machines.get(aim_cell) if build_mode else null
 	if turn != null and turn.can_turn:
-		_aim_dir = turn.dir
+		# Стрелка — куда встанет машина после отпускания, не куда смотрит сейчас.
+		var n: int = turn.turn_steps if turn.turn_steps > 1 else 4
+		_aim_dir = (turn.dir + 1) % n
 
 
 ## Цель копки для тапа в мировой точке tap: {"cell", "point"[, "foe"]} или {} — копать
@@ -1090,8 +1135,8 @@ func _fill_key() -> void:
 	_key[11] = int(p.task_progress * 24.0)
 	_key[12] = 1 if _world_finger >= 0 else 0
 	_key[13] = (1 if rollcall_shown() else 0) | (2 if _rollcall_on() else 0)
-	# Q и V появляются и пропадают, не сдвигая ряд: без этих бит дырка не перерисуется.
-	_key[14] = 1 if _q_ready() else 0
+	# Q на месте всегда; дуга перезарядки — в _key[9]. V появляется и пропадает.
+	_key[14] = 1 if _player() != null else 0
 	_key[15] = 1 if _v_ready() else 0
 	# Альфа в ключе не нужна: modulate круга не зависит от _draw_pad.
 
@@ -1128,9 +1173,11 @@ func _draw_pad() -> void:
 		_draw_button(font, id, String(b["glyph"]), cap, on, p)
 
 
-## Пока палец на мире: кольцо радиуса вокруг героя и рамка клетки-цели (#149).
+## Пока палец на мире: кольцо радиуса, рамка клетки и, в стройке, стрелка
+## ориентации (#149, #310). Стрелка — куда встанет блок или куда повернётся
+## машина после отпускания. До отпускания ничего не тратится.
 func _draw_aim(p: Player) -> void:
-	if _world_finger < 0:
+	if p == null or (_world_finger < 0 and _world_ghost <= 0):
 		return
 	var xf: Transform2D = get_viewport().get_canvas_transform()
 	var zoom: float = xf.get_scale().x
@@ -1144,6 +1191,27 @@ func _draw_aim(p: Player) -> void:
 	var r: Rect2 = Rect2(xf * Vector2(aim_cell * World.TILE), Vector2(World.TILE, World.TILE) * zoom)
 	_pad.draw_rect(r, Color(col, 0.18))
 	_pad.draw_rect(r.grow(1.0), Color(col, 0.95), false, 2.5)
+	if build_mode and not aim_foe:
+		_draw_aim_arrow(r, col)
+
+
+## Стрелка из центра клетки. Новая машина встаёт dir 0 (вправо). Уже стоящая
+## поворачиваемая — на (dir + 1) % n, это уже в _aim_dir.
+func _draw_aim_arrow(r: Rect2, col: Color) -> void:
+	var n: int = 4
+	var step: int = 0
+	var m = World.machines.get(aim_cell)
+	if m != null and m.can_turn:
+		n = m.turn_steps if m.turn_steps > 1 else 4
+		step = _aim_dir if _aim_dir >= 0 else (m.dir + 1) % n
+	var ang: float = TAU * float(step) / float(n)
+	var dir: Vector2 = Vector2.RIGHT.rotated(ang)
+	var c: Vector2 = r.get_center()
+	var tip: Vector2 = c + dir * r.size.x * 0.38
+	var back: Vector2 = c - dir * r.size.x * 0.12
+	var side: Vector2 = Vector2(-dir.y, dir.x) * r.size.x * 0.16
+	_pad.draw_line(c - dir * r.size.x * 0.28, tip, Color(col, 0.95), maxf(2.0, 2.5 * _k))
+	_pad.draw_colored_polygon(PackedVector2Array([tip, back + side, back - side]), Color(col, 0.95))
 
 func _draw_stick() -> void:
 	var c: Vector2 = stick_center
