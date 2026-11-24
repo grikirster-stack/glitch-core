@@ -147,6 +147,7 @@ func _build_tileset() -> void:
 	add_child(tilemap)
 	decor = preload("res://scripts/world/decor.gd").new()   # ADR-003 V2: декор-слой флоры
 	add_child(decor)
+	_build_sheath_layer(ts)
 
 
 # ------------------------------------------------------------ ГЕНЕРАЦИЯ
@@ -199,6 +200,12 @@ func generate(p_seed: int) -> void:
 	_light_reach = 1
 	_trees = 0
 	_defense_reset()
+	# Обшивка — слой прошлого мира. Без сброса новая глава рисует чужой фон.
+	if sheath.size() != W * H:
+		sheath.resize(W * H)
+	sheath.fill(SHEATH_NONE)
+	if sheathmap:
+		sheathmap.clear()
 
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 	rng.seed = world_seed
@@ -1903,6 +1910,7 @@ func set_tile(x: int, y: int, id: int) -> void:
 	_defense_on_set_tile(Vector2i(x, y), id)
 	if beams != null and old != id:
 		beams.mark_dirty()
+	# Обшивка — фон, не стена. Смена тайла её не сносит: луч и коллизия её не читают.
 	# Коллектор кэширует «пусто до неба» раз в 0,5 с. Столбец изменился — сразу.
 	if old != id:
 		_note_collector_column(x)
@@ -2199,6 +2207,100 @@ func tile_place_ok(c: Vector2i, id: int) -> bool:
 	if id == IDs.T.VENT_GRATE:
 		return vents.has(c)
 	return true
+
+
+# ------------------------------------------------------------ ОБШИВКА (#312, ADR-006 § 3.1)
+## Фон пристройки: отдельный слой, не тайл. Коллизии и луч её не читают —
+## клетка воздуха с обшивкой остаётся проходом. В сохранение и снимок LAN
+## попадают только ненулевые клетки (4 байта на клетку: x, y, код).
+
+const SHEATH_NONE: int = 0
+const SHEATH_BACK: int = 1
+
+var sheath: PackedByteArray = PackedByteArray()
+var sheathmap: TileMapLayer = null
+var _sheath_atlas: Vector2i = Vector2i(-1, -1)
+
+
+func _build_sheath_layer(ts: TileSet) -> void:
+	sheathmap = TileMapLayer.new()
+	sheathmap.name = "Sheath"
+	sheathmap.tile_set = ts
+	sheathmap.z_index = -1
+	add_child(sheathmap)
+	_sheath_atlas = DB.atlas_of_tile[IDs.T.ROOM_PANEL] if IDs.T.ROOM_PANEL < DB.atlas_of_tile.size() else Vector2i(0, 0)
+	sheath.resize(W * H)
+	sheath.fill(SHEATH_NONE)
+	# Полупрозрачный фон: сквозь него виден луч, стеной слой не становится.
+	sheathmap.modulate = Color(0.55, 0.72, 0.48, 0.55)
+
+
+func sheath_at(c: Vector2i) -> int:
+	if sheath.size() != W * H or not in_bounds(c.x, c.y):
+		return SHEATH_NONE
+	return sheath[c.y * W + c.x]
+
+
+## Поставить или снять обшивку. false — клетка вне мира. Луч не помечается:
+## фон на пути луча его не меняет.
+func set_sheath(c: Vector2i, code: int) -> bool:
+	if sheath.size() != W * H:
+		sheath.resize(W * H)
+		sheath.fill(SHEATH_NONE)
+	if not in_bounds(c.x, c.y):
+		return false
+	var idx: int = c.y * W + c.x
+	var next: int = code if code > 0 else SHEATH_NONE
+	if sheath[idx] == next:
+		return true
+	sheath[idx] = next
+	_paint_sheath_cell(c, next)
+	return true
+
+
+func _paint_sheath_cell(c: Vector2i, code: int) -> void:
+	if sheathmap == null:
+		return
+	if code == SHEATH_NONE:
+		sheathmap.set_cell(c, 0, Vector2i(-1, -1))
+	else:
+		sheathmap.set_cell(c, 0, _sheath_atlas)
+
+
+## Компактная запись: x u8, y u8, код u8, выравнивание. Мир 256×256 — байта хватает.
+func sheath_save() -> PackedByteArray:
+	var out: PackedByteArray = PackedByteArray()
+	if sheath.size() != W * H:
+		return out
+	for y in H:
+		var row: int = y * W
+		for x in W:
+			var code: int = sheath[row + x]
+			if code == SHEATH_NONE:
+				continue
+			out.append(x)
+			out.append(y)
+			out.append(code)
+			out.append(0)
+	return out
+
+
+## Старый файл без поля и пустой буфер — слой пуст. Чужой размер не роняет загрузку.
+func sheath_load(raw) -> void:
+	if sheath.size() != W * H:
+		sheath.resize(W * H)
+	sheath.fill(SHEATH_NONE)
+	if sheathmap:
+		sheathmap.clear()
+	if not (raw is PackedByteArray) or raw.is_empty():
+		return
+	var n: int = raw.size() - (raw.size() % 4)
+	for i in range(0, n, 4):
+		var x: int = raw[i]
+		var y: int = raw[i + 1]
+		if not in_bounds(x, y):
+			continue
+		set_sheath(Vector2i(x, y), raw[i + 2])
 
 
 ## Вентиляции в пещерах: VENTS_RANDOM штук на полу пещер (воздух над твёрдым),
@@ -3066,6 +3168,8 @@ func save_state() -> Dictionary:
 		# Отрастание (#174): цель — перепись этого мира, а не пересчёт по уже изменённым тайлам.
 		"ore_initial": ore_initial.duplicate(),
 		"ore_regrow_dawns": ore_regrow_dawns,
+		# Обшивка (#312): только ненулевые клетки. Старый файл поля не имеет — пусто.
+		"sheath": sheath_save(),
 	}
 
 
@@ -3160,6 +3264,7 @@ func load_state(d: Dictionary) -> bool:
 	elif ore_initial.is_empty():
 		_census_ores()
 	ore_regrow_dawns = int(d.get("ore_regrow_dawns", ore_regrow_dawns))
+	sheath_load(d.get("sheath", PackedByteArray()))
 	return true
 
 

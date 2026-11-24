@@ -148,6 +148,10 @@ func give_starter_kit(p: Player) -> void:
 	p.inv.add(IDs.I.COAL, 6)
 	p.inv.add(IDs.I.STONE, 4)
 	p.inv.add(IDs.I.SCRAP, 4)
+	# Пристройка (ADR-006 § 3.1, #312): из того же набора — навес или закрытая комната.
+	p.inv.add(IDs.I.PANEL, Balance.ROOM_KIT_PANELS)
+	p.inv.add(IDs.I.DOOR, Balance.ROOM_KIT_DOORS)
+	p.inv.add(IDs.I.SHEATH, Balance.ROOM_KIT_SHEATH)
 	# Камень и хлам — чтобы горелка открылась, когда предмет появится (C1).
 	# Медной руды в наборе нет: слиток открывается первым подбором.
 
