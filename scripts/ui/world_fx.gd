@@ -143,6 +143,24 @@ var _glow_node: Node2D = null
 ## Лента следа кота. Свой узел с материалом эмиссии: кот выходит ночью,
 ## и CanvasModulate мира не должен гасить шлейф.
 var _trail_node: Node2D = null
+## Искры обрыва луча. Свой узел: ночной шейдер WorldFX белый крест гасит.
+var _mark_node: Node2D = null
+## Полоса луча. Свой CanvasItem с тем же материалом, что у WorldFX: ночной
+## шейдер возвращает цвет при альфе > 0.98. z родителя 20 — под туманом.
+var _beam_node: Node2D = null
+
+
+## Узел полосы со своим _draw: сигнал draw на Node2D.new() в кадр не попадает.
+class BeamBand extends Node2D:
+	var owner_fx: Node = null
+
+	func _draw() -> void:
+		if owner_fx != null:
+			owner_fx._paint_beam(self)
+
+
+## Отрезки текущего кадра: {a, b, color}. Рисует _beam_node, не сам WorldFX.
+var _beam_queue: Array = []
 
 
 func _ready() -> void:
@@ -160,6 +178,26 @@ func _ready() -> void:
 	_trail_node.z_index = 40
 	_trail_node.draw.connect(_on_trail_draw)
 	add_child(_trail_node)
+	# Искра обрыва — на слое, который ночь не гасит (all_emit, как шлейф кота).
+	# На самом WorldFX белый крест тухнет: шейдер ночи оставляет только цвета луча.
+	_mark_node = Node2D.new()
+	_mark_node.name = "BeamBreaks"
+	_mark_node.z_as_relative = false
+	_mark_node.z_index = 41
+	_mark_node.draw.connect(_on_mark_draw)
+	add_child(_mark_node)
+	if _glow_node.material != null:
+		_mark_node.material = _glow_node.material
+	# Полоса луча — свой узел, z 0 относительно WorldFX (мир 20, под туманом).
+	# all_emit не ставим: иначе свет прошёл бы сквозь туман.
+	var band := BeamBand.new()
+	band.name = "BeamLine"
+	band.z_index = 0
+	add_child(band)
+	band.owner_fx = self
+	_beam_node = band
+	if material != null:
+		_beam_node.material = material
 	# Emission._ready мог отработать раньше: материал уже лежит на ореолах.
 	if _glow_node.material != null:
 		_trail_node.material = _glow_node.material
@@ -560,40 +598,175 @@ func _draw_core_arcs() -> void:
 		drawn += 1
 
 
-## Линия луча по центрам клеток: 4 px, яркая у источника и тусклая к концу.
+## Линия луча по центрам клеток: 4 px, полный цвет по всей длине.
 ## Цвет — Beams.COLOR; те же цвета в Emission.glow_colors, ночью светятся сами.
-## Перерисовка — только когда beams.changed (см. _process).
+## Градиент к концу ночью гаснет: шейдер эмиссии возвращает цвет только при
+## альфе > 0.98. Перерисовка — только когда beams.changed (см. _process).
 func _draw_beams(view: Rect2) -> void:
 	if World.beams == null or World.beams.segments.is_empty():
 		return
 	var t0: int = Time.get_ticks_usec()
 	var tile: float = float(World.TILE)
 	for s in World.beams.segments:
-		var a: Vector2 = World.cell_to_world(s["from"])
-		var b: Vector2 = World.cell_to_world(s["to"])
-		# Конец сегмента — центр последней воздушной клетки. Если дальше стоит
-		# постройка, линия должна дойти до её грани: иначе луч «не входит» в башню.
-		var dir: int = int(s["dir"]) & 7
-		var step: Vector2i = Beams.DIR[dir]
-		var hit: Vector2i = s["to"] + step
-		if World.machines.has(hit):
-			b += Vector2(step) * tile * 0.5
+		var span: Dictionary = beam_span(s)
+		var a: Vector2 = span["a"]
+		var b: Vector2 = span["b"]
 		if view.size != Vector2.ZERO and not view.grow(tile * 4.0).intersects(Rect2(a, b - a).abs()):
 			continue
-		var mask: int = int(s["color"])
+		var col: Color = span["color"]
+		_beam_queue.append({"a": a, "b": b, "color": Color(col.r, col.g, col.b, float(span["alpha"]))})
+	if _beam_node != null:
+		_beam_node.queue_redraw()
+	_draw_beam_breaks(view, tile)
+	beam_draw_us = Time.get_ticks_usec() - t0
+
+
+## Полоса на своём узле: тот же мир, z родителя 20, под туманом.
+func _paint_beam(band: Node2D) -> void:
+	for q in _beam_queue:
+		band.draw_line(q["a"], q["b"], q["color"], 4.0)
+	_beam_queue.clear()
+
+
+## Конец линии луча. b — центр клетки to; постройка впереди — на полклетки
+## дальше (грань машины); стена в to — на полклетки ближе (грань, без захода).
+## Чистая геометрия: сценарий зовёт её без отрисовки.
+static func beam_span(s: Dictionary) -> Dictionary:
+	var tile: float = float(World.TILE)
+	var a: Vector2 = World.cell_to_world(s["from"])
+	var b: Vector2 = World.cell_to_world(s["to"])
+	var dir: int = int(s["dir"]) & 7
+	var step: Vector2i = Beams.DIR[dir]
+	var hit: Vector2i = s["to"] + step
+	if _span_wall(s):
+		# Стена уже в to: грань, без захода в породу.
+		b -= Vector2(step) * tile * 0.5
+	elif World.machines.has(hit) and not _budget_break(hit):
+		# Постройка впереди, луч в неё входит. Обрыв бюджета — нет: линия
+		# кончается в центре последней освещённой клетки.
+		b += Vector2(step) * tile * 0.5
+	var mask: int = int(s["color"])
+	var col: Color = Color(0, 0, 0, 0)
+	if mask > 0 and mask < Beams.COLOR.size():
+		col = Beams.COLOR[mask]
+	return {"a": a, "b": b, "color": col, "alpha": 1.0}
+
+
+## Обрыв бюджета на клетке впереди: линия не заходит в машину, крест — в центре to.
+static func _budget_break(cell: Vector2i) -> bool:
+	if World.beams == null:
+		return false
+	for p in World.beams.break_points:
+		if p["cell"] == cell and str(p["reason"]) == "budget":
+			return true
+	return false
+
+
+## Обрыв стены на этой ноге: break_points reason wall на клетке to, и клетка твёрдая.
+static func _span_wall(s: Dictionary) -> bool:
+	if World.beams == null:
+		return false
+	var to: Vector2i = s["to"]
+	if not World.is_solid_cell(to):
+		return false
+	for p in World.beams.break_points:
+		if p["cell"] == to and str(p["reason"]) == "wall":
+			return true
+	return false
+
+
+## Экранный размер искры обрыва: 10 px, не зависит от зума камеры.
+## На 1280×720 при зуме 2.4 клетка ~38 px, линия луча 4 px — крест шире линии
+## и читается без лупы. Меньше 8 px на этом кадре тонет в шапке луча.
+const BREAK_MARK_PX: float = 10.0
+## Белый крест: красный луч — золото (#FFD86E), белый от него далеко по каналам.
+const BREAK_MARK: Color = Color(1.0, 1.0, 1.0, 1.0)
+
+
+## Искра обрыва: белый крест поперёк луча, не квадрат на линии.
+## Стена — крест на грани, куда пришёл луч. Бюджет — тот же крест в последней
+## освещённой клетке. Штрих не нулевой: длина BREAK_MARK_PX.
+func _draw_beam_breaks(view: Rect2, tile: float) -> void:
+	var cam: Camera2D = get_viewport().get_camera_2d()
+	var zoom: float = cam.zoom.x if cam != null and cam.zoom.x > 0.0 else 1.0
+	var arm: float = BREAK_MARK_PX / zoom
+	for p in World.beams.break_points:
+		var cell: Vector2i = p["cell"]
+		var center: Vector2 = World.cell_to_world(cell)
+		if view.size != Vector2.ZERO and not view.grow(tile).has_point(center):
+			continue
+		var mask: int = int(p["color"])
 		if mask <= 0 or mask >= Beams.COLOR.size():
 			continue
-		var col: Color = Beams.COLOR[mask]
-		# Доля длины у начала сегмента: 1 у горелки, меньше после построек.
-		var head: float = clampf(float(s["strength"]), 0.0, 1.0)
-		# Короткий кусок (луч упёрся в башню рядом) не должен гаснуть до чёрного:
-		# ребёнок иначе не видит, что луч вошёл.
-		var tail: float = lerpf(0.72, head, 0.45)
-		var mid: Vector2 = (a + b) * 0.5
-		# Одна линия 4 px: у источника альфа 1, к концу 0,35.
-		draw_line(a, mid, Color(col.r, col.g, col.b, head), 4.0)
-		draw_line(mid, b, Color(col.r, col.g, col.b, tail), 4.0)
-	beam_draw_us = Time.get_ticks_usec() - t0
+		# Ориентация креста — шаг луча. Позиция — конец той же линии, что
+		# рисует _draw_beams: грань стены или центр последней освещённой.
+		var face: Vector2 = _break_face(cell)
+		var at: Vector2 = _break_at(cell, str(p["reason"]))
+		_mark_queue.append({"at": at, "face": face, "arm": arm})
+	if _mark_node != null:
+		_mark_node.queue_redraw()
+
+
+## Куда ставить крест. Стена: конец ноги, у которой to — клетка стены.
+## Бюджет на клетке машины: луч кончился на грани перед ней, сегмент
+## закрыт на предыдущей клетке (to + step == cell). Иначе — центр to.
+static func break_mark_at(cell: Vector2i, reason: String) -> Vector2:
+	if World.beams == null:
+		return World.cell_to_world(cell)
+	for s in World.beams.segments:
+		if s["to"] == cell and (reason != "wall" or _span_wall(s)):
+			return beam_span(s)["b"]
+	if reason != "wall":
+		for s in World.beams.segments:
+			var step: Vector2i = Beams.DIR[int(s["dir"]) & 7]
+			if s["to"] + step == cell:
+				return beam_span(s)["b"]
+	return World.cell_to_world(cell)
+
+
+func _break_at(cell: Vector2i, reason: String) -> Vector2:
+	return break_mark_at(cell, reason)
+
+
+## Крест: штрих поперёк луча на BREAK_MARK_PX и короткий вдоль, чтобы точка
+## читалась и когда луч пришёл ровно в центр грани. face == ZERO — оси мира.
+## Очередь искр на кадр: рисовать чужой узел из _draw нельзя, только из его
+## собственного сигнала draw. Слой all_emit — ночь крест не гасит.
+var _mark_queue: Array = []
+
+
+func _on_mark_draw() -> void:
+	for m in _mark_queue:
+		_paint_cross(_mark_node, m["at"], m["face"], m["arm"])
+	_mark_queue.clear()
+
+
+## draw_line без узла рисует в том, чей _draw сейчас идёт, а не в слой.
+## Слой all_emit: ночь белый крест не гасит.
+func _paint_cross(node: Node2D, at: Vector2, face: Vector2, arm: float) -> void:
+	var along: Vector2 = face if face != Vector2.ZERO else Vector2.RIGHT
+	var side: Vector2 = Vector2(-along.y, along.x)
+	var half: Vector2 = side * arm * 0.5
+	var stub: Vector2 = along * arm * 0.35
+	# Толщина 3 px мира: на зуме 2.4 это ~7 экранных px, крест не нитка.
+	node.draw_line(at - half, at + half, BREAK_MARK, 3.0)
+	node.draw_line(at - stub, at + stub, BREAK_MARK, 3.0)
+
+
+## Куда смотрит грань обрыва. Сегмент стены закрывается с to УЖЕ на клетке
+## породы (beams.gd), поэтому to + step промахивается и даёт ZERO — искра
+## тогда падает в центр и тонет в линии. Ищем to == cell. Край мира и угол
+## двух стен помечают последнюю освещённую клетку: грань — шаг из неё.
+func _break_face(cell: Vector2i) -> Vector2:
+	for s in World.beams.segments:
+		var step: Vector2i = Beams.DIR[int(s["dir"]) & 7]
+		if s["to"] == cell:
+			return Vector2(step)
+	for s in World.beams.segments:
+		var step: Vector2i = Beams.DIR[int(s["dir"]) & 7]
+		if s["to"] + step == cell:
+			return Vector2(step)
+	return Vector2.ZERO
 
 
 ## Белый столб запуска (#175): от ядра до верха мира, 6 px, пока идёт удержание.
@@ -657,8 +830,13 @@ func _draw_domes(view: Rect2) -> void:
 ## all_emit: ночь не гасит ни ореол, ни шлейф.
 func set_glow_material(m: Material) -> void:
 	_glow_node.material = m
+	# Полоса берёт материал тайлов, не all_emit: иначе свет прошёл бы сквозь туман.
+	if _beam_node != null and _beam_node.material == null and material != null:
+		_beam_node.material = material
 	if _trail_node != null:
 		_trail_node.material = m
+	if _mark_node != null:
+		_mark_node.material = m
 
 
 ## Ширина ленты следа, px. Было 2 (полилиния) — на зуме игры нитка, не шлейф.

@@ -5,7 +5,9 @@ extends RefCounted
 ## beam_pass(); в C1 базовая постройка луч гасит.
 ##
 ## Трассировка по клеткам, как копка: воздух и жидкость пропускают, твёрдая
-## клетка без постройки останавливает. Длина и плата за постройку — Balance.
+## клетка без постройки останавливает. Длина — Balance.
+## Зеркало и призма стоят ровно свою клетку: отдельной платы за поворот нет.
+## Смеситель задаёт бюджет выхода сам (beam_out_budget).
 ## Перестроение не чаще раза в кадр: World ставит dirty, rebuild() — в _process.
 
 ## Маски цвета. Смеси: Y = R|G, C = G|B, M = R|B, W = 7.
@@ -59,7 +61,13 @@ const DIR_N: int = 8
 var cells: Dictionary = {}
 ## Сегменты для отрисовки: {from, to, color, strength}. strength — доля длины
 ## у начала сегмента (1 у источника, меньше к концу).
+## Сегмент нулевой длины или нулевой силы не кладётся.
 var segments: Array = []
+## Обрывы последнего rebuild: {cell, color, reason, marker}.
+## reason — "wall" (порода, край мира, угол двух стен) или "budget"
+## (после зеркала/призмы не осталось клеток). cell — клетка, где луч кончился:
+## стена или последняя освещённая. marker — короткая подпись для рисунка.
+var break_points: Array[Dictionary] = []
 ## Кто-то изменил мир или источник. World перестроит в ближайшем _process.
 var dirty: bool = false
 ## Вырос на 1 после каждого rebuild(), в котором карта или сегменты сменились.
@@ -111,6 +119,7 @@ func rebuild() -> int:
 	dirty = false
 	var next_cells: Dictionary = {}
 	var next_segs: Array = []
+	var next_breaks: Array[Dictionary] = []
 	var prev_sig: int = -1
 	var n: int = World.W * World.H
 	if _flat.size() != n:
@@ -124,9 +133,10 @@ func rebuild() -> int:
 		_fill_occ()
 		_reset_pass_inputs()
 		next_segs = []
+		next_breaks = []
 		_run = 0
-		_trace(next_segs)
-		var sig: int = _seg_sig(next_segs)
+		_trace(next_segs, next_breaks)
+		var sig: int = _seg_sig(next_segs) ^ _break_sig(next_breaks)
 		_clear_flat(next_segs)
 		kept = next_segs
 		if sig == prev_sig:
@@ -142,9 +152,19 @@ func rebuild() -> int:
 	_cells_from_segs(next_cells, kept)
 	cells = next_cells
 	segments = kept
+	break_points = next_breaks
 	_deliver(kept)
 	last_rebuild_us = Time.get_ticks_usec() - t0
 	return last_rebuild_us
+
+
+func _break_sig(points: Array) -> int:
+	var h: int = points.size() * 53
+	for p in points:
+		var c: Vector2i = p["cell"]
+		h = (h * 33) ^ (c.x * 73856093) ^ (c.y * 19349663) ^ (int(p["color"]) << 4)
+		h ^= 1 if str(p["reason"]) == "budget" else 2
+	return h
 
 
 func _seg_sig(segs: Array) -> int:
@@ -260,10 +280,10 @@ func _clear_occ() -> void:
 	_occ_nodes = [null, null]
 
 
-func _trace(next_segs: Array) -> void:
+func _trace(next_segs: Array, breaks: Array[Dictionary]) -> void:
 	# Луч — семь чисел: x, y, dir, color, left, len, budget.
-	# budget — длина у источника этого луча (24 или 32). После зеркала и призмы
-	# left падает на BEAM_BLOCK_COST, len (для яркости) остаётся прежним.
+	# budget — длина у источника этого луча (24 или 32). Зеркало и призма
+	# стоят свою клетку и отдельной платы не берут: left после них — остаток.
 	# Смеситель смотрит на budget, не на left: белый выход — всегда 32.
 	var q: PackedInt32Array = PackedInt32Array()
 	var steps: int = 0
@@ -302,10 +322,13 @@ func _trace(next_segs: Array) -> void:
 		var dir: int = q[ri + 2]
 		var color: int = q[ri + 3]
 		var left: int = q[ri + 4]
-		var length: int = maxi(1, q[ri + 5])
+		var length: int = q[ri + 5]
+		# Нулевая сила не маскируется: такой луч в очередь не кладут.
+		if length <= 0 or left <= 0:
+			continue
 		var budget: int = q[ri + 6]
 		ri += RAY
-		if color == 0 or left <= 0:
+		if color == 0:
 			continue
 
 		var step: Vector2i = DIR[dir & 7]
@@ -322,11 +345,17 @@ func _trace(next_segs: Array) -> void:
 			var nx: int = x + sx
 			var ny: int = y + sy
 			if nx < 0 or ny < 0 or nx >= w or ny >= h:
+				# Край мира — та же стена: искра на последней освещённой клетке.
+				if walked > 0:
+					_add_break(breaks, Vector2i(x, y), color, "wall")
+				_close_seg(next_segs, Vector2i(fx, fy), Vector2i(x, y), dir, color, seg_left, length, walked)
 				break
 			var nidx: int = ny * w + nx
 			# Наискосок сквозь угол двух стен не идём: обе боковые клетки
 			# должны быть воздухом. Одна стена на углу — луч ещё проходит.
 			if sx != 0 and sy != 0 and _corner_blocked(x, y, sx, sy, w, h, solid, tiles):
+				if walked > 0:
+					_add_break(breaks, Vector2i(x, y), color, "wall")
 				_close_seg(next_segs, Vector2i(fx, fy), Vector2i(x, y), dir, color, seg_left, length, walked)
 				break
 			var occ: int = _occ[nidx]
@@ -336,30 +365,39 @@ func _trace(next_segs: Array) -> void:
 					var node = _occ_nodes[occ]
 					if is_instance_valid(node):
 						var outs: Array = node.beam_pass(dir, color)
-
-						var out_left: int = left - Balance.BEAM_BLOCK_COST
+						# Клетка зеркала/призмы — и есть плата. Остаток left
+						# ещё не вычел шаг в эту клетку: вычитаем его здесь.
+						# Смеситель задаёт бюджет сам (белый — 32 минус его плата).
+						var out_left: int = left - 1
 						var out_budget: int = budget
-						# Смеситель: длина — max(бюджет входов) − 2, белый — 32.
-						# Зеркало и призма бюджет не меняют, только платят 2.
 						if node.has_method("beam_out_budget"):
 							out_budget = int(node.beam_out_budget(budget))
 							out_left = out_budget
-
-						for o in outs:
-							if q.size() >= MAX_RAYS * RAY or not (o is Array) or o.size() < 2:
-								break
-
-							var span: int = maxi(1, out_left)
-							q.append(nx)
-							q.append(ny)
-							q.append(int(o[0]) & 7)
-							q.append(int(o[1]) & 7)
-							q.append(out_left)
-							q.append(span)
-							q.append(out_budget)
+						if out_left <= 0:
+							# Честный обрыв: в очередь луч с нулём не кладём.
+							_add_break(breaks, Vector2i(nx, ny), color, "budget")
+						else:
+							var span: int = out_left
+							for o in outs:
+								if q.size() >= MAX_RAYS * RAY or not (o is Array) or o.size() < 2:
+									break
+								if int(o[1]) == 0:
+									continue
+								q.append(nx)
+								q.append(ny)
+								q.append(int(o[0]) & 7)
+								q.append(int(o[1]) & 7)
+								q.append(out_left)
+								q.append(span)
+								q.append(out_budget)
+				elif occ == 1:
+					# Глушитель (маяк, горелка): конец линии, не обрыв в воздухе.
+					pass
 				break
 			if solid[tiles[nidx]] != 0:
 				# Упирается в породу: линия доходит до стены, сквозь неё не идёт.
+				# Искра — на клетке стены, у грани, куда пришёл луч.
+				_add_break(breaks, Vector2i(nx, ny), color, "wall")
 				_close_seg(next_segs, Vector2i(fx, fy), Vector2i(nx, ny), dir, color, seg_left, length, walked)
 				break
 			# Воздух и жидкость. Клетка источника в карту не пишется — луч из носика.
@@ -369,6 +407,8 @@ func _trace(next_segs: Array) -> void:
 			walked += 1
 			_flat[nidx] = _flat[nidx] | color
 		if walked > 0 and left <= 0:
+			# Бюджет кончился в воздухе: маркер в последней освещённой клетке.
+			_add_break(breaks, Vector2i(x, y), color, "budget")
 			next_segs.append(_seg(fx, fy, x, y, dir, color, seg_left, length, walked))
 
 
@@ -411,8 +451,23 @@ func _deliver(segs: Array) -> void:
 		m.beam_receive(int(hit.get(c.y * w + c.x, 0)))
 
 
+func _add_break(breaks: Array[Dictionary], cell: Vector2i, color: int, reason: String) -> void:
+	if color == 0:
+		return
+	for p in breaks:
+		if p["cell"] == cell and str(p["reason"]) == reason and int(p["color"]) == color:
+			return
+	breaks.append({
+		"cell": cell,
+		"color": color,
+		"reason": reason,
+		"marker": "искра" if reason == "wall" else "обрыв",
+	})
+
+
 func _close_seg(segs: Array, from: Vector2i, to: Vector2i, dir: int, color: int, seg_left: int, length: int, air: int) -> void:
-	if air <= 0 and from == to:
+	# Нулевая длина и нулевая сила не рисуются и в карту не входят.
+	if air <= 0 or length <= 0 or seg_left <= 0:
 		return
 	segs.append(_seg(from.x, from.y, to.x, to.y, dir, color, seg_left, length, air))
 

@@ -1,7 +1,7 @@
 extends ScenarioBase
 ## Зеркало, смеситель, призма (ADR-005 § 4–5, #165).
 ##
-## Таблица § 5: (а) красный поворачивает на зеркале «/», длина 24−2;
+## Таблица § 5: (а) красный поворачивает на зеркале «/», плата — клетка зеркала;
 ## (б) R+G → жёлтый; (в) G+B → голубой, R+B → пурпурный, R+G+B → белый 32−2;
 ## (г) белый в призме даёт R/G/B, красный проходит прямо; (д) луч в выход
 ## смесителя гаснет; (е) кольцо из 4 зеркал без источника заканчивается,
@@ -27,7 +27,7 @@ func run() -> void:
 	finish()
 
 
-## (а) Горелка R → зеркало «/» → луч вверх, длина 24−2.
+## (а) Горелка R → зеркало «/» → луч вверх. Плата зеркала — только его клетка.
 func _check_mirror(origin: Vector2i) -> void:
 	var burner: Burner = _burn(origin, IDs.I.COAL, 0)
 	var mirror_cell: Vector2i = origin + Vector2i(6, 0)
@@ -40,10 +40,10 @@ func _check_mirror(origin: Vector2i) -> void:
 	_flush()
 	ok("до зеркала луч красный", _lane(origin, Vector2i(1, 0), 1, 5, Beams.R), _dump(origin, Vector2i(1, 0), 8))
 	ok("на зеркале луча нет", World.beams.color_at(mirror_cell) == 0)
-	# 24 − 2 = 22 клетки после платы; 5 уже пройдены до зеркала → 17 вверх.
-	ok("после зеркала луч вверх, длина 22", _lane(mirror_cell, Vector2i(0, -1), 1, 17, Beams.R),
-			_dump(mirror_cell, Vector2i(0, -1), 19))
-	ok("18-я клетка вверх пуста", World.beams.color_at(mirror_cell + Vector2i(0, -18)) == 0)
+	# 5 клеток до зеркала, зеркало — 6-я. Вверх остаётся 18, 19-я пуста.
+	ok("после зеркала луч вверх, 18 клеток", _lane(mirror_cell, Vector2i(0, -1), 1, 18, Beams.R),
+			_dump(mirror_cell, Vector2i(0, -1), 20))
+	ok("19-я клетка вверх пуста", World.beams.color_at(mirror_cell + Vector2i(0, -19)) == 0)
 	ok("сквозь зеркало луч не прошёл", World.beams.color_at(mirror_cell + Vector2i(1, 0)) == 0)
 	# Второй луч в то же зеркало отражается сам, первый не ломает.
 	var side: Vector2i = Vector2i(mirror_cell.x, mirror_cell.y + 4)
@@ -133,14 +133,16 @@ func _check_prism(origin: Vector2i) -> void:
 			_dump(prism_cell, Vector2i(0, -1), 4))
 	ok("из призмы синий направо", World.beams.color_at(prism_cell + Vector2i(0, 1)) == Beams.B,
 			_dump(prism_cell, Vector2i(0, 1), 4))
-	# Белый 32 − 2 (смеситель) − 2 (призма) = 28 на каждом выходе.
+	# Белый 30 после смесителя, 2 клетки до призмы, призма — своя клетка.
+	# Прямо остаётся 27 красных. Клетка 1 у выхода чистая: зелёный вход смесителя
+	# сюда не доходит.
 	var red_n: int = 0
 	for k in range(1, 40):
 		if World.beams.color_at(prism_cell + Vector2i(k, 0)) == Beams.R:
 			red_n += 1
 		else:
 			break
-	ok("красный из призмы длиной 26", red_n == 26, "клеток %d" % red_n)
+	ok("красный из призмы длиной 27", red_n == 27, "клеток %d" % red_n)
 	for m in [r, g, b, mixer]:
 		_gone(m)
 	_flush()
@@ -208,11 +210,12 @@ func _check_ring(origin: Vector2i) -> void:
 			and World.beams.color_at(origin + Vector2i(0, -1)) == Beams.R
 			and World.beams.color_at(origin + Vector2i(1, -3)) == Beams.R,
 			"сегментов %d" % painted)
-	# 24 − 2×4 зеркала = 16: 2 до кольца и 14 по нему, дальше пусто.
+	# 2 клетки до кольца и 4 зеркала по клетке: 24 − 2 − 4 = 18 по кольцу, дальше пусто.
 	var total: int = World.beams.cells.size()
-	ok("луч кольца кончился по длине", total == 16, "клеток %d" % total)
-	ok("за кольцом луч кончается", World.beams.color_at(origin + Vector2i(12, 0)) == 0,
-			"%d" % World.beams.color_at(origin + Vector2i(12, 0)))
+	ok("луч кольца кончился по длине", total == 20, "клеток %d" % total)
+	# Выход из кольца — с 4-й клетки вправо, 12 клеток воздуха. 16-я пуста.
+	ok("за кольцом луч кончается", World.beams.color_at(origin + Vector2i(16, 0)) == 0,
+			"%d" % World.beams.color_at(origin + Vector2i(16, 0)))
 	_gone(burner)
 	for m in mirrors:
 		_gone(m)
