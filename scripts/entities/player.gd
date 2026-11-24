@@ -334,17 +334,25 @@ func _handle_input(dt: float) -> void:
 			_do_mining(dig_cell, dt)
 		else:
 			mining_progress = 0.0
+			# Пустая рука по воздуху с обшивкой — снять фон, один раз на нажатие.
+			if in_reach and not _lmb_was and inv.selected_stack().is_empty():
+				_break_sheath(cell)
 	else:
 		mining_progress = 0.0
 		mining_cell = Vector2i(-1, -1)
 		_lmb_was = false
 
-	if _mouse_down(MOUSE_BUTTON_RIGHT) and in_reach:
+	# ПКМ ставит, если дотягиваемся. Далеко — одно нажатие говорит «Далеко», но не крутит машину.
+	var rmb: bool = _mouse_down(MOUSE_BUTTON_RIGHT)
+	if rmb:
 		var fresh: bool = _place_cd == 0.0   # первый кадр нажатия: поворот — только по нему
 		_place_cd -= dt
-		if _place_cd <= 0.0:
+		if _place_cd <= 0.0 and in_reach:
 			_place_cd = 0.16
 			_do_place(cell, fresh)
+		elif fresh and not in_reach:
+			_place_cd = 0.16
+			_notify(DENY_FAR, Color(1.0, 0.6, 0.5))
 	else:
 		_place_cd = 0.0   # новое нажатие ставит сразу: короткий клик или тап не теряется
 
@@ -563,12 +571,62 @@ func _break_tile(cell: Vector2i) -> void:
 		Game.stats_ore += 1
 	if drop != IDs.I.NONE:
 		spawn_item(drop, 1, World.cell_to_world(cell))
+	# Обшивка на сломанной клетке остаётся: это фон, не часть тайла.
+
+
+## Открыть или закрыть дверь. Герой в проёме не даёт закрыть — иначе его замурует.
+func _toggle_door(cell: Vector2i) -> void:
+	var tid: int = World.get_tile_v(cell)
+	if tid != IDs.T.DOOR and tid != IDs.T.DOOR_OPEN:
+		return
+	if tid == IDs.T.DOOR_OPEN and _cell_hits_hero(cell):
+		_notify(DENY_HERO, Color(1.0, 0.6, 0.5))
+		return
+	var next: int = IDs.T.DOOR if tid == IDs.T.DOOR_OPEN else IDs.T.DOOR_OPEN
+	World.set_tile(cell.x, cell.y, next)
+	_sfx_here("place", -16.0, 0.7 if next == IDs.T.DOOR_OPEN else 0.55)
+
+
+## Снять обшивку с клетки и вернуть предмет. Стену и дверь снимает копка.
+func _break_sheath(cell: Vector2i) -> bool:
+	if World.sheath_at(cell) == World.SHEATH_NONE:
+		return false
+	World.set_sheath(cell, World.SHEATH_NONE)
+	spawn_item(IDs.I.SHEATH, 1, World.cell_to_world(cell))
+	_sfx_here("break", -10.0, 1.2)
+	return true
 
 
 ## Руда свободной цели: уголь, медь, железо, кристалл. Хлам и камень — нет.
 func _ore_drop(drop: int) -> bool:
 	return drop == IDs.I.COAL or drop == IDs.I.COPPER_ORE \
 			or drop == IDs.I.IRON_ORE or drop == IDs.I.CRYSTAL
+
+
+## Почему клетку нельзя занять предметом в руке. Пустая строка — можно.
+## Тексты приёмки (#312): «Занято», «Далеко», «Пересекается с героем».
+const DENY_BUSY: String = "Занято"
+const DENY_FAR: String = "Далеко"
+const DENY_HERO: String = "Пересекается с героем"
+
+func place_denial(cell: Vector2i) -> String:
+	if not World.in_bounds(cell.x, cell.y):
+		return DENY_FAR
+	if World.cell_to_world(cell).distance_to(global_position) > REACH:
+		return DENY_FAR
+	var tid: int = World.get_tile_v(cell)
+	# Открытая дверь — проход, но клетка уже занята створкой: вторую не ставим.
+	if tid == IDs.T.DOOR_OPEN or (tid != IDs.T.AIR and not DB.is_liquid(tid)) or World.machines.has(cell):
+		return DENY_BUSY
+	if _cell_hits_hero(cell):
+		return DENY_HERO
+	return ""
+
+
+func _cell_hits_hero(cell: Vector2i) -> bool:
+	var r: Rect2 = Rect2(Vector2(cell.x * World.TILE, cell.y * World.TILE), Vector2(World.TILE, World.TILE))
+	var pr: Rect2 = Rect2(global_position - SIZE * 0.5, SIZE)
+	return r.intersects(pr)
 
 
 func _do_place(cell: Vector2i, fresh: bool = true) -> void:
@@ -586,7 +644,13 @@ func _do_place(cell: Vector2i, fresh: bool = true) -> void:
 	var place: String = DB.item_place(stack.id)
 	if place == "":
 		return
-	if not _place_allowed(cell):
+	var why: String = place_denial(cell)
+	if why != "":
+		if fresh:
+			_notify(why, Color(1.0, 0.6, 0.5))
+		return
+	if place.begins_with("sheath:"):
+		_place_sheath(cell, stack)
 		return
 	if place.begins_with("tile:"):
 		var tid: int = int(place.substr(5))
@@ -606,21 +670,26 @@ func _do_place(cell: Vector2i, fresh: bool = true) -> void:
 			_notify("Сюда нельзя поставить.", Color(1.0, 0.6, 0.5))
 
 
+## Обшивка — фон клетки. На стене и на воздухе лежит одинаково: луч её не видит.
+func _place_sheath(cell: Vector2i, _stack: ItemStack) -> void:
+	if World.sheath_at(cell) != World.SHEATH_NONE:
+		_notify(DENY_BUSY, Color(1.0, 0.6, 0.5))
+		return
+	if not World.set_sheath(cell, World.SHEATH_BACK):
+		_notify(DENY_FAR, Color(1.0, 0.6, 0.5))
+		return
+	inv.remove_at(inv.selected, 1)
+	_sfx_here("place", -12.0, 1.2)
+
+
 ## Сюда можно поставить блок или машину: клетка свободна (и машины в ней нет), герой
 ## не мешает. Сенсорный прицел (TouchControls, #149) выбирает по ней клетку постройки.
 func can_place_at(cell: Vector2i) -> bool:
-	return not World.machines.has(cell) and _place_allowed(cell)
+	return place_denial(cell) == ""
 
 
 func _place_allowed(cell: Vector2i) -> bool:
-	var tid: int = World.get_tile_v(cell)
-	if tid != IDs.T.AIR and not DB.is_liquid(tid):
-		return false
-	var r: Rect2 = Rect2(Vector2(cell.x * World.TILE, cell.y * World.TILE), Vector2(World.TILE, World.TILE))
-	var pr: Rect2 = Rect2(global_position - SIZE * 0.5, SIZE)
-	if r.intersects(pr):
-		return false
-	return true
+	return place_denial(cell) == ""
 
 
 # ------------------------------------------------- ЦЕЛЬ E (#116)
@@ -651,6 +720,7 @@ const ET_DISMANTLE: String = "dismantle"        ## разбор постройк
 const ET_SIREN: String = "siren"                ## сирена: E при полном заряде гонит рой
 const ET_LENS: String = "lens"                  ## линза в руке у маяка — вставить
 const ET_SPORE_BED: String = "spore_bed"        ## грядка: E забирает волокно с лотка
+const ET_DOOR: String = "door"                  ## дверь: E открывает и закрывает (#312)
 
 ## Сколько секунд держать E над постройкой, чтобы разобрать её (DISMANTLE).
 const DISMANTLE_HOLD: float = 0.9
@@ -707,8 +777,37 @@ func interact_target(powered: Callable = Callable()) -> Dictionary:
 	var res: Dictionary = off if off_d < best_d else best
 	if not res.is_empty():
 		return res
+	var door: Dictionary = _door_target(pos)
+	if not door.is_empty():
+		return door
 	# Рядом нет ничего с особым действием E — разбор: ближайшая машина.
 	return _dismantle_target(pos)
+
+
+## Дверь под курсором или ближайшая в радиусе E. Открытая и закрытая — одна цель.
+func _door_target(pos: Vector2) -> Dictionary:
+	var aimed: int = World.get_tile_v(building_cell)
+	if aimed == IDs.T.DOOR or aimed == IDs.T.DOOR_OPEN:
+		var ap: Vector2 = World.cell_to_world(building_cell)
+		if ap.distance_to(pos) <= E_MACHINE:
+			return {"kind": ET_DOOR, "cell": building_cell, "node": null, "pos": ap}
+	var r: int = int(ceil(E_MACHINE / float(World.TILE))) + 1
+	var pc: Vector2i = World.world_to_cell(pos)
+	var best: Vector2i = Vector2i(-1, -1)
+	var best_d: float = E_MACHINE
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			var c: Vector2i = pc + Vector2i(dx, dy)
+			var tid: int = World.get_tile_v(c)
+			if tid != IDs.T.DOOR and tid != IDs.T.DOOR_OPEN:
+				continue
+			var d: float = World.cell_to_world(c).distance_to(pos)
+			if d < best_d:
+				best_d = d
+				best = c
+	if best.x < 0:
+		return {}
+	return {"kind": ET_DOOR, "cell": best, "node": null, "pos": World.cell_to_world(best)}
 
 
 ## Цель разбора: ближайшая машина, которую можно снять (пустая рука, не
@@ -853,6 +952,11 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 			# сирена: E при полном заряде гонит фантомов (#172);
 			# грядка: E забирает волокно с лотка (#313).
 			tg["node"].interact(self)
+		ET_DOOR:
+			# Закрытая — обычная твёрдая клетка, открытая — проход. set_tile сам
+			# помечает луч и сетку пути. Не _set_airlock: тот путь луч не трогает.
+			if fresh:
+				_toggle_door(cell)
 		ET_LENS:
 			if fresh:
 				tg["node"].insert_lens(self)

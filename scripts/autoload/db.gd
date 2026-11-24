@@ -69,6 +69,10 @@ func _build_tile_defs() -> void:
 		IDs.T.AIRLOCK: {"solid": true, "hard": 3.0, "drop": IDs.I.AIRLOCK, "light": 0.0, "name": "Шлюз"},
 		IDs.T.AIRLOCK_OPEN: {"solid": false, "hard": 3.0, "drop": IDs.I.AIRLOCK, "light": 0.0, "name": "Шлюз (открыт)"},
 		IDs.T.VENT_GRATE: {"solid": false, "hard": 1.0, "drop": IDs.I.VENT_GRATE, "light": 0.0, "name": "Решётка вентиляции"},
+		# Каркас пристройки (#312). Руинная T.PANEL drop не получает: руины не сыплют панели.
+		IDs.T.ROOM_PANEL: {"solid": true, "hard": 3.0, "drop": IDs.I.PANEL, "light": 0.0, "name": "Панель"},
+		IDs.T.DOOR: {"solid": true, "hard": 2.0, "drop": IDs.I.DOOR, "light": 0.0, "name": "Дверь"},
+		IDs.T.DOOR_OPEN: {"solid": false, "hard": 2.0, "drop": IDs.I.DOOR, "light": 0.0, "name": "Дверь (открыта)"},
 	}
 
 
@@ -146,6 +150,10 @@ func tile_color(id: int) -> Color:
 		IDs.T.STEEL_WALL:
 			return PAL["frame"]
 		IDs.T.AIRLOCK, IDs.T.AIRLOCK_OPEN:
+			return PAL["hazard"]
+		IDs.T.ROOM_PANEL:
+			return PAL["metal"]
+		IDs.T.DOOR, IDs.T.DOOR_OPEN:
 			return PAL["hazard"]
 		_:
 			return PAL["metal_d"]
@@ -249,7 +257,9 @@ func _build_item_defs() -> void:
 	# Живая база (ADR-006 § 3.2, #313). Волокно — выпуск грядки, панель — общий
 	# выход ручного рецепта и будущего пресса (#314). Грядка ставится руками.
 	_add_item_def(IDs.I.SPORE_FIBER, "Споровое волокно", Color(0.72, 0.86, 0.42), "fiber", 99, "")
-	_add_item_def(IDs.I.PANEL, "Панель", Color(0.78, 0.80, 0.74), "panel", 99, "")
+	_add_item_def(IDs.I.PANEL, "Панель", Color(0.78, 0.80, 0.74), "panel", 99, "tile:%d" % IDs.T.ROOM_PANEL)
+	_add_item_def(IDs.I.DOOR, "Дверь", Color(0.72, 0.55, 0.28), "door", 20, "tile:%d" % IDs.T.DOOR)
+	_add_item_def(IDs.I.SHEATH, "Обшивка", Color(0.55, 0.62, 0.48), "sheath", 99, "sheath:1")
 	_add_item_def(IDs.I.SPORE_BED, "Споровая грядка", Color(0.55, 0.72, 0.38), "spore_bed", 5, "machine:SporeBed")
 
 	# Требования релей-ядра — из Balance (§ 4.7).
@@ -1336,6 +1346,28 @@ func _paint_built(t: Image, id: int, rng: RandomNumberGenerator) -> void:
 				elif slat == 1:
 					c = md
 				_rect(t, 0, y, 16, 1, c)
+		IDs.T.ROOM_PANEL:
+			# Панель игрока: светлая плита с крестом шва, не рёбра руинной панели.
+			_rect(t, 0, 0, 16, 16, mt)
+			_rect(t, 0, 0, 16, 1, mh)
+			_rect(t, 0, 15, 16, 1, md)
+			_rect(t, 0, 0, 1, 16, mh)
+			_rect(t, 15, 0, 1, 16, md)
+			_rect(t, 7, 2, 2, 12, md)
+			_rect(t, 2, 7, 12, 2, md)
+		IDs.T.DOOR:
+			# Закрытая дверь: плита и полоса поперёк, не шлюзовая «зебра».
+			_paint_block(t, Color(0.42, 0.32, 0.18), rng)
+			_rect(t, 6, 2, 4, 12, Color(0.62, 0.46, 0.24))
+			_rect(t, 11, 8, 2, 2, pal("hazard"))
+		IDs.T.DOOR_OPEN:
+			# Открытая дверь: косяк, середина прозрачна — луч и герой проходят.
+			var wood: Color = Color(0.42, 0.32, 0.18)
+			_rect(t, 0, 0, 3, 16, wood)
+			_rect(t, 13, 0, 3, 16, wood)
+			_rect(t, 0, 0, 16, 2, wood)
+			_rect(t, 0, 14, 16, 2, wood)
+			_rect(t, 11, 7, 2, 2, pal("hazard"))
 
 
 # --------------------------------------------------- читаемость (ADR-003 § 5)
@@ -1746,6 +1778,20 @@ func _paint_item(img: Image, shape: String, c: Color, rng: RandomNumberGenerator
 				_px(img, 4, y, c.darkened(0.25))
 				_px(img, 8, y, c.darkened(0.25))
 				_px(img, 11, y, c.darkened(0.25))
+		"door":
+			# Створка с ручкой: ставится закрытой.
+			for y in range(3, 13):
+				for x in range(5, 11):
+					_px(img, x, y, c)
+			_px(img, 9, 8, Color(0.95, 0.82, 0.35))
+			_px(img, 9, 9, Color(0.95, 0.82, 0.35))
+		"sheath":
+			# Тонкая накладка: фон, не стена.
+			for y in range(5, 11):
+				for x in range(2, 14):
+					_px(img, x, y, Color(c.r, c.g, c.b, 0.85))
+			for x in range(3, 13):
+				_px(img, x, 7, c.lightened(0.3))
 		"spore_bed":
 			# Лоток и росток: грядка узнаётся до установки.
 			for y in range(7, 13):
