@@ -82,6 +82,7 @@ func _fire_touch() -> void:
 	if tc == null:
 		ok("сенсорный слой есть", false)
 		return
+	ok("тач: словарь плашек не зовёт мышь", _touch_dict_clean())
 	var t0: float = now()
 	var mark: Vector2i = mission.call("mark")
 	stand_at_cell(mark + Vector2i(2, 1))
@@ -280,6 +281,27 @@ func _colors_touch() -> void:
 	ok("тач «Цвета»: тап по зеркалу свёл лучи",
 			World.beams != null and World.beams.color_at(LightLayout.at(LightLayout.MIX_OUT)) == Beams.Y,
 			"тапов %d" % taps)
+	# Плашка топки после смеси: медь в руке до поворота сбивает тап по зеркалу.
+	# После смеси игрок у зеркала, поэтому возвращаемся к горелке на чтение.
+	var back: Vector2 = player.global_position
+	player.inv.add(IDs.I.COPPER_ORE, 1)
+	var ore: int = _slot(IDs.I.COPPER_ORE)
+	player.inv.selected = ore
+	stand_at_cell(green_c)
+	aim(green.global_position)
+	var fuel_ready: bool = await wait_until(func() -> bool:
+		return String(UI.hud.hint_text).contains("топливо") and _plate().to_lower().contains("топка"), 2.0)
+	var fuel_plate: String = _plate()
+	ok("тач «Цвета»: нарисованная плашка топки — тап, не десктоп",
+			fuel_ready and fuel_plate.to_lower().contains("тап")
+			and fuel_plate.to_lower().contains("топка")
+			and fuel_plate != String(UI.hud.hint_text),
+			"плашка «%s», hint «%s»" % [fuel_plate, UI.hud.hint_text])
+	_note_plate(fuel_plate)
+	player.inv.remove_at(ore, 1)
+	player.inv.selected = _empty_slot()
+	player.global_position = back
+	player.vel = Vector2.ZERO
 	var pharos_c: Vector2i = LightLayout.at(LightLayout.PHAROS)
 	await _stand_at_pharos()
 	_settle_camera()
@@ -289,6 +311,11 @@ func _colors_touch() -> void:
 	var said: String = await _wait_hint("Тап по маяку гасит прожектор")
 	ok("тач «Цвета»: команда прожектора — тап, не [E]",
 			_cmd_ok(said, "Тап по маяку гасит прожектор"), "«%s»" % said)
+	var plate: String = _plate()
+	ok("тач «Цвета»: нарисованная плашка маяка — тап, не десктоп",
+			plate.to_lower().contains("тап") and plate != String(UI.hud.hint_text),
+			"плашка «%s», hint «%s»" % [plate, UI.hud.hint_text])
+	_note_plate(plate)
 	_touch(2, tc.btn_center["e"], true)
 	await wait(0.4)
 	_touch(2, tc.btn_center["e"], false)
@@ -306,6 +333,8 @@ func _colors_touch() -> void:
 				and String(n.get("text", "")).find("[E]") < 0:
 			heard = true
 	ok("тач «Цвета»: ночная реплика назвала тап", heard)
+	ok("тач «Цвета»: ни одна нарисованная плашка не звала мышь",
+			_plates_clean(), "«%s»" % _plate_bad)
 	_touch_off(tc)
 
 
@@ -405,6 +434,43 @@ func _rebuild_beams() -> void:
 ## Если висит чужая — ждём, пока плашка сменится на нужную, а не на ту же чужую.
 ## Команда главы — часть после « | ». Контекстная плашка слева может звать
 ## другую кнопку; невыполнимая команда — это [E] или ПКМ в самой команде главы.
+## Нарисованная нижняя плашка, не склейка hint_text и tutorial_text.
+func _plate() -> String:
+	var hud = UI.hud
+	if hud == null or not hud.has_method("plate_text"):
+		return ""
+	return String(hud.plate_text())
+
+
+## Слова, которых на телефоне нет: мышь и клавиша забора. [E] и [V] — глифы кнопок.
+const _DESKTOP_WORDS: Array = ["ЛКМ", "ПКМ", "[X]", "удерживать"]
+var _plate_bad: String = ""
+
+
+func _note_plate(text: String) -> void:
+	if _plate_bad != "":
+		return
+	for w in _DESKTOP_WORDS:
+		if text.contains(String(w)):
+			_plate_bad = text
+			return
+
+
+func _plates_clean() -> bool:
+	_note_plate(_plate())
+	return _plate_bad == ""
+
+
+## Словарь сенсорных плашек не зовёт мышь. [E] и [V] в значениях допустимы.
+func _touch_dict_clean() -> bool:
+	for v in HUD.TOUCH_HINTS.values():
+		var s: String = String(v)
+		for w in _DESKTOP_WORDS:
+			if s.contains(String(w)):
+				return false
+	return true
+
+
 func _cmd_ok(said: String, need: String) -> bool:
 	var cmd: String = said
 	var bar: int = said.find(" | ")

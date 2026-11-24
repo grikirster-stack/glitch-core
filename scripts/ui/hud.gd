@@ -557,7 +557,12 @@ func _touch_hint(text: String) -> String:
 		s = s.substr(0, cut)
 	s = s.replace(" (удерживать 3 с)", "")
 	s = s.replace(" (удерживать)", "")
-	return s.strip_edges()
+	s = s.strip_edges()
+	# Десктоп-слова на телефоне невыполнимы: кнопки там только [E] и [V].
+	# Пустая плашка честнее команды, которую нельзя нажать.
+	if s.contains("ЛКМ") or s.contains("ПКМ") or s.contains("[X]"):
+		return ""
+	return s
 
 
 func _set_hint(h: String) -> void:
@@ -1838,6 +1843,11 @@ static func right_column_bottom(w: float, n: int) -> float:
 	if n > 0:
 		return team_plate_rect(w, n).end.y
 	return MAP_OFFSET.y + MAP_SIZE.y
+
+
+## Текст нижней плашки. Сценарии читают его, не склейку hint_text и tutorial_text.
+func plate_text() -> String:
+	return _plate_text()
 
 
 ## Текст нижней плашки. На ПК — hint_text как есть (пустой, если цели нет).
