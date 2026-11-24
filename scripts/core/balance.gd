@@ -46,7 +46,17 @@ const COLLECTOR_MIN_DAYLIGHT: float = 0.35
 const SPORE_BED_SECONDS: float = 12.0   ## секунд белого на одно волокно
 const SPORE_BED_TRAY: int = 4           ## волокон в лотке, дальше «Выход полон»
 const SPORE_BED_PANEL_IN: int = 2       ## волокон на ручной рецепт панелей
-const SPORE_BED_PANEL_OUT: int = 4      ## панелей с этого рецепта (тот же выход, что у пресса #314)
+const SPORE_BED_PANEL_OUT: int = 4      ## панелей с этого рецепта (тот же выход, что у пресса)
+
+# ------------------------------------------------ пресс (ADR-006 § 3.2, #314)
+## Первый замер, не закон. Те же 2→4, что у ручного рецепта: пресс не выгоднее рук,
+## он работает, пока игрок в шахте. 8 с — короче волокна (12 с), длиннее кадра:
+## партия видна. Две партии в буфере — запас, пока выходной сундук полон.
+const PRESS_FIBER_IN: int = SPORE_BED_PANEL_IN   ## волокон на партию
+const PRESS_PANEL_OUT: int = SPORE_BED_PANEL_OUT ## панелей с партии
+const PRESS_SECONDS: float = 8.0                 ## секунд работы на партию
+const PRESS_QUEUE: int = 2                       ## партий волокна во внутреннем слоте
+const PRESS_BUFFER: int = 2                      ## готовых партий панелей, дальше ждём
 
 # ----------------------------------------- каркас пристройки (ADR-006 § 3.1, #312)
 ## Один стартовый набор собирает и открытый навес, и закрытую пристройку
@@ -206,7 +216,7 @@ const VENT_SPAWN_MAX_PX: float = 1000.0
 ## с push_warning, и после слияния список заработает целиком без правок здесь.
 const BLUEPRINT_ORDER: Array = [
 	"MIXER", "PHAROS", "COLLECTOR", "ACCUMULATOR", "STEEL_WALL",
-	"VENT_GRATE", "SIREN", "LENS", "RAINBOW_CORE", "SPORE_BED",
+	"VENT_GRATE", "SIREN", "LENS", "RAINBOW_CORE", "SPORE_BED", "PRESS",
 ]
 ## Подарок терминала: 2–3 вида из этого набора, числа — [мин, макс] на вид.
 ## Роль места (капитан, инженер, …) выбирает, какие виды, как у тайников руин.
