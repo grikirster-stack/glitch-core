@@ -134,8 +134,8 @@ const HINT_PLACE: String = "ПКМ — поставить"
 const TOUCH_PICKUP: String = "Забрать: %s"
 const TOUCH_PICKUP_BURNER: String = "Забрать горелку"
 const TOUCH_PLACE: String = "Тапни клетку — поставить"
-const TOUCH_BURNER_FUEL: String = "Забрать · [E] — топка"
-const TOUCH_BURNER_SWITCH: String = "Забрать горелку · [E] — рубильник"
+const TOUCH_BURNER_FUEL: String = "Забрать · Тап — топка"
+const TOUCH_BURNER_SWITCH: String = "Забрать горелку · Тап — рубильник"
 
 ## Одна строка в нижней плашке на телефоне, пока игрок не начал действовать.
 ## CONTROLS_TOUCH на экране больше не рисуется — три строки закрывали карточку.
@@ -161,7 +161,7 @@ const TOUCH_HINTS: Dictionary = {
 	HINT_LOAD: "[E] — загрузить",
 	HINT_SIREN: "[E] — сирену",
 	HINT_LENS: "[E] — линзу",
-	HINT_PHAROS: "[E] — прожектор",
+	HINT_PHAROS: "Тап — прожектор",
 	HINT_SPORE_BED: "[E] — волокно",
 }
 

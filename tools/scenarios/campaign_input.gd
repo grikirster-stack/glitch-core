@@ -106,17 +106,28 @@ func _fire_touch() -> void:
 		return
 	var dir0: int = burner.dir
 	var taps: int = 0
+	var aim_said: String = ""
 	while burner.dir != 3 and taps < 8:
+		var seen: String = _hint_or_card()
+		if seen.find("Тап — носик вверх") >= 0:
+			aim_said = seen
 		_touch(1, _screen(burner.global_position), true)
 		await wait(0.2)
 		_touch(1, _screen(burner.global_position), false)
 		await wait(0.35)
 		taps += 1
+	if aim_said == "":
+		aim_said = await _wait_hint("Тап — носик вверх")
 	print("  [замер] тач «Огонь»: носик %d → %d за %d тап(ов)" % [dir0, burner.dir, taps])
-	ok("тач «Огонь»: носик вверх через тап игрока", burner.dir == 3, "dir %d, тапов %d" % [burner.dir, taps])
+	ok("тач «Огонь»: носик вверх через тап игрока, команда — тап",
+			burner.dir == 3 and _cmd_ok(aim_said, "Тап — носик вверх"),
+			"dir %d, «%s»" % [burner.dir, aim_said])
 	player.inv.selected = _slot(IDs.I.COAL)
 	_tap(3, UI.hud.hotbar_slot_rect(player.inv.selected).get_center())
 	await wait(0.15)
+	var fuel_said: String = await _wait_hint("Тап — топка")
+	ok("тач «Огонь»: команда топки — тап, не [E]",
+			_cmd_ok(fuel_said, "Тап — топка"), "«%s»" % fuel_said)
 	_touch(1, _screen(burner.global_position), true)
 	_touch(2, tc.btn_center["e"], true)
 	await wait(0.45)
@@ -275,9 +286,9 @@ func _colors_touch() -> void:
 	var pharos: Pharos = World.machines.get(pharos_c) as Pharos
 	await wait_until(func() -> bool:
 		return pharos != null and pharos.color == Beams.Y and pharos.active, 3.0)
-	var said: String = await _wait_hint("[E] у маяка гасит прожектор")
-	ok("тач «Цвета»: команда прожектора без ПКМ",
-			said.find("[E] у маяка гасит прожектор") >= 0 and said.find("ПКМ") < 0, "«%s»" % said)
+	var said: String = await _wait_hint("Тап по маяку гасит прожектор")
+	ok("тач «Цвета»: команда прожектора — тап, не [E]",
+			_cmd_ok(said, "Тап по маяку гасит прожектор"), "«%s»" % said)
 	_touch(2, tc.btn_center["e"], true)
 	await wait(0.4)
 	_touch(2, tc.btn_center["e"], false)
@@ -286,6 +297,15 @@ func _colors_touch() -> void:
 	ok("тач «Цвета»: [E] сенсорного слоя гасит прожектор при живом луче",
 			doused and pharos.color == Beams.Y, "погашен %s" % str(pharos.lamp_off if pharos != null else false))
 	ok("тач «Цвета»: глава перешла к ночи", await wait_stage(3, 2.0), str(mission.stage))
+	var night_said: String = await _wait_hint("Зажги прожектор — тап по маяку")
+	ok("тач «Цвета»: ночная команда — тап, не [E]",
+			_cmd_ok(night_said, "Зажги прожектор — тап по маяку"), "«%s»" % night_said)
+	var heard: bool = false
+	for n in UI.hud.notes:
+		if String(n.get("text", "")).find("тап по маяку") >= 0 \
+				and String(n.get("text", "")).find("[E]") < 0:
+			heard = true
+	ok("тач «Цвета»: ночная реплика назвала тап", heard)
 	_touch_off(tc)
 
 
@@ -383,6 +403,16 @@ func _rebuild_beams() -> void:
 ## обучения «на горелку», и общий фильтр возвращался на чужой строке.
 ## Если нужная строка уже висит — это она, ждать смены не нужно.
 ## Если висит чужая — ждём, пока плашка сменится на нужную, а не на ту же чужую.
+## Команда главы — часть после « | ». Контекстная плашка слева может звать
+## другую кнопку; невыполнимая команда — это [E] или ПКМ в самой команде главы.
+func _cmd_ok(said: String, need: String) -> bool:
+	var cmd: String = said
+	var bar: int = said.find(" | ")
+	if bar >= 0:
+		cmd = said.substr(bar + 3)
+	return cmd.find(need) >= 0 and cmd.find("[E]") < 0 and cmd.find("ПКМ") < 0
+
+
 func _wait_hint(need: String) -> String:
 	var before: String = _hint_or_card()
 	if before.find(need) >= 0:

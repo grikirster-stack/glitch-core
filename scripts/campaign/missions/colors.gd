@@ -88,19 +88,29 @@ func stages() -> Array:
 			"goals": [["Сведи лучи в смеситель", func() -> Vector2i: return flag(_yellow_out()),
 				IDs.I.MIXER, func() -> Vector2: return LightLayout.world_at(LightLayout.MIX_OUT)]]},
 		{"title": "Маяк",
-			"hint": "[E] у маяка гасит прожектор",
+			"hint": "[E] у маяка гасит прожектор" if not UI.touch_on else "Тап по маяку гасит прожектор",
 			"say": ["Жёлтый дошёл. Прожектор горит — эхо к нему не подойдёт.",
 					"Погаси его: ночью зажжёшь снова, когда эхо будет близко."],
 			"goals": [["Погаси прожектор маяка", func() -> Vector2i: return flag(_lamp_out()),
 				IDs.I.PHAROS, func() -> Vector2: return LightLayout.world_at(LightLayout.PHAROS)]]},
 		{"title": "Ночь",
 			"hint": "Эхо бьёт, пока прожектор погашен",
-			"say": ["Короткая ночь. Эхо идёт к тебе и бьёт.",
-					"Зажги прожектор — [E] у маяка."],
+			"say": ["Короткая ночь. Эхо идёт к тебе и бьёт."],
 			"enter": _begin_night,
 			"goals": [["Переживи короткую ночь", func() -> Vector2i: return flag(_night_done()),
 				IDs.I.PHAROS, func() -> Vector2: return LightLayout.world_at(LightLayout.PHAROS)]]},
 	]
+
+
+## Сенсорный слой включают после старта главы. Статическая строка этапа
+## уже записана, поэтому команду прожектора считаем заново: на телефоне тап,
+## на ПК — [E]. Индекс этапа не меняется.
+func live_hint() -> String:
+	if stage == 2:
+		return "Тап по маяку гасит прожектор" if UI.touch_on else "[E] у маяка гасит прожектор"
+	if stage == 3:
+		return "Зажги прожектор — тап по маяку" if UI.touch_on else "Зажги прожектор — [E] у маяка"
+	return super()
 
 
 func on_tick(delta: float) -> void:
@@ -166,6 +176,9 @@ func _night_done() -> bool:
 func _begin_night() -> void:
 	_day0 = Game.day_number
 	hold_time = -1.0
+	# Реплику ночи нельзя запечь в stages(): сенсорный слой включают после
+	# старта главы, и тогда на телефоне остаётся команда [E].
+	say("Зажги прожектор — тап по маяку." if UI.touch_on else "Зажги прожектор — [E] у маяка.")
 	Game.time_of_day = Balance.NIGHT_START
 	_night_on = true
 	_night_t = 0.0

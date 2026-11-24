@@ -105,7 +105,7 @@ func live_hint() -> String:
 			return _nozzle_hint()
 		# «вверх» остаётся и после поворота: иначе команда носика пропадает
 		# в тот же кадр, когда игрок её выполнил.
-		return "Носик вверх. [E] — уголь" if not UI.touch_on else "Носик вверх. [E] — топка"
+		return "Носик вверх. [E] — уголь" if not UI.touch_on else "Тап — носик вверх. Тап — топка"
 	return super()
 
 
