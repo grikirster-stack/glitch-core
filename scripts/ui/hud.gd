@@ -217,6 +217,7 @@ var tutorial_step: int = Tut.DIG
 var tutorial_text: String = ""
 ## Секунд до ночи (целые, вверх) в сумерках; -1 — не сумерки.
 var night_countdown: int = -1
+var _countdown_font: int = 18
 ## Генератор индикатора мощности (под курсором или ближайший), null — нет.
 var power_gen = null
 ## Строка индикатора мощности ("" — индикатора нет).
@@ -1067,6 +1068,14 @@ func _night_countdown() -> int:
 	if not Game.is_dusk():
 		return -1
 	return int(ceil((Balance.NIGHT_START - Game.time_of_day) * Balance.DAY_LENGTH))
+
+
+## Подпись отсчёта. На телефоне короче: полная строка на body не влезает
+## в щель 512 лог. px между стиком и боем, и секунды пропадали (#310).
+func _countdown_label() -> String:
+	if UI.touch_on:
+		return "НОЧЬ %d с" % night_countdown
+	return "НОЧЬ ЧЕРЕЗ %d с" % night_countdown
 
 
 # ------------------------------------------------------------ МИНИКАРТА
@@ -1964,7 +1973,7 @@ func _compute_layout() -> Dictionary:
 		var dw: float = maxf(_tw(day_label(), fs), STRIP_W)
 		L["day"] = Rect2(w - PAD - dw, 6.0, dw, 34.0)
 		if night_countdown >= 0:
-			var cw: float = _tw("НОЧЬ ЧЕРЕЗ %d с" % night_countdown, fb) + 24.0
+			var cw: float = _tw(_countdown_label(), fb) + 24.0
 			L["countdown"] = Rect2((w - cw) * 0.5, 8.0, cw, 26.0)
 		L["map"] = Rect2(w - MAP_OFFSET.x, MAP_OFFSET.y, MAP_SIZE.x, MAP_SIZE.y)
 	var n_team: int = team_mates.size()
@@ -2005,7 +2014,6 @@ func _compute_layout() -> Dictionary:
 		# (прыжок, бег, E, копать). Меню сверху и Q/V/G в захват не входят:
 		# иначе полоса уезжает к верхней трети.
 		var grab_top: float = _combat_grab_top(h)
-		hy = grab_top - cell_h
 		hy = grab_top - cell_h
 		var band_y: float = h * (2.0 / 3.0)
 		if hy + 0.5 < band_y:
@@ -2278,6 +2286,18 @@ func _place_touch_card(L: Dictionary, tb: Dictionary, band: float, hint_top: flo
 	var icon: float = CARD_ICON_LINE
 	var text_w: float = _tw(line, fs)
 	var need: float = pad + icon + pad + text_w + pad
+	# Сумерки: справа остаётся полоса отсчёта (#310). Иначе карточка на 200–250 %
+	# занимает всю ширину ряда, и «НОЧЬ ЧЕРЕЗ» пропадает. Кегль цели не трогаем —
+	# режем поля и иконку, как и без резерва.
+	var cd_reserve: float = 0.0
+	var cd_keep: bool = false
+	if night_countdown >= 0 and not L.has("countdown"):
+		# body, если влезает; иначе small — тот же кегль, которым рисуется запасной
+		# отсчёт. Резерв не сбрасываем: на 288 лог. px щели над целью нет.
+		cd_reserve = _tw(_countdown_label(), UI.FONT["body"]) + 12.0
+		if cd_reserve + 48.0 > w:
+			cd_reserve = _tw(_countdown_label(), UI.FONT["small"]) + 8.0
+		cd_keep = true
 	# Плашка ещё не стоит. Если под целью останется ряд и зазор, а строка цели
 	# всё ещё влезает выше — оставляем этот ряд плашке. Иначе цель как была.
 	if not L.has("hint") and _plate_text() != "" and L.has("hotbar"):
@@ -2301,32 +2321,56 @@ func _place_touch_card(L: Dictionary, tb: Dictionary, band: float, hint_top: flo
 	# Сначала ряд, куда строка влезает целиком при FONT.small, иконке 16 и полях 8.
 	# Нет такого — режем поля и иконку. Всё ещё нет (стик и Q на 512 лог. px
 	# оставляют 349, строка 381) — кегль, не текст и не «…».
-	var picked: Rect2 = _card_pick_row(line_h, need, band, floor_y, L, grabs)
+	var picked: Rect2 = _card_pick_reserved(line_h, need, band, floor_y, L, grabs, cd_reserve)
 	while not picked.has_area() and pad > CARD_LINE_PAD_MIN + 0.01:
 		pad = maxf(CARD_LINE_PAD_MIN, pad - 2.0)
 		need = pad + icon + pad + text_w + pad
-		picked = _card_pick_row(line_h, need, band, floor_y, L, grabs)
+		picked = _card_pick_reserved(line_h, need, band, floor_y, L, grabs, cd_reserve)
 	while not picked.has_area() and icon > CARD_ICON_LINE_MIN + 0.01:
 		icon = maxf(CARD_ICON_LINE_MIN, icon - 2.0)
 		need = pad + icon + pad + text_w + pad
-		picked = _card_pick_row(line_h, need, band, floor_y, L, grabs)
+		picked = _card_pick_reserved(line_h, need, band, floor_y, L, grabs, cd_reserve)
 	while not picked.has_area() and icon > 0.5:
 		icon = 0.0
 		pad = 0.0
 		need = text_w
-		picked = _card_pick_row(line_h, need, band, floor_y, L, grabs)
+		picked = _card_pick_reserved(line_h, need, band, floor_y, L, grabs, cd_reserve)
 	while not picked.has_area() and fs > CARD_FONT_LINE_MIN:
 		fs -= 1
 		text_w = _tw(line, fs)
 		need = text_w
+		picked = _card_pick_reserved(line_h, need, band, floor_y, L, grabs, cd_reserve)
+	if not picked.has_area() and cd_reserve > 0.0 and not cd_keep:
+		cd_reserve = 0.0
 		picked = _card_pick_row(line_h, need, band, floor_y, L, grabs)
+	if not picked.has_area() and cd_keep and cd_reserve > 0.0:
+		# Щель над целью короче строки отсчёта. Секунды садятся в этот же ряд:
+		# справа остаётся cd_reserve, цель ужимается до остатка. Не поднимаем
+		# хотбар и не выходим из нижней трети.
+		var yb: float = floor_y
+		var forced: Rect2 = Rect2()
+		while yb + 0.5 >= band and not forced.has_area():
+			if not _card_row_blocked(yb, line_h, L):
+				var gap: Rect2 = _card_x_gap(yb, line_h, 48.0 + cd_reserve, [], grabs, 0.0, w)
+				if gap.size.x + 0.5 >= 48.0 + cd_reserve:
+					var cw: float = gap.size.x - cd_reserve
+					forced = Rect2(gap.position.x, yb, cw, line_h)
+			yb -= 1.0
+		if forced.has_area():
+			picked = forced
+			while fs > CARD_FONT_LINE_MIN and _tw(line, fs) > picked.size.x + 0.5:
+				fs -= 1
+			text_w = _tw(line, fs)
+			pad = 0.0
+			icon = 0.0
 	if not picked.has_area():
 		# Полосу не стираем: самый широкий ряд, даже если строка чуть шире.
 		var best: Rect2 = Rect2()
 		var yb: float = band
 		while yb <= floor_y + 0.5:
 			if not _card_row_blocked(yb, line_h, L):
-				var gap: Rect2 = _card_x_gap(yb, line_h, need, [], grabs, 0.0, w)
+				var avoid: Array = [L["countdown"]] if L.has("countdown") else []
+				var gap: Rect2 = _card_x_gap(yb, line_h, need, avoid, grabs, 0.0, w)
 				if gap.size.x > best.size.x:
 					best = gap
 			yb += 1.0
@@ -2359,13 +2403,34 @@ func _place_touch_card(L: Dictionary, tb: Dictionary, band: float, hint_top: flo
 
 ## Ряд в [band, floor], куда строка ширины need влезает между захватами,
 ## не на плашку и не на хотбар. Сначала запрошенная высота, потом выше неё.
+## Как _card_pick_row, но справа оставляет reserve под отсчёт ночи.
+func _card_pick_reserved(line_h: float, need: float, band: float, floor_y: float, L: Dictionary, grabs: Array, reserve: float) -> Rect2:
+	if reserve <= 0.5:
+		return _card_pick_row(line_h, need, band, floor_y, L, grabs)
+	var y: float = floor_y
+	while y + 0.5 >= band:
+		if not _card_row_blocked(y, line_h, L):
+			var avoid: Array = [L["countdown"]] if L.has("countdown") else []
+			var gap: Rect2 = _card_x_gap(y, line_h, need + reserve, avoid, grabs, 0.0, size.x)
+			if gap.size.x + 0.5 >= need + reserve:
+				var room: float = gap.size.x - reserve
+				var cw: float = minf(need, room)
+				var cx: float = clampf(gap.position.x, gap.position.x, gap.end.x - reserve - cw)
+				var cr: Rect2 = Rect2(cx, y, cw, line_h)
+				if not _card_blocked(cr, [], grabs):
+					return cr
+		y -= 1.0
+	return Rect2()
+
+
 func _card_pick_row(line_h: float, need: float, band: float, floor_y: float, L: Dictionary, grabs: Array) -> Rect2:
 	# Снизу вверх: самый нижний свободный ряд. Верхний (граница трети) оставляем
 	# плашке ввода — иначе она пропадает, а цель садится в её щель.
 	var y: float = floor_y
 	while y + 0.5 >= band:
 		if not _card_row_blocked(y, line_h, L):
-			var gap: Rect2 = _card_x_gap(y, line_h, need, [], grabs, 0.0, size.x)
+			var avoid: Array = [L["countdown"]] if L.has("countdown") else []
+			var gap: Rect2 = _card_x_gap(y, line_h, need, avoid, grabs, 0.0, size.x)
 			if gap.size.x + 0.5 >= need:
 				var cw: float = minf(need, gap.size.x)
 				var cx: float = clampf((size.x - cw) * 0.5, gap.position.x, gap.end.x - cw)
@@ -2494,6 +2559,13 @@ func _place_touch_top(L: Dictionary, tb: Dictionary, band: float, portrait: bool
 	# (TouchControls._layout). Сдвинуть её в нижнюю треть — сдвинуть I/J/паузу.
 	var room: float = ceiling - band
 	var y: float = band
+	# Отсчёт до цели (#310): иначе карточка занимает всю ширину ряда, и резерв
+	# справа уже некуда деть. Секунды не должны ждать, пока цель сядет.
+	if night_countdown >= 0:
+		var early: Rect2 = _place_touch_countdown(w, band, ceiling, tb.values())
+		if early.has_area():
+			L["countdown"] = early
+			taken.append(early)
 	# Цель всегда на экране, пока есть текст: полоса 22–24 px над плашкой
 	# (если она есть) иначе над хотбаром, зазор HINT_GAP_TOUCH, внутри нижней
 	# трети. Не влезла по ширине — режем поля и иконку, не текст. Захват
@@ -2501,10 +2573,15 @@ func _place_touch_top(L: Dictionary, tb: Dictionary, band: float, portrait: bool
 	if player and card_text != "":
 		var card_r: Rect2 = _place_touch_card(L, tb, band, hint_top)
 		if card_r.has_area():
-			L["card_line"] = true
-			L["card"] = card_r
-			_fit_card_title(L, card_r.size.x)
-			taken.append(card_r)
+			if L.has("countdown") and card_r.intersects(L["countdown"]):
+				var cd0: Rect2 = L["countdown"]
+				if card_r.end.x > cd0.position.x and card_r.position.x < cd0.position.x:
+					card_r.size.x = cd0.position.x - 4.0 - card_r.position.x
+			if card_r.size.x >= 48.0:
+				L["card_line"] = true
+				L["card"] = card_r
+				_fit_card_title(L, card_r.size.x)
+				taken.append(card_r)
 			if card_r.position.y <= band + 0.5:
 				y = card_r.end.y + 4.0
 				room = ceiling - y
@@ -2560,14 +2637,94 @@ func _place_touch_top(L: Dictionary, tb: Dictionary, band: float, portrait: bool
 			L["day"] = dr
 			taken.append(dr)
 			y = maxf(y, dr.end.y + 4.0)
-	if night_countdown >= 0:
-		var cw2: float = _tw("НОЧЬ ЧЕРЕЗ %d с" % night_countdown, fs) + 24.0
-		var cr2: Rect2 = Rect2((w - cw2) * 0.5, band, cw2, 26.0)
-		if cr2.end.y <= ceiling + 0.5 and not _hits(cr2, taken):
-			L["countdown"] = cr2
-			taken.append(cr2)
+	if night_countdown >= 0 and not L.has("countdown"):
+		# Закреплён (#310). Сначала щель над карточкой. На 250 % портрета ряда
+		# над ней нет — тогда справа в её ряду, куда остался cd_reserve.
+		# Плашку в блокеры не кладём: она на всю ширину хотбара.
+		var cd_block: Array = []
+		for id in ["map", "hp", "emp", "day", "status"]:
+			if L.has(id):
+				cd_block.append(L[id])
+		cd_block.append_array(tb.values())
+		var cd: Rect2 = Rect2()
+		if L.has("card"):
+			cd = _place_touch_countdown(w, band, (L["card"] as Rect2).position.y - 2.0, cd_block)
+			if not cd.has_area():
+				cd = _countdown_beside_card(L["card"], cd_block)
+		if not cd.has_area():
+			if L.has("card"):
+				cd_block.append(L["card"])
+			cd = _place_touch_countdown(w, band, ceiling, cd_block)
+		if cd.has_area():
+			L["countdown"] = cd
+			taken.append(cd)
 	# Уведомления — над плашкой, в свободной полосе нижней трети. Не влезли — скрыты.
 	_place_touch_notes(L, tb, taken, band, ceiling)
+
+
+## Справа от карточки, в её ряду. Выше и ниже ряда на 250 % портрета щели нет.
+func _countdown_beside_card(card: Rect2, taken: Array) -> Rect2:
+	var fb: int = UI.FONT["small"]
+	var need: float = _tw(_countdown_label(), fb) + 8.0
+	var x0: float = card.end.x + 4.0
+	if x0 + need > size.x - PAD + 0.5:
+		x0 = size.x - PAD - need
+	if x0 < card.end.x + 2.0:
+		return Rect2()
+	var cr: Rect2 = Rect2(x0, card.position.y, need, card.size.y)
+	if cr.position.y + 0.5 < size.y * TOUCH_BAND:
+		return Rect2()
+	if cr.end.x > size.x + 0.5 or _hits(cr, taken):
+		return Rect2()
+	if _hits_grab(cr, _grab_circles()):
+		var shrunk: Rect2 = _shrink_off_grabs(cr, _grab_circles())
+		if shrunk.size.x + 0.5 < need or shrunk.size.y + 0.5 < card.size.y:
+			return Rect2()
+		cr = shrunk
+	_countdown_font = fb
+	return cr
+
+
+## Отсчёт до ночи в нижней трети, всегда, пока сумерки. Ширина по кеглю body —
+## им же строка и рисуется. Сначала центр у границы трети, не влез — любая щель
+## между захватами. Пустой только если щели нет вовсе.
+func _place_touch_countdown(w: float, band: float, ceiling: float, taken: Array) -> Rect2:
+	var fb: int = UI.FONT["body"]
+	# Плашка рисует строку по центру на всю ширину прямоугольника. Поля 8 px
+	# хватает обводке. Кегль body. На 288 лог. px (портрет 250 %) body не
+	# влезает рядом с целью — тогда small, не прячем секунды.
+	var need: float = _tw(_countdown_label(), fb) + 8.0
+	var wide: Rect2 = _countdown_slot(w, band, ceiling, taken, need)
+	if wide.has_area():
+		return wide
+	fb = UI.FONT["small"]
+	need = _tw(_countdown_label(), fb) + 8.0
+	_countdown_font = fb
+	return _countdown_slot(w, band, ceiling, taken, need)
+
+
+func _countdown_slot(w: float, band: float, ceiling: float, taken: Array, need: float) -> Rect2:
+	# 26 px — запас над body 18. На 250 % между границей трети и плашкой
+	# остаётся ~24 px: строка всё ещё читается, полосу не прячем.
+	var hgt: float = 22.0
+	var top: float = minf(ceiling, size.y)
+	if top - band + 0.5 < hgt:
+		hgt = maxf(18.0, top - band)
+	var grabs: Array = _grab_circles()
+	var y0: float = band
+	var x0: float = clampf((w - need) * 0.5, PAD, maxf(PAD, w - PAD - need))
+	var centered: Rect2 = Rect2(x0, y0, need, hgt)
+	if not _hits(centered, taken) and not _hits_grab(centered, grabs) and centered.end.y <= top + 0.5:
+		return centered
+	var y: float = top - hgt
+	while y + 0.5 >= band:
+		var gap: Rect2 = _grab_gap_slot(grabs, y, y + hgt, need, hgt)
+		if gap.has_area():
+			var cr: Rect2 = Rect2(gap.position.x, y, need, hgt)
+			if not _hits(cr, taken) and cr.end.y <= top + 0.5 and cr.position.y + 0.5 >= band:
+				return cr
+		y -= 2.0
+	return Rect2()
 
 
 ## Блок, чей прямоугольник пересекает захват кнопки, не рисуем: тап ушёл бы в кнопку.
@@ -2576,7 +2733,8 @@ func _drop_grab_hits(L: Dictionary) -> void:
 	if grabs.is_empty():
 		return
 	var drop: Array = []
-	for id in ["hint", "map", "hp", "emp", "day", "status", "countdown", "notes"]:
+	# Отсчёт закреплён: _place_touch_countdown уже увёл его от захватов.
+	for id in ["hint", "map", "hp", "emp", "day", "status", "notes"]:
 		if L.has(id) and _hits_grab(L[id], grabs):
 			drop.append(id)
 	# Полосу цели не стираем: _place_touch_card уже сдвинула её по X.
@@ -2800,8 +2958,10 @@ func _draw() -> void:
 		draw_rect(cr, Color(C_DANGER, 0.7), false, 1.0)
 		# Последние 5 с — ярче, мигает раз в секунду (ключ — целые секунды).
 		var hot: bool = night_countdown <= 5 and night_countdown % 2 == 1
-		draw_string(font, cr.position + Vector2(0, 19), "НОЧЬ ЧЕРЕЗ %d с" % night_countdown,
-				HORIZONTAL_ALIGNMENT_CENTER, cr.size.x, fb,
+		var cd_fs: int = _countdown_font if UI.touch_on else fb
+		var cd_y: float = cr.position.y + minf(float(cd_fs) + 1.0, cr.size.y - 2.0)
+		draw_string(font, Vector2(cr.position.x, cd_y), _countdown_label(),
+				HORIZONTAL_ALIGNMENT_CENTER, cr.size.x, cd_fs,
 				C_DANGER.lerp(C_LINE, 0.6) if hot else C_DANGER.lerp(C_LINE, 0.25))
 
 	# ---- Команда в сети: товарищи и перекличка (MP-J) ---------------------
