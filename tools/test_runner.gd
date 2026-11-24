@@ -106,6 +106,7 @@ func _process(_delta: float) -> void:
 		12: _t_day_dawn()
 		13: _t_day_result()
 		14: _t_relay()
+		34: _t_relay_done()
 		15: _t_water_dig()
 		16: _t_water_check()
 		17: _t_anim_start()
@@ -585,7 +586,19 @@ func _t_relay() -> void:
 	_ok("ядро запущено", ok and Game.core_arcs == Game.CORE_ARCS_FREE)
 	_ok("таймер идёт", Game.relay_active and Game.relay_timer > 0.0)
 	Game.relay_timer = 0.05
-	_next(15, 0.5)
+	_next(34, 0.5)
+
+
+func _t_relay_done() -> void:
+	# Свободная игра (ADR-006 § 2, #315): успех не ставит WON и не открывает эвакуацию.
+	# Проверяем здесь, до сейв-теста: тот зовёт reset_run и обнуляет счётчик.
+	# Кампания и хардкор по-прежнему входят в WON — это сценарии, не этот прогон.
+	var es: Node = scene.get("end_screen")
+	_ok("сигнал записан, мир не встал", Game.state == Game.State.PLAYING
+			and Game.signal_sent and Game.signal_sends >= 1 and not Game.relay_active
+			and (es == null or not es.visible),
+			"state=%d sends=%d" % [Game.state, Game.signal_sends])
+	_next(15, 0.1)
 
 
 ## Вода должна течь. Ставим воду на ровную землю, рядом копаем настоящую яму
@@ -640,12 +653,8 @@ func _t_water_check() -> void:
 func _t_anim_start() -> void:
 	# Секция «== Анимации ==»: те же проверки, что и в tools/anim_test.gd.
 	# Общий код — дублирования нет. Шаг 19 раньше звал power_test (#170 снят).
-	# Шаг релея выше доводит ядро до победы, и к этому моменту экран «ЭВАКУАЦИЯ»
-	# уже открыт. С #214 он глушит копку и E — секция проверяет героя, не финал.
-	# Прячем экран, состояние WON не трогаем: его ждёт «== Финал ==» (#212 не чиним).
-	var es: Node = scene.get("end_screen")
-	if es != null and es.has_method("hide_end"):
-		es.hide_end()
+	# Свободный сигнал (ADR-006, #315) экран эвакуации больше не открывает:
+	# секция проверяет героя в PLAYING, глушить нечего.
 	anim = AnimTestScript.Runner.new(self)
 	add_child(anim)
 	anim.start(scene)
@@ -800,7 +809,9 @@ func _t_finish() -> void:
 	print("  ПРЕДУПРЕЖДЕНИЕ  время кадра: среднее %.2f мс, максимум %.2f мс, кадров > 100 мс: %d из %d (не провал)"
 			% [avg_ms, _frame_max_ms, _frame_slow, _frame_n])
 	print("== Финал ==")
-	_ok("состояние WON", Game.state == Game.State.WON, "state=%d" % Game.state)
+	# Передача проверена на шаге 34, сразу после отсчёта. Здесь мир уже после
+	# сейв-теста (reset_run): WON свободная игра больше не ставит (ADR-006, #315).
+	_ok("прогон дошёл до финала", Game.state == Game.State.PLAYING, "state=%d" % Game.state)
 	print("")
 	print("ИТОГ: проверок %d, провалов %d" % [checks, fails])
 	get_tree().quit(1 if fails > 0 else 0)

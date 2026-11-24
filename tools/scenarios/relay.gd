@@ -1,6 +1,7 @@
 extends ScenarioBase
-## Ядро (ADR-005 § 6.3, #175, #212): шесть дуг → E 3 с у ядра → этап 6,
-## отсчёт Balance.RELAY_TIME (90 с) → победа, на финальном экране — эпилог Lore.
+## Ядро (ADR-005 § 6.3, #175, #212; ADR-006 § 2, #315): шесть дуг → E 3 с у ядра
+## → этап 6, отсчёт Balance.RELAY_TIME (90 с) → сигнал записан, мир не встаёт.
+## Эпилог Lore считается, но экрана эвакуации нет: база остаётся.
 ## Ждать полторы минуты в тесте смысла нет: отсчёт ускоряется (Game.relay_speed).
 
 const SPEED: float = 30.0          ## 90 с удержания — за 3 с реального времени
@@ -44,21 +45,26 @@ func run() -> void:
 	var t0: float = Game.relay_timer
 	await wait(0.5)
 	ok("отсчёт ускорен тестом", t0 - Game.relay_timer > 10.0, "%.1f → %.1f с" % [t0, Game.relay_timer])
-	var won: bool = await wait_until(func() -> bool: return Game.state == Game.State.WON,
-			Balance.RELAY_TIME / SPEED + 4.0)
-	ok("победа", won, "state=%d" % Game.state)
+	var done: bool = await wait_until(func() -> bool:
+		return Game.signal_sends >= 1 and not Game.relay_active, Balance.RELAY_TIME / SPEED + 4.0)
+	ok("сигнал записан, мир не встал", done and Game.signal_sent and Game.signal_sends == 1
+			and Game.state == Game.State.PLAYING, "state=%d sends=%d" % [Game.state, Game.signal_sends])
 	ok("ядро отработало", not Game.relay_active and Game.relay_timer == 0.0)
-
 	var es: EndScreen = scene.get("end_screen")
 	await await_frame()
-	ok("финальный экран показан", es != null and es.visible and es.title == "ЭВАКУАЦИЯ",
-			es.title if es != null else "нет экрана")
-	if es != null:
-		var want: String = Lore.epilogue(Game.epilogue_stats())
-		ok("эпилог из Lore на экране", es.epilogue != "" and es.epilogue == want,
-				es.epilogue.left(80))
-		ok("экран в CanvasLayer поверх мира", es.get_parent() is CanvasLayer
-				and (es.get_parent() as CanvasLayer).layer > UI.layer)
+	ok("экрана эвакуации нет", es == null or not es.visible,
+		es.title if es != null and es.visible else "")
+	# Экран живёт в CanvasLayer, даже когда скрыт: слой не сняли вместе с победой.
+	ok("экран в CanvasLayer поверх мира", es != null and es.get_parent() is CanvasLayer
+			and (es.get_parent() as CanvasLayer).layer > UI.layer,
+		str(es.get_parent()) if es != null else "нет экрана")
+	var want: String = Lore.epilogue(Game.epilogue_stats())
+	var shown: String = es.epilogue if es != null else ""
+	# Свободный успех экран не открывает, поэтому текст эпилога на нём пуст.
+	# Сам Lore обязан посчитать непустой текст по статистике этой передачи.
+	ok("эпилог Lore посчитан и на скрытый экран не положен",
+		want != "" and want.find("Кербер-9") >= 0 and shown == "",
+		"экран «%s», lore «%s»" % [shown.left(40), want.left(60)])
 	Game.relay_speed = 1.0
 	finish()
 

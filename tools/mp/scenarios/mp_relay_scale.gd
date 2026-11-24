@@ -41,7 +41,13 @@ func run_host() -> void:
 	ok("ядро поставлено", MachineBase.place_machine("RainbowCore", cell) and Game.core_cell == cell)
 	for c in [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M]:
 		Game.core_feed(c)
-	ok("шесть дуг — запуск отказывает", Game.core_arc_count() == 6 and not Game.try_finish(player))
+	# ADR-006 § 2 (#315): свободной сети достаточно ядра и шести дуг. Пять по-прежнему отказывают.
+	Game.core_arcs = Game.core_arcs & ~(1 << 5)   # бит пурпурной дуги, не маска Beams.M
+	ok("пять дуг — запуск отказывает", Game.core_arc_count() == 5 and not Game.try_finish(player))
+	Game.core_feed(Beams.M)
+	ok("шесть дуг — ядро запущено", Game.core_arc_count() == 6 and Game.try_finish(player) and Game.relay_active)
+	Game.relay_active = false
+	Game.relay_timer = 0.0
 	share_put("arcs", Game.core_arcs)
 	await barrier("dep")
 
@@ -54,6 +60,7 @@ func run_host() -> void:
 	ok("N = 1: требование одиночное",
 			await wait_until(func() -> bool: return Game.relay_req == req1, WAIT), str(Game.relay_req))
 	ok("N = 1: дуги целы", Game.core_arcs == int(share_get("arcs")), str(Game.core_arcs))
+	# Запуск выше шлёт «СИГНАЛ УШЁЛ» через тот же Game.notification, что и состав.
 	ok("уведомление команде: героев 1, ×1", notes_with("Героев на связи: 1") >= 1, str(notes))
 
 	# --- Аня вернулась: N = 2.
@@ -70,13 +77,11 @@ func run_host() -> void:
 	ok("Аня вышла снова", await wait_until(func() -> bool: return Net.peers.size() == 1, 15.0))
 	ok("N = 1 снова: требование как в первый раз", await wait_until(func() -> bool: return Game.relay_req == req1, WAIT),
 			str(Game.relay_req))
-	Game.core_feed(Beams.M)
-	Game.tasks_done = 1
-	Game.stats_ore = Balance.FREE_ORE_NEED
-	Game.nights_survived = Balance.FREE_NIGHTS_NEED
-	ok("шестая дуга — ядро запущено", Game.try_finish(player) and Game.relay_active
+	# Повторный запуск после выхода Ани: дуги целы, этапы 1–3 запуск не держат.
+	ok("повторный запуск при N = 1", Game.try_finish(player) and Game.relay_active
 			and Game.core_arcs == Game.CORE_ARCS_FREE)
 	Game.relay_active = false
+	Game.relay_timer = 0.0
 	share_clear(["req", "arcs"])
 	finish()
 

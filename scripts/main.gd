@@ -70,6 +70,10 @@ func _start() -> void:
 	player.add_to_group("player")
 	add_child(player)
 	player.global_position = World.spawn_point
+	# Метка постоянной базы (ADR-006 § 4, #315): в мире, не в HUD.
+	var mark := BaseMark.new()
+	mark.name = "BaseMark"
+	add_child(mark)
 	Game.player = player
 	UI.bind(player)
 	if mission_id != "" and not Net.is_client():
@@ -599,3 +603,26 @@ func exit_to_menu() -> void:
 func _exit_to_menu_now() -> void:
 	if is_inside_tree() and get_tree().current_scene == self and ResourceLoader.exists(MENU_SCENE):
 		get_tree().change_scene_to_file(MENU_SCENE)
+
+
+## Столбик постоянной базы. Следует за Game.base_mark_cell(): капсула, пока игрок
+## не перенёс метку на свой сундук. Не элемент HUD — рисуется в мире, как табличка руины.
+class BaseMark extends Node2D:
+	var _cell: Vector2i = Vector2i(-99, -99)
+
+	func _process(_delta: float) -> void:
+		if not Game.has_method("base_mark_cell"):
+			return
+		var cell: Vector2i = Game.base_mark_cell()
+		if cell == _cell:
+			return
+		_cell = cell
+		global_position = World.cell_to_world(cell) + Vector2(0.0, -10.0)
+		queue_redraw()
+
+	func _draw() -> void:
+		draw_rect(Rect2(-1.0, -2.0, 2.0, 12.0), Color(0.55, 0.85, 1.0, 0.9))
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(0.0, -14.0), Vector2(7.0, -8.0), Vector2(0.0, -2.0),
+		]), Color(0.35, 1.0, 0.7, 0.95))
+		draw_rect(Rect2(-8.0, -16.0, 16.0, 1.0), Color(0.7, 0.95, 1.0, 0.5))

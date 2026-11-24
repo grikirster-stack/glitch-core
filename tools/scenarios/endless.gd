@@ -6,12 +6,11 @@ extends ScenarioBase
 ##    клеток угля нет, в тумане уголь отрос.
 ## 2. Фантомы. Тень при смерти роняет SHADE_DROP_COAL угля, мотылёк роя —
 ##    SWARM_DROP_COPPER меди. Чёрный ящик не мешает: предметы лежат отдельно.
-## 3. После сигнала. Победа → экран с кнопкой «Остаться на планете». Клик мышью
-##    по stay_rect — то же, что C: PLAYING, signal_sent, ядро на месте, карточка
-##    зовёт к одному делу: непрочитанный терминал, иначе цвет маяка, иначе
-##    «Смени день». Пока экран открыт, ЛКМ не копает мир под ним,
-##    а клик мимо кнопки игру не продолжает. Повторный запуск ядра доходит до
-##    второй победы, в эпилоге — «вторая передача». Хардкор кнопки не даёт.
+## 3. После сигнала (ADR-006 § 2, #315). Успех пишет signal_sent и счётчик,
+##    экран эвакуации не открывается, клик копает. Карточка зовёт к одному делу:
+##    непрочитанный терминал, иначе цвет маяка, иначе «Смени день».
+##    Повторный запуск доходит до второй передачи без кнопки «Остаться».
+##    Принудительная победа хардкора кнопки не даёт.
 
 
 func run() -> void:
@@ -123,16 +122,15 @@ func _stay() -> void:
 	Game.try_finish(player)
 	ok("ядро запущено для проверки финала", Game.relay_active)
 	Game.relay_timer = 0.05
-	var won: bool = await wait_until(func() -> bool: return Game.state == Game.State.WON, 2.0)
-	ok("сигнал ушёл — победа", won and Game.signal_sent and Game.signal_sends == 1,
+	var won: bool = await wait_until(func() -> bool:
+		return Game.signal_sends >= 1 and Game.state == Game.State.PLAYING, 2.0)
+	ok("сигнал записан, мир не встал", won and Game.signal_sent and Game.signal_sends == 1,
 			"state=%d sends=%d" % [Game.state, Game.signal_sends])
 	var es: EndScreen = scene.get("end_screen")
 	await await_frame()
-	ok("на финале есть «Остаться на планете»", es != null and es.visible and es.can_stay
-			and es.stay_rect.size.x > 0.0 and es.stay_rect.size.y >= EndScreen.STAY_MIN_HIT,
-			es.title if es != null else "нет экрана")
+	ok("экрана эвакуации нет", es == null or not es.visible,
+		es.title if es != null and es.visible else "")
 	var beacon: Vector2i = World.beacon_cell
-	# Пока экран открыт, зажатая ЛКМ не должна копать клетку под курсором (#214).
 	var dig: Vector2i = find_mineable()
 	ok("есть клетка, которую клик мог бы выкопать", dig.x >= 0, str(dig))
 	var dig_before: int = World.get_tile_v(dig) if dig.x >= 0 else -1
@@ -140,21 +138,9 @@ func _stay() -> void:
 		aim(World.cell_to_world(dig))
 		press_mouse(MOUSE_BUTTON_LEFT)
 		await wait(0.6)
-		ok("клик сквозь экран победы не копает", World.get_tile_v(dig) == dig_before
-				and player.mining_progress <= 0.0,
-				"тайл %d → %d, прогресс %.2f" % [dig_before, World.get_tile_v(dig), player.mining_progress])
+		ok("клик после сигнала копает", World.get_tile_v(dig) != dig_before,
+				"тайл %d → %d" % [dig_before, World.get_tile_v(dig)])
 		release_mouse(MOUSE_BUTTON_LEFT)
-	# Клик мимо кнопки игру не продолжает: только прямоугольник stay_rect.
-	_click_screen(es.stay_rect.position + Vector2(-8.0, es.stay_rect.size.y * 0.5))
-	await await_frame()
-	ok("клик мимо кнопки не оставляет на планете", Game.state == Game.State.WON and es.visible,
-			"state=%d" % Game.state)
-	# Клик мышью по кнопке — тот же путь, что C: событие в EndScreen._gui_input.
-	_click_screen(es.stay_rect.get_center())
-	var stayed: bool = await wait_until(func() -> bool: return Game.state == Game.State.PLAYING, 2.0)
-	ok("клик по кнопке — остались, состояние PLAYING", stayed and Game.signal_sent,
-			"state=%d" % Game.state)
-	ok("экран финала закрыт", es != null and not es.visible)
 	ok("ядро на месте", World.beacon_cell == beacon, str(World.beacon_cell))
 	var hud: HUD = UI.hud
 	if hud != null:
@@ -167,11 +153,11 @@ func _stay() -> void:
 	ok("повторный запуск ядра возможен", again and Game.relay_active,
 			"relay_active=%s" % str(Game.relay_active))
 	Game.relay_timer = 0.05
-	var won2: bool = await wait_until(func() -> bool: return Game.state == Game.State.WON, 2.0)
-	ok("вторая передача — снова победа", won2 and Game.signal_sends == 2, "sends=%d" % Game.signal_sends)
+	var won2: bool = await wait_until(func() -> bool:
+		return Game.signal_sends >= 2 and Game.state == Game.State.PLAYING, 2.0)
+	ok("вторая передача в том же мире", won2 and Game.signal_sends == 2, "sends=%d" % Game.signal_sends)
 	await await_frame()
-	ok("эпилог второй передачи", es != null and es.visible and es.epilogue.contains("Вторая передача"),
-			es.epilogue.right(60) if es != null else "")
+	ok("вторая передача тоже без экрана", es == null or not es.visible)
 	# Хардкор: победа завершает забег, кнопки нет и C ничего не делает.
 	# Флаг сцены, не аргумент — следующий сценарий его не унаследует.
 	scene.set("hardcore", true)

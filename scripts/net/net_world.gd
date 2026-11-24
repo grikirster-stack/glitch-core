@@ -71,6 +71,8 @@ var hash_checks: int = 0
 var hash_bad: int = 0
 var last_host_hash: int = 0
 var globals_rx: int = 0
+## Хост: сколько раз GLOBAL ушёл сразу, не дожидаясь такта (сигнал, перенос метки).
+var globals_now: int = 0
 
 # --- оба
 ## Размер последнего снимка, Б.
@@ -345,6 +347,18 @@ func _send_global(with_hash: bool) -> void:
 	var payload: PackedByteArray = NetCodec.encode_global(g)
 	for id in synced:
 		Net.send(NetCodec.Msg.GLOBAL, payload, int(id))
+
+
+## Хост: отдать GLOBAL сейчас, не ждать такта. Сигнал и перенос метки зовут это,
+## чтобы поздний вход и уже вошедшие увидели клетку в том же кадре, не через секунду.
+func publish_global() -> void:
+	globals_now += 1
+	if not Net.is_host() or synced.is_empty():
+		_global_dirty = true
+		return
+	_send_global(false)
+	_global_dirty = false
+	_global_t = 0.0
 
 
 # ------------------------------------------------------------------ СНИМОК

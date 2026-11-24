@@ -664,6 +664,7 @@ func _do_place(cell: Vector2i, fresh: bool = true) -> void:
 		# «machine:» — 8 символов, вид машины начинается с девятого.
 		var kind: String = place.substr(8)
 		if MachineBase.place_machine(kind, cell):
+			_stamp_placed(kind, cell)
 			inv.remove_at(inv.selected, 1)
 			_sfx_here("place_machine", -8.0)
 		else:
@@ -1617,10 +1618,53 @@ func _feedback_hit(knock: Vector2) -> void:
 
 ## Сундук рядом по E: у прокси окно открывается у владельца — слой команд MP-G (#91).
 func _open_chest(c: Chest) -> void:
+	# E и тап сходятся здесь (тап держит KEY_E). Открытие метку не двигает:
+	# перенос — кнопка в окне сундука, иначе заглянуть в склад значит перенести налёт.
+	# Чужой сундук говорит отказом сразу: окно всё равно откроется.
+	_refuse_foreign_chest(c)
 	if net_role != NetRole.PROXY:
 		UI.open_chest(c)
 	else:
 		InvOps.host_open(self, c)
+
+
+## Чужой сундук: отказ текстом, метку не трогаем. Капсульный сундук лагеря молчит.
+## Прокси не решает: сообщение уходит тому, кто нажал E.
+func _refuse_foreign_chest(c: Chest) -> void:
+	if c == null or not is_instance_valid(c):
+		return
+	if not Net.is_authority():
+		return
+	if c.cell == World.camp_chest_cell:
+		return
+	var owner: int = int(c.owner_uid)
+	var uid: int = int(net_uid) if get("net_uid") != null else 0
+	if owner >= 0 and owner != uid:
+		_notify("Чужой сундук. Метку базы ставит только хозяин.", Color(1.0, 0.55, 0.4))
+
+
+## Кнопка «Сделать меткой базы» в окне сундука. Хост решает сам, клиент шлёт команду.
+## true — метка перенесена. Сообщение слышит тот, кто нажал кнопку.
+func request_base_mark(c: Chest) -> bool:
+	if c == null or not is_instance_valid(c):
+		return false
+	if Net.is_client():
+		InvOps.send(NetCodec.InvOp.MARK, {"cell": InvOps.cell_of(c)})
+		return false
+	if Game.base_mark_move(c.cell, self):
+		_notify("Метка базы перенесена на этот сундук.", Color(0.45, 0.95, 0.7))
+		return true
+	return false
+
+
+## Игрок поставил машину. Сундук запоминает, чей он: иначе чужой неотличим от своего.
+func _stamp_placed(kind: String, cell: Vector2i) -> void:
+	if kind != "Chest":
+		return
+	var m = World.machines.get(cell)
+	if m == null or not (m is Chest):
+		return
+	m.owner_uid = int(net_uid) if get("net_uid") != null else 0
 
 
 ## Владелец: удар с хоста (событие HIT) — отбрасывание, заморозка ввода, вспышка, тряска.

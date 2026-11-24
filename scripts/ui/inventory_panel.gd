@@ -309,6 +309,19 @@ func _put_all_rect() -> Rect2:
 	return Rect2(_panel_pos() + Vector2(116, 184), Vector2(96, _chest_btn_h()))
 
 
+## «Сделать меткой базы». ПК: под «Забрать/Сложить», 22 px, мышь попадает в центр.
+## Телефон: тот же ряд, что «осмотр» и «закрыть», 48 px — палец не целится в 22.
+## Пустой прямоугольник — клик не ловит (сундук не открыт).
+func _mark_rect() -> Rect2:
+	if chest == null:
+		return Rect2()
+	if not UI.touch_on:
+		# Под «Забрать/Сложить» (они кончаются на 236). Сетка инвентаря ниже.
+		return Rect2(_panel_pos() + Vector2(16, 240), Vector2(300, 22))
+	# «Забрать/Сложить/переложить» кончаются на 232. Кнопка — под ними.
+	return Rect2(_panel_pos() + Vector2(16, 236), Vector2(304, 48))
+
+
 ## «Переложить»: тот же перенос стопки, что Shift+ЛКМ. Только на телефоне и
 ## только при открытом сундуке — на ПК жест остаётся Shift+ЛКМ.
 func _move_rect() -> Rect2:
@@ -322,14 +335,14 @@ func _move_rect() -> Rect2:
 func _inspect_rect() -> Rect2:
 	if not UI.touch_on:
 		return Rect2()
-	var y: float = 236.0 if chest != null else 78.0
+	var y: float = 288.0 if chest != null else 78.0
 	return Rect2(_panel_pos() + Vector2(16, y), Vector2(148, 48))
 
 
 func _close_rect() -> Rect2:
 	if not UI.touch_on:
 		return Rect2()
-	var y: float = 236.0 if chest != null else 78.0
+	var y: float = 288.0 if chest != null else 78.0
 	return Rect2(_panel_pos() + Vector2(172, y), Vector2(148, 48))
 
 
@@ -362,8 +375,12 @@ func _inv_max_scroll() -> int:
 ## На телефоне ряд кнопок сундука кончается на 232 — сетка ниже, иначе накроет его.
 func _inv_y() -> float:
 	if not UI.touch_on:
-		return 258.0
-	return 292.0 if chest != null else 134.0
+		# Сундук открыт: кнопка метки кончается на 262, «ВЫ» — на 6 px выше сетки.
+		# Четыре ряда кончаются на 460, дуги стоят на 492.
+		# Кнопка метки: базовая линия 256, чернила до ~272. «ВЫ» — ниже.
+		return 292.0 if chest != null else 258.0
+	# Кнопки сундука кончаются на 336. «ВЫ» на 6 px выше сетки.
+	return 344.0 if chest != null else 134.0
 
 
 ## Колонок в верхнем ряду — ровно хотбар; рюкзак всегда по 10 (#161).
@@ -562,6 +579,42 @@ func _draw() -> void:
 	_tag = ""
 
 
+## Подпись кнопки метки. Чужой и капсульный сундук говорят, почему нельзя.
+func _mark_label() -> String:
+	if _mark_here():
+		return "Это метка базы"
+	if _mark_camp():
+		return "Капсула меткой не становится"
+	if _mark_foreign():
+		return "Чужой — метку ставит хозяин"
+	return "Сделать меткой базы"
+
+
+## Кнопка жива только у своего сундука, который ещё не метка.
+func _mark_enabled() -> bool:
+	return chest != null and not _mark_here() and not _mark_foreign() and not _mark_camp()
+
+
+func _mark_here() -> bool:
+	if chest == null or not Game.has_method("base_mark_cell"):
+		return false
+	return Game.get("base_mark_set") == true and Game.base_mark_cell() == chest.cell
+
+
+func _mark_camp() -> bool:
+	return chest != null and chest.cell == World.camp_chest_cell
+
+
+func _mark_foreign() -> bool:
+	if chest == null:
+		return false
+	var owner: int = int(chest.get("owner_uid"))
+	if owner < 0:
+		return false
+	var uid: int = int(player.net_uid) if player != null and player.get("net_uid") != null else 0
+	return owner != uid
+
+
 func _draw_chest(origin: Vector2) -> void:
 	_tag = "chest"
 	if chest == null:
@@ -593,6 +646,7 @@ func _draw_chest(origin: Vector2) -> void:
 			break
 	_button(_take_all_rect(), "Забрать всё", has_chest)
 	_button(_put_all_rect(), "Сложить всё", has_pack)
+	_button(_mark_rect(), _mark_label(), _mark_enabled())
 	if UI.touch_on:
 		_button(_move_rect(), "переложить", _quick_latch)
 		_button(_inspect_rect(), "осмотр", not _inspect.is_empty())
@@ -631,7 +685,11 @@ func _draw_inventory(origin: Vector2) -> void:
 	var cols: int = _hotbar_cols()
 	var keys: String = "1-0" if cols >= Inventory.HOTBAR_MAX else "1-%d" % cols
 	var w: float = _text(origin + Vector2(16, inv_y - 6), "ВЫ", 40, UI.FONT["small"], C_HEAD)
-	_text(origin + Vector2(16 + w + 8, inv_y - 6), "верхний ряд — хотбар (%s)" % keys, 300 - w, UI.FONT["small"], C_DIM)
+	# Кнопка метки занимает x 16…316. Подпись хотбара начинается правее неё.
+	var hint_x: float = 16.0 + w + 8.0
+	if chest != null:
+		hint_x = maxf(hint_x, 324.0)
+	_text(origin + Vector2(hint_x, inv_y - 6), "верхний ряд — хотбар (%s)" % keys, 360.0 - hint_x, UI.FONT["small"], C_DIM)
 	# Разделитель хотбар | рюкзак — посередине зазора между рядами, по ширине рюкзака (10).
 	var a: Rect2 = _inv_slot_rect(0)
 	var b: Rect2 = _inv_slot_rect(cols + Inventory.HOTBAR_MAX - 1)
@@ -686,9 +744,10 @@ func _station_line(_station: String) -> Array:
 func _draw_goal(origin: Vector2) -> void:
 	if Game.in_mission():
 		return
-	# На телефоне сетка инвентаря ниже на 34 (ряд кнопок сундука 48 px) и
-	# кончается на 524. Дуги уезжают под неё: панель 540, низ строки — 530.
-	var y: float = origin.y + (530.0 if UI.touch_on else 496.0)
+	# Телефон, сундук открыт: три ряда кончаются на 494. Дуги — под ними, выше тоста.
+	# Закрытый сундук на телефоне оставляет дуги на 530.
+	# ПК, сундук открыт: сетка кончается на 438, дуги на 492, выше тоста (513).
+	var y: float = origin.y + (530.0 if UI.touch_on and chest == null else (508.0 if UI.touch_on else (492.0 if chest != null else 496.0)))
 	var need: int = Game.arc_need()
 	var lit: int = Game.core_arcs & need
 	var label: String = "Дуги %d/%d" % [Game.core_arc_count(), Game.arc_need_count()]
@@ -878,6 +937,8 @@ func _hover_target() -> Dictionary:
 			return {"kind": "take_all"}
 		if _put_all_rect().has_point(p):
 			return {"kind": "put_all"}
+		if _mark_rect().has_point(p):
+			return {"kind": "mark"}
 		if _move_rect().has_point(p):
 			return {"kind": "move"}
 	if _inspect_rect().has_point(p):
@@ -1192,6 +1253,11 @@ func _click(pos: Vector2, right: bool, shift: bool = false) -> void:
 			put_all()
 			queue_redraw()
 			return
+		if _mark_rect().has_point(pos) and not right:
+			_quick_latch = false
+			mark_base()
+			queue_redraw()
+			return
 		if _move_rect().has_point(pos) and not right:
 			_quick_latch = not _quick_latch
 			queue_redraw()
@@ -1290,6 +1356,19 @@ func take_all() -> int:
 
 
 ## «Сложить всё»: рюкзак (всё, кроме хотбара) — в сундук.
+## «Сделать меткой базы». Хост переносит сам, клиент шлёт MARK. Чужой и капсульный
+## кнопку не жмут: подпись уже говорит, почему нельзя.
+func mark_base() -> bool:
+	if chest == null or player == null:
+		return false
+	if not _mark_enabled():
+		_feedback(_mark_label(), C_WARN)
+		return false
+	if player.has_method("request_base_mark"):
+		return player.request_base_mark(chest)
+	return false
+
+
 func put_all() -> int:
 	if chest == null:
 		return 0

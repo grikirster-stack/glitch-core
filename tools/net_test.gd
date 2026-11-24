@@ -18,8 +18,8 @@ extends SceneTree
 
 ## Схема протокола PROTO = SCHEMA_PROTO. Поменяли кодек, порядок IDs или таблицы DB —
 ## поднимите Net.PROTO и впишите сюда новый PROTO и хэш, который напечатает тест.
-const SCHEMA_PROTO: int = 25
-const SCHEMA_HASH: String = "ca4e41257d929808f9eaa02b7ee5a18d"
+const SCHEMA_PROTO: int = 26
+const SCHEMA_HASH: String = "20330461b80979f5ff100f8dfbeefbc7"
 
 const PORT_BASE: int = 24900
 const LOOP: String = "127.0.0.1"
@@ -227,10 +227,18 @@ func _codec() -> void:
 	var gl: Dictionary = {"time": 0.5, "day": 65535, "state": 2, "research": 999, "stage": 4,
 			"relay_active": true, "relay_timer": 180.0, "tasks_done": 3, "tasks_total": 12, "threat": 1,
 			"threat_budget": 7.25, "brownout": false, "hash": 0xFFFFFFFF, "game_time": 3600.5,
-			"core_arcs": 0, "core_cell": Vector2i(-1, -1)}
+			"core_arcs": 0, "core_cell": Vector2i(-1, -1),
+			"signal_sends": 65535, "base_mark": Vector2i(639, 179), "base_mark_set": true}
+	var gl_none: Dictionary = gl.duplicate()
+	gl_none["base_mark"] = Vector2i(-1, -1)
+	gl_none["base_mark_set"] = false
+	gl_none["signal_sends"] = 0
 	var gb: PackedByteArray = NetCodec.encode_global(gl)
 	ok("GLOBAL — %d Б, туда-обратно" % NetCodec.GLOBAL_BYTES, gb.size() == NetCodec.GLOBAL_BYTES and NetCodec.decode_global(gb) == gl,
 			str(NetCodec.decode_global(gb)))
+	var gbn: PackedByteArray = NetCodec.encode_global(gl_none)
+	ok("GLOBAL без метки: 0xFFFF, счётчик 0", gbn.size() == NetCodec.GLOBAL_BYTES
+			and NetCodec.decode_global(gbn) == gl_none, str(NetCodec.decode_global(gbn)))
 
 	# События
 	var ev: Dictionary = NetCodec.decode_event(NetCodec.encode_sound(Vector2(100, 200), 255, -128.0, 2.55))
@@ -626,6 +634,7 @@ func _codec_inv() -> void:
 		[Op.SPLIT, {"from": NetCodec.Box.INV, "fslot": 0, "to": NetCodec.Box.INV, "tslot": 35, "id": 9, "n": 0,
 				"flags": 0, "cell": NetCodec.CELL_NONE}],
 		[Op.TAKE_ALL, {"cell": 4242}], [Op.PUT_ALL, {"cell": 0}], [Op.CLOSE, {"cell": NetCodec.CELL_NONE}],
+		[Op.MARK, {"cell": 4242}],
 		[Op.CRAFT, {"recipe": 34, "times": 3}],
 		[Op.DROP, {"from": NetCodec.Box.INV, "fslot": 35, "id": 3, "n": 64, "cell": NetCodec.CELL_NONE}],
 		[Op.SELECT, {"slot": 9}], [Op.UNLOCK, {"node": 5}],
@@ -639,7 +648,7 @@ func _codec_inv() -> void:
 			print("    расхождение: команда %d" % int(smp[0]))
 		if not NetCodec.decode_inv_args(int(smp[0]), b.slice(0, b.size() - 1)).is_empty():
 			bad_ok = false
-	ok("команды InvOps: аргументы туда-обратно (9 видов)", all_ok)
+	ok("команды InvOps: аргументы туда-обратно (10 видов)", all_ok)
 	ok("команды InvOps: короткий кадр — отказ", bad_ok and NetCodec.decode_inv_args(99, PackedByteArray([1])).is_empty())
 	var move: PackedByteArray = NetCodec.frame(NetCodec.Msg.CMD, NetCodec.encode_cmd(Op.MOVE, 1,
 			NetCodec.encode_inv_args(Op.MOVE, samples[0][1])))

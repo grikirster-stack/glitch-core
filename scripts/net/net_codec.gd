@@ -619,9 +619,10 @@ static func presses_bump(presses: int, i: int) -> int:
 ## time f32 · смена u16 · состояние u8 · данные u16 (заглушка 0, #169: счётчик снят)
 ## · этап u8 · релей u8 + f32 · задания 2×u8 · угроза u8 + f32 · браун-аут u8 ·
 ## hash мира u32 · game_time f32 · дуги ядра u8 · клетка ядра u32 (idx, нет ядра —
-## 0xFFFFFFFF). 36 Б (#175, PROTO 15).
+## 0xFFFFFFFF) · передачи u16 · метка базы 2×u16 (0xFFFF — метки нет).
+## 42 Б (#315, PROTO 24). Потолок 63 в битах threat снят: счётчик полный.
 
-const GLOBAL_BYTES: int = 36
+const GLOBAL_BYTES: int = 42
 
 
 static func encode_global(d: Dictionary) -> PackedByteArray:
@@ -647,6 +648,11 @@ static func encode_global(d: Dictionary) -> PackedByteArray:
 	if cc.x >= 0 and cc.y >= 0:
 		idx = cell_idx(cc)
 	out.encode_u32(32, idx)
+	out.encode_u16(36, clampi(int(d.get("signal_sends", 0)), 0, 0xFFFF))
+	var mark: Vector2i = d.get("base_mark", Vector2i(-1, -1))
+	var set: bool = bool(d.get("base_mark_set", false)) and mark.x >= 0 and mark.y >= 0
+	out.encode_u16(38, clampi(mark.x, 0, 0xFFFF) if set else 0xFFFF)
+	out.encode_u16(40, clampi(mark.y, 0, 0xFFFF) if set else 0xFFFF)
 	return out
 
 
@@ -661,6 +667,9 @@ static func decode_global(b: PackedByteArray) -> Dictionary:
 		"threat_budget": b.decode_float(18), "brownout": b.decode_u8(22) != 0,
 		"hash": b.decode_u32(23), "game_time": b.decode_float(27),
 		"core_arcs": b.decode_u8(31) & 0x7F, "core_cell": _cell_or_none(b.decode_u32(32)),
+		"signal_sends": b.decode_u16(36),
+		"base_mark": _mark_cell(b.decode_u16(38), b.decode_u16(40)),
+		"base_mark_set": b.decode_u16(38) != 0xFFFF,
 	}
 
 
@@ -940,7 +949,8 @@ static func schema_sample() -> PackedByteArray:
 				"presses": 0x4321, "pos": Vector2(5000.5, 1400.25), "vel": Vector2(-248, 520), "flags": 3}),
 		encode_global({"time": 0.66, "day": 3, "state": 0, "research": 12, "stage": 2,
 				"relay_active": true, "relay_timer": 90.5, "tasks_done": 2, "tasks_total": 5,
-				"threat": 1, "threat_budget": 7.5, "brownout": true, "hash": 0xDEADBEEF, "game_time": 1234.5}),
+				"threat": 1, "threat_budget": 7.5, "brownout": true, "hash": 0xDEADBEEF, "game_time": 1234.5,
+				"signal_sends": 2, "base_mark": Vector2i(12, 34), "base_mark_set": true}),
 		encode_sound(Vector2(100, 200), 5, -6.0, 1.2),
 		encode_notify(Vector2(0, 0), "Рядом нет вентиляции", Color(1.0, 0.5, 0.25), 0),
 		encode_fx(Vector2(1, 2), 3, 4),
@@ -1162,7 +1172,7 @@ static func lobby_schema_sample() -> PackedByteArray:
 ## (encode_inv_args); итог — CMD_RESULT, свежий INV владельцу и CHEST подписчикам сундука.
 
 ## Команды CMD. Только дописывать в конец (иначе — поднять Net.PROTO).
-enum InvOp { NONE, MOVE, SPLIT, TAKE_ALL, PUT_ALL, CRAFT, DROP, SELECT, UNLOCK, CLOSE }
+enum InvOp { NONE, MOVE, SPLIT, TAKE_ALL, PUT_ALL, CRAFT, DROP, SELECT, UNLOCK, CLOSE, MARK }
 ## Контейнеры команд: инвентарь героя, открытый сундук, «рука» (окно, по сети не ходит).
 enum Box { INV, CHEST, HAND }
 ## События TECH. Только дописывать в конец.
@@ -1198,11 +1208,18 @@ static func _cell_or_none(i: int) -> Vector2i:
 	return idx_cell(i)
 
 
+## Метка базы: 0xFFFF по x — метки нет. Иначе клетка как есть (мир уже в u16).
+static func _mark_cell(x: int, y: int) -> Vector2i:
+	if x == 0xFFFF:
+		return Vector2i(-1, -1)
+	return Vector2i(x, y)
+
+
 ## Аргументы команды по её виду (поля словаря — в скобках):
 ##   MOVE, SPLIT — откуда u8 (from, Box) · слот u8 (fslot) · куда u8 (to) · слот u8 (tslot,
 ##       SLOT_AUTO — сам) · ожидаемый предмет u8 (id) · n u16 · флаги u8 (MOVE_SWAP) ·
 ##       клетка сундука u32 (cell, индекс cell_idx) — 12 Б;
-##   TAKE_ALL, PUT_ALL, CLOSE — клетка сундука u32 (cell);
+##   TAKE_ALL, PUT_ALL, CLOSE, MARK — клетка сундука u32 (cell);
 ##   CRAFT — рецепт u16 (recipe, индекс DB.recipes) · раз u8 (times);
 ##   DROP — откуда u8 · слот u8 · id u8 · n u16 · клетка u32;
 ##   SELECT — слот u8 (slot); UNLOCK — узел u8 (node, индекс Tech.ORDER).
@@ -1218,7 +1235,7 @@ static func encode_inv_args(op: int, d: Dictionary) -> PackedByteArray:
 			s.put_u16(clampi(int(d.get("n", 0)), 0, 0xFFFF))
 			s.put_u8(int(d.get("flags", 0)) & 0xFF)
 			s.put_u32(int(d.get("cell", CELL_NONE)) & 0xFFFFFFFF)
-		InvOp.TAKE_ALL, InvOp.PUT_ALL, InvOp.CLOSE:
+		InvOp.TAKE_ALL, InvOp.PUT_ALL, InvOp.CLOSE, InvOp.MARK:
 			s.put_u32(int(d.get("cell", CELL_NONE)) & 0xFFFFFFFF)
 		InvOp.CRAFT:
 			s.put_u16(int(d.get("recipe", 0)) & 0xFFFF)
@@ -1238,7 +1255,7 @@ static func encode_inv_args(op: int, d: Dictionary) -> PackedByteArray:
 
 ## Размер аргументов каждой команды, Б.
 const INV_ARGS_SIZE: Dictionary = {InvOp.MOVE: 12, InvOp.SPLIT: 12, InvOp.TAKE_ALL: 4,
-		InvOp.PUT_ALL: 4, InvOp.CLOSE: 4, InvOp.CRAFT: 3, InvOp.DROP: 9, InvOp.SELECT: 1,
+		InvOp.PUT_ALL: 4, InvOp.CLOSE: 4, InvOp.MARK: 4, InvOp.CRAFT: 3, InvOp.DROP: 9, InvOp.SELECT: 1,
 		InvOp.UNLOCK: 1}
 
 
@@ -1251,7 +1268,7 @@ static func decode_inv_args(op: int, b: PackedByteArray) -> Dictionary:
 		InvOp.MOVE, InvOp.SPLIT:
 			return {"from": s.get_u8(), "fslot": s.get_u8(), "to": s.get_u8(), "tslot": s.get_u8(),
 					"id": s.get_u8(), "n": s.get_u16(), "flags": s.get_u8(), "cell": s.get_u32()}
-		InvOp.TAKE_ALL, InvOp.PUT_ALL, InvOp.CLOSE:
+		InvOp.TAKE_ALL, InvOp.PUT_ALL, InvOp.CLOSE, InvOp.MARK:
 			return {"cell": s.get_u32()}
 		InvOp.CRAFT:
 			return {"recipe": s.get_u16(), "times": s.get_u8()}
@@ -1336,6 +1353,7 @@ static func inv_schema_sample() -> PackedByteArray:
 		encode_inv_args(InvOp.DROP, {"from": Box.INV, "fslot": 35, "id": 3, "n": 64, "cell": CELL_NONE}),
 		encode_inv_args(InvOp.SELECT, {"slot": 9}),
 		encode_inv_args(InvOp.UNLOCK, {"node": 5}),
+		encode_inv_args(InvOp.MARK, {"cell": 4242}),
 		encode_chest(cell_idx(Vector2i(320, 90)), CHEST_OPEN, [[9, 99], [0, 0], [255, 65535]]),
 		encode_tech(TechEv.UNLOCK, 12, 1),
 		encode_tech(TechEv.FRAGMENT, 0, 0, "…сигнал с глубины 40…"),

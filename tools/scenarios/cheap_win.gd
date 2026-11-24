@@ -18,7 +18,8 @@ func run() -> void:
 	var minutes: float = honest / 60.0
 	print("  [замер] честный забег: %.1f с игрового времени (%.1f мин), от старта %.1f с" % [
 			honest, minutes, Game.game_time - t0])
-	ok("честный путь доходит до победы", Game.state == Game.State.WON, "state=%d" % Game.state)
+	ok("честный путь записывает сигнал и не встаёт", Game.state == Game.State.PLAYING
+			and Game.signal_sent and Game.signal_sends >= 1, "state=%d sends=%d" % [Game.state, Game.signal_sends])
 	# Было: 6 с накрутки (tasks_done, stats_ore, прыжок часов, core_feed).
 	# Стало: терминал E, 12 руды киркой, 4 блока ПКМ, ночь часами игры.
 	# Удержание Balance.RELAY_TIME в зачёт не входит — отсчёт ускорен, иначе сценарий не уложится.
@@ -130,10 +131,12 @@ func _honest() -> float:
 	# часы забега короткими: в замер честного пути оно не входит, см. печать ниже.
 	var hold0: float = Game.game_time
 	Game.relay_speed = 30.0
-	var won: bool = await wait_until(func() -> bool: return Game.state == Game.State.WON, 12.0)
+	var won: bool = await wait_until(func() -> bool:
+		return Game.signal_sends >= 1 and not Game.relay_active, 12.0)
 	var hold_clock: float = Game.game_time - hold0
 	Game.relay_speed = 1.0
-	ok("удержание дошло до эвакуации", won)
+	ok("удержание записало сигнал, мир не встал", won and Game.state == Game.State.PLAYING
+			and Game.signal_sent, "state=%d" % Game.state)
 	print("  [замер] удержание в зачёте: %.1f с часов (релей ускорен ×30, в игре %.0f с)" % [
 			hold_clock, Balance.RELAY_TIME])
 	print("  [замер] удержание без ускорения было бы %.0f с; фантомов на ускоренном отсчёте не считаем" % Balance.RELAY_TIME)
