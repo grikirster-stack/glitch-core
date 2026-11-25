@@ -537,6 +537,10 @@ func _t_day_result() -> void:
 			"было %d, стало %d, t=%.3f" % [_day0, Game.day_number, Game.time_of_day])
 	_ok("day_started пришёл один раз", _day_signals == 1, "n=%d" % _day_signals)
 	Game.day_started.disconnect(_on_day_started)
+	# Рассвет оставляет часы в ночи. Дальше релей ставит устройство у метки,
+	# и директор начинает налёт. Плашка размера интерфейса тогда видит строку
+	# налёта вместо подсказки этапа. День здесь — как до проверки суток.
+	Game.time_of_day = 0.5
 	_next(14)
 
 

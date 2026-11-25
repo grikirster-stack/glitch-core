@@ -124,12 +124,22 @@ func reset_run() -> void:
 	base_mark_pending = Vector2i(-1, -1)
 	base_mark_wave = Vector2i(-1, -1)
 	raid_active = false
+	raid_phase = 0
+	raid_number = 0
+	raid_target = Vector2i(-1, -1)
+	raid_reward_id = 0
+	raid_remain = 0.0
+	raid_checked = Vector2i(-1, -1)
+	raid_damage = ""
 	# --- Журнал и чертежи (#169): живут один забег.
 	Tech.reset()
 	_apply_blueprint_flag()
 	# Цвета маяка, которые карточка уже видела, тоже живут один забег.
+	# Строка налёта тоже: иначе следующий сценарий видит чужую плашку.
 	if UI.hud != null:
 		UI.hud._pharos_seen = 0
+		UI.hud.raid_line = ""
+		UI.hud.raid_cell = Vector2i(-1, -1)
 
 
 func _process(delta: float) -> void:
@@ -416,6 +426,20 @@ var base_mark_pending: Vector2i = Vector2i(-1, -1)
 var base_mark_wave: Vector2i = Vector2i(-1, -1)
 ## Налёт идёт. Ставит будущий цикл налётов; пока его нет — только сценарий.
 var raid_active: bool = false
+## Фаза налёта: 0 нет, 1 предупреждение, 2 идёт, 3 итог.
+var raid_phase: int = 0
+## Номер налёта за забег. Первый проверяет один вход, второй ищет другой.
+var raid_number: int = 0
+## Клетка цели (устройство или внешний участок). (-1, -1) — цели нет.
+var raid_target: Vector2i = Vector2i(-1, -1)
+## id награды этого налёта. 0 — ещё не выдана. Один раз на id, переживает сейв.
+var raid_reward_id: int = 0
+## Секунды до контакта (предупреждение) или до конца попытки (налёт).
+var raid_remain: float = 0.0
+## Вход, который уже проверял прошлый налёт. (-1, -1) — ещё не проверяли.
+var raid_checked: Vector2i = Vector2i(-1, -1)
+## Что сломал налёт: "" / "section" / "device". Клиент рисует итог.
+var raid_damage: String = ""
 ## Край прошлого кадра: сценарий ставит raid_active через set, без сигнала.
 var _raid_was: bool = false
 
@@ -1087,6 +1111,8 @@ const SAVE_FIELDS: Array[String] = [
 	"core_arcs", "core_cell",            # дуги и активное ядро (#175)
 	"signal_sent", "signal_sends",       # бесконечная игра (#174)
 	"base_mark", "base_mark_set", "base_mark_pending", "base_mark_wave",  # метка базы (ADR-006, #315)
+	"raid_active", "raid_phase", "raid_number", "raid_target",  # налёт (ADR-006 § 4, #316)
+	"raid_reward_id", "raid_remain", "raid_checked", "raid_damage",
 	"blueprints",                        # чертежи команды (ADR-005 § 7.1, #169)
 ]
 
@@ -1150,6 +1176,25 @@ func load_state(d: Dictionary) -> void:
 			base_mark = d["base_mark"]
 		base_mark_pending = d.get("base_mark_pending", Vector2i(-1, -1))
 		base_mark_wave = d.get("base_mark_wave", Vector2i(-1, -1))
+	# Старый файл налёта не знает. Грязную фазу с прошлого забега не оставляем.
+	if not d.has("raid_phase"):
+		raid_active = false
+		raid_phase = 0
+		raid_number = 0
+		raid_target = Vector2i(-1, -1)
+		raid_reward_id = 0
+		raid_remain = 0.0
+		raid_checked = Vector2i(-1, -1)
+		raid_damage = ""
+	else:
+		raid_phase = int(d.get("raid_phase", 0))
+		raid_number = int(d.get("raid_number", 0))
+		raid_target = d.get("raid_target", Vector2i(-1, -1))
+		raid_reward_id = int(d.get("raid_reward_id", 0))
+		raid_remain = float(d.get("raid_remain", 0.0))
+		raid_checked = d.get("raid_checked", Vector2i(-1, -1))
+		raid_damage = String(d.get("raid_damage", ""))
+		raid_active = bool(d.get("raid_active", raid_phase == 2))
 	_raid_was = raid_active
 	set_state(State.PLAYING)
 	_apply_blueprint_flag()         # --blueprints=all важнее файла: сценарии так и ждут
@@ -1225,7 +1270,10 @@ func net_global() -> Dictionary:
 			"core_arcs": core_arcs & CORE_ARCS_FULL, "core_cell": core_cell,
 			"signal_sends": signal_sends,
 			"base_mark": base_mark if base_mark_set else Vector2i(-1, -1),
-			"base_mark_set": base_mark_set}
+			"base_mark_set": base_mark_set,
+			"raid_phase": raid_phase, "raid_number": raid_number,
+			"raid_target": raid_target, "raid_reward_id": raid_reward_id,
+			"raid_remain": raid_remain}
 
 
 ## Клиент: глобальный пакет хоста. Рассвет и этап цели — с теми же уведомлениями,
@@ -1273,6 +1321,14 @@ func net_apply_global(d: Dictionary) -> void:
 			base_mark = d["base_mark"]
 		elif not base_mark_set:
 			base_mark = Vector2i(-1, -1)
+	if d.has("raid_phase"):
+		raid_phase = int(d["raid_phase"])
+		raid_number = int(d.get("raid_number", 0))
+		raid_target = d.get("raid_target", Vector2i(-1, -1))
+		raid_reward_id = int(d.get("raid_reward_id", 0))
+		raid_remain = float(d.get("raid_remain", 0.0))
+		raid_active = raid_phase == 2
+		_raid_was = raid_active
 	set_state(int(d["state"]))
 
 

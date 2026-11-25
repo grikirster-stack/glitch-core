@@ -99,6 +99,10 @@ var damage_flash: float = 0.0
 var panel_alpha: float = 0.0
 ## Текущая подсказка внизу экрана ("" — нет). Читают сценарии.
 var hint_text: String = ""
+## Строка налёта (#316). Плашка показывает её, пока цель E не важнее.
+var raid_line: String = ""
+## Клетка, куда смотрит стрелка края и точка миникарты.
+var raid_cell: Vector2i = Vector2i(-1, -1)
 
 # ------------------------------------------- ТЕКСТЫ ПОДСКАЗОК (читают сценарии)
 const HINT_TERMINAL: String = "[E] — выполнить задание (удерживать)"
@@ -278,6 +282,7 @@ var _map_tex: ImageTexture = null
 var _map_sig: PackedInt32Array = PackedInt32Array()
 var _map_check_t: float = 0.0
 var _map_dot: Vector2i = Vector2i(-9999, -9999)
+var _map_raid: Vector2i = Vector2i(-1, -1)
 var _map_rect: Rect2 = Rect2()
 var _fog_img: Image = null
 var _fog_tex: ImageTexture = null
@@ -432,7 +437,7 @@ func _fill_key() -> void:
 	_key[1] = int(size.y)
 	_key[2] = _note_serial
 	_key[3] = notes.size()
-	_key[4] = _hint_hash
+	_key[4] = _hint_hash if Game.raid_phase == 0 else raid_line.hash()
 	_key[5] = Game.tasks_done
 	_key[6] = Game.tasks_total
 	_key[7] = Game.blueprints.size()
@@ -1127,6 +1132,9 @@ func _update_map(delta: float) -> void:
 	if dot != _map_dot:
 		_map_dot = dot
 		_map.queue_redraw()
+	if raid_cell != _map_raid:
+		_map_raid = raid_cell
+		_map.queue_redraw()
 
 
 ## Сверить рельеф с запечённым и при отличии перерисовать текстуру.
@@ -1209,6 +1217,7 @@ func _draw_map_layer() -> void:
 			# Открытая вентиляция — отсюда лезут фантомы: цвет угрозы.
 			nv += 1
 			c.draw_rect(Rect2(vp - Vector2(2, 2), Vector2(5, 5)), C_DANGER)
+	_draw_raid_map_dot(c)
 	stat_map_vents = nv
 	stat_map_grates = ng
 	# Активное ядро (нет ядра — точка не рисуется: лагерь и так виден рельефом).
@@ -1386,11 +1395,56 @@ func _interact_progress() -> float:
 func _draw_mark_layer() -> void:
 	var t0: int = Time.get_ticks_usec()
 	_draw_card_arrow()
+	_draw_raid_arrow()
 	stat_us += Time.get_ticks_usec() - t0
 
 
 ## Рамка интерактива и мигающая рамка цели карточки — в мировых px.
 ## Толщина линий делится на зум: на экране она та же, что была у слоя HUD.
+
+## Стрелка налёта у края экрана. Клетка в кадре — стрелки нет.
+func _draw_raid_arrow() -> void:
+	if _mark == null or raid_cell.x < 0 or player == null or player.camera == null:
+		return
+	var world: Vector2 = World.cell_to_world(raid_cell)
+	var xf: Transform2D = get_viewport().get_canvas_transform()
+	var sp: Vector2 = xf * world
+	var vis: Rect2 = get_viewport().get_visible_rect().grow(-18.0)
+	if vis.has_point(sp):
+		return
+	var mid: Vector2 = vis.get_center()
+	var dir: Vector2 = (sp - mid).normalized()
+	if dir == Vector2.ZERO:
+		dir = Vector2.RIGHT
+	var edge: Vector2 = _raid_edge(mid, dir, vis)
+	_mark.draw_colored_polygon(PackedVector2Array([
+		edge + dir * 10.0,
+		edge + dir.rotated(2.4) * 8.0,
+		edge + dir.rotated(-2.4) * 8.0,
+	]), C_DANGER)
+
+
+func _raid_edge(mid: Vector2, dir: Vector2, vis: Rect2) -> Vector2:
+	var tx: float = 9999.0
+	if absf(dir.x) > 0.001:
+		var bound: float = vis.end.x if dir.x > 0.0 else vis.position.x
+		tx = (bound - mid.x) / dir.x
+	var ty: float = 9999.0
+	if absf(dir.y) > 0.001:
+		var boundy: float = vis.end.y if dir.y > 0.0 else vis.position.y
+		ty = (boundy - mid.y) / dir.y
+	var t: float = minf(tx if tx > 0.0 else 9999.0, ty if ty > 0.0 else 9999.0)
+	return mid + dir * t
+
+
+func _draw_raid_map_dot(c: CanvasItem) -> void:
+	if raid_cell.x < 0:
+		return
+	var r: Rect2 = _map_rect_now()
+	var px: float = r.position.x + float(raid_cell.x) * r.size.x / float(World.W)
+	var py: float = r.position.y + float(raid_cell.y) * r.size.y / float(World.H)
+	c.draw_rect(Rect2(Vector2(px, py) - Vector2(2, 2), Vector2(5, 5)), C_DANGER)
+
 func _draw_world_mark() -> void:
 	var t0: int = Time.get_ticks_usec()
 	stat_mark_redraws += 1
@@ -1858,6 +1912,19 @@ func plate_text() -> String:
 ##   4. короткая подсказка этапа цели (_touch_stage_help).
 ## Копание и стройка плашку не прячут: подсказка нужна и во время действия.
 func _plate_text() -> String:
+	# Строка налёта жива, только пока фаза не пустая. Иначе чужой сценарий
+	# видит «Налёт…» вместо подсказки этапа. Пока налёт идёт, она важнее
+	# подсказки «поставить»: иначе сторона и цель не доходят до плашки.
+	var raid_show: String = ""
+	if Game.raid_phase != 0:
+		raid_show = raid_line
+	elif raid_line != "":
+		# Фаза пустая, а строка осталась от прошлого забега: плашка не должна
+		# подменять обучение. Стираем здесь, reset_run не всегда зовут.
+		raid_line = ""
+		raid_cell = Vector2i(-1, -1)
+	if raid_show != "":
+		return raid_show
 	if not UI.touch_on:
 		return hint_text
 	var short: String = _touch_hint(hint_text)
@@ -2105,8 +2172,9 @@ func _compute_layout() -> Dictionary:
 		if ht != "":
 			L["hint_text"] = ht
 			L["hint_font"] = hfont
-			var side: float = 0.0 if portrait else 16.0
-			var hw: float = _tw(ht, hfont) + side
+			# Поля по 8 с обеих сторон. Ширина — по нарисованной строке, не шире экрана.
+			var side: float = 16.0
+			var hw: float = minf(_tw(ht, hfont) + side, w - 2.0 * PAD)
 			var grabs: Array = _grab_circles()
 			var slot_r: Rect2 = Rect2()
 			var hint_ceiling: float = stack_top

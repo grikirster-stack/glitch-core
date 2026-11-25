@@ -57,6 +57,8 @@ var approach_t: float = 0.0
 var approach_at: Vector2 = Vector2.ZERO
 ## Директор (#268): сквозь свет, пока героя не видно. Глава не ставит.
 var seek_los: bool = false
+## Налёт на базу (#316): курс на постройку, не на героя. Свет не разворачивает.
+var raid: bool = false
 var hp: float = MAX_HP
 var max_hp: float = MAX_HP
 var dmg: float = 24.0				## Урон по игроку за удар.
@@ -354,7 +356,20 @@ func _physics_process(delta: float) -> void:
 	# --- Атака ---------------------------------------------------------------
 	# Бьём игрока, только если цель — он сам (у роя и тени цель бывает машиной).
 	# harmless — обучение до главы 4: эхо подходит и отступает, удара нет.
-	if not harmless and state == St.CHASE and target_machine == null and not frozen and dist < 22.0 \
+	if raid and state == St.CHASE and approach_t > 0.0 and stun <= 0.0:
+		var goal: Vector2 = approach_at
+		# 28 px достаёт грядку из-за двери. Удар — только в клетке цели.
+		var here: Vector2i = World.world_to_cell(global_position)
+		var there: Vector2i = World.world_to_cell(goal)
+		if here == there and global_position.distance_to(goal) < 18.0:
+			Threat.raid_apply_hit(there)
+			approach_t = 0.0
+			alive = false
+			queue_free()
+			return
+	if raid:
+		pass
+	elif not harmless and state == St.CHASE and target_machine == null and not frozen and dist < 22.0 \
 			and stun <= 0.0 and player.has_method("damage"):
 		var knock: Vector2 = (player.global_position - global_position).normalized() * 190.0
 		player.damage(dmg, knock)
@@ -487,6 +502,11 @@ func _flee_open(c: Vector2i) -> bool:
 
 
 func _decide(dt: float, dist: float, light: float) -> void:
+	# Налёт держит курс на базу. Свет клетки не разворачивает.
+	if raid and approach_t > 0.0:
+		state = St.CHASE
+		alert = 2.0
+		return
 	# Осада главы важнее света: копатель идёт к постройке сквозь луч.
 	if siege_target != null and is_instance_valid(siege_target) and kind == "burrower":
 		target_machine = siege_target
@@ -613,7 +633,17 @@ func _move_walking(dir: Vector2, speed: float, dt: float) -> void:
 	vel.y = minf(vel.y + 900.0 * dt, 520.0)
 
 	# phantom = true: шлюз для фантома стена и открытым (#31).
-	var res: Dictionary = World.move_body(global_position, vel * dt, body, true)
+	# Налёт идёт пешком в дверь в одну клетку (16 px). Обычное тело 22 px
+	# задевает панель над проёмом. Коллизия налёта 10×12, центр опущен к полу,
+	# чтобы коробка целиком лежала в ряду двери. Рисунок не меняется.
+	var box: Vector2 = body
+	var origin: Vector2 = global_position
+	if raid:
+		box = Vector2(10.0, 12.0)
+		origin.y += 2.0
+	var res: Dictionary = World.move_body(origin, vel * dt, box, true)
+	if raid:
+		res["position"].y -= 2.0
 	global_position = res["position"]
 	if res["hit_y"]:
 		vel.y = 0.0
@@ -804,6 +834,9 @@ static func can_dig(t: int) -> bool:
 ## Держать тело: погоня, сирена, подход к лучу, осада постройки.
 ## Иначе забытый фантом растворяется за пределом досягаемости.
 func _keeps_body(dist: float) -> bool:
+	# Налёт идёт на базу, пока герой в шахте. Дистанция до героя его не растворяет.
+	if raid:
+		return true
 	if state == St.CHASE or _forced_flee > 0.0 or approach_t > 0.0 or _on_siege():
 		return true
 	return _age <= SPAWN_GRACE or dist <= _despawn_limit()

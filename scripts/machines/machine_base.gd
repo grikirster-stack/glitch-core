@@ -21,6 +21,8 @@ var kind: String = ""
 ## Наработка: секунды полезной работы (см. work()). Питания больше нет (#170).
 var work_time: float = 0.0
 var hp: float = Balance.MACHINE_HP
+## Налёт остановил устройство (#316). Чинится камнем или хламом, не сносится.
+var raid_stopped: bool = false
 var max_hp: float = Balance.MACHINE_HP
 var progress: float = 0.0
 var anim: float = 0.0
@@ -186,6 +188,19 @@ func spawn_item(item_id: int, count: int, pos: Vector2) -> void:
 # ------------------------------------------------------------- ПРОЧНОСТЬ (§ 4.4)
 
 ## Получить урон. При hp <= 0 машина разрушается.
+func raid_stop() -> void:
+	raid_stopped = true
+	hp = minf(hp, 20.0)
+	anim = 1.0
+	queue_redraw()
+
+
+func raid_restart() -> void:
+	raid_stopped = false
+	anim = 1.0
+	queue_redraw()
+
+
 func take_damage(amount: float) -> void:
 	if not Net.is_authority():   # СЕТЬ (ADR-002): прочность считает хост
 		return
@@ -382,6 +397,7 @@ func save_state() -> Dictionary:
 		"work_time": work_time,
 		"output": _output.duplicate(),
 		"permanent": permanent,
+		"raid_stopped": raid_stopped,
 	}
 
 
@@ -397,6 +413,7 @@ func load_state(d: Dictionary) -> void:
 	progress = float(d.get("progress", progress))
 	work_time = float(d.get("work_time", work_time))
 	permanent = bool(d.get("permanent", permanent))
+	raid_stopped = bool(d.get("raid_stopped", false))
 	_output = load_counts(d.get("output", {}))
 	_output_count = 0
 	for id in _output.keys():
