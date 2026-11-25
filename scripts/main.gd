@@ -110,6 +110,13 @@ func _start() -> void:
 
 	give_starter_kit(player)
 
+	# Игровые сценарии: godot --path . -- --scenario=walk,mining
+	# Флаг раньше чертежей набора: сценарий ждёт пустой список, свободная игра — нет.
+	if not scenarios.is_empty():
+		scenario_mode = true
+		Game.scenario_mode = true   # директор угрозы (Threat) читает флаг отсюда
+	_grant_starter_blueprints()
+
 	if not Game.in_mission() and not (Net.is_client() and mission_id != ""):
 		_intro_notify()
 
@@ -119,10 +126,8 @@ func _start() -> void:
 		add_child(runner)
 		runner.start(self)
 
-	# Игровые сценарии: godot --path . -- --scenario=walk,mining
+	# Игровые сценарии: флаг уже стоит (до чертежей набора). Здесь только раннер.
 	if not scenarios.is_empty():
-		scenario_mode = true
-		Game.scenario_mode = true   # директор угрозы (Threat) читает флаг отсюда
 		var srunner: ScenarioRunner = ScenarioRunner.carried
 		if srunner != null and is_instance_valid(srunner):
 			srunner.adopt(self)   # ПАУЗА (#119): сценарий вернулся из меню — список не заново
@@ -152,12 +157,41 @@ func give_starter_kit(p: Player) -> void:
 	p.inv.add(IDs.I.COAL, 6)
 	p.inv.add(IDs.I.STONE, 4)
 	p.inv.add(IDs.I.SCRAP, 4)
-	# Пристройка (ADR-006 § 3.1, #312): из того же набора — навес или закрытая комната.
+	# Панель, дверь и волокно стебля — в хотбаре. Волокно стебля и есть дроп
+	# копки (IDs.I.LOG): если оно лежит только в рюкзаке, добыча докладывается
+	# туда, а цифра выбирает лишь хотбар — клиент не может поставить блок.
+	# Обшивка, слиток и стекло — в рюкзак. Девятый слот хотбара пуст: новая
+	# добыча идёт в руку. Полный хотбар ломал линзу, разбор и «Сложить всё».
 	p.inv.add(IDs.I.PANEL, Balance.ROOM_KIT_PANELS)
 	p.inv.add(IDs.I.DOOR, Balance.ROOM_KIT_DOORS)
-	p.inv.add(IDs.I.SHEATH, Balance.ROOM_KIT_SHEATH)
+	p.inv.add(IDs.I.LOG, Balance.STARTER_LOG)
+	_kit_backpack(p, IDs.I.SHEATH, Balance.ROOM_KIT_SHEATH)
+	_kit_backpack(p, IDs.I.COPPER_INGOT, Balance.STARTER_COPPER_INGOT)
+	_kit_backpack(p, IDs.I.GLASS, Balance.STARTER_GLASS)
 	# Камень и хлам — чтобы горелка открылась, когда предмет появится (C1).
 	# Медной руды в наборе нет: слиток открывается первым подбором.
+
+
+## Стопка набора — в рюкзак, мимо хотбара. Панель, дверь и волокно в хотбаре остаются.
+func _kit_backpack(p: Player, id: int, amount: int) -> void:
+	if amount <= 0:
+		return
+	var left: int = Inventory.stack_into(p.inv.slots, id, amount, p.inv.hotbar_size)
+	if left != amount:
+		p.inv.mark_seen(id)
+		p.inv.changed.emit()
+
+
+## Коллектор и грядка в стартовом наборе. Второй игрок сети не дописывает имя дважды.
+## Сценарий и автотест набор не трогают: этап 1 ждёт пустой список чертежей.
+func _grant_starter_blueprints() -> void:
+	if Game.scenario_mode or _args.has("--test"):
+		return
+	for name in ["COLLECTOR", "SPORE_BED"]:
+		if Game.blueprints.has(name):
+			continue
+		Game.blueprints.append(name)
+		Game.blueprint_changed.emit(name)
 
 
 ## Имена сценариев из --scenario=walk,mining. С --scenario-shard=K/N — только каждый

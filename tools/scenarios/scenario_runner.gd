@@ -412,6 +412,19 @@ const REGISTRY: Dictionary = {
 	# --- Каркас пристройки (ADR-006 § 3.1, #312) ---
 	"room_parts": {"file": "room_parts.gd", "title": "каркас пристройки", "timeout_ms": 90000,
 		"desc": "равный набор: навес и закрытая пристройка; дверь гасит луч; обшивка — фон; save и снимок; шлюз фабрики → камень"},
+	# --- Цепочка новичка (C3, #317) ---
+	"guide_chain": {"file": "guide_chain.gd", "title": "цепочка новичка", "timeout_ms": 180000,
+		"desc": "каркас, дверь, грядка, луч, волокно, сундук, комната; восток и запад; волокно ≤ 120 с"},
+	"guide_touch": {"file": "guide_touch.gd", "title": "цепочка на телефоне", "timeout_ms": 60000,
+		"desc": "плашка называет тап, без ЛКМ и ПКМ; тап по карточке показывает цель"},
+	"guide_pause": {"file": "guide_pause.gd", "title": "причина паузы грядки", "timeout_ms": 60000,
+		"desc": "нет луча, стена из break_points, полный лоток, ночь"},
+	"guide_show": {"file": "guide_show.gd", "title": "показать не меняет мир", "timeout_ms": 60000,
+		"desc": "камера на 2 с и назад; хэши мира, машин и сейва те же"},
+	"guide_hide": {"file": "guide_hide.gd", "title": "помощь скрывается", "timeout_ms": 60000,
+		"desc": "скрыть, сейв, старый файл, «?» возвращает текущий шаг"},
+	"guide_raid": {"file": "guide_raid.gd", "title": "итог налёта на плашке", "timeout_ms": 60000,
+		"desc": "после фазы 0 итог и один проект; во время налёта строка налёта"},
 	# --- Свободный сигнал и метка базы (ADR-006 § 2, § 4, § 6, #315) ---
 	"free_signal": {"file": "free_signal.gd", "title": "свободный сигнал", "timeout_ms": 90000,
 		"desc": "ядро и шесть дуг запускают 90 с; успех не ставит экран; метка у капсулы, перенос на свой сундук"},
@@ -695,10 +708,16 @@ func _reset_world() -> void:
 	p.inv.selected = 0
 	p.inv.seen_items = {}
 	# Стартовый набор — как в обычной игре. Подбор рецептов (#171) идёт от него.
-	p.inv.add(IDs.I.LAMP, 3)
-	p.inv.add(IDs.I.COAL, 6)
-	p.inv.add(IDs.I.STONE, 4)
-	p.inv.add(IDs.I.SCRAP, 4)
+	# Комната и волокно (C3) — тот же набор, что give_starter_kit, без чертежей:
+	# этап 1 ждёт пустой список.
+	var main: Node = scene
+	if main.has_method("give_starter_kit"):
+		main.give_starter_kit(p)
+	else:
+		p.inv.add(IDs.I.LAMP, 3)
+		p.inv.add(IDs.I.COAL, 6)
+		p.inv.add(IDs.I.STONE, 4)
+		p.inv.add(IDs.I.SCRAP, 4)
 	p.global_position = World.spawn_point
 	# Экран финала мог остаться от прошлого сценария.
 	var es: Node = scene.get("end_screen")
