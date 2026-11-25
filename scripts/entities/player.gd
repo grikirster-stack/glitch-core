@@ -876,7 +876,8 @@ func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable,
 		var d: float = mp.distance_to(pos)
 		var sel: ItemStack = inv.selected_stack()
 		var tg: Dictionary = {"cell": c, "node": m, "pos": mp}
-		if not sel.is_empty() and sel.id == IDs.I.SCRAP and m.hp < m.max_hp and d < E_STATION:
+		if not sel.is_empty() and (sel.id == IDs.I.SCRAP or sel.id == IDs.I.STONE) \
+				and (m.hp < m.max_hp or bool(m.get("raid_stopped"))) and d < E_STATION:
 			tg["kind"] = ET_REPAIR
 		elif m is Burner and d < E_MACHINE:
 			tg["kind"] = ET_BURNER
@@ -1151,6 +1152,8 @@ func _repair(best: MachineBase) -> void:
 	_repair_cd = REPAIR_GAP
 	_e_used = true
 	best.hp = minf(best.max_hp, best.hp + Balance.REPAIR_PER_SCRAP)
+	if best.has_method("raid_restart"):
+		best.raid_restart()
 	best.anim = 1.0
 	best.queue_redraw()
 	inv.remove_at(inv.selected, 1)

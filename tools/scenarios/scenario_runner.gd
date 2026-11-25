@@ -415,6 +415,29 @@ const REGISTRY: Dictionary = {
 	# --- Свободный сигнал и метка базы (ADR-006 § 2, § 4, § 6, #315) ---
 	"free_signal": {"file": "free_signal.gd", "title": "свободный сигнал", "timeout_ms": 90000,
 		"desc": "ядро и шесть дуг запускают 90 с; успех не ставит экран; метка у капсулы, перенос на свой сундук"},
+	# --- Налёт на базу (ADR-006 § 4, #316) ---
+	"raid_open_door": {"file": "raid_open_door.gd", "title": "налёт: открытая дверь", "timeout_ms": 90000,
+		"desc": "герой в шахте, дверь открыта: предупреждение ≥ 25 с, вход снаружи, фантом заходит"},
+	"raid_closed_door": {"file": "raid_closed_door.gd", "title": "налёт: закрытая дверь", "timeout_ms": 90000,
+		"desc": "дверь закрыта: внешний участок или конец по таймеру, внутрь не спавним"},
+	"raid_target_bed": {"file": "raid_target_bed.gd", "title": "налёт: цель грядка", "timeout_ms": 60000,
+		"desc": "исправная грядка без луча ночью — цель, горелка её не перебивает"},
+	"raid_first_wave": {"file": "raid_first_wave.gd", "title": "налёт: первая волна", "timeout_ms": 90000,
+		"desc": "оборона жива, один участок повреждён и встаёт за сутки"},
+	"raid_no_panels": {"file": "raid_no_panels.gd", "title": "налёт: без панелей", "timeout_ms": 90000,
+		"desc": "нет панелей — встало устройство, камень запускает, награда один раз"},
+	"raid_save_warning": {"file": "raid_save_warning.gd", "title": "налёт: сейв предупреждения", "timeout_ms": 60000,
+		"desc": "сохранение во время предупреждения возвращает фазу, цель, остаток, id"},
+	"raid_save_mid": {"file": "raid_save_mid.gd", "title": "налёт: сейв середины", "timeout_ms": 60000,
+		"desc": "сохранение посреди налёта возвращает фазу, цель, остаток, id награды"},
+	"raid_first_contact": {"file": "raid_first_contact.gd", "title": "налёт: первый контакт", "timeout_ms": 120000,
+		"desc": "от фазы 2 до удара не дольше 45 с, фантом идёт от входа сам"},
+	"raid_quiet_nights": {"file": "raid_quiet_nights.gd", "title": "налёт: тихие ночи", "timeout_ms": 60000,
+		"desc": "ночи 1–2 без налёта, ночь 3 начинает предупреждение"},
+	"raid_second_entry": {"file": "raid_second_entry.gd", "title": "налёт: второй вход", "timeout_ms": 90000,
+		"desc": "следующий налёт берёт другой вход снаружи, если он есть"},
+	"raid_touch_repair": {"file": "raid_touch_repair.gd", "title": "налёт: починка с телефона", "timeout_ms": 90000,
+		"desc": "тап по виртуальной E чинит вставшее устройство камнем"},
 	}
 
 var scene: Node = null

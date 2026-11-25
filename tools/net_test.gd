@@ -18,8 +18,8 @@ extends SceneTree
 
 ## Схема протокола PROTO = SCHEMA_PROTO. Поменяли кодек, порядок IDs или таблицы DB —
 ## поднимите Net.PROTO и впишите сюда новый PROTO и хэш, который напечатает тест.
-const SCHEMA_PROTO: int = 26
-const SCHEMA_HASH: String = "20330461b80979f5ff100f8dfbeefbc7"
+const SCHEMA_PROTO: int = 27
+const SCHEMA_HASH: String = "9245834c88e09286ad9a7304aedf3a9d"
 
 const PORT_BASE: int = 24900
 const LOOP: String = "127.0.0.1"
@@ -228,7 +228,9 @@ func _codec() -> void:
 			"relay_active": true, "relay_timer": 180.0, "tasks_done": 3, "tasks_total": 12, "threat": 1,
 			"threat_budget": 7.25, "brownout": false, "hash": 0xFFFFFFFF, "game_time": 3600.5,
 			"core_arcs": 0, "core_cell": Vector2i(-1, -1),
-			"signal_sends": 65535, "base_mark": Vector2i(639, 179), "base_mark_set": true}
+			"signal_sends": 65535, "base_mark": Vector2i(639, 179), "base_mark_set": true,
+			"raid_phase": 2, "raid_number": 7, "raid_target": Vector2i(400, 120),
+			"raid_reward_id": 3, "raid_remain": 12.5}
 	var gl_none: Dictionary = gl.duplicate()
 	gl_none["base_mark"] = Vector2i(-1, -1)
 	gl_none["base_mark_set"] = false

@@ -50,6 +50,13 @@ var spawned_total: int = 0          ## сколько фантомов вышл�
 ## Глава выпустила безвредное эхо. Сценарий читает: ночью эхо уходит за секунды.
 var chapter_echo: bool = false
 var pending: Array = []             ## телеграфы: {cell, kind, t, hum}
+## Налёт (#316). Фаза и таймер живут в Game — их пишет сейв и GLOBAL.
+## Здесь только поиск входа, чтобы кадр не искал весь мир.
+var raid_entrance: Vector2i = Vector2i(-1, -1)
+var raid_side: String = ""
+## Участок, который налёт повредил. Пусто — участка нет.
+var raid_section: Vector2i = Vector2i(-1, -1)
+var raid_section_t: float = 0.0
 
 var _relay_seen: bool = false
 var _pack_seq: int = 0
@@ -75,6 +82,10 @@ func reset() -> void:
 	spawn_timer = 0.0
 	spawned_total = 0
 	chapter_echo = false
+	raid_entrance = Vector2i(-1, -1)
+	raid_side = ""
+	raid_section = Vector2i(-1, -1)
+	raid_section_t = 0.0
 	_relay_seen = false
 	night_players = 1
 
@@ -329,6 +340,7 @@ func _doppels_alive() -> int:
 func tick(delta: float) -> void:
 	Game.phantoms_alive = get_tree().get_nodes_in_group("phantom").size()
 	_tick_pending(delta)
+	_tick_raid(delta)
 	if scripted():   # КАМПАНИЯ: волны ведёт глава (Mission.wave), телеграфы — здесь
 		_update_dusk_hum()
 		return
@@ -540,6 +552,7 @@ func spawn_phantom(kind: String, pos: Vector2, opts: Dictionary = {}) -> Array:
 		p.player = pl
 		p.pack_id = pid
 		p.harmless = bool(opts.get("harmless", false))
+		p.raid = bool(opts.get("raid", false))
 		host.add_child(p)
 		if not p.alive:
 			continue   # лимит MAX_PHANTOMS: копия растворилась сразу
@@ -551,7 +564,10 @@ func spawn_phantom(kind: String, pos: Vector2, opts: Dictionary = {}) -> Array:
 		out.append(p)
 		spawned_total += 1
 		phantom_spawned.emit(p)
-		if bool(opts.get("seek", false)) and p.has_method("seek_until_seen"):
+		if bool(opts.get("raid", false)) and p.has_method("approach"):
+			var at: Vector2 = opts.get("at", p.global_position)
+			p.approach(Balance.RAID_CONTACT_MAX, at)
+		elif bool(opts.get("seek", false)) and p.has_method("seek_until_seen"):
 			var hero := _player()
 			if hero != null:
 				p.seek_until_seen(90.0, hero.global_position)
@@ -753,6 +769,10 @@ func save_state() -> Dictionary:
 		"relay_seen": _relay_seen,
 		"pack_seq": _pack_seq,
 		"rng_state": _rng.state,
+		"raid_entrance": raid_entrance,
+		"raid_side": raid_side,
+		"raid_section": raid_section,
+		"raid_section_t": raid_section_t,
 	}
 
 
@@ -781,7 +801,531 @@ func load_state(d: Dictionary) -> void:
 	_pack_seq = int(d.get("pack_seq", 0))
 	if d.has("rng_state"):
 		_rng.state = int(d["rng_state"])
+	raid_entrance = d.get("raid_entrance", Vector2i(-1, -1))
+	raid_side = String(d.get("raid_side", ""))
+	raid_section = d.get("raid_section", Vector2i(-1, -1))
+	raid_section_t = float(d.get("raid_section_t", 0.0))
 	Game.phantoms_alive = 0
+
+
+# ------------------------------------------------------------------ НАЛЁТ (ADR-006 § 4, #316)
+
+const RAID_NONE: int = 0
+const RAID_WARN: int = 1
+const RAID_ON: int = 2
+const RAID_DONE: int = 3
+const RAID_NEIGHBOR: int = 18
+const RAID_DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+
+
+## Часы налёта. Хост и одиночная считают; клиент только показывает пакет.
+## Кампания (scripted) налёт не ведёт. Сценарий зовёт tick сам.
+func _tick_raid(delta: float) -> void:
+	if scripted():
+		return
+	if Net.is_client():
+		return
+	_restore_section(delta)
+	if Game.raid_phase == RAID_WARN:
+		Game.raid_remain = maxf(0.0, Game.raid_remain - delta)
+		if Game.raid_remain <= 0.0:
+			_raid_contact()
+		return
+	if Game.raid_phase == RAID_ON:
+		Game.raid_remain = maxf(0.0, Game.raid_remain - delta)
+		_raid_hold_course()
+		# Сценарий глушит _process директора, но физику фантома дерево крутит
+		# само. Здесь только курс: удар и шаг — в phantom._physics_process.
+		if not _raid_phantom_alive():
+			if Game.raid_damage == "":
+				_raid_finish(false)
+			else:
+				_raid_finish(true)
+		elif Game.raid_remain <= 0.0 and Game.raid_damage == "":
+			_raid_finish(false)
+		return
+	if Game.raid_phase == RAID_DONE:
+		Game.raid_remain = maxf(0.0, Game.raid_remain - delta)
+		if Game.raid_remain <= 0.0:
+			_raid_clear()
+		return
+	if not Game.is_night() or Game.day_number < 1:
+		return
+	# Ночь началась, налёта ещё нет — предупреждение до контакта.
+	# Ночи 1–2 — эхо и прежний потолок. Лишний фантом налёта ломает бюджет.
+	if not active:
+		return
+	if quiet_night(Game.day_number, Game.relay_active):
+		return
+	_raid_begin_warn()
+
+
+func _raid_begin_warn() -> void:
+	var pick: Dictionary = _raid_pick()
+	# Без устройства у метки налёт не начинается: иначе эхо выходит на саму метку
+	# и ломает потолок ночи, где базы ещё нет.
+	if String(pick.get("kind", "")) == "mark":
+		return
+	Game.raid_phase = RAID_WARN
+	Game.raid_number += 1
+	Game.raid_target = pick["target"]
+	Game.raid_remain = Balance.RAID_WARN_LEAD
+	Game.raid_damage = ""
+	Game.raid_active = false
+	raid_entrance = pick["entrance"]
+	raid_side = String(pick["side"])
+	_raid_was_sync()
+	var line: String = _raid_line(pick)
+	if UI.hud != null:
+		UI.hud.raid_line = line
+		UI.hud.raid_cell = Game.raid_target if Game.raid_target.x >= 0 else raid_entrance
+	Game.notify(line, Color(1.0, 0.55, 0.35))
+
+
+func _raid_contact() -> void:
+	var cell: Vector2i = raid_entrance
+	if cell.x < 0 or not _raid_outside(cell):
+		var again: Dictionary = _raid_pick()
+		cell = again["entrance"]
+		raid_entrance = cell
+		raid_side = String(again["side"])
+		if Game.raid_target.x < 0:
+			Game.raid_target = again["target"]
+	if cell.x < 0:
+		Game.raid_phase = RAID_ON
+		Game.raid_active = true
+		Game.raid_remain = Balance.RAID_GIVE_UP
+		_raid_was_sync()
+		return
+	Game.raid_checked = cell
+	Game.raid_phase = RAID_ON
+	Game.raid_active = true
+	Game.raid_remain = Balance.RAID_CONTACT_MAX
+	_raid_was_sync()
+	# Эхо пешее: без камня под входом и по дороге к цели оно проваливается.
+	_raid_floor_path(cell, Game.raid_target if Game.raid_target.x >= 0 else cell)
+	var opts: Dictionary = {"raid": true, "at": World.cell_to_world(Game.raid_target if Game.raid_target.x >= 0 else cell)}
+	telegraph(cell, "echo", opts)
+
+
+
+func _raid_floor_path(from: Vector2i, to: Vector2i) -> void:
+	# Камень только в воздухе и только снаружи. Пол под дверью закрыл бы проход.
+	var y: int = to.y
+	var x0: int = mini(from.x, to.x)
+	var x1: int = maxi(from.x, to.x)
+	var cells: Array[Vector2i] = []
+	for x in range(x0, x1 + 1):
+		cells.append(Vector2i(x, y))
+	if from.y != y:
+		var step: int = 1 if y > from.y else -1
+		var yy: int = from.y
+		while yy != y:
+			cells.append(Vector2i(from.x, yy))
+			yy += step
+	for c in cells:
+		if not _raid_outside(c):
+			continue
+		var floor: Vector2i = c + Vector2i(0, 1)
+		if World.in_bounds(floor.x, floor.y) and World.get_tile_v(floor) == IDs.T.AIR:
+			World.set_tile(floor.x, floor.y, IDs.T.STONE)
+
+
+func _raid_hold_course() -> void:
+	var at: Vector2 = World.cell_to_world(Game.raid_target if Game.raid_target.x >= 0 else raid_entrance)
+	for p in get_tree().get_nodes_in_group("phantom"):
+		if not is_instance_valid(p) or not bool(p.get("raid")):
+			continue
+		if not p.has_method("approach"):
+			continue
+		# Повторный approach обнуляет путь каждый кадр — эхо стоит у входа.
+		if float(p.get("approach_t")) > 1.0:
+			continue
+		p.approach(8.0, at)
+
+
+func _raid_phantom_alive() -> bool:
+	for p in get_tree().get_nodes_in_group("phantom"):
+		if is_instance_valid(p) and bool(p.get("raid")) and bool(p.get("alive")):
+			return true
+	for p in pending:
+		if bool(p.get("opts", {}).get("raid", false)):
+			return true
+	return false
+
+
+func _raid_finish(hit: bool) -> void:
+	Game.raid_phase = RAID_DONE
+	Game.raid_active = false
+	Game.raid_remain = 8.0
+	_raid_was_sync()
+	if hit and Game.raid_reward_id != Game.raid_number:
+		Game.raid_reward_id = Game.raid_number
+		var hero = _player()
+		if hero != null and hero.get("inv") != null:
+			hero.inv.add(IDs.I.SCRAP, 2)
+	var line: String = _raid_result_line(hit)
+	if UI.hud != null:
+		UI.hud.raid_line = line
+	Game.notify(line, Color(0.85, 0.9, 1.0))
+
+
+func _raid_clear() -> void:
+	Game.raid_phase = RAID_NONE
+	Game.raid_active = false
+	Game.raid_remain = 0.0
+	Game.raid_target = Vector2i(-1, -1)
+	Game.raid_damage = ""
+	raid_entrance = Vector2i(-1, -1)
+	raid_side = ""
+	_raid_was_sync()
+	if UI.hud != null:
+		UI.hud.raid_line = ""
+		UI.hud.raid_cell = Vector2i(-1, -1)
+
+
+func _raid_was_sync() -> void:
+	Game._poll_raid()
+
+
+func _raid_line(pick: Dictionary) -> String:
+	var side: String = String(pick["side"])
+	var what: String = "грядка" if String(pick["kind"]) == "bed" else "база"
+	if side == "":
+		side = "сторона не ясна"
+	return "Налёт с %s, цель — %s" % [side, what]
+
+
+func _raid_result_line(hit: bool) -> String:
+	var side: String = raid_side if raid_side != "" else "неясной стороны"
+	if not hit:
+		return "Налёт с %s не дошёл" % side
+	if Game.raid_damage == "section":
+		return "Налёт с %s: участок встанет за сутки" % side
+	if Game.raid_damage == "device":
+		return "Налёт с %s: чини камнем или хламом" % side
+	return "Налёт с %s отбит" % side
+
+
+## Цель: исправная тёмная грядка у метки, иначе ближайшее устройство.
+## Вход — снаружи, с путём. Второй налёт не повторяет проверенный вход.
+func _raid_pick() -> Dictionary:
+	var anchor: Vector2i = Game.base_mark_anchor()
+	var target: Vector2i = Vector2i(-1, -1)
+	var kind: String = ""
+	var best: int = 9999
+	var bed_best: int = 9999
+	for m in World.machines.values():
+		if not is_instance_valid(m) or not (m is MachineBase):
+			continue
+		var c: Vector2i = m.cell
+		var d: int = absi(c.x - anchor.x) + absi(c.y - anchor.y)
+		if d > RAID_NEIGHBOR:
+			continue
+		# Зажжённая грядка целью не становится: луч ночью её уже сторожит.
+		if m.kind == "SporeBed" and bool(m.get("lit")):
+			continue
+		# Тёмная живая грядка важнее ближней горелки: луч ночью выключен.
+		if m.kind == "SporeBed" and float(m.hp) > 0.0 and not bool(m.get("lit")):
+			if d < bed_best:
+				target = c
+				kind = "bed"
+				bed_best = d
+				best = d
+			continue
+		if kind == "bed" or d >= best:
+			continue
+		target = c
+		kind = "device"
+		best = d
+	if target.x < 0:
+		target = anchor
+		kind = "mark"
+	var door: bool = _raid_door_open(target)
+	var entrance: Vector2i = _raid_entrance(target, door)
+	# Сторона — от цели, не от метки базы: западный проём у восточной метки иначе «восток».
+	var side_from: Vector2i = target if target.x >= 0 else anchor
+	var side: String = _raid_side_name(entrance if entrance.x >= 0 else side_from, side_from)
+	return {"target": target, "kind": kind, "entrance": entrance, "side": side, "open": door}
+
+
+func _raid_door_open(target: Vector2i) -> bool:
+	for d in RAID_DIRS:
+		var n: Vector2i = target + d
+		if World.in_bounds(n.x, n.y) and World.get_tile_v(n) == IDs.T.DOOR_OPEN:
+			return true
+	# Дверь комнаты может быть не в соседней клетке устройства.
+	for y in range(maxi(0, target.y - 6), mini(World.H, target.y + 7)):
+		for x in range(maxi(0, target.x - 8), mini(World.W, target.x + 9)):
+			if World.get_tile_v(Vector2i(x, y)) == IDs.T.DOOR_OPEN:
+				return true
+	return false
+
+
+func _raid_entrance(target: Vector2i, open_door: bool) -> Vector2i:
+	var skip: Vector2i = Game.raid_checked if Game.raid_number >= 1 else Vector2i(-1, -1)
+	# Второй налёт ищет другой подход, не соседнюю клетку уже проверенного входа.
+	# Первый налёт skip пустой — этот проход его не касается.
+	var alt: bool = skip.x >= 0 and _raid_has_other_approach(target, skip, open_door)
+	var best: Vector2i = Vector2i(-1, -1)
+	var best_d: int = 9999
+	var x0: int = maxi(1, target.x - RAID_NEIGHBOR)
+	var x1: int = mini(World.W - 2, target.x + RAID_NEIGHBOR)
+	var y0: int = maxi(1, target.y - 8)
+	var y1: int = mini(World.H - 2, target.y + 8)
+	for y in range(y0, y1 + 1):
+		for x in range(x0, x1 + 1):
+			var c: Vector2i = Vector2i(x, y)
+			if c == skip:
+				continue
+			if alt and _raid_same_approach(c, skip, target):
+				continue
+			if not _raid_outside(c):
+				continue
+			var here: int = World.get_tile_v(c)
+			if here == IDs.T.DOOR or here == IDs.T.DOOR_OPEN or here == IDs.T.ROOM_PANEL:
+				continue
+			if World.astar != null and World.astar.is_point_solid(c):
+				continue
+			var d: int = absi(c.x - target.x) + absi(c.y - target.y)
+			# Пеший шаг не поднимается на две клетки. Вход на другой высоте хуже.
+			d += absi(c.y - target.y) * 8
+			# Со стороны двери, не через крышу: открытый проход ближе, чем обход.
+			if open_door and not _raid_row_clear(c, target):
+				d += 12
+			if d < 2 or d >= best_d:
+				continue
+			if open_door:
+				if not _raid_reaches(c, target):
+					continue
+			else:
+				if not _raid_faces_shell(c):
+					continue
+			best = c
+			best_d = d
+	return best
+
+
+
+## Тот же подход: соседняя клетка проверенного входа или та же сторона от цели.
+func _raid_same_approach(c: Vector2i, checked: Vector2i, target: Vector2i) -> bool:
+	if absi(c.x - checked.x) + absi(c.y - checked.y) <= 2:
+		return true
+	# Сторона считается от цели налёта. raid_target в момент выбора ещё пуст.
+	var anchor: Vector2i = target if target.x >= 0 else checked
+	return _raid_side_name(c, anchor) == _raid_side_name(checked, anchor)
+
+
+## Есть ли снаружи вход не с того же подхода. Иначе второй налёт остаётся на старом.
+func _raid_has_other_approach(target: Vector2i, checked: Vector2i, open_door: bool) -> bool:
+	var x0: int = maxi(1, target.x - RAID_NEIGHBOR)
+	var x1: int = mini(World.W - 2, target.x + RAID_NEIGHBOR)
+	var y0: int = maxi(1, target.y - 8)
+	var y1: int = mini(World.H - 2, target.y + 8)
+	for y in range(y0, y1 + 1):
+		for x in range(x0, x1 + 1):
+			var c: Vector2i = Vector2i(x, y)
+			if _raid_same_approach(c, checked, target):
+				continue
+			if not _raid_entrance_ok(c, target, open_door):
+				continue
+			return true
+	return false
+
+
+func _raid_entrance_ok(c: Vector2i, target: Vector2i, open_door: bool) -> bool:
+	if not _raid_outside(c):
+		return false
+	var here: int = World.get_tile_v(c)
+	if here == IDs.T.DOOR or here == IDs.T.DOOR_OPEN or here == IDs.T.ROOM_PANEL:
+		return false
+	if World.astar != null and World.astar.is_point_solid(c):
+		return false
+	var d: int = absi(c.x - target.x) + absi(c.y - target.y)
+	if d < 2:
+		return false
+	if open_door:
+		return _raid_reaches(c, target)
+	return _raid_faces_shell(c)
+
+
+
+func _raid_row_clear(from: Vector2i, to: Vector2i) -> bool:
+	if from.y != to.y:
+		return false
+	var x0: int = mini(from.x, to.x)
+	var x1: int = maxi(from.x, to.x)
+	for x in range(x0 + 1, x1):
+		var id: int = World.get_tile_v(Vector2i(x, from.y))
+		if id == IDs.T.ROOM_PANEL or id == IDs.T.DOOR:
+			return false
+	return true
+
+
+func _raid_outside(c: Vector2i) -> bool:
+	if not World.in_bounds(c.x, c.y):
+		return false
+	if World.get_tile_v(c) == IDs.T.ROOM_PANEL or World.get_tile_v(c) == IDs.T.DOOR:
+		return false
+	# Внутри комнаты — клетка, у которой все четыре стороны упираются в панели/двери
+	# ближе, чем в воздух мира. Снаружи — есть путь к поверхности без панели.
+	return not _raid_enclosed(c)
+
+
+func _raid_enclosed(c: Vector2i) -> bool:
+	# Замкнуто, если от клетки нельзя выйти на воздух без двери-стены,
+	# и рядом есть панель. Открытая дверь комнатой не является.
+	var seen: Dictionary = {}
+	var q: Array[Vector2i] = [c]
+	seen[c] = true
+	var steps: int = 0
+	var saw_panel: bool = false
+	while not q.is_empty() and steps < 80:
+		var cur: Vector2i = q.pop_front()
+		steps += 1
+		if cur != c and not _raid_near_shell(cur) and steps > 4:
+			return false
+		for d in RAID_DIRS:
+			var n: Vector2i = cur + d
+			if seen.has(n) or not World.in_bounds(n.x, n.y):
+				continue
+			var id: int = World.get_tile_v(n)
+			if id == IDs.T.ROOM_PANEL or id == IDs.T.DOOR:
+				saw_panel = true
+				continue
+			if World.astar != null and World.astar.is_point_solid(n):
+				continue
+			seen[n] = true
+			q.append(n)
+	return saw_panel
+
+
+func _raid_near_shell(c: Vector2i) -> bool:
+	for d in RAID_DIRS:
+		var id: int = World.get_tile_v(c + d)
+		if id == IDs.T.ROOM_PANEL or id == IDs.T.DOOR or id == IDs.T.DOOR_OPEN:
+			return true
+	return false
+
+
+func _raid_faces_shell(c: Vector2i) -> bool:
+	for d in RAID_DIRS:
+		var n: Vector2i = c + d
+		var id: int = World.get_tile_v(n)
+		if id == IDs.T.ROOM_PANEL or id == IDs.T.DOOR:
+			return true
+		if World.machines.has(n):
+			return true
+	return false
+
+
+func _raid_reaches(from: Vector2i, to: Vector2i) -> bool:
+	if World.astar == null:
+		return false
+	var goal: Vector2i = to
+	if World.astar.is_point_solid(goal):
+		goal = _raid_free_near(to)
+	if goal.x < 0:
+		return false
+	return World.astar.get_id_path(from, goal).size() > 1
+
+
+func _raid_free_near(c: Vector2i) -> Vector2i:
+	var best: Vector2i = Vector2i(-1, -1)
+	var best_d: int = 99
+	for y in range(c.y - 3, c.y + 4):
+		for x in range(c.x - 3, c.x + 4):
+			var n: Vector2i = Vector2i(x, y)
+			if not World.in_bounds(x, y) or World.astar.is_point_solid(n):
+				continue
+			var d: int = absi(x - c.x) + absi(y - c.y)
+			if d < best_d:
+				best_d = d
+				best = n
+	return best
+
+
+func _raid_side_name(cell: Vector2i, anchor: Vector2i) -> String:
+	var dx: int = cell.x - anchor.x
+	var dy: int = cell.y - anchor.y
+	if absi(dx) >= absi(dy):
+		return "востока" if dx >= 0 else "запада"
+	return "юга" if dy >= 0 else "севера"
+
+
+## Рабочая оборона: есть панель у базы. Иначе встаёт одно устройство.
+func raid_apply_hit(at: Vector2i) -> void:
+	if Game.raid_damage != "":
+		return
+	if _raid_has_panels(at):
+		var sec: Vector2i = _raid_section_cell(at)
+		if sec.x >= 0:
+			raid_section = sec
+			raid_section_t = Balance.RAID_SECTION_RESTORE
+			World.set_tile(sec.x, sec.y, IDs.T.AIR)
+			Game.raid_damage = "section"
+			_raid_finish(true)
+			return
+	var m = World.machines.get(at) if World.machines.has(at) else null
+	if m == null:
+		m = _raid_nearest_machine(at)
+	if m != null and m.has_method("raid_stop"):
+		m.raid_stop()
+		Game.raid_damage = "device"
+		_raid_finish(true)
+	elif m != null:
+		m.hp = minf(m.hp, 20.0)
+		m.set("raid_stopped", true)
+		Game.raid_damage = "device"
+		_raid_finish(true)
+
+
+func _raid_has_panels(at: Vector2i) -> bool:
+	for y in range(at.y - 6, at.y + 7):
+		for x in range(at.x - 8, at.x + 9):
+			if World.in_bounds(x, y) and World.get_tile_v(Vector2i(x, y)) == IDs.T.ROOM_PANEL:
+				return true
+	return false
+
+
+func _raid_section_cell(at: Vector2i) -> Vector2i:
+	var best: Vector2i = Vector2i(-1, -1)
+	var best_d: int = 99
+	for y in range(at.y - 6, at.y + 7):
+		for x in range(at.x - 8, at.x + 9):
+			var c: Vector2i = Vector2i(x, y)
+			if not World.in_bounds(x, y) or World.get_tile_v(c) != IDs.T.ROOM_PANEL:
+				continue
+			var d: int = absi(x - at.x) + absi(y - at.y)
+			if d < best_d:
+				best_d = d
+				best = c
+	return best
+
+
+func _raid_nearest_machine(at: Vector2i):
+	var best = null
+	var best_d: int = 99
+	for m in World.machines.values():
+		if not is_instance_valid(m) or not (m is MachineBase):
+			continue
+		var d: int = absi(m.cell.x - at.x) + absi(m.cell.y - at.y)
+		if d < best_d:
+			best_d = d
+			best = m
+	return best
+
+
+func _restore_section(delta: float) -> void:
+	if raid_section.x < 0 or raid_section_t <= 0.0:
+		return
+	raid_section_t -= delta
+	if raid_section_t > 0.0:
+		return
+	if World.in_bounds(raid_section.x, raid_section.y) and World.get_tile_v(raid_section) == IDs.T.AIR:
+		World.set_tile(raid_section.x, raid_section.y, IDs.T.ROOM_PANEL)
+	raid_section = Vector2i(-1, -1)
+	raid_section_t = 0.0
 
 
 # ------------------------------------------------------------------ СЕТЬ (ADR-002 § 4.7, MP-F #92)

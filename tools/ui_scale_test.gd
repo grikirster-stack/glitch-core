@@ -383,6 +383,12 @@ func _t_intro_plate(tc: TouchControls, hud: HUD) -> void:
 	var old_hash: int = hud._hint_hash
 	var old_time: float = Game.game_time
 	var old_done: bool = hud._intro_done
+	var raid_phase0: int = Game.raid_phase
+	var raid_line0: String = hud.raid_line
+	var raid_cell0: Vector2i = hud.raid_cell
+	Game.raid_phase = 0
+	hud.raid_line = ""
+	hud.raid_cell = Vector2i(-1, -1)
 	hud.hint_text = ""
 	hud._hint_hash = "".hash()
 	hud._intro_done = false
@@ -426,6 +432,9 @@ func _t_intro_plate(tc: TouchControls, hud: HUD) -> void:
 	hud._hint_hash = old_hash
 	hud._intro_done = old_done
 	Game.game_time = old_time
+	Game.raid_phase = raid_phase0
+	hud.raid_line = raid_line0
+	hud.raid_cell = raid_cell0
 	if had_vel:
 		scene.player.vel = old_vel
 		if scene.player.inv != null:
@@ -517,6 +526,15 @@ func _t_touch_plate(tc: TouchControls, hud: HUD) -> void:
 			scene.player.inv.hotbar_size = 6
 	Game.objective_stage = 2
 	Game.stats_ore = 0
+	# Налёт важнее плашки, пока фаза жива. Этот прогон проверяет подсказки
+	# этапа, не налёт: логика суток выше может оставить предупреждение.
+	# Фазу и строку возвращаем в конце, ход налёта не обрываем насовсем.
+	var raid_phase0: int = Game.raid_phase
+	var raid_line0: String = hud.raid_line
+	var raid_cell0: Vector2i = hud.raid_cell
+	Game.raid_phase = 0
+	hud.raid_line = ""
+	hud.raid_cell = Vector2i(-1, -1)
 	hud.hint_text = ""
 	hud._hint_hash = "".hash()
 	hud.tutorial_text = ""
@@ -643,6 +661,9 @@ func _t_touch_plate(tc: TouchControls, hud: HUD) -> void:
 	Game.objective_stage = old_stage
 	Game.game_time = old_time
 	Game.stats_ore = old_ore
+	Game.raid_phase = raid_phase0
+	hud.raid_line = raid_line0
+	hud.raid_cell = raid_cell0
 	if had_player:
 		scene.player.vel = old_vel
 		if scene.player.inv != null:

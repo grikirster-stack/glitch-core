@@ -620,9 +620,10 @@ static func presses_bump(presses: int, i: int) -> int:
 ## · этап u8 · релей u8 + f32 · задания 2×u8 · угроза u8 + f32 · браун-аут u8 ·
 ## hash мира u32 · game_time f32 · дуги ядра u8 · клетка ядра u32 (idx, нет ядра —
 ## 0xFFFFFFFF) · передачи u16 · метка базы 2×u16 (0xFFFF — метки нет).
-## 42 Б (#315, PROTO 24). Потолок 63 в битах threat снят: счётчик полный.
+## 56 Б (#316, PROTO 27). Хвост налёта — 14 Б после 42 Б #315:
+## фаза u8, номер u16, цель 2×u16, награда u16, pad u8, остаток f32.
 
-const GLOBAL_BYTES: int = 42
+const GLOBAL_BYTES: int = 56
 
 
 static func encode_global(d: Dictionary) -> PackedByteArray:
@@ -653,6 +654,17 @@ static func encode_global(d: Dictionary) -> PackedByteArray:
 	var set: bool = bool(d.get("base_mark_set", false)) and mark.x >= 0 and mark.y >= 0
 	out.encode_u16(38, clampi(mark.x, 0, 0xFFFF) if set else 0xFFFF)
 	out.encode_u16(40, clampi(mark.y, 0, 0xFFFF) if set else 0xFFFF)
+	# Налёт (#316, PROTO 27): фаза u8, номер u16, цель 2×u16 (0xFFFF — нет),
+	# id награды u16, остаток f32. Хост считает, клиент только показывает.
+	out.encode_u8(42, int(d.get("raid_phase", 0)) & 0xFF)
+	out.encode_u16(43, clampi(int(d.get("raid_number", 0)), 0, 0xFFFF))
+	var rt: Vector2i = d.get("raid_target", Vector2i(-1, -1))
+	var has_t: bool = rt.x >= 0 and rt.y >= 0
+	out.encode_u16(45, clampi(rt.x, 0, 0xFFFF) if has_t else 0xFFFF)
+	out.encode_u16(47, clampi(rt.y, 0, 0xFFFF) if has_t else 0xFFFF)
+	out.encode_u16(49, clampi(int(d.get("raid_reward_id", 0)), 0, 0xFFFF))
+	out.encode_u8(51, 0)
+	out.encode_float(52, float(d.get("raid_remain", 0.0)))
 	return out
 
 
@@ -670,6 +682,11 @@ static func decode_global(b: PackedByteArray) -> Dictionary:
 		"signal_sends": b.decode_u16(36),
 		"base_mark": _mark_cell(b.decode_u16(38), b.decode_u16(40)),
 		"base_mark_set": b.decode_u16(38) != 0xFFFF,
+		"raid_phase": b.decode_u8(42),
+		"raid_number": b.decode_u16(43),
+		"raid_target": _mark_cell(b.decode_u16(45), b.decode_u16(47)),
+		"raid_reward_id": b.decode_u16(49),
+		"raid_remain": b.decode_float(52),
 	}
 
 
@@ -950,7 +967,7 @@ static func schema_sample() -> PackedByteArray:
 		encode_global({"time": 0.66, "day": 3, "state": 0, "research": 12, "stage": 2,
 				"relay_active": true, "relay_timer": 90.5, "tasks_done": 2, "tasks_total": 5,
 				"threat": 1, "threat_budget": 7.5, "brownout": true, "hash": 0xDEADBEEF, "game_time": 1234.5,
-				"signal_sends": 2, "base_mark": Vector2i(12, 34), "base_mark_set": true}),
+				"signal_sends": 2, "base_mark": Vector2i(12, 34), "base_mark_set": true, "raid_phase": 1, "raid_number": 2, "raid_target": Vector2i(8, 9), "raid_reward_id": 2, "raid_remain": 12.5}),
 		encode_sound(Vector2(100, 200), 5, -6.0, 1.2),
 		encode_notify(Vector2(0, 0), "Рядом нет вентиляции", Color(1.0, 0.5, 0.25), 0),
 		encode_fx(Vector2(1, 2), 3, 4),

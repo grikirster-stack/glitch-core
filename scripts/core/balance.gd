@@ -175,6 +175,15 @@ const SPAWN_INTERVAL_MAX: float = 7.0
 const SPAWN_INTERVAL_MIN: float = 2.5
 const SPAWN_INTERVAL_PER_T: float = 0.5
 const VENT_TELEGRAPH: float = 2.0      ## с от «пара из вентиляции» до появления
+## Налёт на базу (ADR-006 § 4, #316). Предупреждение не короче 25 с
+## до первого контакта: сумерки длятся ~14 с, одних их мало.
+const RAID_WARN_LEAD: float = 25.0
+## После появления фантома контакт не позже этого срока.
+const RAID_CONTACT_MAX: float = 45.0
+## Нет прохода — попытка кончается, внутрь комнаты не спавним.
+const RAID_GIVE_UP: float = 40.0
+## Повреждённый участок сам встаёт за сутки производства.
+const RAID_SECTION_RESTORE: float = 240.0
 const BLACK_BOX_CHANCE: float = 0.25
 const MAX_PHANTOMS: int = 16           ## поднято с 12 после замера freeze_probe в #27
 # --- Бесконечная игра (ADR-005 § 6.4, #174) ---
