@@ -1483,6 +1483,21 @@ func _on_card_input(event: InputEvent) -> void:
 	cam.position_smoothing_enabled = smooth
 
 
+## Сценарий кончился посреди показа: камера и флаги не должны утечь в следующий.
+## Иначе guide_touch оставляет смещение, а guide_show принимает его за «до».
+func cancel_card_look() -> void:
+	_card_looking = false
+	card_look_left = 0.0
+	_card_cam_back = Vector2.ZERO
+	_card_cam_aim = Vector2.ZERO
+	if player != null and is_instance_valid(player) and player.camera != null:
+		var cam: Camera2D = player.camera
+		var smooth: bool = cam.position_smoothing_enabled
+		cam.position_smoothing_enabled = false
+		cam.position = Vector2.ZERO
+		cam.position_smoothing_enabled = smooth
+
+
 ## Показ цели кончился — камера встаёт обратно на героя.
 func _update_card_look(delta: float) -> void:
 	if not _card_looking:
@@ -2068,6 +2083,8 @@ const HOTBAR_BOTTOM: float = 32.0
 
 var _lay: Dictionary = {}
 var _lay_sig: int = -1
+## Портрет уже шести ячеек по 78: сколько слотов реально рисуется. 0 — не портрет.
+var _portrait_shown: int = 0
 
 ## Прямоугольники блоков HUD в логических px — для теста «ничего не наезжает»: здоровье, импульс,
 ## строки статуса (каждая — своя плашка), сутки, отсчёт до ночи, миникарта, команда, хотбар,
@@ -2129,11 +2146,22 @@ func _ensure_layout() -> void:
 		_lay = _compute_layout()
 
 
-## Сколько ячеек хотбара рисовать (#161). Героя ещё нет — 10, как у Inventory по умолчанию.
+## Сколько ячеек в инвентаре (#161). Героя ещё нет — 10, как у Inventory по умолчанию.
+## Не читает раскладку: её ширина считается от этого числа, иначе портрет сужает
+## сам себя на каждом кадре.
 func _hotbar_count() -> int:
 	if player == null or player.inv == null:
 		return SLOT_COUNT
 	return clampi(player.inv.hotbar_size, 1, SLOT_COUNT)
+
+
+## Сколько ячеек реально рисуется. На узком портрете крайние не влезают в ячейку
+## 78 — их нет на полосе, стопки остаются в инвентаре.
+func _hotbar_shown() -> int:
+	var n: int = _hotbar_count()
+	if _portrait_shown > 0:
+		return mini(n, _portrait_shown)
+	return n
 
 
 ## Подпись входов раскладки: размер, коэффициент, строки, число уведомлений, состав команды,
@@ -2530,21 +2558,20 @@ func _compute_layout() -> Dictionary:
 	var hint_max: float = minf(w - 2.0 * PAD, 600.0)
 	if portrait:
 		# Щели между стиком и E нет: ячейка там сжималась до 27 px (3.4 мм).
-		# Полоса над рядом боя, шаг не от щели X. 6 слотов — SLOT_PORTRAIT
-		# (ячейка 78). 10 слотов — min(82, пол ширины / 10), ячейка не меньше
-		# 36, чтобы номер рисовался. Кнопки не двигаем.
-		var step: float = SLOT_PORTRAIT
-		if n_slots >= SLOT_COUNT:
-			step = minf(SLOT_PORTRAIT, floorf((w - 2.0 * PAD) / float(n_slots)))
-		slot = maxf(step, SLOT_DIGIT_MIN + 4.0)
-		hb_w = slot * float(n_slots) - 4.0
-		# Холст уже шести крупных ячеек (1080×2400 при 250 % — 432 лог. px):
-		# полоса не должна выходить за край. Номер слота тогда не рисуется.
+		# Полоса над рядом боя, шаг не от щели X. Ячейка не уже 78 (SLOT_PORTRAIT
+		# минус зазор). Шесть таких на 432 лог. px не влезают, десять — тем более
+		# (сжатие давало 66 и 37). Крайние слоты прячем, не сжимаем. Кнопки не двигаем.
 		var fit: float = w - 2.0 * PAD
-		if hb_w > fit + 0.5:
-			slot = maxf(16.0, floorf((fit + 4.0) / float(n_slots)))
-			hb_w = slot * float(n_slots) - 4.0
+		var shown: int = n_slots
+		var step: float = SLOT_PORTRAIT
+		while shown > 1 and SLOT_PORTRAIT * float(shown) - 4.0 > fit + 0.5:
+			shown -= 1
+		slot = step
+		hb_w = slot * float(shown) - 4.0
 		hx = clampf((w - hb_w) * 0.5, PAD, maxf(PAD, w - PAD - hb_w))
+		# Рисунок и тап читают это число, не hotbar_size: иначе 7–10-я ячейка
+		# рисуется за краем полосы и тап по пустому месту выбирает слот.
+		_portrait_shown = shown
 		var cell_h: float = slot - 4.0
 		# Низ полосы — у верхнего захвата стика и нижнего ряда боя
 		# (прыжок, бег, E, копать). Меню сверху и Q/V/G в захват не входят:
@@ -2558,6 +2585,7 @@ func _compute_layout() -> Dictionary:
 		hi = w - PAD
 		hint_max = hi - lo
 	else:
+		_portrait_shown = 0
 		if tb.has("stick") and tb.has("e"):
 			lo = (tb["stick"] as Rect2).end.x + PAD
 			hi = (tb["e"] as Rect2).position.x - PAD
@@ -3794,7 +3822,7 @@ func _text_outlined(font: Font, pos: Vector2, text: String, fsize: int, col: Col
 ## i за пределом hotbar_size — пустой прямоугольник: тап мимо хотбара ничего не выбирает.
 func hotbar_slot_logical(i: int) -> Rect2:
 	_ensure_layout()
-	if i < 0 or i >= _hotbar_count():
+	if i < 0 or i >= _hotbar_shown():
 		return Rect2()
 	var hb: Rect2 = _lay["hotbar"]
 	var slot: float = float(_lay["slot"])
@@ -3836,7 +3864,7 @@ func _slot_font() -> int:
 
 func _draw_hotbar(font: Font) -> void:
 	var fs: int = _slot_font()
-	for i in _hotbar_count():
+	for i in _hotbar_shown():
 		var r: Rect2 = hotbar_slot_logical(i)
 		var sel: bool = (player.inv.selected == i)
 		draw_rect(r, C_PLATE)

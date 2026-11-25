@@ -611,13 +611,13 @@ func _hit_shown(pos: Vector2) -> String:
 	return ""
 
 
-## Ячейка хотбара под пальцем или -1. Перебираем inv.hotbar_size, не вшитую десятку (#161):
-## пустое место за 6-й ячейкой — не хотбар.
+## Ячейка хотбара под пальцем или -1. Перебираем нарисованные ячейки, не hotbar_size:
+## на узком портрете крайние не влезают в ячейку 78 и тапом не выбираются.
 func hotbar_slot_at(pos: Vector2) -> int:
 	var hud: HUD = UI.hud
 	if hud == null:
 		return -1
-	var n: int = hud._hotbar_count()
+	var n: int = hud._hotbar_shown()
 	for i in n:
 		if hud.hotbar_slot_rect(i).grow(2.0).has_point(pos):
 			return i

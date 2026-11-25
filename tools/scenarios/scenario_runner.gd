@@ -719,6 +719,13 @@ func _reset_world() -> void:
 		p.inv.add(IDs.I.STONE, 4)
 		p.inv.add(IDs.I.SCRAP, 4)
 	p.global_position = World.spawn_point
+	# Показ цели прошлого сценария не должен течь дальше. guide_touch уводит
+	# камеру на 2 с и заканчивается, не дожидаясь возврата; следующий сценарий
+	# иначе запоминает уже смещённую камеру как «до».
+	if UI.hud != null and UI.hud.has_method("cancel_card_look"):
+		UI.hud.cancel_card_look()
+	elif p.camera != null:
+		p.camera.position = Vector2.ZERO
 	# Экран финала мог остаться от прошлого сценария.
 	var es: Node = scene.get("end_screen")
 	if es != null:

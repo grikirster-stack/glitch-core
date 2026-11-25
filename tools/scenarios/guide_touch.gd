@@ -34,6 +34,11 @@ func run() -> void:
 	hud._card_hit.gui_input.emit(touch)
 	ok("тап по карточке увёл камеру", hud._card_looking and hud.card_look_left > 0.0,
 			"смотрит %s" % hud._card_looking)
+	# Показ 2 с. Не оставляем его следующему сценарию: сброс мира вернёт камеру,
+	# но этот сценарий сам должен дождаться возврата, как игрок.
+	var back: bool = await wait_until(func() -> bool: return not hud._card_looking, 3.0)
+	ok("тап: камера вернулась сама", back and player.camera.position == Vector2.ZERO,
+			"%s, показ %s" % [player.camera.position, str(hud._card_looking)])
 	UI.touch_on = was
 	finish()
 
