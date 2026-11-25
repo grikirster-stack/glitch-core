@@ -26,17 +26,22 @@ func run() -> void:
 		ph.state = ph.St.CHASE
 	for _i in 8:
 		RaidCommon.step_frame(self, 0.05)
-	var wave_s: float = now() - t0
 	ok("повреждён один участок", Game.raid_damage == "section", Game.raid_damage)
 	var panels_after: int = _panels(origin)
 	ok("снята одна панель, не вся оборона", panels_after == panels_before - 1, "%d → %d" % [panels_before, panels_after])
 	var hp_bed: float = float(World.machines[room["inside"]].hp) if World.machines.has(room["inside"]) else -1.0
 	ok("устройство живо", hp_bed > 0.0, "hp %.0f" % hp_bed)
-	print("  замер волны: %.2f с, урон %s, hp грядки %.0f" % [wave_s, Game.raid_damage, hp_bed])
-	# Сутки производства — таймер участка, не реальный день игрока.
-	Threat.raid_section_t = 1.0
-	RaidCommon.tick(1.2)
-	ok("участок встал за сутки", _panels(origin) == panels_before, str(_panels(origin)))
+	var sec: Vector2i = Threat.raid_section
+	var left: float = Threat.raid_section_t
+	ok("таймер участка — сутки, не подмена", left > Balance.RAID_SECTION_RESTORE - 2.0 and left <= Balance.RAID_SECTION_RESTORE,
+			"%.1f" % left)
+	# Сутки производства тикают директором. До конца суток минус 1 с — панель снята.
+	Threat.tick(maxf(0.0, left - 1.0))
+	ok("за сутки минус секунда участок не встал", sec.x >= 0 and World.get_tile_v(sec) == IDs.T.AIR and Threat.raid_section_t > 0.0,
+			"тайл %d, остаток %.1f" % [World.get_tile_v(sec), Threat.raid_section_t])
+	Threat.tick(1.5)
+	ok("участок встал за сутки", sec.x >= 0 and World.get_tile_v(sec) == IDs.T.ROOM_PANEL and Threat.raid_section.x < 0,
+			"тайл %d" % World.get_tile_v(sec))
 	finish()
 
 

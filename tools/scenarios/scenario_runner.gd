@@ -430,6 +430,14 @@ const REGISTRY: Dictionary = {
 		"desc": "сохранение во время предупреждения возвращает фазу, цель, остаток, id"},
 	"raid_save_mid": {"file": "raid_save_mid.gd", "title": "налёт: сейв середины", "timeout_ms": 60000,
 		"desc": "сохранение посреди налёта возвращает фазу, цель, остаток, id награды"},
+	"raid_first_contact": {"file": "raid_first_contact.gd", "title": "налёт: первый контакт", "timeout_ms": 120000,
+		"desc": "от фазы 2 до удара не дольше 45 с, фантом идёт от входа сам"},
+	"raid_quiet_nights": {"file": "raid_quiet_nights.gd", "title": "налёт: тихие ночи", "timeout_ms": 60000,
+		"desc": "ночи 1–2 без налёта, ночь 3 начинает предупреждение"},
+	"raid_second_entry": {"file": "raid_second_entry.gd", "title": "налёт: второй вход", "timeout_ms": 90000,
+		"desc": "следующий налёт берёт другой вход снаружи, если он есть"},
+	"raid_touch_repair": {"file": "raid_touch_repair.gd", "title": "налёт: починка с телефона", "timeout_ms": 90000,
+		"desc": "тап по виртуальной E чинит вставшее устройство камнем"},
 	}
 
 var scene: Node = null
