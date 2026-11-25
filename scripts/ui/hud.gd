@@ -2083,8 +2083,8 @@ const HOTBAR_BOTTOM: float = 32.0
 
 var _lay: Dictionary = {}
 var _lay_sig: int = -1
-## Портрет уже шести ячеек по 78: сколько слотов реально рисуется. 0 — не портрет.
-var _portrait_shown: int = 0
+## Портрет: сколько ячеек в ряду (не больше 5). 0 — не портрет, один ряд.
+var _portrait_cols: int = 0
 
 ## Прямоугольники блоков HUD в логических px — для теста «ничего не наезжает»: здоровье, импульс,
 ## строки статуса (каждая — своя плашка), сутки, отсчёт до ночи, миникарта, команда, хотбар,
@@ -2155,13 +2155,10 @@ func _hotbar_count() -> int:
 	return clampi(player.inv.hotbar_size, 1, SLOT_COUNT)
 
 
-## Сколько ячеек реально рисуется. На узком портрете крайние не влезают в ячейку
-## 78 — их нет на полосе, стопки остаются в инвентаре.
+## Сколько ячеек рисуется и тапается. На портрете — все, в два ряда, ничего не прячем:
+## набор кладёт дверь и волокно в слоты 5 и 6, без них цепочка на телефоне не идёт.
 func _hotbar_shown() -> int:
-	var n: int = _hotbar_count()
-	if _portrait_shown > 0:
-		return mini(n, _portrait_shown)
-	return n
+	return _hotbar_count()
 
 
 ## Подпись входов раскладки: размер, коэффициент, строки, число уведомлений, состав команды,
@@ -2558,26 +2555,29 @@ func _compute_layout() -> Dictionary:
 	var hint_max: float = minf(w - 2.0 * PAD, 600.0)
 	if portrait:
 		# Щели между стиком и E нет: ячейка там сжималась до 27 px (3.4 мм).
-		# Полоса над рядом боя, шаг не от щели X. Ячейка не уже 78 (SLOT_PORTRAIT
-		# минус зазор). Шесть таких на 432 лог. px не влезают, десять — тем более
-		# (сжатие давало 66 и 37). Крайние слоты прячем, не сжимаем. Кнопки не двигаем.
+		# Шесть ячеек по 78 на 432 не влезают в один ряд (сжатие давало 66, прятание
+		# уносило дверь и волокно). Второй ряд — только когда все слоты не влезают
+		# в один при ячейке 82. На 512 шесть ещё влезают: лишний ряд съедает плашку.
+		# Кнопки не двигаем. Ландшафт — ниже, в щели, без второго ряда.
 		var fit: float = w - 2.0 * PAD
-		var shown: int = n_slots
-		var step: float = SLOT_PORTRAIT
-		while shown > 1 and SLOT_PORTRAIT * float(shown) - 4.0 > fit + 0.5:
-			shown -= 1
-		slot = step
-		hb_w = slot * float(shown) - 4.0
+		var cols: int = n_slots
+		var one_w: float = SLOT_PORTRAIT * float(n_slots) - 4.0
+		if one_w > fit + 0.5:
+			cols = mini(n_slots, 5)
+			while cols > 1 and SLOT_PORTRAIT * float(cols) - 4.0 > fit + 0.5:
+				cols -= 1
+		_portrait_cols = cols
+		var rows_n: int = int(ceil(float(n_slots) / float(cols)))
+		slot = SLOT_PORTRAIT
+		hb_w = slot * float(cols) - 4.0
 		hx = clampf((w - hb_w) * 0.5, PAD, maxf(PAD, w - PAD - hb_w))
-		# Рисунок и тап читают это число, не hotbar_size: иначе 7–10-я ячейка
-		# рисуется за краем полосы и тап по пустому месту выбирает слот.
-		_portrait_shown = shown
 		var cell_h: float = slot - 4.0
 		# Низ полосы — у верхнего захвата стика и нижнего ряда боя
 		# (прыжок, бег, E, копать). Меню сверху и Q/V/G в захват не входят:
 		# иначе полоса уезжает к верхней трети.
 		var grab_top: float = _combat_grab_top(h)
-		hy = grab_top - cell_h
+		var block_h: float = cell_h * float(rows_n) + 4.0 * float(rows_n - 1)
+		hy = grab_top - block_h
 		var band_y: float = h * (2.0 / 3.0)
 		if hy + 0.5 < band_y:
 			hy = band_y
@@ -2585,7 +2585,7 @@ func _compute_layout() -> Dictionary:
 		hi = w - PAD
 		hint_max = hi - lo
 	else:
-		_portrait_shown = 0
+		_portrait_cols = 0
 		if tb.has("stick") and tb.has("e"):
 			lo = (tb["stick"] as Rect2).end.x + PAD
 			hi = (tb["e"] as Rect2).position.x - PAD
@@ -2609,7 +2609,11 @@ func _compute_layout() -> Dictionary:
 		# её из нижней трети. На ПК tb пуст — HOTBAR_BOTTOM не меняется.
 		hint_max = minf(minf(w - 2.0 * PAD, 600.0), hi - lo)
 	L["slot"] = slot
-	L["hotbar"] = Rect2(hx, hy, hb_w, slot - 4.0)
+	var hb_h: float = slot - 4.0
+	if _portrait_cols > 0:
+		var rows_n: int = int(ceil(float(n_slots) / float(_portrait_cols)))
+		hb_h = (slot - 4.0) * float(rows_n) + 4.0 * float(rows_n - 1)
+	L["hotbar"] = Rect2(hx, hy, hb_w, hb_h)
 	# Ландшафт: захват стика шире видимого круга и задевает хотбар у нижнего
 	# края. Сужаем по X, высоту не трогаем. Портрет уже выше всех захватов —
 	# сужение по X снова зажало бы ячейку до 27 px, его нет.
@@ -2664,11 +2668,12 @@ func _compute_layout() -> Dictionary:
 				hint_ceiling = minf(hint_ceiling, (L["card"] as Rect2).position.y - gap)
 			if portrait:
 				var hx0: float = clampf(hx + hb_w * 0.5 - hw * 0.5, PAD, maxf(PAD, w - PAD - hw))
+				# hy — верх верхнего ряда. Плашка над ним, не между рядами:
+				# иначе она закрывает слоты 0–4, и дверь с волокном не выбрать.
 				slot_r = Rect2(hx0, hy - gap - hint_h, hw, hint_h)
-				# Цель уже над хотбаром — плашка уходит под неё, не на неё.
 				if L.has("card") and slot_r.intersects(L["card"]):
 					slot_r.position.y = (L["card"] as Rect2).end.y + gap
-				if slot_r.end.y > hy - gap + 0.5:
+				if slot_r.end.y > hy - gap + 0.5 or slot_r.intersects(L["hotbar"]):
 					slot_r = Rect2()
 			elif not grabs.is_empty():
 				# Прямо над хотбаром, в нижней трети. Свободный поиск сажал плашку
@@ -2842,7 +2847,13 @@ func _place_touch_card(L: Dictionary, tb: Dictionary, band: float, hint_top: flo
 	var floor_y: float = size.y - line_h
 	if L.has("hotbar"):
 		var hb_gap: float = card_gap if portrait else HINT_GAP_TOUCH
+		# Верх блока — верхний ряд. Карточка не садится на слоты второго ряда.
 		floor_y = minf(floor_y, (L["hotbar"] as Rect2).position.y - hb_gap - line_h)
+		# Два ряда поднимают хотбар, и низ свободной полосы попадает в захват боя.
+		# Карточка там перехватывает тап по верхнему ряду. Потолок — над захватом.
+		if portrait:
+			var grab_top: float = _combat_grab_top(size.y)
+			floor_y = minf(floor_y, grab_top - hb_gap - line_h)
 	# Ландшафт с плашкой: единственный ряд цели — над ней, у границы трети.
 	# Поиск снизу вверх сажает цель на хотбар или прячет. Ряд фиксируем.
 	if not portrait and hint_top + 0.5 < (L["hotbar"] as Rect2).position.y if L.has("hotbar") else false:
@@ -3125,6 +3136,15 @@ func _place_touch_top(L: Dictionary, tb: Dictionary, band: float, portrait: bool
 	if L.has("hint"):
 		hint_top = (L["hint"] as Rect2).position.y
 	var ceiling: float = hint_top - HINT_GAP_TOUCH
+	# Два ряда хотбара поднимают плашку к захвату боя, и щель над ней пропадает.
+	# Отсчёт может сесть между верхом хотбара и захватом: тап по хотбару важнее,
+	# но секунды не должны пропадать.
+	if L.has("hotbar"):
+		# Верх хотбара на границе трети — щель над ним вне нижней трети.
+		# Тогда отсчёт идёт в карман сбоку полосы, не над ней.
+		var hb_top: float = (L["hotbar"] as Rect2).position.y
+		if hb_top - 2.0 > band + 18.0:
+			ceiling = maxf(ceiling, hb_top - 2.0)
 	# Плашка команды на телефоне скрыта: team_plate_rect — якорь кнопок меню
 	# (TouchControls._layout). Сдвинуть её в нижнюю треть — сдвинуть I/J/паузу.
 	var room: float = ceiling - band
@@ -3132,7 +3152,7 @@ func _place_touch_top(L: Dictionary, tb: Dictionary, band: float, portrait: bool
 	# Отсчёт до цели (#310): иначе карточка занимает всю ширину ряда, и резерв
 	# справа уже некуда деть. Секунды не должны ждать, пока цель сядет.
 	if night_countdown >= 0:
-		var early: Rect2 = _place_touch_countdown(w, band, ceiling, tb.values())
+		var early: Rect2 = _place_touch_countdown(w, band, ceiling, tb.values(), L.get("hotbar", Rect2()))
 		if early.has_area():
 			L["countdown"] = early
 			taken.append(early)
@@ -3219,17 +3239,26 @@ func _place_touch_top(L: Dictionary, tb: Dictionary, band: float, portrait: bool
 		cd_block.append_array(tb.values())
 		var cd: Rect2 = Rect2()
 		if L.has("card"):
-			cd = _place_touch_countdown(w, band, (L["card"] as Rect2).position.y - 2.0, cd_block)
+			cd = _place_touch_countdown(w, band, (L["card"] as Rect2).position.y - 2.0, cd_block, L.get("hotbar", Rect2()))
 			if not cd.has_area():
 				cd = _countdown_beside_card(L["card"], cd_block)
 		if not cd.has_area():
 			if L.has("card"):
 				cd_block.append(L["card"])
-			cd = _place_touch_countdown(w, band, ceiling, cd_block)
+			cd = _place_touch_countdown(w, band, ceiling, cd_block, L.get("hotbar", Rect2()))
 		if cd.has_area():
 			L["countdown"] = cd
 			taken.append(cd)
 	# Уведомления — над плашкой, в свободной полосе нижней трети. Не влезли — скрыты.
+	# Плашка ставится после этого вызова. Без резерва строка уведомления садится
+	# в её ряд (150 %, холст 1280×2844) и пересекает «hint».
+	var hint_gap: float = HINT_GAP_LAND if not portrait else HINT_GAP_TOUCH
+	var hint_row: float = HINT_H_LAND if not portrait else ROW_H
+	if _plate_text() != "" and L.has("hotbar") and not L.has("hint"):
+		var hb_top: float = (L["hotbar"] as Rect2).position.y
+		var reserved: Rect2 = Rect2(PAD, hb_top - hint_gap - hint_row, w - 2.0 * PAD, hint_row)
+		if reserved.position.y + 0.5 >= band and reserved.end.y <= hb_top - hint_gap + 0.5:
+			taken.append(reserved)
 	_place_touch_notes(L, tb, taken, band, ceiling)
 
 
@@ -3259,22 +3288,22 @@ func _countdown_beside_card(card: Rect2, taken: Array) -> Rect2:
 ## Отсчёт до ночи в нижней трети, всегда, пока сумерки. Ширина по кеглю body —
 ## им же строка и рисуется. Сначала центр у границы трети, не влез — любая щель
 ## между захватами. Пустой только если щели нет вовсе.
-func _place_touch_countdown(w: float, band: float, ceiling: float, taken: Array) -> Rect2:
+func _place_touch_countdown(w: float, band: float, ceiling: float, taken: Array, hotbar: Rect2 = Rect2()) -> Rect2:
 	var fb: int = UI.FONT["body"]
 	# Плашка рисует строку по центру на всю ширину прямоугольника. Поля 8 px
 	# хватает обводке. Кегль body. На 288 лог. px (портрет 250 %) body не
 	# влезает рядом с целью — тогда small, не прячем секунды.
 	var need: float = _tw(_countdown_label(), fb) + 8.0
-	var wide: Rect2 = _countdown_slot(w, band, ceiling, taken, need)
+	var wide: Rect2 = _countdown_slot(w, band, ceiling, taken, need, hotbar)
 	if wide.has_area():
 		return wide
 	fb = UI.FONT["small"]
 	need = _tw(_countdown_label(), fb) + 8.0
 	_countdown_font = fb
-	return _countdown_slot(w, band, ceiling, taken, need)
+	return _countdown_slot(w, band, ceiling, taken, need, hotbar)
 
 
-func _countdown_slot(w: float, band: float, ceiling: float, taken: Array, need: float) -> Rect2:
+func _countdown_slot(w: float, band: float, ceiling: float, taken: Array, need: float, hotbar: Rect2 = Rect2()) -> Rect2:
 	# 26 px — запас над body 18. На 250 % между границей трети и плашкой
 	# остаётся ~24 px: строка всё ещё читается, полосу не прячем.
 	var hgt: float = 22.0
@@ -3295,6 +3324,41 @@ func _countdown_slot(w: float, band: float, ceiling: float, taken: Array, need: 
 			if not _hits(cr, taken) and cr.end.y <= top + 0.5 and cr.position.y + 0.5 >= band:
 				return cr
 		y -= 2.0
+	# Два ряда по 78 на 720×1280 садятся на границу трети: щели над ними
+	# в нижней трети нет. Полоса узкая — карман слева или справа, на высоте
+	# рядов, не на захвате и не на ячейках.
+	return _countdown_beside_hotbar(band, need, hgt, taken, grabs, hotbar)
+
+
+
+
+
+## Карман сбоку двухрядного хотбара, внутри нижней трети. Пустой — кармана нет.
+func _countdown_beside_hotbar(band: float, need: float, hgt: float, taken: Array, grabs: Array, hotbar: Rect2) -> Rect2:
+	if _portrait_cols <= 0 or not hotbar.has_area():
+		return Rect2()
+	var hb: Rect2 = hotbar
+	var y: float = hb.position.y
+	if y + 0.5 < band:
+		y = band
+	if y + hgt > hb.end.y + 0.5 or y + hgt > size.y + 0.5:
+		return Rect2()
+	var spots: Array = [
+		Rect2(PAD, y, hb.position.x - PAD - 4.0, hgt),
+		Rect2(hb.end.x + 4.0, y, size.x - PAD - (hb.end.x + 4.0), hgt),
+	]
+	for spot in spots:
+		var pocket: Rect2 = spot
+		if pocket.size.x + 0.5 < need:
+			continue
+		var cr: Rect2 = Rect2(pocket.position.x, pocket.position.y, need, hgt)
+		if pocket.position.x > hb.end.x:
+			cr.position.x = pocket.end.x - need
+		if cr.position.y + 0.5 < band or cr.end.y > size.y + 0.5:
+			continue
+		if _hits(cr, taken) or _hits_grab(cr, grabs) or cr.intersects(hb):
+			continue
+		return cr
 	return Rect2()
 
 
@@ -3826,7 +3890,13 @@ func hotbar_slot_logical(i: int) -> Rect2:
 		return Rect2()
 	var hb: Rect2 = _lay["hotbar"]
 	var slot: float = float(_lay["slot"])
-	return Rect2(hb.position.x + float(i) * slot, hb.position.y, slot - 4.0, slot - 4.0)
+	var col: int = i
+	var row: int = 0
+	if _portrait_cols > 0:
+		col = i % _portrait_cols
+		row = int(i / _portrait_cols)
+	return Rect2(hb.position.x + float(col) * slot,
+			hb.position.y + float(row) * slot, slot - 4.0, slot - 4.0)
 
 
 ## Ячейка хотбара i на экране, px холста. Ею же попадает тап по хотбару
