@@ -6,18 +6,27 @@ extends ScenarioBase
 func run() -> void:
 	var origin: Vector2i = World.beacon_cell + Vector2i(8, -4)
 	var room: Dictionary = RaidCommon.build_room(origin, true)
-	# Второй выход: слева, на той же высоте, с камнем под ногами.
-	var west: Vector2i = origin + Vector2i(-2, 1)
-	World.set_tile(west.x, west.y, IDs.T.AIR)
+	# Западный проём дальше восточной двери: первый налёт берёт ближний восток,
+	# второй обязан уйти на запад, а не на соседнюю клетку той же двери.
+	var west_door: Vector2i = origin + Vector2i(0, 1)
+	var west: Vector2i = origin + Vector2i(-6, 1)
+	World.set_tile(west_door.x, west_door.y, IDs.T.DOOR_OPEN)
+	World.set_tile(west_door.x - 1, west.y, IDs.T.STONE)
+	for x in range(west.x, west_door.x - 1):
+		World.set_tile(x, west.y, IDs.T.AIR)
+		World.set_tile(x, west.y + 1, IDs.T.STONE)
 	World.set_tile(west.x, west.y + 1, IDs.T.STONE)
-	World.set_tile(origin.x - 1, origin.y + 1, IDs.T.AIR)
 	RaidCommon.place_bed(room["inside"], false)
 	RaidCommon.arm(3)
 	Threat.tick(0.05)
 	ok("первый налёт начался", Game.raid_phase == 1 and Game.raid_number == 1, "номер %d" % Game.raid_number)
 	RaidCommon.tick(Game.raid_remain + 0.2)
 	var first: Vector2i = Threat.raid_entrance
+	var east_out: Vector2i = room["outside"]
 	ok("первый вход снаружи и валиден", first.x >= 0 and first != room["inside"], str(first))
+	ok("первый налёт с восточной двери", absi(first.x - east_out.x) + absi(first.y - east_out.y) <= 1,
+			"%s, восток %s" % [str(first), str(east_out)])
+	var first_side: String = Threat.raid_side
 	RaidCommon.tick(Balance.VENT_TELEGRAPH + 0.2)
 	var ph: Node = _one()
 	if ph != null:
@@ -38,12 +47,13 @@ func run() -> void:
 	Threat.tick(0.05)
 	ok("номер вырос", Game.raid_number == 2 and Game.raid_phase == 1, "номер %d фаза %d" % [Game.raid_number, Game.raid_phase])
 	var second: Vector2i = Threat.raid_entrance
-	var alt: bool = _other_outside(room["inside"], first)
+	# Ближайшая клетка западного проёма, не дальний воздух и не сосед восточной двери.
+	var near_west: bool = second.x < west_door.x and second.x >= west.x - 1 and absi(second.y - west.y) <= 1
+	var same_door: bool = absi(second.x - first.x) + absi(second.y - first.y) <= 2
 	ok("второй вход снаружи и валиден", second.x >= 0 and second != room["inside"], str(second))
-	if alt:
-		ok("второй вход другой", second != first, "%s → %s" % [str(first), str(second)])
-	else:
-		ok("другого входа нет, тот же допустим", second == first, "геометрия без альтернативы, %s" % str(second))
+	ok("второй налёт с другой стороны", Threat.raid_side != first_side and near_west and not same_door,
+			"%s → %s, сторона %s → %s" % [str(first), str(second), first_side, Threat.raid_side])
+	ok("путь от западного проёма до цели есть", Threat._raid_reaches(second, room["inside"]))
 	finish()
 
 
@@ -52,17 +62,3 @@ func _one() -> Node:
 	return list[0] if not list.is_empty() else null
 
 
-func _other_outside(target: Vector2i, skip: Vector2i) -> bool:
-	for y in range(target.y - 4, target.y + 5):
-		for x in range(target.x - 10, target.x + 11):
-			var c: Vector2i = Vector2i(x, y)
-			if c == skip or not World.in_bounds(x, y):
-				continue
-			if World.get_tile_v(c) != IDs.T.AIR:
-				continue
-			if absi(c.x - target.x) + absi(c.y - target.y) < 2:
-				continue
-			var floor: Vector2i = c + Vector2i(0, 1)
-			if World.in_bounds(floor.x, floor.y) and World.get_tile_v(floor) == IDs.T.STONE:
-				return true
-	return false

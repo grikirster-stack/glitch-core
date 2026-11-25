@@ -52,7 +52,8 @@ func run() -> void:
 	await wait(0.15)
 	var plate: String = RaidCommon.plate()
 	ok("плашка зовёт починить тапом или кнопкой E",
-			plate == "[E] — починить" or plate == "Тап — починить" or plate.contains("починить"),
+			plate == "[E] — починить" or plate == "Тап — починить" \
+					or plate.begins_with("[E] — починить") or plate.begins_with("Тап — починить"),
 			"«%s»" % plate)
 	ok("плашка без ЛКМ, ПКМ и [X]", not plate.contains("ЛКМ") and not plate.contains("ПКМ") and not plate.contains("[X]"),
 			"«%s»" % plate)

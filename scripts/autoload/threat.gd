@@ -1043,7 +1043,9 @@ func _raid_pick() -> Dictionary:
 		kind = "mark"
 	var door: bool = _raid_door_open(target)
 	var entrance: Vector2i = _raid_entrance(target, door)
-	var side: String = _raid_side_name(entrance if entrance.x >= 0 else target, anchor)
+	# Сторона — от цели, не от метки базы: западный проём у восточной метки иначе «восток».
+	var side_from: Vector2i = target if target.x >= 0 else anchor
+	var side: String = _raid_side_name(entrance if entrance.x >= 0 else side_from, side_from)
 	return {"target": target, "kind": kind, "entrance": entrance, "side": side, "open": door}
 
 
@@ -1062,6 +1064,9 @@ func _raid_door_open(target: Vector2i) -> bool:
 
 func _raid_entrance(target: Vector2i, open_door: bool) -> Vector2i:
 	var skip: Vector2i = Game.raid_checked if Game.raid_number >= 1 else Vector2i(-1, -1)
+	# Второй налёт ищет другой подход, не соседнюю клетку уже проверенного входа.
+	# Первый налёт skip пустой — этот проход его не касается.
+	var alt: bool = skip.x >= 0 and _raid_has_other_approach(target, skip, open_door)
 	var best: Vector2i = Vector2i(-1, -1)
 	var best_d: int = 9999
 	var x0: int = maxi(1, target.x - RAID_NEIGHBOR)
@@ -1072,6 +1077,8 @@ func _raid_entrance(target: Vector2i, open_door: bool) -> Vector2i:
 		for x in range(x0, x1 + 1):
 			var c: Vector2i = Vector2i(x, y)
 			if c == skip:
+				continue
+			if alt and _raid_same_approach(c, skip, target):
 				continue
 			if not _raid_outside(c):
 				continue
@@ -1097,6 +1104,49 @@ func _raid_entrance(target: Vector2i, open_door: bool) -> Vector2i:
 			best = c
 			best_d = d
 	return best
+
+
+
+## Тот же подход: соседняя клетка проверенного входа или та же сторона от цели.
+func _raid_same_approach(c: Vector2i, checked: Vector2i, target: Vector2i) -> bool:
+	if absi(c.x - checked.x) + absi(c.y - checked.y) <= 2:
+		return true
+	# Сторона считается от цели налёта. raid_target в момент выбора ещё пуст.
+	var anchor: Vector2i = target if target.x >= 0 else checked
+	return _raid_side_name(c, anchor) == _raid_side_name(checked, anchor)
+
+
+## Есть ли снаружи вход не с того же подхода. Иначе второй налёт остаётся на старом.
+func _raid_has_other_approach(target: Vector2i, checked: Vector2i, open_door: bool) -> bool:
+	var x0: int = maxi(1, target.x - RAID_NEIGHBOR)
+	var x1: int = mini(World.W - 2, target.x + RAID_NEIGHBOR)
+	var y0: int = maxi(1, target.y - 8)
+	var y1: int = mini(World.H - 2, target.y + 8)
+	for y in range(y0, y1 + 1):
+		for x in range(x0, x1 + 1):
+			var c: Vector2i = Vector2i(x, y)
+			if _raid_same_approach(c, checked, target):
+				continue
+			if not _raid_entrance_ok(c, target, open_door):
+				continue
+			return true
+	return false
+
+
+func _raid_entrance_ok(c: Vector2i, target: Vector2i, open_door: bool) -> bool:
+	if not _raid_outside(c):
+		return false
+	var here: int = World.get_tile_v(c)
+	if here == IDs.T.DOOR or here == IDs.T.DOOR_OPEN or here == IDs.T.ROOM_PANEL:
+		return false
+	if World.astar != null and World.astar.is_point_solid(c):
+		return false
+	var d: int = absi(c.x - target.x) + absi(c.y - target.y)
+	if d < 2:
+		return false
+	if open_door:
+		return _raid_reaches(c, target)
+	return _raid_faces_shell(c)
 
 
 
