@@ -132,6 +132,9 @@ func begin() -> void:
 	Game.tasks_total = World.terminals.size() + Game.tasks_done
 	say("Глава %d. %s" % [chapter, title])
 	_enter(0)
+	# Этапы пишут статическую строку. Живая команда (кнопка, носик) должна
+	# быть на плашке с первого кадра, не после первого _process.
+	_refresh_hint()
 
 
 ## Стартовый набор героя (свой и каждого товарища в сети).
@@ -210,6 +213,7 @@ func _enter(i: int) -> void:
 	var enter: Callable = st.get("enter", Callable())
 	if enter.is_valid():
 		enter.call()
+	_refresh_hint()
 	_check_t = 0.0
 	evaluate()
 

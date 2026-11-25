@@ -35,6 +35,10 @@ func run() -> void:
 		finish()
 		return
 	await wait(0.4)
+	# Курсор прошлого сценария остаётся в мире: пустая клетка рядом с горелкой
+	# и лампа стартового набора дают «ПКМ — поставить» вместо забора.
+	aim(far.global_position)
+	await wait(0.4)
 	ok("у горелки без топлива в руке — подсказка «забрать»",
 			hud.hint_text == HUD.HINT_PICKUP_BURNER, "«%s»" % hud.hint_text)
 	hold(KEY_2)

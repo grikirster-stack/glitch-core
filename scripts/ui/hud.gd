@@ -134,8 +134,8 @@ const HINT_PLACE: String = "ПКМ — поставить"
 const TOUCH_PICKUP: String = "Забрать: %s"
 const TOUCH_PICKUP_BURNER: String = "Забрать горелку"
 const TOUCH_PLACE: String = "Тапни клетку — поставить"
-const TOUCH_BURNER_FUEL: String = "Забрать · [E] — топка"
-const TOUCH_BURNER_SWITCH: String = "Забрать горелку · [E] — рубильник"
+const TOUCH_BURNER_FUEL: String = "Забрать · Тап — топка"
+const TOUCH_BURNER_SWITCH: String = "Забрать горелку · Тап — рубильник"
 
 ## Одна строка в нижней плашке на телефоне, пока игрок не начал действовать.
 ## CONTROLS_TOUCH на экране больше не рисуется — три строки закрывали карточку.
@@ -161,6 +161,7 @@ const TOUCH_HINTS: Dictionary = {
 	HINT_LOAD: "[E] — загрузить",
 	HINT_SIREN: "[E] — сирену",
 	HINT_LENS: "[E] — линзу",
+	HINT_PHAROS: "Тап — прожектор",
 	HINT_SPORE_BED: "[E] — волокно",
 }
 
@@ -182,6 +183,8 @@ const HINT_DISMANTLE_TAIL: String = " · удерживать [E] — разоб
 ## Сирена (#172): не больше шести слов — ребёнок читает кнопку, не абзац.
 const HINT_SIREN: String = "[E] — включить сирену"
 const HINT_LENS: String = "[E] — вставить линзу"
+## Рубильник жёлтого маяка (#311). Линза — отдельная строка HINT_LENS.
+const HINT_PHAROS: String = "[E] — прожектор"
 const HINT_SPORE_BED: String = "[E] — забрать волокно"
 
 ## Цепочка обучения: шаги по порядку, TUT_DONE — пройдена (строка скрыта).
@@ -554,7 +557,12 @@ func _touch_hint(text: String) -> String:
 		s = s.substr(0, cut)
 	s = s.replace(" (удерживать 3 с)", "")
 	s = s.replace(" (удерживать)", "")
-	return s.strip_edges()
+	s = s.strip_edges()
+	# Десктоп-слова на телефоне невыполнимы: кнопки там только [E] и [V].
+	# Пустая плашка честнее команды, которую нельзя нажать.
+	if s.contains("ЛКМ") or s.contains("ПКМ") or s.contains("[X]"):
+		return ""
+	return s
 
 
 func _set_hint(h: String) -> void:
@@ -594,6 +602,8 @@ func _compute_hint(_pos: Vector2) -> String:
 		return HINT_SIREN
 	if kind == player.ET_LENS:
 		return HINT_LENS
+	if kind == player.ET_PHAROS:
+		return HINT_PHAROS
 	if kind == player.ET_SPORE_BED:
 		return HINT_SPORE_BED
 	if kind == player.ET_TERMINAL:
@@ -1833,6 +1843,11 @@ static func right_column_bottom(w: float, n: int) -> float:
 	if n > 0:
 		return team_plate_rect(w, n).end.y
 	return MAP_OFFSET.y + MAP_SIZE.y
+
+
+## Текст нижней плашки. Сценарии читают его, не склейку hint_text и tutorial_text.
+func plate_text() -> String:
+	return _plate_text()
 
 
 ## Текст нижней плашки. На ПК — hint_text как есть (пустой, если цели нет).

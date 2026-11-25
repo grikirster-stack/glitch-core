@@ -720,6 +720,7 @@ const ET_LOAD: String = "load"                  ## предмет в руке п
 const ET_DISMANTLE: String = "dismantle"        ## разбор постройки (удержание E)
 const ET_SIREN: String = "siren"                ## сирена: E при полном заряде гонит рой
 const ET_LENS: String = "lens"                  ## линза в руке у маяка — вставить
+const ET_PHAROS: String = "pharos"              ## жёлтый маяк: E гасит и зажигает прожектор
 const ET_SPORE_BED: String = "spore_bed"        ## грядка: E забирает волокно с лотка
 const ET_DOOR: String = "door"                  ## дверь: E открывает и закрывает (#312)
 
@@ -886,6 +887,11 @@ func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable,
 		elif m is Pharos and not sel.is_empty() and sel.id == IDs.I.LENS and d < E_MACHINE \
 				and not bool(m.get("lens")):
 			tg["kind"] = ET_LENS
+		elif m is Pharos and d < E_MACHINE and int(m.get("color")) == Beams.Y \
+				and bool(m.get("active")):
+			# Прожектор — отдельная команда E. Линза выше: с ней в руке E вставляет,
+			# а не гасит свет. Неактивный маяк сюда не попадает — его можно разобрать.
+			tg["kind"] = ET_PHAROS
 		elif m is SporeBed and int(m.get("tray")) > 0 and d < E_MACHINE:
 			tg["kind"] = ET_SPORE_BED
 		elif m is Chest and d < E_MACHINE and not _chest_empty(m):
@@ -961,6 +967,10 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 		ET_LENS:
 			if fresh:
 				tg["node"].insert_lens(self)
+		ET_PHAROS:
+			# Рубильник прожектора. Сам маяк зовёт Game.notify — здесь только вызов.
+			if fresh:
+				tg["node"].interact(self)
 		ET_CHEST:
 			# Сундук — через сетевую обёртку: у прокси окно открывает владелец (MP-G).
 			_open_chest(tg["node"])
