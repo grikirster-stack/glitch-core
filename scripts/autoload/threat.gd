@@ -56,6 +56,7 @@ var _wave_recall_left: bool = false
 var _wave_recall_due: bool = false
 var _wave_mark: bool = false
 var wave_recalls: int = 0
+var _swarm_touch: float = 0.0
 var spawned_total: int = 0          ## сколько фантомов вышло за забег
 ## Глава выпустила безвредное эхо. Сценарий читает: ночью эхо уходит за секунды.
 var chapter_echo: bool = false
@@ -98,6 +99,7 @@ func reset() -> void:
 	_wave_recall_left = false
 	_wave_recall_due = false
 	wave_recalls = 0
+	_swarm_touch = 0.0
 	_wave_mark = false
 	spawned_total = 0
 	chapter_echo = false
@@ -372,6 +374,9 @@ func tick(delta: float) -> void:
 		_end_night()
 	if not active:
 		return
+	# Общий выдох роя (#333). Пауза волны ниже делает return — счётчик
+	# должен тикать и в паузе, иначе семь цветов снова сидят в кольце.
+	_swarm_breath(delta)
 	# Релей запустили посреди ночи — к бюджету добавляется его вклад в T.
 	if Game.relay_active and not _relay_seen:
 		_relay_seen = true
@@ -439,6 +444,7 @@ func _begin_night() -> void:
 	_wave_clock = 0.0
 	_wave_was_gap = false
 	wave_recalls = 0
+	_swarm_touch = 0.0
 	_wave_recall_left = false
 	_wave_mark = true
 
@@ -453,6 +459,7 @@ func _end_night() -> void:
 	_wave_recall_left = false
 	_wave_recall_due = false
 	wave_recalls = 0
+	_swarm_touch = 0.0
 	_wave_mark = false
 	_relay_seen = false
 
@@ -485,6 +492,41 @@ func _recall_echoes() -> void:
 	wave_pause = _wave_span()
 	_recall_wave()
 	_wave_recall_due = true
+
+
+## Общий выдох (#333): один счётчик на ночь, не на фантома. Кто-то в
+## кольце 112 px непрерывно дольше 10 с — все не-налётные в кольце уходят
+## на те же 8 с. Кадр без никого в кольце обнуляет счётчик. Налёт до удара
+## не отзываем: breath_out сам откажется, здесь его даже не зовём.
+func _swarm_breath(delta: float) -> void:
+	var ring: Array = []
+	for p in get_tree().get_nodes_in_group("phantom"):
+		if not is_instance_valid(p) or not bool(p.get("alive")):
+			continue
+		if bool(p.get("raid")) and not bool(p.get("raid_struck")):
+			continue
+		if p.get("siege_target") != null:
+			continue
+		if not p.has_method("_touch_near"):
+			continue
+		var ring_px: float = 112.0
+		if "TOUCH_RING" in p:
+			ring_px = float(p.TOUCH_RING)
+		if float(p._touch_near()) <= ring_px:
+			ring.append(p)
+	if ring.is_empty():
+		_swarm_touch = 0.0
+		return
+	_swarm_touch += delta
+	var hold: float = 10.0
+	if "TOUCH_HOLD" in ring[0]:
+		hold = float(ring[0].TOUCH_HOLD)
+	if _swarm_touch < hold:
+		return
+	_swarm_touch = 0.0
+	for p in ring:
+		if is_instance_valid(p) and p.has_method("breath_out"):
+			p.breath_out()
 
 
 func _recall_wave() -> void:
@@ -975,6 +1017,7 @@ func load_state(d: Dictionary) -> void:
 	_wave_recall_left = false
 	_wave_recall_due = wave_pause > 0.0
 	wave_recalls = 0
+	_swarm_touch = 0.0
 	_wave_mark = active
 	spawned_total = int(d.get("spawned_total", 0))
 	_relay_seen = bool(d.get("relay_seen", false))

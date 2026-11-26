@@ -63,6 +63,9 @@ const TOUCH_REST: float = 8.0
 var _touch_s: float = 0.0
 var _breath: float = 0.0
 var _breath_n: int = 0
+var _breath_out: bool = false
+var _breath_gone: bool = false
+var raid_struck: bool = false
 var _touch_cache: Array = []
 var _touch_cache_t: float = 0.0
 ## Глава «Огонь» (#215): пока > 0, эхо идёт к лучу (CHASE на approach_at),
@@ -237,10 +240,11 @@ func _physics_process(delta: float) -> void:
 	var player_light: float = _player_light_value(player.global_position) if fears_light else 0.0
 
 	# Передышка по касанию (#333): 10 с в 112 px — отход на >=200 px и 8 с
-	# снаружи. Налёт — отдельный курс C2: даже без живого подхода передышка
-	# обнуляет approach_t, и _raid_hold_course тут же даёт новый. Не зовём.
+	# снаружи. Налёт до удара — отдельный курс C2: передышка обнуляет
+	# approach_t, и _raid_hold_course тут же даёт новый. После удара тело
+	# уже свободно, флаг raid_struck только фиксирует «после, не до».
 	# Осада главы тоже идёт своим курсом.
-	if not raid and siege_target == null and stun <= 0.0:
+	if (not raid or raid_struck) and siege_target == null and stun <= 0.0:
 		_touch_breath(dt)
 
 	# --- Решения -------------------------------------------------------------
@@ -410,6 +414,7 @@ func _physics_process(delta: float) -> void:
 		var here: Vector2i = World.world_to_cell(global_position)
 		var there: Vector2i = World.world_to_cell(goal)
 		if here == there and global_position.distance_to(goal) < 18.0:
+			raid_struck = true
 			Threat.raid_apply_hit(there)
 			approach_t = 0.0
 			alive = false
@@ -1186,28 +1191,56 @@ func force_flee(t: float, from: Vector2 = Vector2.ZERO) -> void:
 
 
 ## Передышка по касанию (#333). Кольцо — то же 112 px, что доля ночи
-## под давлением. Пока таймер отдыха > 0, ближе TOUCH_AWAY не подходим:
-## иначе отход на один кадр и сразу возврат, и ночь снова сплошной контакт.
+## под давлением. 8 с начинаются в момент выхода за 200 px и не
+## перезапускаются, пока тело ещё внутри: иначе отдых не кончается
+## никогда. Повторный вход во время этих 8 с часы не останавливает.
+## Возврат — только после. До выхода держим отход, но часы не тикают.
+func breath_out() -> void:
+	if not alive or net_puppet:
+		return
+	if raid and not raid_struck:
+		return
+	if _breath > 0.0 or _breath_out:
+		return
+	_begin_breath()
+
+
+func _begin_breath() -> void:
+	_touch_s = 0.0
+	_breath = TOUCH_REST
+	_breath_out = true
+	_breath_gone = false
+	_breath_n += 1
+	# 8 с — с приказа, не с выхода за 200. Пеший шаг часто не доходит
+	# до вентиляции, и часы «после выхода» не начинались вовсе.
+	wave_hold(TOUCH_REST, _touch_anchor())
+
+
 func _touch_breath(dt: float) -> void:
-	if _breath > 0.0:
-		_breath = maxf(0.0, _breath - dt)
+	if _breath > 0.0 or _breath_out:
 		_touch_s = 0.0
-		# Ближе 200 px отдых не кончается: иначе шаг наружу и сразу возврат.
-		if _touch_near() < TOUCH_AWAY:
+		var near: float = _touch_near()
+		# Часы идут с приказа. Пока не вышли за 200 — не уменьшаем запас
+		# отхода: иначе тело, застрявшее в кольце, возвращается через 8 с.
+		if near >= TOUCH_AWAY:
+			_breath_gone = true
+		_breath = maxf(0.0, _breath - dt)
+		if _breath <= 0.0 and (_breath_gone or near >= TOUCH_AWAY):
+			_breath_gone = false
+			_breath_out = false
+			return
+		if _breath <= 0.0:
 			_breath = TOUCH_REST
-			var anchor: Vector2 = _touch_anchor()
-			if not _wave_hold or _flee_from.distance_to(anchor) > 32.0:
-				wave_hold(_breath, anchor)
+		var anchor: Vector2 = _touch_anchor()
+		if not _wave_hold or _flee_from.distance_to(anchor) > 32.0 or _forced_flee < _breath:
+			wave_hold(_breath, anchor)
 		return
 	if _touch_near() <= TOUCH_RING:
 		_touch_s += dt
 		if _touch_s >= TOUCH_HOLD:
-			_touch_s = 0.0
-			_breath = TOUCH_REST
-			_breath_n += 1
-			wave_hold(TOUCH_REST, _touch_anchor())
+			_begin_breath()
 	else:
-		# Касание непрерывное: кадр вне кольца обнуляет счётчик.
+		# Касание непрерывное: кадр вне кольца обнуляет счётчик до отхода.
 		_touch_s = 0.0
 
 
@@ -1219,6 +1252,10 @@ func _touch_near() -> float:
 	var best: float = INF
 	if player != null and is_instance_valid(player):
 		best = global_position.distance_to(player.global_position)
+	# Давление ночи считает каждую поставленную клетку, не только горелку.
+	# Иначе тело сидит на маяке, а передышка его не видит.
+	for c in World.machines:
+		best = minf(best, global_position.distance_to(World.cell_to_world(c)))
 	for m in _touch_base():
 		# Та же точка, что у давления ночи: центр клетки, не спрайт.
 		# Спрайт маяка выше ряда, и тело в 80 px от клетки не копило касание.
