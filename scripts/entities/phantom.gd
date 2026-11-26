@@ -55,6 +55,17 @@ var _flee_from: Vector2 = Vector2.ZERO
 var _wave_hold: bool = false
 var _hold_frames: int = 0
 var _hold_fail: int = 0
+## Передышка по касанию (#333). 10 с в кольце 112 px — отход на >=200 px
+## и 8 с снаружи, затем возврат. Числа здесь одни: Balance не трогаем.
+const TOUCH_RING: float = 112.0
+const TOUCH_HOLD: float = 10.0
+const TOUCH_AWAY: float = 200.0
+const TOUCH_REST: float = 8.0
+var _touch_s: float = 0.0
+var _breath: float = 0.0
+var _breath_n: int = 0
+var _touch_cache: Array = []
+var _touch_cache_t: float = 0.0
 ## Глава «Огонь» (#215): пока > 0, эхо идёт к лучу (CHASE на approach_at),
 ## а не бродит. Свет ярче light_flee по-прежнему перебивает — эхо отступает.
 var approach_t: float = 0.0
@@ -203,7 +214,11 @@ func _physics_process(delta: float) -> void:
 	# Директор (#268): сквозь свет, пока героя не видно. Кристалл в соседней
 	# клетке закрывает луч — _has_los врёт, и эхо стоит в свете у героя.
 	# Свет самой клетки героя при дистанции удара — та же видимость.
-	if seek_los and _seen_hero(dist):
+	# Волна (#333): взгляд с 900 px не обрывает подход. На семи цветах герой
+	# виден от вентиляции, и эхо разворачивается, не войдя в кольцо 112 px.
+	# Вход в кольцо тоже не конец: свет клетки ярче light_flee, и эхо стоит
+	# секунду, а не 10. Подход кончается передышкой по касанию, не взглядом.
+	if seek_los and _touch_s >= TOUCH_HOLD:
 		seek_los = false
 
 	# --- Растворение в глубине ------------------------------------------------
@@ -221,6 +236,13 @@ func _physics_process(delta: float) -> void:
 	var fears_light: bool = light_flee < INF
 	var light: float = _light_value() if fears_light else 0.0
 	var player_light: float = _player_light_value(player.global_position) if fears_light else 0.0
+
+	# Передышка по касанию (#333): 10 с в 112 px — отход на >=200 px и 8 с
+	# снаружи. Сирена, налёт с живым подходом и осада главы идут своим курсом.
+	# Налёт, у которого подход кончился и удар не случился, уже не идёт к цели:
+	# без отхода он стоит в кольце до рассвета.
+	if siege_target == null and stun <= 0.0 and (not raid or approach_t <= 0.0):
+		_touch_breath(dt)
 
 	# --- Решения -------------------------------------------------------------
 	if _forced_flee > 0.0:
@@ -243,8 +265,9 @@ func _physics_process(delta: float) -> void:
 		# Сирена (#172) и отход волны (#333): свет и приманка состояние не меняют.
 		state = St.FLEE
 		target_machine = null
-	elif approach_t > 0.0 and (light <= light_flee or (seek_los and not _seen_hero(dist))):
+	elif approach_t > 0.0 and (light <= light_flee or seek_los):
 		# Луч ещё не вспугнул: идём к нему, не к герою и не в блуждание.
+		# seek_los гаснет в кольце касания (выше) — до него свет подход не режет.
 		state = St.CHASE
 		target_machine = null
 	else:
@@ -258,8 +281,8 @@ func _physics_process(delta: float) -> void:
 	elif state == St.FLEE:
 		if _wave_hold and _forced_flee > 0.0:
 			# Первый кадр отзыва без A*: полный поиск на нём ронял двойника.
-			# Дальше — один путь по коридору. Прямой шаг в центр клетки
-			# бьёт головой в потолок: тело 22 px, ряд 16 px.
+			# Дальше путь тот же, что в погоне: сплющенный по Y шаг не выходит
+			# из ряда 16 px, и тело остаётся в кольце 112 px.
 			if _hold_frames <= 1:
 				path.clear()
 				path_i = 0
@@ -332,11 +355,6 @@ func _physics_process(delta: float) -> void:
 		var node: Vector2i = path[path_i]
 		var np: Vector2 = World.cell_to_world(node)
 		var dnode: float = global_position.distance_to(np)
-		# Волна: тело 22 px, ряд 16 px. Вертикаль узла — прыжок в потолок,
-		# X не сдвигается. Идём только по горизонтали и засчитываем узел по X.
-		if wave_walk:
-			np.y = global_position.y
-			dnode = absf(global_position.x - np.x)
 		if dnode < NODE_REACH:
 			path_i += 1
 			_stuck_t = 0.0
@@ -543,7 +561,7 @@ func _decide(dt: float, dist: float, light: float) -> void:
 		target_machine = siege_target
 		state = St.CHASE
 		return
-	if light > light_flee and not (seek_los and approach_t > 0.0 and not _seen_hero(dist)):
+	if light > light_flee and not (seek_los and approach_t > 0.0):
 		state = St.FLEE
 		target_machine = null
 		return
@@ -654,10 +672,21 @@ func _gazed_at(dist: float) -> bool:
 
 func _move_walking(dir: Vector2, speed: float, dt: float) -> void:
 	# Прыжки через препятствия
-	# Волна идёт по полу. Прыжок в потолок ряда обнуляет X.
-	if on_ground and absf(dir.x) > 0.2 and _blocked_ahead() and not _wave_hold:
+	# Прыжок через порог — тот же, что в погоне. Без него отход упирается
+	# в первую стену коридора и тело остаётся в кольце.
+	if on_ground and absf(dir.x) > 0.2 and _blocked_ahead():
 		vel.y = -280.0
 		on_ground = false
+	# Узел пути прямо над головой: dir.x == 0, порог выше не срабатывает.
+	# Пеший стоит под клеткой до перестроения — налёт так и не доходит до удара.
+	elif on_ground and dir.y < -0.75 and not _headroom_blocked():
+		vel.y = -280.0
+		on_ground = false
+		if path_i + 1 < path.size():
+			var ahead_x: float = World.cell_to_world(path[path_i + 1]).x - global_position.x
+			if absf(ahead_x) > 4.0:
+				facing = 1 if ahead_x > 0.0 else -1
+				vel.x = float(facing) * minf(speed, 120.0)
 
 	vel.x = move_toward(vel.x, dir.x * speed, 900.0 * dt)
 	if stun > 0.0 or frozen:
@@ -939,6 +968,11 @@ func _blocked_ahead() -> bool:
 	return World.is_solid_at(ahead)
 
 
+## Потолок в клетке над головой: прыжок вверх только разобьётся об него.
+func _headroom_blocked() -> bool:
+	return World.is_solid_at(global_position + Vector2(0.0, -20.0))
+
+
 ## Директор (#268): герой виден. Луч по клеткам врёт, если кристалл стоит
 ## в соседней клетке и закрывает отрезок — при дистанции удара свет клетки
 ## героя значит то же, что прямая видимость.
@@ -1148,26 +1182,127 @@ func force_flee(t: float, from: Vector2 = Vector2.ZERO) -> void:
 ## иначе красный луч возвращает фантома в 112 px в тот же кадр.
 
 
-## Цель отхода волны: открытая клетка своего ряда дальше кольца 112 px.
-## Без поиска пути — A* на кадре отзыва снимает двойника.
+## Передышка по касанию (#333). Кольцо — то же 112 px, что доля ночи
+## под давлением. Пока таймер отдыха > 0, ближе TOUCH_AWAY не подходим:
+## иначе отход на один кадр и сразу возврат, и ночь снова сплошной контакт.
+func _touch_breath(dt: float) -> void:
+	if _breath > 0.0:
+		_breath = maxf(0.0, _breath - dt)
+		_touch_s = 0.0
+		# Ближе 200 px отдых не кончается: иначе шаг наружу и сразу возврат.
+		if _touch_near() < TOUCH_AWAY:
+			_breath = TOUCH_REST
+			var anchor: Vector2 = _touch_anchor()
+			if not _wave_hold or _flee_from.distance_to(anchor) > 32.0:
+				wave_hold(_breath, anchor)
+		return
+	if _touch_near() <= TOUCH_RING:
+		_touch_s += dt
+		if _touch_s >= TOUCH_HOLD:
+			_touch_s = 0.0
+			_breath = TOUCH_REST
+			_breath_n += 1
+			wave_hold(TOUCH_REST, _touch_anchor())
+	else:
+		# Касание непрерывное: кадр вне кольца обнуляет счётчик.
+		_touch_s = 0.0
+
+
+## Ближайшая дистанция до героя или машины базы, px.
+## Только поставленные игроком: горелка, маяк, накопитель, смеситель,
+## зеркало, призма, грядка. Полный обход World.machines — тысячи клеток,
+## и ночь на автопилоте не доигрывается.
+func _touch_near() -> float:
+	var best: float = INF
+	if player != null and is_instance_valid(player):
+		best = global_position.distance_to(player.global_position)
+	for m in _touch_base():
+		# Та же точка, что у давления ночи: центр клетки, не спрайт.
+		# Спрайт маяка выше ряда, и тело в 80 px от клетки не копило касание.
+		var spot: Vector2 = m.global_position
+		if m.get("cell") is Vector2i:
+			spot = World.cell_to_world(m.cell)
+		best = minf(best, global_position.distance_to(spot))
+	return best
+
+
+## Точка, от которой отходим: ближайшая машина базы или герой.
+func _touch_anchor() -> Vector2:
+	var best: Vector2 = player.global_position if player != null else global_position
+	var best_d: float = INF
+	if player != null and is_instance_valid(player):
+		best_d = global_position.distance_to(player.global_position)
+	for m in _touch_base():
+		var spot: Vector2 = m.global_position
+		if m.get("cell") is Vector2i:
+			spot = World.cell_to_world(m.cell)
+		var d: float = global_position.distance_to(spot)
+		if d < best_d:
+			best_d = d
+			best = spot
+	return best
+
+
+const TOUCH_KINDS: Array[String] = ["Burner", "Pharos", "Accumulator", "Mixer", "Mirror", "Prism", "SporeBed"]
+
+
+func _touch_base() -> Array:
+	_touch_cache_t -= get_physics_process_delta_time()
+	if _touch_cache_t > 0.0:
+		return _touch_cache
+	_touch_cache_t = 0.5
+	_touch_cache = []
+	for m in World.machines.values():
+		if not is_instance_valid(m) or not (m is Node2D):
+			continue
+		if String(m.get("kind")) in TOUCH_KINDS:
+			_touch_cache.append(m)
+	return _touch_cache
+
+
+## Цель отхода: вентиль не ближе 200 px от якоря. Клетка своего ряда у ядра —
+## порода, пути нет, тело остаётся в 112 px. Вентиль — точка, из которой
+## фантом пришёл. A* здесь не строим: на кадре отзыва он снимал двойника.
 func _wave_aim() -> Vector2:
 	var origin: Vector2 = _flee_from if _flee_from != Vector2.ZERO else global_position
-	var here: Vector2i = World.world_to_cell(global_position)
-	var sx: int = 1 if global_position.x >= origin.x else -1
-	var best: Vector2i = Vector2i(-1, -1)
-	var best_far: float = -1.0
-	for step in range(6, 24):
-		var c: Vector2i = Vector2i(here.x + sx * step, here.y)
-		if not _flee_open(c):
+	var need: float = TOUCH_AWAY
+	var best: Vector2 = Vector2.ZERO
+	var best_d: float = INF
+	var loose: Vector2 = Vector2.ZERO
+	var loose_d: float = INF
+	for v in World.vents:
+		var w: Vector2 = World.cell_to_world(v)
+		var far: float = w.distance_to(origin)
+		if far + 8.0 < need:
 			continue
-		var far: float = World.cell_to_world(c).distance_to(origin)
-		if far > best_far:
-			best_far = far
-			best = c
-	if best.x < 0:
-		return global_position + Vector2(200.0 * float(sx), 0.0)
-	# Центр клетки — потолок для тела 22 px. Стоим на полу, как в погоне.
-	return World.cell_to_world(best) + Vector2(0.0, 5.0)
+		var d: float = global_position.distance_to(w)
+		if d < 24.0:
+			continue
+		if d < loose_d:
+			loose_d = d
+			loose = w
+		if not _vent_reachable(v):
+			continue
+		if d < best_d:
+			best_d = d
+			best = w
+	if best_d < INF:
+		return best + Vector2(0.0, 5.0)
+	if loose_d < INF:
+		return loose + Vector2(0.0, 5.0)
+	var sx: float = 1.0 if global_position.x >= origin.x else -1.0
+	return global_position + Vector2(need * sx, 0.0)
+
+
+## Вентиль достижим пешком: открыт и в радиусе пары клеток есть пол.
+func _vent_reachable(v: Vector2i) -> bool:
+	if not _flee_open(v):
+		return false
+	for dy in range(0, 4):
+		for dx in range(-2, 3):
+			if _flee_floor(v + Vector2i(dx, -dy)):
+				return true
+	return false
 
 
 func wave_hold(t: float, from: Vector2 = Vector2.ZERO, hold: bool = true) -> void:

@@ -667,10 +667,12 @@ func _print_night_diag(day: int, planned: Array, spent: float, contact_s: Dictio
 	print("    отзывов волны: %d" % int(Threat.wave_recalls))
 	var hf := 0
 	var ff := 0
+	var fired := 0
 	for ph in get_tree().get_nodes_in_group("phantom"):
 		hf += int(ph.get("_hold_frames"))
 		ff += int(ph.get("_hold_fail"))
-	print("    кадров удержания: %d, путь не найден: %d" % [hf, ff])
+		fired += int(ph.get("_breath_n"))
+	print("    кадров удержания: %d, путь не найден: %d, передышек: %d" % [hf, ff, fired])
 
 
 func _print_diag(key: String, row: Dictionary) -> void:
@@ -973,7 +975,7 @@ func _wipe_built() -> void:
 
 func _print_table(rows: Array) -> void:
 	print("  ТАБЛИЦА night_autopilot (сид %d)" % int(scene.get("seed_value")))
-	print("  | уровень | пик | B | cap | потери | топливо с | удар с | uptime | давление | ночь не состоялась |")
+	print("  | уровень | пик | B | cap | потери | топливо с | удар с | uptime | давление | ночей пропущено |")
 	for r in rows:
 		var missed: String = "%d/%d" % [int(r["missed"]), int(r["nights"])]
 		var hit: String = "—" if float(r["hit_s"]) < 0.0 else "%.1f" % float(r["hit_s"])

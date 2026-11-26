@@ -610,6 +610,8 @@ func _echo_mouth(ppos: Vector2) -> Vector2i:
 
 
 ## Ближайшая к устью тёмная проходимая клетка, из которой A* доходит до героя.
+## На длинной вертикали путь к спавну может исчезнуть — повторная проверка
+## в _echo_pos_with_path, не здесь.
 func _dark_step(vent: Vector2i, hero: Vector2i, flee: float) -> Vector2i:
 	var seen: Dictionary = {}
 	var q: Array[Vector2i] = [vent]
@@ -722,7 +724,27 @@ func spawn_phantom(kind: String, pos: Vector2, opts: Dictionary = {}) -> Array:
 	return out
 
 
+## Клетка рта через 2 с телеграфа может уже не иметь пути: A* на длинной
+## вертикали иногда отдаёт путь, которого нет к спавну (#333, сид 4242).
+## Тогда ищем заново. Нет пути — оставляем прежнюю точку, как было.
+func _echo_pos_with_path(pos: Vector2) -> Vector2:
+	var hero: Vector2i = World.world_to_cell(_player_pos())
+	var here: Vector2i = World.world_to_cell(pos)
+	if World.astar.get_id_path(here, hero).size() > 1:
+		return pos
+	var mouth: Vector2i = _echo_mouth(_player_pos())
+	if mouth.x < 0:
+		return Vector2.ZERO
+	if World.astar.get_id_path(mouth, hero).size() <= 1:
+		return Vector2.ZERO
+	return World.cell_to_world(mouth)
+
+
 func _spawn_now(kind: String, pos: Vector2, opts: Dictionary = {}) -> void:
+	if kind == "echo" and not bool(opts.get("raid", false)) and bool(opts.get("seek", false)):
+		var fresh: Vector2 = _echo_pos_with_path(pos)
+		if fresh != Vector2.ZERO:
+			pos = fresh
 	var made: Array = spawn_phantom(kind, pos, opts)
 	if not made.is_empty() and Game.is_night():
 		Sfx.play("alarm", -20.0, 1.6)
@@ -1254,8 +1276,10 @@ func _raid_entrance(target: Vector2i, open_door: bool) -> Vector2i:
 			d += absi(c.y - target.y) * 8
 			if d < 2:
 				continue
+			# Без пола под ногами эхо проваливается и стоит под целью.
+			# Клетка с полом всегда ближе клетки в воздухе.
 			if not World.is_solid_cell(c + Vector2i.DOWN):
-				d += RAID_NEIGHBOR
+				d += 400
 			# Со стороны двери, не через крышу: открытый проход ближе, чем обход.
 			if open_door and not _raid_row_clear(c, target):
 				d += 12
@@ -1265,7 +1289,10 @@ func _raid_entrance(target: Vector2i, open_door: bool) -> Vector2i:
 				if not _raid_reaches(c, target):
 					continue
 			else:
-				if not _raid_faces_shell(c):
+				# Оболочка — соседняя клетка. На открытой площадке пол под целью
+				# на две клетки в стороне, и фильтр берёт вход в воздухе.
+				# Пеший эхо оттуда проваливается и до удара не доходит.
+				if not _raid_faces_shell(c) and not _raid_stands_by(c, target):
 					continue
 			best = c
 			best_d = d
@@ -1372,6 +1399,15 @@ func _raid_near_shell(c: Vector2i) -> bool:
 		if id == IDs.T.ROOM_PANEL or id == IDs.T.DOOR or id == IDs.T.DOOR_OPEN:
 			return true
 	return false
+
+
+## Пол в двух шагах от цели: пеший налёт встанет, а не провалится.
+func _raid_stands_by(c: Vector2i, target: Vector2i) -> bool:
+	if absi(c.x - target.x) + absi(c.y - target.y) > 3:
+		return false
+	if absi(c.y - target.y) > 1:
+		return false
+	return World.is_solid_cell(c + Vector2i.DOWN)
 
 
 func _raid_faces_shell(c: Vector2i) -> bool:
