@@ -160,7 +160,13 @@ func _layout_checks() -> void:
 	tc.force_insets = saved_insets
 	tc.force_team_rows = saved_team
 	# Прямое поле, не set_ui_scale: тот двигает панели, а следующие шаги бьют по ячейкам.
+	# size HUD set_ui_scale тоже не вернёт: _layout_on пишет ui_scale напрямую, и
+	# place_full не вызывается. Холст проверки — 1280×2844, окно — 1280×720.
+	# Без возврата хотбар остаётся портретным на весь кадр: тап по миру у нижнего
+	# края (клетка под героем) попадает в нижний ряд и ест постановку.
 	UI.ui_scale = saved_scale
+	UI.hud.size = get_viewport().get_visible_rect().size / UI.ui_scale
+	UI.hud._lay_sig = -1
 	tc._relayout()
 
 
@@ -691,7 +697,9 @@ func _pinch_zoom() -> void:
 	_touch(5, c + Vector2(50.0, 0.0), true)
 	await wait(0.1)
 	ok("второй палец на мире — щипок, прицела нет", tc.aim_cell == TouchControls.NO_CELL
-			and not bool(player.touch_input.get("mouse_buttons", {}).get(MOUSE_BUTTON_RIGHT, false)))
+			and not bool(player.touch_input.get("mouse_buttons", {}).get(MOUSE_BUTTON_RIGHT, false)),
+			"aim %s rmb %s" % [str(tc.aim_cell),
+				str(bool(player.touch_input.get("mouse_buttons", {}).get(MOUSE_BUTTON_RIGHT, false)))])
 	_drag(4, c + Vector2(-100.0, 0.0))
 	_drag(5, c + Vector2(100.0, 0.0))
 	await wait(0.1)

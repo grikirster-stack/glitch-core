@@ -5,13 +5,15 @@ extends ScenarioBase
 ## (логические 432×960 и 512×1137.6). Окно не трогаем: headless размер до кадра
 ## не применяет, холст передаём в _layout.
 
-## Холст 1280, как у touch_controls и ui_scale_test: headless окно 1280×720,
-## stretch expand. 1080 дал бы тап в координатах окна мимо ячеек холста.
-## Логические размеры те же, что у телефона: 432×960 и 512×1137.6.
+## Холсты телефона, не подмена 1280. 1080×2400 / 2.5 = 432×960,
+## 1280×2844 / 2.5 = 512×1137.6. Окно headless 1280×720 событие по миру
+## не доносит до холста — выбор слота идёт в hotbar_slot_at по координатам холста.
 const CANVASES: Array = [
-	{"canvas": Vector2(1280, 2844.444), "scale": 1280.0 / 432.0},
+	{"canvas": Vector2(1080, 2400), "scale": 2.5},
 	{"canvas": Vector2(1280, 2844), "scale": 2.5},
 ]
+const PLATE: String = "Поставь каркас: тап панелью у лагеря"
+const CARD: String = "Поставь каркас у лагеря"
 ## Набор в порядке give_starter_kit: лампа, уголь, камень, хлам, панель, дверь, волокно.
 const KIT: Array = [IDs.I.LAMP, IDs.I.COAL, IDs.I.STONE, IDs.I.SCRAP, IDs.I.PANEL, IDs.I.DOOR, IDs.I.LOG]
 const KIT_N: Array = [3, 6, 4, 4, 2, 1, 1]
@@ -36,25 +38,52 @@ func run() -> void:
 	var scale0: float = UI.ui_scale
 	var card0: String = UI.hud.card_text
 	var hint0: String = UI.hud.hint_text
+	var plate0: String = UI.hud.guide_plate
+	var line0: String = UI.hud.guide_line
+	var step0: int = UI.hud.guide_step
+	var night0: int = UI.hud.night_countdown
+	var notes0: Array = UI.hud.notes.duplicate(true)
+	var help0: bool = Game.help_hidden
+	var stage0: int = Game.objective_stage
 	player.apply_hotbar_size(Inventory.HOTBAR_MAX)
 	_fill_kit()
 	await _place_door_and_bed()
 	_fill_kit()
-	UI.hud.card_text = "Закрой комнату дверью"
-	UI.hud.hint_text = "Тап — поставить"
+	# Живая плашка шага, не короткая подмена. «Тап — поставить» влезала в щель,
+	# которую строка на 287 px не занимала, и пустой hint проходил как «не закрывает».
+	_live_plate()
 	for spec in CANVASES:
-		await _one(spec["canvas"], float(spec["scale"]))
+		await _one(spec["canvas"], float(spec["scale"]), false, false)
+		await _one(spec["canvas"], float(spec["scale"]), true, false)
+		await _one(spec["canvas"], float(spec["scale"]), true, true)
 	_restore(saved, hb0, sel0)
 	UI.set_ui_scale(scale0, false)
 	UI.hud.card_text = card0
 	UI.hud.hint_text = hint0
+	UI.hud.guide_plate = plate0
+	UI.hud.guide_line = line0
+	UI.hud.guide_step = step0
+	UI.hud.night_countdown = night0
+	UI.hud.notes = notes0
+	Game.help_hidden = help0
+	Game.objective_stage = stage0
 	UI.hud.size = get_viewport().get_visible_rect().size / UI.ui_scale
 	UI.hud._lay_sig = -1
 	tc.set_enabled(false)
 	finish()
 
 
-func _one(canvas: Vector2, scale: float) -> void:
+func _live_plate() -> void:
+	UI.hud.guide_plate = PLATE
+	UI.hud.guide_line = CARD
+	UI.hud.guide_step = 1
+	UI.hud.card_text = CARD
+	UI.hud.hint_text = ""
+	Game.help_hidden = false
+	Game.objective_stage = 1
+
+
+func _one(canvas: Vector2, scale: float, night: bool, with_note: bool) -> void:
 	var logical: Vector2 = canvas / scale
 	UI.ui_scale = scale
 	UI.touch_on = true
@@ -62,16 +91,24 @@ func _one(canvas: Vector2, scale: float) -> void:
 	tc.force_insets = Vector4.ZERO
 	tc._layout(canvas)
 	UI.hud.size = logical
+	UI.hud.night_countdown = 87 if night else -1
+	UI.hud.notes = [{"text": "Налёт отбит: почини стену", "icon": 0, "ttl": 5.0}] if with_note else []
+	_live_plate()
 	UI.hud._lay_sig = -1
 	UI.hud._ensure_layout()
-	var tag: String = "%.0f×%.1f" % [logical.x, logical.y]
+	var tag: String = "%.0f×%.0f%s%s" % [logical.x, logical.y, "/ночь" if night else "", "/заметка" if with_note else ""]
 	var bar: Rect2 = UI.hud.layout_rect("hotbar")
 	var band: float = logical.y * (2.0 / 3.0)
 	var grab: float = UI.hud._combat_grab_top(logical.y)
 	var cell: Rect2 = UI.hud.hotbar_slot_logical(0)
 	var row1: Rect2 = UI.hud.hotbar_slot_logical(5)
-	print("  РЯДЫ %s хотбар=%s ячейка=%.1f ряд0y=%.1f ряд1y=%.1f треть=%.1f захват=%.1f" % [
-		tag, str(bar), cell.size.x, cell.position.y, row1.position.y, band, grab])
+	var plate: String = UI.hud.plate_text()
+	var hint: Rect2 = UI.hud.layout_rect("hint")
+	var card: Rect2 = UI.hud.layout_rect("card")
+	var cd: Rect2 = UI.hud.layout_rect("countdown")
+	var note: Rect2 = UI.hud.layout_rect("notes")
+	print("  РЯДЫ %s хотбар=%s плашка=%s карточка=%s отсчёт=%s заметка=%s текст=«%s»" % [
+		tag, str(bar), str(hint), str(card), str(cd), str(note), plate])
 	ok("%s два ряда, ячейка ≥ 78" % tag,
 			cell.size.x + 0.5 >= 78.0 and row1.position.y > cell.position.y + 70.0
 			and UI.hud.hotbar_slot_logical(9).has_area(),
@@ -80,16 +117,46 @@ func _one(canvas: Vector2, scale: float) -> void:
 			bar.position.y + 0.5 >= band and bar.end.y <= grab + 0.5
 			and row1.end.y <= grab + 0.5,
 			"хотбар y %.1f–%.1f, треть %.1f, захват %.1f" % [bar.position.y, bar.end.y, band, grab])
-	var hint: Rect2 = UI.hud.layout_rect("hint")
-	var card: Rect2 = UI.hud.layout_rect("card")
-	print("  ПЛАШКИ %s подсказка=%s карточка=%s" % [tag, str(hint), str(card)])
-	var covers: bool = false
-	if hint.has_area() and (hint.intersects(bar) or hint.end.y > cell.position.y + 0.5):
-		covers = true
-	if card.has_area() and (card.intersects(bar) or card.intersects(hint) or card.end.y > cell.position.y + 0.5):
-		covers = true
-	ok("%s плашка и карточка не закрывают верхний ряд" % tag, not covers,
-			"подсказка %s, карточка %s, верх ряда %.1f" % [str(hint), str(card), cell.position.y])
+	# Пустая плашка — провал, не «не закрывает». Живой текст обязан иметь прямоугольник.
+	ok("%s живая плашка нарисована" % tag, plate != "" and hint.has_area(),
+			"текст «%s», rect %s" % [plate, str(hint)])
+	ok("%s карточка нарисована" % tag, card.has_area() and UI.hud.card_text != "",
+			"карточка %s «%s»" % [str(card), UI.hud.card_text])
+	var packed: bool = hint.has_area() and card.has_area()
+	packed = packed and hint.position.y + 0.5 >= band and card.position.y + 0.5 >= band
+	packed = packed and hint.end.y <= cell.position.y + 0.5 and card.end.y <= cell.position.y + 0.5
+	packed = packed and not hint.intersects(card) and not hint.intersects(bar) and not card.intersects(bar)
+	if night:
+		packed = packed and cd.has_area() and cd.position.y + 0.5 >= band
+		packed = packed and not cd.intersects(hint) and not cd.intersects(card) and not cd.intersects(bar)
+		packed = packed and cd.end.y <= cell.position.y + 0.5
+	# Заметка, которой нет строки между карточкой и плашкой, скрыта — это
+	# прежнее правило, не дыра. Нарисованная обязана быть в нижней трети
+	# и не закрывать плашку, карточку, отсчёт и хотбар.
+	if with_note and note.has_area():
+		packed = packed and note.position.y + 0.5 >= band
+		packed = packed and not note.intersects(hint) and not note.intersects(card) and not note.intersects(bar)
+		if night:
+			packed = packed and not note.intersects(cd)
+	if with_note and not note.has_area():
+		print("  ЗАМЕТКА %s скрыта: между карточкой и плашкой нет строки" % tag)
+	var slot_clear: bool = true
+	for i in 10:
+		var sr: Rect2 = UI.hud.hotbar_slot_logical(i)
+		if hint.intersects(sr) or card.intersects(sr) or (night and cd.intersects(sr)):
+			slot_clear = false
+		if note.has_area() and note.intersects(sr):
+			slot_clear = false
+	ok("%s плашка и карточка в нижней трети, над рядом, без пересечений" % tag,
+			packed and slot_clear,
+			"плашка %s карточка %s отсчёт %s верх ряда %.1f треть %.1f" % [
+				str(hint), str(card), str(cd), cell.position.y, band])
+	var readable: bool = hint.has_area() and hint.size.y + 0.5 >= 18.0 and hint.size.x + 0.5 >= 48.0
+	if night and cd.has_area():
+		var tw: float = UI.hud._tw(UI.hud._countdown_label(), UI.hud._countdown_font)
+		readable = readable and tw + 0.5 <= cd.size.x and cd.size.y + 0.5 >= 18.0
+	ok("%s текст плашки и отсчёта читаем" % tag, readable,
+			"плашка %.0f×%.0f отсчёт шрифт %d" % [hint.size.x, hint.size.y, UI.hud._countdown_font])
 	var all_hit: bool = true
 	var kit_ok: bool = true
 	for i in 10:

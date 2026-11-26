@@ -2670,11 +2670,26 @@ func _compute_layout() -> Dictionary:
 				var hx0: float = clampf(hx + hb_w * 0.5 - hw * 0.5, PAD, maxf(PAD, w - PAD - hw))
 				# hy — верх верхнего ряда. Плашка над ним, не между рядами:
 				# иначе она закрывает слоты 0–4, и дверь с волокном не выбрать.
-				slot_r = Rect2(hx0, hy - gap - hint_h, hw, hint_h)
-				if L.has("card") and slot_r.intersects(L["card"]):
-					slot_r.position.y = (L["card"] as Rect2).end.y + gap
-				if slot_r.end.y > hy - gap + 0.5 or slot_r.intersects(L["hotbar"]):
-					slot_r = Rect2()
+				# Два ряда на 432 поднимают хотбар к границе трети: щели в 34 px
+				# (строка 24 + зазор 10) нет. Зазоры сжимаем до 4, плашку не прячем.
+				slot_r = _portrait_hint_slot(L, hx0, hy, hw, hint_h, gap, h * TOUCH_BAND)
+				if slot_r.has_area() and slot_r.size.x + 0.5 < hw:
+					hw = slot_r.size.x
+					var shorter: String = _touch_plate_fit(ht, hfont, maxf(48.0, hw - side))
+					if shorter != "":
+						ht = shorter
+						L["hint_text"] = ht
+				# Отсчёт ставится до плашки и не знает, что карточка уехала к границе
+				# трети. На 432 он остаётся на 640 и задевает карточку. Сдвигаем в её
+				# ряд, справа, не пересекая плашку.
+				if L.has("countdown") and L.has("card"):
+					var cd_now: Rect2 = L["countdown"]
+					var card_now: Rect2 = L["card"]
+					if cd_now.intersects(card_now) or (slot_r.has_area() and cd_now.intersects(slot_r)):
+						var moved_cd: Rect2 = _countdown_on_card_row(card_now, cd_now)
+						if moved_cd.has_area() and not moved_cd.intersects(card_now) and not (slot_r.has_area() and moved_cd.intersects(slot_r)):
+							L["countdown"] = moved_cd
+							_countdown_font = UI.FONT["small"]
 			elif not grabs.is_empty():
 				# Прямо над хотбаром, в нижней трети. Свободный поиск сажал плашку
 				# в щель у границы трети и вытеснял цель — здесь ряд фиксирован.
@@ -2793,6 +2808,121 @@ func _compute_layout() -> Dictionary:
 		L["note_lines"] = lines
 	return L
 
+
+
+
+
+## Плашка портрета над верхним рядом хотбара. На 432 два ряда поднимают хотбар
+## к границе трети: щели в 34 px (строка 24 + зазор 10) нет. Зазоры сжимаем до 4,
+## карточку поднимаем к границе трети. Отсчёт, севший в эту щель, уходит в ряд
+## карточки. Плашку не прячем: пустой прямоугольник делает «Забрать» нетапабельной.
+func _portrait_hint_slot(L: Dictionary, hx0: float, hy: float, hw: float, hint_h: float, gap: float, band: float) -> Rect2:
+	var gap_use: float = gap
+	var h_use: float = hint_h
+	var y: float = hy - gap_use - h_use
+	var card: Rect2 = L["card"] if L.has("card") else Rect2()
+	if card.has_area() and y + 0.5 < card.end.y + gap_use:
+		gap_use = 4.0
+		y = hy - gap_use - h_use
+		var lifted: float = y - gap_use - card.size.y
+		if lifted + 0.5 >= band:
+			card.position.y = lifted
+			_commit_card(L, card)
+		elif card.position.y + 0.5 > band:
+			card.position.y = band
+			_commit_card(L, card)
+	# Отсчёт ставится раньше и не знает нового ряда карточки. На 432 он на 640,
+	# карточка на 643.7 — пересечение 3.7 px. Уводим секунды в её ряд, справа.
+	if L.has("countdown") and card.has_area():
+		var cd_early: Rect2 = L["countdown"]
+		# Общая граница — не пересечение: иначе 512 сдвигает отсчёт на полосу суток.
+		var overlaps: bool = cd_early.position.x < card.end.x - 0.5 and cd_early.end.x > card.position.x + 0.5 			and cd_early.position.y < card.end.y - 0.5 and cd_early.end.y > card.position.y + 0.5
+		if overlaps:
+			var beside_early: Rect2 = _countdown_on_card_row(card, cd_early)
+			if beside_early.has_area():
+				# Карточка могла сузиться, чтобы справа остался зазор 6.
+				if card.end.x + 5.0 > beside_early.position.x:
+					card.size.x = beside_early.position.x - 6.0 - card.position.x
+				_commit_card(L, card)
+				L["countdown"] = beside_early
+				_countdown_font = UI.FONT["small"]
+	if card.has_area() and y + 0.5 < card.end.y + 4.0:
+		# Карточка и отсчёт делят ряд у границы трети, плашка — щель над хотбаром.
+		var share: float = band
+		if L.has("countdown"):
+			var cd0: Rect2 = L["countdown"]
+			if cd0.intersects(Rect2(PAD, share, size.x - 2.0 * PAD, card.size.y)) or cd0.end.y > share + card.size.y + 0.5:
+				var moved: Rect2 = _countdown_on_card_row(card, cd0)
+				if moved.has_area():
+					L["countdown"] = moved
+					_countdown_font = UI.FONT["small"]
+		card.position.y = share
+		_commit_card(L, card)
+		y = card.end.y + 4.0
+		var room: float = hy - 4.0 - y
+		if room + 0.5 < h_use:
+			h_use = maxf(18.0, room)
+		if y + h_use > hy - 4.0 + 0.5:
+			y = hy - 4.0 - h_use
+	if y + 0.5 < band:
+		y = band
+	var slot_r: Rect2 = Rect2(hx0, y, hw, h_use)
+	if card.has_area() and slot_r.intersects(L["card"]):
+		var below: float = (L["card"] as Rect2).end.y + 4.0
+		if below + h_use <= hy - 4.0 + 0.5:
+			slot_r.position.y = below
+			slot_r.size.y = minf(h_use, hy - 4.0 - below)
+	if slot_r.position.y + 0.5 < band or slot_r.end.y > hy - 4.0 + 0.5 or slot_r.intersects(L["hotbar"]):
+		return Rect2()
+	if L.has("card") and slot_r.intersects(L["card"]):
+		return Rect2()
+	if L.has("countdown") and slot_r.intersects(L["countdown"]):
+		var cd: Rect2 = L["countdown"]
+		var beside: Rect2 = _countdown_on_card_row(L["card"] if L.has("card") else Rect2(PAD, band, 48.0, 22.0), cd)
+		if beside.has_area() and not beside.intersects(slot_r):
+			L["countdown"] = beside
+			_countdown_font = UI.FONT["small"]
+		else:
+			var left: float = cd.position.x - 4.0 - slot_r.position.x
+			var right: float = slot_r.end.x - (cd.end.x + 4.0)
+			if left >= 48.0 and left >= right:
+				slot_r.size.x = left
+			elif right >= 48.0:
+				slot_r.position.x = cd.end.x + 4.0
+				slot_r.size.x = right
+	if slot_r.size.y + 0.5 < 16.0 or slot_r.size.x + 0.5 < 48.0:
+		return Rect2()
+	return slot_r
+
+
+## Карточка сдвинулась — подпись и кнопки этапа едут вместе с ней.
+func _commit_card(L: Dictionary, card: Rect2) -> void:
+	L["card"] = card
+	_fit_card_title(L, card.size.x)
+	_lay_guide_buttons(L, card)
+
+
+## Отсчёт в ряду карточки, справа от неё. На 432 кармана сбоку хотбара нет.
+func _countdown_on_card_row(card: Rect2, cd: Rect2) -> Rect2:
+	if not card.has_area():
+		return Rect2()
+	var need: float = cd.size.x
+	# Зазор 6, не 4: Rect2.intersects считает общую границу пересечением.
+	var x0: float = card.end.x + 6.0
+	if x0 + need > size.x - PAD + 0.5:
+		x0 = size.x - PAD - need
+	if x0 < card.end.x + 6.0:
+		var shrink: float = x0 - 6.0 - card.position.x
+		if shrink + 0.5 >= 48.0:
+			card.size.x = shrink
+		else:
+			return Rect2()
+	var cr: Rect2 = Rect2(x0, card.position.y, need, card.size.y)
+	if cr.end.x > size.x - PAD + 0.5 or cr.position.x < card.end.x + 5.0:
+		return Rect2()
+	if _hits_grab(cr, _grab_circles()):
+		return Rect2()
+	return cr
 
 
 ## Миникарта телефона: 96×28, в нижней трети, не на кнопках и не на захватах.
@@ -3225,9 +3355,15 @@ func _place_touch_top(L: Dictionary, tb: Dictionary, band: float, portrait: bool
 			dx = minf(dx, (L["map"] as Rect2).position.x - 8.0 - dw)
 		var dr: Rect2 = Rect2(maxf(PAD, dx), y, dw, 34.0)
 		if dr.end.x <= w - PAD + 0.5 and dr.end.y <= ceiling + 0.5 and not _hits(dr, taken):
-			L["day"] = dr
-			taken.append(dr)
-			y = maxf(y, dr.end.y + 4.0)
+			# Полоса суток в ряду карточки. Если её низ задевает ряд плашки,
+			# заметке между ними не остаётся строки — сажаем полосу в ряд карточки.
+			if L.has("card") and dr.end.y + 4.0 > (L["card"] as Rect2).end.y + 4.0:
+				dr.position.y = (L["card"] as Rect2).position.y
+				dr.size.y = (L["card"] as Rect2).size.y
+			if dr.end.y <= ceiling + 0.5 and not _hits(dr, taken):
+				L["day"] = dr
+				taken.append(dr)
+				y = maxf(y, dr.end.y + 4.0)
 	if night_countdown >= 0 and not L.has("countdown"):
 		# Закреплён (#310). Сначала щель над карточкой. На 250 % портрета ряда
 		# над ней нет — тогда справа в её ряду, куда остался cd_reserve.
@@ -3252,13 +3388,26 @@ func _place_touch_top(L: Dictionary, tb: Dictionary, band: float, portrait: bool
 	# Уведомления — над плашкой, в свободной полосе нижней трети. Не влезли — скрыты.
 	# Плашка ставится после этого вызова. Без резерва строка уведомления садится
 	# в её ряд (150 %, холст 1280×2844) и пересекает «hint».
+	# Резерв — только строка плашки, не вся полоса до хотбара: на 512 над
+	# карточкой есть 49 px, и заметка должна сесть туда, не закрывая плашку.
 	var hint_gap: float = HINT_GAP_LAND if not portrait else HINT_GAP_TOUCH
 	var hint_row: float = HINT_H_LAND if not portrait else ROW_H
 	if _plate_text() != "" and L.has("hotbar") and not L.has("hint"):
 		var hb_top: float = (L["hotbar"] as Rect2).position.y
-		var reserved: Rect2 = Rect2(PAD, hb_top - hint_gap - hint_row, w - 2.0 * PAD, hint_row)
-		if reserved.position.y + 0.5 >= band and reserved.end.y <= hb_top - hint_gap + 0.5:
+		var ry: float = hb_top - hint_gap - hint_row
+		if L.has("card"):
+			var card_end: float = (L["card"] as Rect2).end.y
+			if card_end + hint_gap + 0.5 > ry:
+				ry = card_end + hint_gap
+		var reserved: Rect2 = Rect2(PAD, ry, w - 2.0 * PAD, hint_row)
+		if reserved.position.y + 0.5 >= band and reserved.end.y <= hb_top - 4.0 + 0.5:
 			taken.append(reserved)
+			# ceiling выше посчитан от старого верха плашки (зазор 10 над хотбаром).
+			# На 512 карточка поднята, и этот потолок ниже ряда плашки: заметке
+			# остаётся 0 px. Потолок — верх зарезервированной строки.
+			# Потолок — верх строки плашки, не низ карточки. Иначе зазор 4
+			# съедает карман, и строке заметки (24) остаётся 6 px.
+			ceiling = reserved.position.y
 	_place_touch_notes(L, tb, taken, band, ceiling)
 
 
@@ -3421,6 +3570,11 @@ func _place_touch_notes(L: Dictionary, tb: Dictionary, taken: Array, band: float
 	var top: float = band
 	for b in taken:
 		var br: Rect2 = b
+		# Ряд плашки зарезервирован и лежит в taken. Кнопка, которая только
+		# задевает его (захват у границы), не должна вытолкнуть заметку ниже
+		# потолка: иначе строке остаётся отрицательная высота и она пропадает.
+		if br.position.y + 0.5 >= ceiling - ROW_H:
+			continue
 		if br.end.y > top and br.position.y < ceiling:
 			top = maxf(top, br.end.y + 4.0)
 	var n_bottom: float = ceiling
@@ -3633,6 +3787,9 @@ func _draw() -> void:
 		draw_rect(hr, C_PLATE)
 		# ПК: базовая линия на 18, как раньше. Телефон — по ascent выбранного кегля.
 		var hy: float = 18.0 if not UI.touch_on else 6.0 + font.get_ascent(hf)
+		# Узкая плашка (16–18 на 432): базовая линия не должна вылезти из рамки.
+		if UI.touch_on and hy > hr.size.y - 1.0:
+			hy = maxf(font.get_ascent(hf), hr.size.y - 2.0)
 		draw_string(font, hr.position + Vector2(8, hy), String(_lay["hint_text"]),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, hf, Color(C_INTERACT, 0.95))
 
