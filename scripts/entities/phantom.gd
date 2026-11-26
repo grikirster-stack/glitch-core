@@ -51,6 +51,10 @@ var kind: String = "echo"
 ## Сирена (#172): пока > 0, состояние — FLEE от _flee_from, _decide молчит.
 var _forced_flee: float = 0.0
 var _flee_from: Vector2 = Vector2.ZERO
+## Волна директора, не сирена: удар маяка отход не обрывает.
+var _wave_hold: bool = false
+var _hold_frames: int = 0
+var _hold_fail: int = 0
 ## Глава «Огонь» (#215): пока > 0, эхо идёт к лучу (CHASE на approach_at),
 ## а не бродит. Свет ярче light_flee по-прежнему перебивает — эхо отступает.
 var approach_t: float = 0.0
@@ -171,6 +175,7 @@ func _apply_kind() -> void:
 		display_name = String(Lore.impostor.get("full", ""))
 
 
+
 func _physics_process(delta: float) -> void:
 	if not alive:
 		return
@@ -220,12 +225,22 @@ func _physics_process(delta: float) -> void:
 	# --- Решения -------------------------------------------------------------
 	if _forced_flee > 0.0:
 		_forced_flee = maxf(0.0, _forced_flee - dt)
+		if _forced_flee <= 0.0:
+			_wave_hold = false
+	# Волна (#333): директор зовёт отход из _process сценария, а этот кадр
+	# физики уже прошёл. Флаг доживает до следующего _physics_process —
+	# иначе _decide в том же кадре возвращает погоню и затирает FLEE.
+	if _wave_hold and _forced_flee > 0.0:
+		state = St.FLEE
+		target_machine = null
+		if not flying:
+			_hold_frames += 1
 	if approach_t > 0.0:
 		approach_t = maxf(0.0, approach_t - dt)
 	if stun > 0.0:
 		state = St.DORMANT
-	elif _forced_flee > 0.0:
-		# Сирена (#172): пока таймер жив, свет и приманка состояние не меняют.
+	elif _forced_flee > 0.0 or _wave_hold:
+		# Сирена (#172) и отход волны (#333): свет и приманка состояние не меняют.
 		state = St.FLEE
 		target_machine = null
 	elif approach_t > 0.0 and (light <= light_flee or (seek_los and not _seen_hero(dist))):
@@ -241,7 +256,16 @@ func _physics_process(delta: float) -> void:
 	if state == St.CHASE:
 		target_pos = _chase_goal()
 	elif state == St.FLEE:
-		if flying:
+		if _wave_hold and _forced_flee > 0.0:
+			# Первый кадр отзыва без A*: полный поиск на нём ронял двойника.
+			# Дальше — один путь по коридору. Прямой шаг в центр клетки
+			# бьёт головой в потолок: тело 22 px, ряд 16 px.
+			if _hold_frames <= 1:
+				path.clear()
+				path_i = 0
+				repath = 0.0
+			target_pos = _wave_aim()
+		elif flying:
 			target_pos = _flee_air()
 		else:
 			# Пеший шаг смотрит только по X. Цель строго вверх (отход от центра
@@ -270,7 +294,7 @@ func _physics_process(delta: float) -> void:
 	if kind == "doppel":
 		net_reveal_t = maxf(0.0, net_reveal_t - dt)   # СЕТЬ (MP-J): «глюк» после удара гаснет
 		var was: bool = frozen
-		frozen = stun <= 0.0 and _gazed_at(dist)
+		frozen = stun <= 0.0 and not _wave_hold and _gazed_at(dist)
 		if frozen and not was:
 			if Game.players.size() > 1:   # СЕТЬ: шёпот — в точке двойника
 				Sfx.play_at("doppel_whisper", global_position, -10.0)
@@ -291,7 +315,9 @@ func _physics_process(delta: float) -> void:
 	repath -= dt
 	var dir: Vector2 = Vector2.ZERO
 	var fleeing_walk: bool = state == St.FLEE and not flying
-	if (state == St.CHASE or fleeing_walk) and repath <= 0.0 and not frozen:
+	# Волна: путь со второго кадра. На первом A* ронял двойника.
+	var wave_walk: bool = _wave_hold and _forced_flee > 0.0 and _hold_frames > 1
+	if (state == St.CHASE or fleeing_walk) and repath <= 0.0 and not frozen and (not _wave_hold or wave_walk):
 		# Вдали от цели путь перестраиваем реже — цели похуже, а поиск дорог.
 		repath = REPATH_FAR if dist > REPATH_FAR_DIST else REPATH_NEAR
 		# Пересчитываем путь, только если цель заметно сдвинулась
@@ -306,6 +332,11 @@ func _physics_process(delta: float) -> void:
 		var node: Vector2i = path[path_i]
 		var np: Vector2 = World.cell_to_world(node)
 		var dnode: float = global_position.distance_to(np)
+		# Волна: тело 22 px, ряд 16 px. Вертикаль узла — прыжок в потолок,
+		# X не сдвигается. Идём только по горизонтали и засчитываем узел по X.
+		if wave_walk:
+			np.y = global_position.y
+			dnode = absf(global_position.x - np.x)
 		if dnode < NODE_REACH:
 			path_i += 1
 			_stuck_t = 0.0
@@ -623,7 +654,8 @@ func _gazed_at(dist: float) -> bool:
 
 func _move_walking(dir: Vector2, speed: float, dt: float) -> void:
 	# Прыжки через препятствия
-	if on_ground and absf(dir.x) > 0.2 and _blocked_ahead():
+	# Волна идёт по полу. Прыжок в потолок ряда обнуляет X.
+	if on_ground and absf(dir.x) > 0.2 and _blocked_ahead() and not _wave_hold:
 		vel.y = -280.0
 		on_ground = false
 
@@ -839,6 +871,10 @@ func _keeps_body(dist: float) -> bool:
 		return true
 	if state == St.CHASE or _forced_flee > 0.0 or approach_t > 0.0 or _on_siege():
 		return true
+	# Волна (#333): отход уводит за 112 px. Без тела пауза не читается —
+	# двойник растворяется на первом же шаге и давление не падает.
+	if _wave_hold:
+		return dist < 900.0
 	return _age <= SPAWN_GRACE or dist <= _despawn_limit()
 
 
@@ -1030,8 +1066,13 @@ func apply_stun(t: float) -> void:
 		return
 	stun = maxf(stun, t)
 	# Стан сильнее сирены: пока стоим, гон не решает.
+	# Волна (#333) — нет: синий маяк иначе обрывает отход в тот же кадр,
+	# и двойник остаётся в 112 px до рассвета.
+	if _wave_hold:
+		return
 	_forced_flee = 0.0
 	_flee_from = Vector2.ZERO
+	_wave_hold = false
 
 
 ## Осада жива: постройка на месте, копатель ещё идёт к ней.
@@ -1100,14 +1141,50 @@ func approach(t: float, at: Vector2) -> void:
 ## Рой и тень света не боятся — от сирены бегут так же. Пока таймер > 0,
 ## _decide состояние не меняет. Стан и смерть — исключения (их проверяет _tick).
 func force_flee(t: float, from: Vector2 = Vector2.ZERO) -> void:
+	wave_hold(t, from, false)
+
+
+## Отход волны директора (#333). Как сирена, но удар маяка таймер не сбрасывает:
+## иначе красный луч возвращает фантома в 112 px в тот же кадр.
+
+
+## Цель отхода волны: открытая клетка своего ряда дальше кольца 112 px.
+## Без поиска пути — A* на кадре отзыва снимает двойника.
+func _wave_aim() -> Vector2:
+	var origin: Vector2 = _flee_from if _flee_from != Vector2.ZERO else global_position
+	var here: Vector2i = World.world_to_cell(global_position)
+	var sx: int = 1 if global_position.x >= origin.x else -1
+	var best: Vector2i = Vector2i(-1, -1)
+	var best_far: float = -1.0
+	for step in range(6, 24):
+		var c: Vector2i = Vector2i(here.x + sx * step, here.y)
+		if not _flee_open(c):
+			continue
+		var far: float = World.cell_to_world(c).distance_to(origin)
+		if far > best_far:
+			best_far = far
+			best = c
+	if best.x < 0:
+		return global_position + Vector2(200.0 * float(sx), 0.0)
+	# Центр клетки — потолок для тела 22 px. Стоим на полу, как в погоне.
+	return World.cell_to_world(best) + Vector2(0.0, 5.0)
+
+
+func wave_hold(t: float, from: Vector2 = Vector2.ZERO, hold: bool = true) -> void:
 	if net_puppet or not alive:
 		return
 	_forced_flee = maxf(_forced_flee, t)
+	_wave_hold = hold
 	if from != Vector2.ZERO:
 		_flee_from = from
 	state = St.FLEE
 	target_machine = null
 	siege_target = null
+	# Подход к герою иначе перебивает отход, как только таймер сирены кончится
+	# на один кадр раньше. Волна сама выпустит следующую.
+	if hold:
+		approach_t = 0.0
+		seek_los = false
 
 
 func take_damage(amount: float, from: Vector2) -> void:
@@ -1120,12 +1197,16 @@ func take_damage(amount: float, from: Vector2) -> void:
 	if kind == "swarm":
 		hp = 0.0
 	alert = 4.0
-	state = St.CHASE
-	target_pos = from
-	# Удар сбивает гон сирены: раненый снова охотится.
-	_forced_flee = 0.0
-	_flee_from = Vector2.ZERO
-	vel += (global_position - from).normalized() * 90.0
+	# Волна директора (#333): удар маяка не возвращает в погоню.
+	# Иначе отход обрывается в тот же кадр, и паузы между подходами нет.
+	# Смерть ниже — как обычно.
+	if not _wave_hold:
+		state = St.CHASE
+		target_pos = from
+		# Удар сбивает гон сирены: раненый снова охотится.
+		_forced_flee = 0.0
+		_flee_from = Vector2.ZERO
+		vel += (global_position - from).normalized() * 90.0
 	if hp <= 0.0:
 		alive = false
 		if raid:

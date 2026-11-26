@@ -46,6 +46,16 @@ var night_day: int = 0              ## номер смены текущей но
 var budget: float = 0.0             ## бюджет ночи (для HUD/отладки)
 var roster: Array[String] = []      ## кто ещё выйдет этой ночью
 var spawn_timer: float = 0.0
+## Волна ночи (#333): подход, потом пауза. Без неё капель 2.5 с держит
+## фантома в 112 px всю ночь. Главы и налёт этот счётчик не читают.
+var wave_pause: float = 0.0
+var _wave_out: int = 0
+var _wave_clock: float = 0.0
+var _wave_was_gap: bool = false
+var _wave_recall_left: bool = false
+var _wave_recall_due: bool = false
+var _wave_mark: bool = false
+var wave_recalls: int = 0
 var spawned_total: int = 0          ## сколько фантомов вышло за забег
 ## Глава выпустила безвредное эхо. Сценарий читает: ночью эхо уходит за секунды.
 var chapter_echo: bool = false
@@ -81,6 +91,13 @@ func reset() -> void:
 	budget = 0.0
 	roster.clear()
 	spawn_timer = 0.0
+	wave_pause = 0.0
+	_wave_out = 0
+	_wave_clock = 0.0
+	_wave_was_gap = false
+	_wave_recall_left = false
+	_wave_recall_due = false
+	_wave_mark = false
 	spawned_total = 0
 	chapter_echo = false
 	raid_entrance = Vector2i(-1, -1)
@@ -313,6 +330,7 @@ static func _steel_wall() -> bool:
 func units_alive() -> int:
 	var n: int = 0
 	var packs: Dictionary = {}
+	var held := 0
 	for p in get_tree().get_nodes_in_group("phantom"):
 		if not is_instance_valid(p) or not bool(p.get("alive")):
 			continue
@@ -361,10 +379,26 @@ func tick(delta: float) -> void:
 		budget += extra
 		roster.append_array(plan_roster(extra, night_day, true, _doppels_alive()))
 		_hurry_doppel(0)
+	# Окно волны (#333): подход, потом пауза по часам ночи, не по числу
+	# вышедших. Иначе cap держит спавн, окно не закрывается, и эхо стоит
+	# в 112 px до рассвета. interval_for между единицами окна — прежний.
+	_wave_clock += delta
+	var pushing: bool = _wave_pushing()
+	if not pushing:
+		if not _wave_was_gap:
+			_recall_echoes()
+		_wave_was_gap = true
+		return
+	if _wave_was_gap:
+		_wave_was_gap = false
+		_wave_out = 0
+		spawn_timer = minf(interval_for_n(threat_level(), players_online()), 1.5)
 	spawn_timer -= delta
 	if spawn_timer > 0.0 or roster.is_empty():
 		return
 	if units_alive() + pending.size() >= cap_for_n(night_day, Game.relay_active, players_online(), threat_level()):
+		return
+	if _wave_out >= _wave_size():
 		return
 	spawn_timer = interval_for_n(threat_level(), players_online())
 	var kind: String = roster.pop_front()
@@ -372,6 +406,8 @@ func tick(delta: float) -> void:
 		return
 	if not request_spawn(kind):
 		roster.push_front(kind)
+		return
+	_wave_out += 1
 
 
 func _begin_night() -> void:
@@ -398,12 +434,101 @@ func _begin_night() -> void:
 	if Game.relay_active:
 		_hurry_doppel(1)
 	spawn_timer = minf(interval_for_n(threat_level(), night_players), 3.0)
+	wave_pause = 0.0
+	_wave_out = 0
+	_wave_clock = 0.0
+	_wave_was_gap = false
+	_wave_recall_left = false
+	_wave_mark = true
 
 
 func _end_night() -> void:
 	active = false
 	roster.clear()
+	wave_pause = 0.0
+	_wave_out = 0
+	_wave_clock = 0.0
+	_wave_was_gap = false
+	_wave_recall_left = false
+	_wave_recall_due = false
+	_wave_mark = false
 	_relay_seen = false
+
+
+## Подход или пауза. Тихие ночи без паузы: cap и так 1, а пустая ночь
+## не должна получить лишний заход. На построенной базе — 30 с подхода
+## и 30 с тишины: ночь 90 с читается «напряжение — пауза — напряжение».
+func _wave_pushing() -> bool:
+	if quiet_night(night_day, Game.relay_active):
+		return true
+	var span: float = _wave_span()
+	return fmod(_wave_clock, span * 2.0) < span
+
+
+func _wave_span() -> float:
+	return 30.0
+
+
+## Сколько единиц в одной волне. Тихая ночь — одна, как cap.
+## Иначе две: ночь читается «подошли — отошли», а не капелью.
+func _wave_size() -> int:
+	if quiet_night(night_day, Game.relay_active):
+		return 1
+	return 2
+
+
+func _wave_full() -> bool:
+	return _wave_out >= _wave_size() or roster.is_empty()
+
+
+## Пауза между волнами. Отход — когда телеграф этой волны доиграет,
+## иначе фантом выходит уже спиной к базе и до 112 px не доходит.
+## Налёт и главы этот флаг не ставят.
+func _arm_wave_gap() -> void:
+	if roster.is_empty():
+		wave_pause = 0.0
+		_wave_recall_left = false
+		return
+	wave_pause = _wave_gap()
+	_wave_recall_left = true
+
+
+## Пауза растёт с угрозой: на построенной базе интервал уже на полу 2.5 с,
+## и без длинной паузы фантом не успевает выйти из 112 px.
+func _wave_gap() -> float:
+	var t: float = threat_level()
+	return clampf(10.0 + t * 1.5, 12.0, 22.0)
+
+
+## Директорская волна отходит к точке выхода. Сирена, налёт и осада главы
+## не перебиваются: у них свой курс.
+func _recall_echoes() -> void:
+	wave_pause = _wave_span()
+	_recall_wave()
+	_wave_recall_due = true
+
+
+func _recall_wave() -> void:
+	wave_recalls += 1
+	var hold: float = _wave_span()
+	if hold <= 0.0:
+		return
+	for p in get_tree().get_nodes_in_group("phantom"):
+		if not is_instance_valid(p) or not bool(p.get("alive")):
+			continue
+		if bool(p.get("raid")) or bool(p.get("harmless")):
+			continue
+		# Осада главы идёт своим курсом. Обычная ночь — нет: тень и двойник
+		# иначе сидят в 112 px всю паузу, и волна не читается.
+		if p.get("siege_target") != null:
+			continue
+		if not p.has_method("wave_hold"):
+			continue
+		# from — точка, ОТ которой бегут. Герой и машины стоят в одной
+		# клетке с фантомом: точка вплотную даёт шаг на месте. Центр базы
+		# далеко, и отход уходит за кольцо 112 px.
+		var origin: Vector2 = World.cell_to_world(World.beacon_cell)
+		p.wave_hold(hold, origin)
 
 
 ## Удержание сигнала (§ 4.7, #32): двойник обязателен и не ждёт конца
@@ -515,23 +640,39 @@ func _dark_step(vent: Vector2i, hero: Vector2i, flee: float) -> Vector2i:
 func telegraph(vent: Vector2i, kind: String, opts: Dictionary = {}) -> void:
 	var pos: Vector2 = World.cell_to_world(vent)
 	var hum: int = Sfx.loop_start("vent_hum", pos, TELEGRAPH_HUM_DB)
-	pending.append({"cell": vent, "kind": kind, "t": Balance.VENT_TELEGRAPH, "hum": hum,
-			"opts": opts})
+	var entry: Dictionary = {"cell": vent, "kind": kind, "t": Balance.VENT_TELEGRAPH, "hum": hum,
+			"opts": opts}
+	if _wave_mark:
+		entry["wave"] = true
+	pending.append(entry)
 	vent_warning.emit(vent)
 
 
 func _tick_pending(delta: float) -> void:
+	# Прошлый такт выпустил волну. Отход — сейчас, когда тела уже в мире,
+	# а не в том же кадре, что _spawn_now (группа ещё пуста).
+	if _wave_recall_due:
+		_wave_recall_due = false
+		_recall_wave()
 	if pending.is_empty():
 		return
 	var keep: Array = []
+	var wave_left: bool = false
 	for p in pending:
 		p["t"] = float(p["t"]) - delta
 		if float(p["t"]) > 0.0:
 			keep.append(p)
+			if bool(p.get("wave", false)):
+				wave_left = true
 			continue
 		Sfx.loop_stop(int(p["hum"]))
 		_spawn_now(String(p["kind"]), World.cell_to_world(p["cell"]), p.get("opts", {}))
 	pending = keep
+	# Волна вышла из вентиляций. Отход — следующим тактом, не этим:
+	# телеграф 2 с иначе съедает паузу, и фантом появляется уже в бегстве.
+	if _wave_recall_left and not wave_left:
+		_wave_recall_left = false
+		_wave_recall_due = true
 
 
 ## Создать фантома (стаю — для роя) в точке. opts: harmless — не бьёт (главы 1–3).
@@ -572,7 +713,12 @@ func spawn_phantom(kind: String, pos: Vector2, opts: Dictionary = {}) -> Array:
 		elif bool(opts.get("seek", false)) and p.has_method("seek_until_seen"):
 			var hero := _player()
 			if hero != null:
-				p.seek_until_seen(90.0, hero.global_position)
+				# Волна (#333): подход сквозь свет — только до отхода, не всю ночь.
+				# Иначе эхо после паузы снова идёт в 112 px и сидит там до рассвета.
+				var seek_t: float = 90.0
+				if not scripted() and not quiet_night(night_day, Game.relay_active):
+					seek_t = minf(seek_t, _wave_span())
+				p.seek_until_seen(seek_t, hero.global_position)
 	return out
 
 
@@ -774,6 +920,7 @@ func save_state() -> Dictionary:
 		"budget": budget,
 		"roster": back,
 		"spawn_timer": spawn_timer,
+		"wave_pause": wave_pause,
 		"spawned_total": maxi(0, spawned_total - alive),   ## вернувшиеся выйдут и посчитаются заново
 		"relay_seen": _relay_seen,
 		"pack_seq": _pack_seq,
@@ -807,6 +954,11 @@ func load_state(d: Dictionary) -> void:
 		if Balance.PHANTOMS.has(String(k)):
 			roster.append(String(k))
 	spawn_timer = float(d.get("spawn_timer", 0.0))
+	wave_pause = float(d.get("wave_pause", 0.0))
+	_wave_out = 0
+	_wave_recall_left = false
+	_wave_recall_due = wave_pause > 0.0
+	_wave_mark = active
 	spawned_total = int(d.get("spawned_total", 0))
 	_relay_seen = bool(d.get("relay_seen", false))
 	_pack_seq = int(d.get("pack_seq", 0))

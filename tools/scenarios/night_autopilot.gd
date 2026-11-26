@@ -42,7 +42,7 @@ const FUEL_OF: Dictionary = {Beams.R: IDs.I.COAL, Beams.G: IDs.I.COPPER_ORE, Bea
 func _process(delta: float) -> void:
 	# Удержание длиннее ночи. При ×4 кадр проскакивает рассвет, и автолоад-
 	# директор закрывает смену. Часы для него оставляем дневными (не пиним
-	# до его такта), состав ведём своим tick — тот же Threat, те же формулы.
+	# до его такта). Состав ведёт drive_threat — тот же Threat.tick, без второго вызова.
 	super(delta)
 	if not _pin_night:
 		return
@@ -54,7 +54,6 @@ func _process(delta: float) -> void:
 		Game.time_of_day = saved
 		_hold_opened = true
 	Game.relay_active = true
-	Threat.tick(delta)
 
 
 func run() -> void:
@@ -77,6 +76,27 @@ func run() -> void:
 	if _flag("autopilot-post"):
 		rows.append(await _level_post(repeats))
 		_print_table(rows)
+		finish()
+		return
+	if _flag("pressure-diag"):
+		var only: String = ""
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with("--pressure-only="):
+				only = a.substr(16)
+		if only != "seven":
+			rows.append(await _level_empty(repeats))
+		if only == "" or only == "red":
+			rows.append(await _level_mid(Beams.R, repeats, true))
+		if only != "red":
+			rows.append(await _level_seven(repeats, false))
+		_print_table(rows)
+		if only != "seven" and only != "red" and not rows.is_empty():
+			var empty: Dictionary = rows[0]
+			ok("пусто: 0 смертей за ночи 1–3", int(empty["deaths"]) == 0, "%d" % int(empty["deaths"]))
+			var quiet: int = 99
+			if empty["peaks"].size() >= 2:
+				quiet = maxi(int(empty["peaks"][0]), int(empty["peaks"][1]))
+			ok("пусто: тихие ночи 1–2 — не больше 1 фантома", quiet <= 1, "по ночам %s" % str(empty["peaks"]))
 		finish()
 		return
 	rows.append(await _level_empty(repeats))
@@ -464,6 +484,20 @@ func _one_night(day: int, machines: Array, secs: float, hold: bool) -> Dictionar
 	var press_s: float = 0.0
 	var hit_s: float = -1.0
 	var prev: float = clock
+	var diag: bool = _flag("pressure-diag")
+	var contact_s: Dictionary = {}
+	var dist_sum: Dictionary = {}
+	var dist_n: Dictionary = {}
+	var path_sum: Dictionary = {}
+	var state_s: Dictionary = {}
+	var min_d: Dictionary = {}
+	var spawn_log: Array = []
+	var seen_ids: Dictionary = {}
+	var gap_s: float = 0.0
+	var gaps: Array = []
+	var in_press: bool = false
+	var bouts: Array = []
+	var bout_s: float = 0.0
 	# Состав, который директор запланировал на эту ночь. К концу roster пуст
 	# (pop_front на каждом спавне) — копия сразу после планирования, до спавна.
 	var planned: Array[String] = []
@@ -474,10 +508,25 @@ func _one_night(day: int, machines: Array, secs: float, hold: bool) -> Dictionar
 		peak = maxi(peak, _alive())
 		if _any_lit(machines):
 			lit_s += step
-		if _under_pressure(machines):
+		var pressed: bool = _under_pressure(machines)
+		if pressed:
 			press_s += step
+			if not in_press and gap_s > 0.4:
+				gaps.append(gap_s)
+			if not in_press and bout_s > 0.4:
+				bouts.append(bout_s)
+				bout_s = 0.0
+			gap_s = 0.0
+			in_press = true
+			bout_s += step
+		else:
+			if in_press:
+				in_press = false
+			gap_s += step
 		if hit_s < 0.0 and _hp_dropped(machines, hp0):
 			hit_s = now - t0
+		if diag:
+			_diag_sample(machines, step, contact_s, dist_sum, dist_n, path_sum, state_s, min_d, spawn_log, seen_ids, now - t0)
 		await get_tree().process_frame
 		# После кадра: _begin_night уже заполнил roster, первый спавн ещё впереди
 		# (таймер не меньше 2.5 с). Если к концу ночи roster пуст — эта копия и есть состав.
@@ -500,6 +549,10 @@ func _one_night(day: int, machines: Array, secs: float, hold: bool) -> Dictionar
 			min_hp = minf(min_hp, m.hp / m.max_hp)
 			if m.hp <= 0.0:
 				lost += 1
+	if diag and in_press and bout_s > 0.4:
+		bouts.append(bout_s)
+	if diag:
+		_print_night_diag(day, planned, spent, contact_s, dist_sum, dist_n, path_sum, state_s, min_d, spawn_log, gaps, bouts)
 	return {
 		"spawned": Threat.spawned_total - spawned0,
 		"kills": Game.stats_kills - kills0,
@@ -545,6 +598,111 @@ func _any_lit(machines: Array) -> bool:
 		if m is Pharos and is_instance_valid(m) and bool(m.get("active")):
 			return true
 	return false
+
+
+func _diag_sample(machines: Array, step: float, contact_s: Dictionary, dist_sum: Dictionary,
+		dist_n: Dictionary, path_sum: Dictionary, state_s: Dictionary, min_d: Dictionary,
+		spawn_log: Array, seen_ids: Dictionary, t: float) -> void:
+	var spots: Array = [player.global_position]
+	for c in machines:
+		spots.append(World.cell_to_world(c))
+	for p in get_tree().get_nodes_in_group("phantom"):
+		if not is_instance_valid(p) or not bool(p.get("alive")):
+			continue
+		var id: int = p.get_instance_id()
+		var kind: String = String(p.get("kind"))
+		if not seen_ids.has(id):
+			seen_ids[id] = true
+			var path_n: int = 0
+			var path_v = p.get("path")
+			if path_v is Array:
+				path_n = path_v.size()
+			var nearest_v: float = 1.0e9
+			for v in World.vents:
+				nearest_v = minf(nearest_v, p.global_position.distance_to(World.cell_to_world(v)))
+			spawn_log.append("%s t=%.1f path=%d vent_px=%.0f seek=%s" % [
+				kind, t, path_n, nearest_v, str(bool(p.get("seek_los")))])
+		var best: float = 1.0e9
+		for s in spots:
+			best = minf(best, p.global_position.distance_to(s))
+		dist_sum[kind] = float(dist_sum.get(kind, 0.0)) + best * step
+		dist_n[kind] = float(dist_n.get(kind, 0.0)) + step
+		if best <= PRESSURE_PX:
+			contact_s[kind] = float(contact_s.get(kind, 0.0)) + step
+		var st: String = kind + ":" + str(int(p.get("state")))
+		state_s[st] = float(state_s.get(st, 0.0)) + step
+		var path_v2 = p.get("path")
+		var pn: int = path_v2.size() if path_v2 is Array else -1
+		path_sum[kind] = float(path_sum.get(kind, 0.0)) + float(pn) * step
+		if not min_d.has(kind) or best < float(min_d[kind]):
+			min_d[kind] = best
+
+
+func _print_night_diag(day: int, planned: Array, spent: float, contact_s: Dictionary,
+		dist_sum: Dictionary, dist_n: Dictionary, path_sum: Dictionary, state_s: Dictionary,
+		min_d: Dictionary, spawn_log: Array, gaps: Array, bouts: Array) -> void:
+	print("  ДИАГ ночь %d состав=%s давление-окно %.1f с" % [day, _roster_line(planned), spent])
+	for line in spawn_log:
+		print("    спавн %s" % line)
+	for kind in contact_s.keys():
+		var cn: float = maxf(float(dist_n.get(kind, 0.0)), 0.01)
+		print("    %s контакт=%.1f с (%.0f %%) средн=%.0f px мин=%.0f path=%.1f" % [
+			kind, float(contact_s[kind]), float(contact_s[kind]) / spent * 100.0,
+			float(dist_sum.get(kind, 0.0)) / cn, float(min_d.get(kind, -1.0)),
+			float(path_sum.get(kind, 0.0)) / cn])
+	var parts: PackedStringArray = []
+	for st in state_s.keys():
+		parts.append("%s=%.1f" % [st, float(state_s[st])])
+	print("    состояния %s" % " ".join(parts))
+	var gap_sum: float = 0.0
+	for g in gaps:
+		gap_sum += float(g)
+	print("    пауз>0.4с: %d, сумма %.1f с" % [gaps.size(), gap_sum])
+	var bout_sum: float = 0.0
+	var bout_max: float = 0.0
+	for b in bouts:
+		bout_sum += float(b)
+		bout_max = maxf(bout_max, float(b))
+	print("    откатов>0.4с: %d, сумма %.1f с, длиннейший %.1f с" % [bouts.size(), bout_sum, bout_max])
+	print("    отзывов волны: %d" % int(Threat.wave_recalls))
+	var hf := 0
+	var ff := 0
+	for ph in get_tree().get_nodes_in_group("phantom"):
+		hf += int(ph.get("_hold_frames"))
+		ff += int(ph.get("_hold_fail"))
+	print("    кадров удержания: %d, путь не найден: %d" % [hf, ff])
+
+
+func _print_diag(key: String, row: Dictionary) -> void:
+	if not row.has("diag") or row["diag"].is_empty():
+		return
+	# Диагностика печатается по последней ночи уровня (repeats=1).
+	var d: Dictionary = row["diag"]
+	var spent: float = maxf(float(d.get("spent", 1.0)), 0.01)
+	print("  ДИАГ %s состав=%s" % [key, _roster_line(row["roster"]) if row.has("roster") else "?"])
+	for line in d.get("spawns", []):
+		print("    спавн %s" % line)
+	var contact: Dictionary = d.get("contact", {})
+	var dist_sum: Dictionary = d.get("dist_sum", {})
+	var dist_n: Dictionary = d.get("dist_n", {})
+	var path_sum: Dictionary = d.get("path_sum", {})
+	var min_d: Dictionary = d.get("min_d", {})
+	for kind in contact.keys():
+		var cn: float = maxf(float(dist_n.get(kind, 0.0)), 0.01)
+		print("    %s контакт=%.1f с (%.0f %%) средн=%.0f px мин=%.0f path=%.1f" % [
+			kind, float(contact[kind]), float(contact[kind]) / spent * 100.0,
+			float(dist_sum.get(kind, 0.0)) / cn, float(min_d.get(kind, -1.0)),
+			float(path_sum.get(kind, 0.0)) / cn])
+	var states: Dictionary = d.get("state", {})
+	var parts: PackedStringArray = []
+	for st in states.keys():
+		parts.append("%s=%.1f" % [st, float(states[st])])
+	print("    состояния %s" % " ".join(parts))
+	var gaps: Array = d.get("gaps", [])
+	var gap_sum: float = 0.0
+	for g in gaps:
+		gap_sum += float(g)
+	print("    пауз>0.4с: %d, сумма %.1f с" % [gaps.size(), gap_sum])
 
 
 func _under_pressure(machines: Array) -> bool:
@@ -838,6 +996,10 @@ func _print_table(rows: Array) -> void:
 		# S = B/D справочно: D не из чего считать, бот не дерётся и цвет не выбирает.
 		if float(r["budget"]) > 0.0:
 			print("  [баланс] S/%s=справ  # B=%.1f, D не считали" % [key, float(r["budget"])])
+		if r.has("rosters"):
+			for i in r["rosters"].size():
+				print("  состав/%s[%d]: %s" % [key, i, _roster_line(r["rosters"][i])])
+		_print_diag(key, r)
 
 
 const KIND_RU: Dictionary = {
