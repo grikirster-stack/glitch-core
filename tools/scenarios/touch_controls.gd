@@ -484,8 +484,13 @@ func _card_tap_does_not_dig() -> void:
 ## Тап по хотбару выбирает слот и режим; умный прицел (#149) ставит и копает, даже
 ## когда палец не попал в клетку.
 func _smart_aim() -> void:
+	# После телепорта палец остаётся на экране. Доводка камеры может сдвинуть
+	# под ним мир на целую клетку между нажатием и отпусканием.
+	var smoothing: bool = player.camera.position_smoothing_enabled
+	player.camera.position_smoothing_enabled = false
 	var base: int = stand_in_corridor(3)
 	_settle_camera()
+	player.camera.force_update_scroll()
 	await wait(0.6)
 	# Хотбар на телефоне — 6 ячеек (#161): 6-я выбирается, пустое место за ней — нет.
 	player.apply_hotbar_size(Inventory.HOTBAR_MIN)
@@ -505,13 +510,14 @@ func _smart_aim() -> void:
 	# Короткий тап по свободной клетке — блок на отпускании (#310). Пока палец
 	# держит клетку, рамка есть, камень цел, второй блок не встаёт.
 	var stones: int = player.inv.slots[5].count
-	_touch(1, _screen(World.cell_to_world(a)), true)
+	var target_screen: Vector2 = _screen(World.cell_to_world(a))
+	_touch(1, target_screen, true)
 	await wait(0.2)
 	ok("пока палец держит клетку, блок не ставится",
 			tc.aim_cell == a and player.inv.slots[5].count == stones
 			and World.get_tile_v(a) == IDs.T.AIR,
-			"aim %s камней %d" % [tc.aim_cell, player.inv.slots[5].count])
-	_touch(1, _screen(World.cell_to_world(a)), false)
+			"прицел %s, цель %s, камней %d" % [tc.aim_cell, a, player.inv.slots[5].count])
+	_touch(1, target_screen, false)
 	var placed: bool = await wait_until(func() -> bool: return World.get_tile_v(a) == IDs.T.STONE, 0.6)
 	ok("отпускание ставит один блок",
 			placed and player.inv.slots[5].count == stones - 1 and World.get_tile_v(near) == IDs.T.AIR,
@@ -558,6 +564,7 @@ func _smart_aim() -> void:
 	await wait(0.1)
 	World.set_tile(rock.x, rock.y, IDs.T.AIR)
 	await _phantom_off_finger()
+	player.camera.position_smoothing_enabled = smoothing
 
 
 ## Герой на дне ямы, на тайл ниже цели; цель слева вплотную. Тап по центру
