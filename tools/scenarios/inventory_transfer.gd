@@ -33,9 +33,12 @@ func run() -> void:
 	ch.slots[0] = ItemStack.new(IDs.I.SCRAP, 9)
 	ch.slots[1] = ItemStack.new(IDs.I.STONE, 5)
 	ch.slots[2] = ItemStack.new(IDs.I.GLASS, 3)
-	# Стартовый набор несёт тот же хлам, камень и стекло-нет, но хлам и камень — да.
+	# Стартовый набор несёт тот же хлам, камень и стекло. Иначе «Забрать всё»
+	# докладывает стекло тайника в стопку набора, и «Сложить всё» уносит его
+	# из рюкзака вместе с комнатой.
 	player.inv.remove_id(IDs.I.SCRAP, player.inv.count_of(IDs.I.SCRAP))
 	player.inv.remove_id(IDs.I.STONE, player.inv.count_of(IDs.I.STONE))
+	player.inv.remove_id(IDs.I.GLASS, player.inv.count_of(IDs.I.GLASS))
 
 	# ---- Открыть тайник, как человек: держать E --------------------------------
 	place_near(World.cell_to_world(cache["cell"]), [Vector2(0, -4), Vector2(16, -4), Vector2(-16, -4),

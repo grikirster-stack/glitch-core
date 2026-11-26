@@ -611,13 +611,13 @@ func _hit_shown(pos: Vector2) -> String:
 	return ""
 
 
-## Ячейка хотбара под пальцем или -1. Перебираем inv.hotbar_size, не вшитую десятку (#161):
-## пустое место за 6-й ячейкой — не хотбар.
+## Ячейка хотбара под пальцем или -1. Перебираем все слоты хотбара:
+## на портрете они в два ряда, прятать крайние нельзя — там дверь и волокно.
 func hotbar_slot_at(pos: Vector2) -> int:
 	var hud: HUD = UI.hud
 	if hud == null:
 		return -1
-	var n: int = hud._hotbar_count()
+	var n: int = hud._hotbar_shown()
 	for i in n:
 		if hud.hotbar_slot_rect(i).grow(2.0).has_point(pos):
 			return i
@@ -950,9 +950,8 @@ func dig_target(p: Player, tap: Vector2, loose: bool) -> Dictionary:
 		if pp.distance_to(tap) <= PHANTOM_GRAB and pp.distance_to(from) <= Player.REACH:
 			return {"cell": World.world_to_cell(pp), "point": pp, "foe": true}
 	var c: Vector2i = World.world_to_cell(tap)
-	# От центра клетки героя, как у мыши: луч из точки ног цепляет пол.
-	var hit: Vector2i = World.first_solid_on_ray(World.cell_to_world(World.world_to_cell(from)), tap, true, true)
-	if hit != NO_CELL and diggable(hit) and _in_reach(from, hit):
+	var hit := p.dig_target(tap)
+	if hit != NO_CELL:
 		return _cell_target(hit)
 	if not loose:
 		return {}

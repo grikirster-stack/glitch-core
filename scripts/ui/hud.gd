@@ -167,6 +167,7 @@ const TOUCH_HINTS: Dictionary = {
 	HINT_LENS: "[E] — линзу",
 	HINT_PHAROS: "Тап — прожектор",
 	HINT_SPORE_BED: "[E] — волокно",
+	HINT_PRESS: "Тап E — забрать панели",
 }
 
 const INTRO_LINES: Array = [
@@ -178,7 +179,7 @@ const INTRO_STEP: float = 5.0
 const INTRO_TIME: float = 15.0
 const HINT_INSERTER: String = "ПКМ — повернуть · [E] с предметом — фильтр"
 const HINT_HIDING: String = "Вы в вентиляции. [V] — вылезть"
-const HINT_REPAIR: String = "[E] — починить хламом (удерживать)"
+const HINT_REPAIR: String = "Удерживай [E] с камнем или хламом"
 const HINT_LOAD: String = "[E] — загрузить в постройку"
 ## Разбор постройки: E удерживать — снять машину и вернуть предмет в рюкзак.
 const HINT_DISMANTLE: String = "[E] (удерживать) — разобрать"
@@ -190,6 +191,7 @@ const HINT_LENS: String = "[E] — вставить линзу"
 ## Рубильник жёлтого маяка (#311). Линза — отдельная строка HINT_LENS.
 const HINT_PHAROS: String = "[E] — прожектор"
 const HINT_SPORE_BED: String = "[E] — забрать волокно"
+const HINT_PRESS: String = "[E] — забрать панели"
 
 ## Цепочка обучения: шаги по порядку, TUT_DONE — пройдена (строка скрыта).
 enum Tut { DIG, CRAFT, PLACE, POWER, TERMINAL, DONE }
@@ -216,8 +218,22 @@ var card_mix: bool = false
 var card_mark_on: bool = false
 ## Камера показывает цель ещё столько секунд (клик по карточке).
 var card_look_left: float = 0.0
+## Цепочка новичка (C3, #317). Одна ближайшая строка, не счётчик шагов.
+## guide_step — факт мира; guide_pause — почему грядка стоит; guide_show — «Показать».
+var guide_step: int = 0
+var _guide_work = null
+var guide_line: String = ""
+var guide_plate: String = ""
+var guide_pause: String = ""
+var guide_show: bool = false
+var _raid_note_until: float = 0.0
+## Кнопки карточки. Не TouchControls: раскладка боя их не знает.
+var _guide_hide: Control = null
+var _guide_help: Control = null
 ## Куда вернуть камеру после показа цели (смещение от героя).
 var _card_cam_back: Vector2 = Vector2.ZERO
+## Куда держать камеру, пока идёт показ. Сглаживание каждый кадр тянет к нулю.
+var _card_cam_aim: Vector2 = Vector2.ZERO
 var _card_looking: bool = false
 ## Шаг цепочки обучения (Tut) и его строка ("" — цепочка пройдена).
 var tutorial_step: int = Tut.DIG
@@ -344,6 +360,9 @@ func _ready() -> void:
 	_card_hit.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_card_hit.gui_input.connect(_on_card_input)
 	add_child(_card_hit)
+	# «Скрыть» на карточке и «?» когда помощь погашена. Не кнопки боя.
+	_guide_hide = _guide_button("Скрыть", _on_guide_hide)
+	_guide_help = _guide_button("?", _on_guide_help)
 	_map_img = Image.create(MAP_SIZE.x, MAP_SIZE.y, false, Image.FORMAT_RGBA8)
 	_map_tex = ImageTexture.create_from_image(_map_img)
 	_fog_img = Image.create(MAP_SIZE.x, MAP_SIZE.y, false, Image.FORMAT_RGBA8)
@@ -611,6 +630,8 @@ func _compute_hint(_pos: Vector2) -> String:
 		return HINT_PHAROS
 	if kind == player.ET_SPORE_BED:
 		return HINT_SPORE_BED
+	if kind == player.ET_PRESS:
+		return HINT_PRESS
 	if kind == player.ET_TERMINAL:
 		return HINT_TERMINAL
 	if kind == player.ET_BEACON:
@@ -717,6 +738,7 @@ func _update_state(delta: float) -> void:
 	# Новый забег (перезапуск сцены): время игры пошло заново — обучение тоже.
 	if Game.game_time < _last_game_time:
 		tutorial_step = Tut.DIG
+		_raid_note_until = 0.0
 		_intro_done = false
 		_state_t = 0.0
 		_pharos_seen = 0
@@ -724,6 +746,8 @@ func _update_state(delta: float) -> void:
 	_state_t -= delta
 	if _state_t <= 0.0:
 		_state_t = STATE_RECHECK_SEC
+		_note_raid()
+		_note_guide_facts()
 		_compute_tracker()
 		_compute_tutorial()
 		_state_hash = hash([card_text, card_have, card_need, card_icon, card_at, card_mark_on,
@@ -789,6 +813,10 @@ func _compute_tracker() -> void:
 			words = "Держись у ядра"
 			tracker_detail = "до эвакуации %d:%02d" % [left / 60, left % 60]
 	_set_card(words, have, need, icon, Game.objective_at())
+	# Цепочка ставится после цели: иначе «Поставь горелку» затирает шаг новичка.
+	# Скрытая помощь карточку цели не трогает — её читает трекер.
+	if _guide_owns_card():
+		_set_guide_card()
 
 
 ## Глава кампании: карточка — первая невыполненная задача. Остальные не перечисляются.
@@ -933,6 +961,434 @@ func _pharos_at() -> Vector2:
 	return Vector2.INF
 
 
+## В свободной мастерской чтение терминала не прерывает обучение. Старые
+## забеги без стартовых чертежей продолжают уже начатый проект сигнала.
+func _guide_owns_card() -> bool:
+	if Game.help_hidden or Game.in_mission():
+		return false
+	if Game.signal_sent or Game.relay_active:
+		return false
+	var workshop := Game.has_blueprint("SPORE_BED") and Game.has_blueprint("COLLECTOR")
+	if not workshop and (Game.free_powered() or Game.objective_stage > 1):
+		return false
+	return guide_step > 0 and guide_line != ""
+
+
+## Плашка шага важнее пустого прицела, только пока игрок сам смотрит в мир.
+## Чужой код, который выставил hint_text = "" или задание терминала и сразу
+## читает плашку, ждёт свою строку: этап, вводные, пустой десктоп.
+func _guide_plate_wins(hint: String) -> bool:
+	if not _guide_owns_card() or guide_plate == "":
+		return false
+	if hint != hint_text:
+		return false
+	if hint == "" or hint == HINT_TERMINAL:
+		return true
+	return false
+
+
+## Снять итог налёта, пока фаза 3. Threat строку и урон потом стирает сам.
+func _note_raid() -> void:
+	if Game.raid_phase != 3:
+		return
+	var line: String = raid_line.strip_edges()
+	if line == "":
+		return
+	var next: String = _raid_next_line()
+	Game.raid_note = line if next == "" else "%s. %s" % [line, next]
+	_raid_note_until = Game.game_time + 8.0
+
+
+## Один следующий проект и одна альтернатива. Не модалка: дерево не стоит.
+func _raid_next_line() -> String:
+	if Game.raid_damage == "section":
+		return "Дальше: дождись суток. Или закрой вторую дверь."
+	if Game.raid_damage == "device":
+		return "Дальше: чини камнем. Или поставь запасную горелку."
+	if _guide_bed() == null:
+		return "Дальше: поставь грядку. Или закрой комнату."
+	return "Дальше: закрой комнату дверью. Или поставь сундук у выхода."
+
+
+## Факты мира, которые шаг не откатывают. Волокно и луч запоминаем сразу.
+func _note_guide_facts() -> void:
+	# Клиент сети ещё без снимка: tiles пуст, а W уже 640. Чтение тайла
+	# падает за границей массива и роняет «без ошибок скрипта».
+	if World.tiles.size() < World.W * World.H:
+		return
+	var bed = _guide_bed()
+	# Рабочая грядка — та, что под лучом или уже дала волокно. Ближний лагерный
+	# сундук шаг не закрывает: сундук ищем у выхода этой грядки.
+	var work = null
+	var work_d: int = 999
+	var anchor: Vector2i = Game.base_mark_cell()
+	for m in World.machines.values():
+		if m == null or not is_instance_valid(m) or String(m.get("kind")) != "SporeBed":
+			continue
+		if not bool(m.get("lit")) and int(m.get("made")) <= 0 and int(m.get("tray")) <= 0:
+			continue
+		var c: Vector2i = m.cell if m.get("cell") != null else World.world_to_cell(m.global_position)
+		var d: int = absi(c.x - anchor.x) + absi(c.y - anchor.y)
+		if d < work_d:
+			work_d = d
+			work = m
+	if work != null:
+		bed = work
+		_guide_work = work
+	elif _guide_work != null and not is_instance_valid(_guide_work):
+		_guide_work = null
+	if bed != null and bool(bed.get("lit")):
+		Game.guide_lit = true
+	if bed != null and (int(bed.get("made")) > int(bed.get("tray"))
+			or (Net.is_client() and player != null and player.inv.count_of(IDs.I.SPORE_FIBER) > 0)):
+		Game.guide_fiber = true
+	# Волокно в рюкзаке само шаг не закрывает: его могли принести с другой грядки.
+	# Считаем только то, что эта грядка уже выпустила.
+	var step: int = _guide_fact_step()
+	if step > Game.guide_latch:
+		Game.guide_latch = step
+	# Ремонт — отдельный шаг, защёлку не уменьшает.
+	if Game.raid_damage != "" and Game.guide_latch >= 8:
+		step = 9
+	_fill_guide(step)
+
+
+## Ближайший несделанный шаг по фактам, не по счётчику. Ремонт не откатывает защёлку.
+func _guide_fact_step() -> int:
+	var anchor: Vector2i = Game.base_mark_cell()
+	if Game.guide_latch <= 1 and not _guide_has_frame(anchor):
+		return 1
+	if Game.guide_latch <= 2 and not _guide_has_door(anchor):
+		return 2
+	var bed = _guide_bed()
+	if bed == null:
+		return 3
+	if not Game.guide_lit and not bool(bed.get("lit")):
+		return 4
+	if not Game.guide_fiber:
+		return 5
+	var work = _guide_work if _guide_work != null and is_instance_valid(_guide_work) else bed
+	if Game.guide_latch <= 6 and not _guide_chest_at_out(work):
+		return 6
+	if Game.guide_latch <= 7 and not _guide_room_closed(work):
+		return 7
+	return 8
+
+
+func _fill_guide(step: int) -> void:
+	guide_step = step
+	guide_pause = ""
+	guide_show = step > 0 and step < 8
+	var touch: bool = UI.touch_on
+	var place: String = "тап" if touch else "ПКМ"
+	var take: String = "тап [E]" if touch else "[E]"
+	match step:
+		1:
+			guide_line = "Поставь каркас у лагеря"
+			guide_plate = "Поставь каркас: %s панелью у лагеря" % place
+		2:
+			guide_line = "Поставь дверь"
+			guide_plate = "Поставь дверь: %s у каркаса" % place
+		3:
+			guide_line = "Поставь грядку"
+			guide_plate = "Поставь грядку: крафт I, %s у каркаса" % place
+		4:
+			guide_line = "Подведи белый луч"
+			guide_plate = "Подведи белый луч: коллектор под открытым небом"
+			guide_pause = _guide_pause_line()
+			if guide_pause != "":
+				guide_plate = guide_pause
+		5:
+			var bed = _guide_bed()
+			guide_line = "Забери волокно" if bed != null and int(bed.tray) > 0 else "Дождись первого волокна"
+			guide_plate = "Забери волокно: %s у грядки" % take
+			if bed != null and int(bed.tray) == 0:
+				guide_plate = "Грядка растёт под белым лучом"
+			guide_pause = _guide_pause_line()
+			if guide_pause != "":
+				guide_plate = guide_pause
+		6:
+			guide_line = "Поставь сундук у выхода"
+			guide_plate = "Поставь сундук у выхода грядки"
+			guide_pause = _guide_pause_line()
+			if guide_pause != "":
+				guide_plate = guide_pause
+		7:
+			guide_line = "Закрой комнату дверью"
+			guide_plate = "Закрой комнату дверью: панели и дверь"
+		_:
+			guide_line = ""
+			guide_plate = ""
+			guide_show = false
+	# Поломка после шага — ремонт, защёлку не уменьшаем.
+	if step == 9:
+		guide_line = "Почини после налёта"
+		guide_show = true
+		if Game.raid_damage == "section":
+			guide_plate = "Почини участок: дождись суток"
+		else:
+			guide_plate = "Почини: камень или хлам на устройство"
+
+
+func _set_guide_card() -> void:
+	var at: Vector2 = _guide_at()
+	var icon: int = IDs.I.PANEL
+	match guide_step:
+		3, 4, 5:
+			icon = IDs.I.SPORE_BED
+		6:
+			icon = IDs.I.CHEST
+		2, 7:
+			icon = IDs.I.DOOR
+	_set_card(guide_line, 0, 1, icon, at)
+
+
+## Куда вести «Показать»: к устройству шага, не к выдуманной клетке.
+func _guide_at() -> Vector2:
+	var anchor: Vector2i = Game.base_mark_cell()
+	if guide_step == 1:
+		return World.cell_to_world(anchor)
+	if guide_step >= 4 and guide_step <= 6:
+		var bed = _guide_bed()
+		if bed != null:
+			return bed.global_position
+	if guide_step == 2:
+		var door := _guide_nearest_tile(anchor, IDs.T.DOOR)
+		if door.x < 0:
+			door = _guide_nearest_tile(anchor, IDs.T.DOOR_OPEN)
+		if door.x >= 0:
+			return World.cell_to_world(door)
+	var panel: Vector2i = _guide_nearest_tile(anchor, IDs.T.ROOM_PANEL)
+	if panel.x >= 0:
+		return World.cell_to_world(panel)
+	return World.cell_to_world(anchor)
+
+
+## Грядка у метки базы. Нет метки — у капсулы. Дальняя грядка шаг не закрывает.
+func _guide_bed():
+	var anchor: Vector2i = Game.base_mark_cell()
+	var best = null
+	var best_d: int = 48
+	for m in World.machines.values():
+		if m == null or not is_instance_valid(m) or String(m.get("kind")) != "SporeBed":
+			continue
+		var c: Vector2i = World.world_to_cell(m.global_position)
+		var d: int = absi(c.x - anchor.x) + absi(c.y - anchor.y)
+		if d < best_d:
+			best_d = d
+			best = m
+	return best
+
+
+func _guide_has_frame(anchor: Vector2i) -> bool:
+	return _guide_nearest_tile(anchor, IDs.T.ROOM_PANEL).x >= 0
+
+
+func _guide_has_door(anchor: Vector2i) -> bool:
+	if _guide_nearest_tile(anchor, IDs.T.DOOR).x >= 0:
+		return true
+	return _guide_nearest_tile(anchor, IDs.T.DOOR_OPEN).x >= 0
+
+
+func _guide_nearest_tile(anchor: Vector2i, id: int) -> Vector2i:
+	var best: Vector2i = Vector2i(-1, -1)
+	var best_d: int = 36
+	var tiles := World.tiles
+	if tiles.size() != World.W * World.H:
+		return best
+	var x0 := maxi(0, anchor.x - 18)
+	var x1 := mini(World.W, anchor.x + 19)
+	for y in range(maxi(0, anchor.y - 18), mini(World.H, anchor.y + 19)):
+		var row := y * World.W
+		for x in range(x0, x1):
+			if tiles[row + x] != id:
+				continue
+			var d := absi(x - anchor.x) + absi(y - anchor.y)
+			if d < best_d:
+				best_d = d
+				best = Vector2i(x, y)
+	return best
+
+
+## Сундук стоит у стороны выдачи грядки, не где угодно у лагеря.
+func _guide_chest_at_out(bed) -> bool:
+	if bed == null or not bed.has_method("out_dir"):
+		return false
+	var out: Vector2i = bed.out_dir()
+	# Ключ машины — клетка постановки, не центр спрайта: он на границе тайла.
+	var cell: Vector2i = bed.cell + out if bed.get("cell") != null else World.world_to_cell(bed.global_position) + out
+	var m = World.machines.get(cell)
+	return m != null and is_instance_valid(m) and String(m.get("kind")) == "Chest"
+
+
+## Комната: дверь и панели вокруг грядки, не одна панель в стороне.
+func _guide_room_closed(bed) -> bool:
+	if bed == null:
+		return false
+	var c: Vector2i = World.world_to_cell(bed.global_position)
+	var panels: int = 0
+	var door: bool = false
+	for dy in range(-4, 5):
+		for dx in range(-4, 5):
+			var n: Vector2i = c + Vector2i(dx, dy)
+			var id: int = World.get_tile_v(n)
+			if id == IDs.T.ROOM_PANEL:
+				panels += 1
+			elif id == IDs.T.DOOR:
+				door = true
+	return door and panels >= 6
+
+
+## Почему грядка стоит. Координаты — только из Beams.break_points, reason wall.
+func _guide_pause_line() -> String:
+	var bed = _guide_work if _guide_work != null and is_instance_valid(_guide_work) else _guide_bed()
+	if bed == null:
+		return ""
+	if bed.raid_stopped:
+		return MachineBase.REPAIR_AFTER_RAID
+	if int(bed.get("tray")) >= Balance.SPORE_BED_TRAY:
+		return "Выход полон — забери"
+	if bool(bed.get("lit")):
+		return ""
+	if Game.is_night():
+		return "Ночь: свет гаснет"
+	var wall: Vector2i = _guide_white_wall(bed)
+	if wall.x >= 0:
+		return "Луч перекрыт: стена (%d, %d)" % [wall.x, wall.y]
+	return "Нет белого луча"
+
+
+## Белая стена на луче к этой грядке. Нет честной клетки — (-1, -1), не выдумка.
+func _guide_white_wall(bed) -> Vector2i:
+	if World.beams == null:
+		return Vector2i(-1, -1)
+	var bed_c: Vector2i = World.world_to_cell(bed.global_position)
+	var best: Vector2i = Vector2i(-1, -1)
+	var best_d: int = World.W + World.H
+	for p in World.beams.break_points:
+		if str(p.get("reason", "")) != "wall":
+			continue
+		if (int(p.get("color", 0)) & 7) != 7:
+			continue
+		var cell: Vector2i = p.get("cell", Vector2i(-1, -1))
+		if not World.in_bounds(cell.x, cell.y):
+			continue
+		if not World.is_solid_cell(cell) and World.get_tile_v(cell) != IDs.T.ROOM_PANEL:
+			continue
+		var offset := bed_c - cell
+		var d := maxi(absi(offset.x), absi(offset.y))
+		if d >= best_d:
+			continue
+		var reach: Dictionary = p.get("reach", {})
+		for dir in reach:
+			if offset == Beams.DIR[int(dir)] * d and d <= int(reach[dir]):
+				best_d = d
+				best = cell
+				break
+	return best
+
+
+## «Скрыть» на правом краю карточки, «?» рядом, когда помощь погашена.
+## Оба в нижней трети на телефоне. В BUTTONS боя их нет.
+func _lay_guide_buttons(L: Dictionary, card: Rect2) -> void:
+	if _guide_hide == null:
+		return
+	var show_hide: bool = _guide_owns_card()
+	_guide_hide.visible = show_hide
+	_guide_hide.mouse_filter = Control.MOUSE_FILTER_STOP if show_hide else Control.MOUSE_FILTER_IGNORE
+	if show_hide:
+		var button := _guide_hide as Button
+		button.text = "×" if UI.touch_on else "Скрыть"
+		button.tooltip_text = "Скрыть подсказки"
+		var bs := button.get_combined_minimum_size()
+		var br := Rect2(card.end - bs, bs)
+		_guide_hide.position = br.position
+		_guide_hide.size = br.size
+		L["guide_hide"] = br
+	var show_help: bool = Game.help_hidden and not Game.in_mission()
+	_place_help_button(L, show_help, card)
+
+
+func _lay_guide_help_band(L: Dictionary, band: float) -> void:
+	if not Game.help_hidden or Game.in_mission():
+		if _guide_help != null:
+			_guide_help.visible = false
+		return
+	var h: float = size.y
+	var y: float = maxf(band, h - 36.0)
+	var r: Rect2 = Rect2(size.x - 36.0, y, 28.0, 28.0)
+	if L.has("hotbar"):
+		var hb: Rect2 = L["hotbar"]
+		r.position = Vector2(hb.end.x + 4.0, hb.position.y)
+		if r.end.x > size.x - 2.0:
+			r.position.x = hb.position.x - r.size.x - 4.0
+	_place_help_button(L, true, r)
+
+
+func _place_help_button(L: Dictionary, on: bool, near: Rect2) -> void:
+	if _guide_help == null:
+		return
+	_guide_help.visible = on
+	_guide_help.mouse_filter = Control.MOUSE_FILTER_STOP if on else Control.MOUSE_FILTER_IGNORE
+	if not on:
+		return
+	var r: Rect2 = Rect2(near.end.x + 4.0, near.position.y, 28.0, minf(28.0, near.size.y))
+	if UI.touch_on and r.position.y + 0.5 < size.y * TOUCH_BAND:
+		r.position.y = size.y * TOUCH_BAND
+	if r.end.x > size.x - 2.0:
+		r.position.x = maxf(2.0, near.position.x - r.size.x - 4.0)
+	_guide_help.position = r.position
+	_guide_help.size = r.size
+	L["guide_help"] = r
+
+
+func _hide_guide_hide() -> void:
+	if _guide_hide != null:
+		_guide_hide.visible = false
+		_guide_hide.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+
+func _place_guide_help_alone() -> void:
+	if _guide_help == null:
+		return
+	if not Game.help_hidden or Game.in_mission():
+		_guide_help.visible = false
+		return
+	if _lay.has("guide_help"):
+		var r: Rect2 = _lay["guide_help"]
+		_guide_help.visible = true
+		_guide_help.mouse_filter = Control.MOUSE_FILTER_STOP
+		_guide_help.position = r.position
+		_guide_help.size = r.size
+
+
+func _place_guide_buttons(card: Rect2) -> void:
+	_lay_guide_buttons(_lay, card)
+
+
+func _guide_button(label: String, cb: Callable) -> Button:
+	var b: Button = Button.new()
+	b.text = label
+	b.flat = true
+	b.add_theme_font_size_override("font_size", UI.FONT["small"])
+	b.focus_mode = Control.FOCUS_NONE
+	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.visible = false
+	b.pressed.connect(cb)
+	add_child(b)
+	return b
+
+
+func _on_guide_hide() -> void:
+	Game.help_hidden = true
+	_state_t = 0.0
+
+
+func _on_guide_help() -> void:
+	Game.help_hidden = false
+	_state_t = 0.0
+
+
 ## Записать карточку. Текст длиннее 6 слов режется — полный текст глав правит G*.
 func _set_card(text: String, have: int, need: int, icon: int, at: Vector2) -> void:
 	card_text = _card_words(text, CARD_WORDS)
@@ -1032,12 +1488,16 @@ func _update_card_mark() -> void:
 			_mark.queue_redraw()
 
 
-## Клик по карточке: камера на 2 с уезжает к цели и возвращается. Герой не двигается.
+## Клик или тап по карточке: камера на 2 с уезжает к цели и возвращается.
+## Герой, мир и сейв не двигаются — только смещение камеры.
 func _on_card_input(event: InputEvent) -> void:
-	if not (event is InputEventMouseButton):
-		return
-	var mb: InputEventMouseButton = event
-	if not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+	var pressed: bool = false
+	if event is InputEventMouseButton:
+		var mb: InputEventMouseButton = event
+		pressed = mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT
+	elif event is InputEventScreenTouch:
+		pressed = (event as InputEventScreenTouch).pressed
+	if not pressed:
 		return
 	if card_at == Vector2.INF or player == null or player.camera == null:
 		return
@@ -1047,22 +1507,54 @@ func _on_card_input(event: InputEvent) -> void:
 		_card_cam_back = cam.position
 	_card_looking = true
 	card_look_left = CARD_LOOK_SEC
-	cam.position = card_at - player.global_position
-	cam.reset_smoothing()
+	_card_cam_aim = card_at - player.global_position
+	# Сглаживание включено и каждый кадр тянет смещение к нулю. Показ держит цель,
+	# пока не кончится; reset_smoothing здесь оставил бы камеру на цели навсегда.
+	var smooth: bool = cam.position_smoothing_enabled
+	cam.position_smoothing_enabled = false
+	cam.position = _card_cam_aim
+	cam.position_smoothing_enabled = smooth
+
+
+## Сценарий кончился посреди показа: камера и флаги не должны утечь в следующий.
+## Иначе guide_touch оставляет смещение, а guide_show принимает его за «до».
+func cancel_card_look() -> void:
+	_card_looking = false
+	card_look_left = 0.0
+	_card_cam_back = Vector2.ZERO
+	_card_cam_aim = Vector2.ZERO
+	if player != null and is_instance_valid(player) and player.camera != null:
+		var cam: Camera2D = player.camera
+		var smooth: bool = cam.position_smoothing_enabled
+		cam.position_smoothing_enabled = false
+		cam.position = Vector2.ZERO
+		cam.position_smoothing_enabled = smooth
 
 
 ## Показ цели кончился — камера встаёт обратно на героя.
 func _update_card_look(delta: float) -> void:
 	if not _card_looking:
 		return
+	if player == null or not is_instance_valid(player) or player.camera == null:
+		_card_looking = false
+		card_look_left = 0.0
+		return
+	var cam: Camera2D = player.camera
 	card_look_left -= delta
-	if card_look_left > 0.0 and player != null and is_instance_valid(player):
+	if card_look_left > 0.0:
+		# Сглаживание за кадр стирает смещение. Держим цель, пока показ не кончился.
+		var hold: bool = cam.position_smoothing_enabled
+		cam.position_smoothing_enabled = false
+		cam.position = _card_cam_aim
+		cam.position_smoothing_enabled = hold
 		return
 	_card_looking = false
 	card_look_left = 0.0
-	if player != null and player.camera != null:
-		player.camera.position = _card_cam_back
-		player.camera.reset_smoothing()
+	# Без reset_smoothing: он запоминает текущий кадр и дотягивает к нулю.
+	var back: bool = cam.position_smoothing_enabled
+	cam.position_smoothing_enabled = false
+	cam.position = _card_cam_back
+	cam.position_smoothing_enabled = back
 
 
 ## Горелка рядом с героем — шаг «поставить» пройден. Питания больше нет (#170).
@@ -1624,6 +2116,8 @@ const HOTBAR_BOTTOM: float = 32.0
 
 var _lay: Dictionary = {}
 var _lay_sig: int = -1
+## Портрет: сколько ячеек в ряду (не больше 5). 0 — не портрет, один ряд.
+var _portrait_cols: int = 0
 
 ## Прямоугольники блоков HUD в логических px — для теста «ничего не наезжает»: здоровье, импульс,
 ## строки статуса (каждая — своя плашка), сутки, отсчёт до ночи, миникарта, команда, хотбар,
@@ -1667,9 +2161,11 @@ func layout_screen_rect(key: String) -> Rect2:
 ## только мышью (_card_hit), сам HUD мышь пропускает (MOUSE_FILTER_IGNORE) — тап
 ## TouchControls иначе читает как мир и копает или ставит клетку под панелью.
 func covers_screen(pos: Vector2) -> bool:
+	_ensure_layout()
+	var point := pos / UI.ui_scale
 	for key in ["card", "hp", "emp", "day", "countdown", "map", "team", "hint", "notes", "status"]:
-		var r: Rect2 = layout_screen_rect(key)
-		if r.size != Vector2.ZERO and r.has_point(pos):
+		var r: Rect2 = _lay.get(key, Rect2())
+		if r.has_point(point):
 			return true
 	return false
 
@@ -1685,11 +2181,19 @@ func _ensure_layout() -> void:
 		_lay = _compute_layout()
 
 
-## Сколько ячеек хотбара рисовать (#161). Героя ещё нет — 10, как у Inventory по умолчанию.
+## Сколько ячеек в инвентаре (#161). Героя ещё нет — 10, как у Inventory по умолчанию.
+## Не читает раскладку: её ширина считается от этого числа, иначе портрет сужает
+## сам себя на каждом кадре.
 func _hotbar_count() -> int:
 	if player == null or player.inv == null:
 		return SLOT_COUNT
 	return clampi(player.inv.hotbar_size, 1, SLOT_COUNT)
+
+
+## Сколько ячеек рисуется и тапается. На портрете — все, в два ряда, ничего не прячем:
+## набор кладёт дверь и волокно в слоты 5 и 6, без них цепочка на телефоне не идёт.
+func _hotbar_shown() -> int:
+	return _hotbar_count()
 
 
 ## Подпись входов раскладки: размер, коэффициент, строки, число уведомлений, состав команды,
@@ -1925,11 +2429,21 @@ func _plate_text() -> String:
 		raid_cell = Vector2i(-1, -1)
 	if raid_show != "":
 		return raid_show
+	# После налёта — итог и один следующий проект. Пока фаза не 0, строка налёта
+	# выше: её равенство проверяют сценарии налёта.
+	if Game.raid_phase == 0 and Game.raid_note != "" and Game.game_time < _raid_note_until:
+		return Game.raid_note
 	if not UI.touch_on:
+		# Чужое действие под прицелом важнее шага. Пустой прицел — шаг цепочки.
+		if _guide_plate_wins(hint_text):
+			return guide_plate
 		return hint_text
 	var short: String = _touch_hint(hint_text)
-	if short != "":
+	if short != "" and not _guide_plate_wins(hint_text):
 		return short
+	# Шаг цепочки важнее вводных строк: иначе 15 с телефон не видит действие.
+	if _guide_owns_card() and guide_plate != "":
+		return guide_plate
 	var intro: String = _intro_line()
 	if intro != "":
 		return intro
@@ -2076,27 +2590,29 @@ func _compute_layout() -> Dictionary:
 	var hint_max: float = minf(w - 2.0 * PAD, 600.0)
 	if portrait:
 		# Щели между стиком и E нет: ячейка там сжималась до 27 px (3.4 мм).
-		# Полоса над рядом боя, шаг не от щели X. 6 слотов — SLOT_PORTRAIT
-		# (ячейка 78). 10 слотов — min(82, пол ширины / 10), ячейка не меньше
-		# 36, чтобы номер рисовался. Кнопки не двигаем.
-		var step: float = SLOT_PORTRAIT
-		if n_slots >= SLOT_COUNT:
-			step = minf(SLOT_PORTRAIT, floorf((w - 2.0 * PAD) / float(n_slots)))
-		slot = maxf(step, SLOT_DIGIT_MIN + 4.0)
-		hb_w = slot * float(n_slots) - 4.0
-		# Холст уже шести крупных ячеек (1080×2400 при 250 % — 432 лог. px):
-		# полоса не должна выходить за край. Номер слота тогда не рисуется.
+		# Шесть ячеек по 78 на 432 не влезают в один ряд (сжатие давало 66, прятание
+		# уносило дверь и волокно). Второй ряд — только когда все слоты не влезают
+		# в один при ячейке 82. На 512 шесть ещё влезают: лишний ряд съедает плашку.
+		# Кнопки не двигаем. Ландшафт — ниже, в щели, без второго ряда.
 		var fit: float = w - 2.0 * PAD
-		if hb_w > fit + 0.5:
-			slot = maxf(16.0, floorf((fit + 4.0) / float(n_slots)))
-			hb_w = slot * float(n_slots) - 4.0
+		var cols: int = n_slots
+		var one_w: float = SLOT_PORTRAIT * float(n_slots) - 4.0
+		if one_w > fit + 0.5:
+			cols = mini(n_slots, 5)
+			while cols > 1 and SLOT_PORTRAIT * float(cols) - 4.0 > fit + 0.5:
+				cols -= 1
+		_portrait_cols = cols
+		var rows_n: int = int(ceil(float(n_slots) / float(cols)))
+		slot = SLOT_PORTRAIT
+		hb_w = slot * float(cols) - 4.0
 		hx = clampf((w - hb_w) * 0.5, PAD, maxf(PAD, w - PAD - hb_w))
 		var cell_h: float = slot - 4.0
 		# Низ полосы — у верхнего захвата стика и нижнего ряда боя
 		# (прыжок, бег, E, копать). Меню сверху и Q/V/G в захват не входят:
 		# иначе полоса уезжает к верхней трети.
 		var grab_top: float = _combat_grab_top(h)
-		hy = grab_top - cell_h
+		var block_h: float = cell_h * float(rows_n) + 4.0 * float(rows_n - 1)
+		hy = grab_top - block_h
 		var band_y: float = h * (2.0 / 3.0)
 		if hy + 0.5 < band_y:
 			hy = band_y
@@ -2104,6 +2620,7 @@ func _compute_layout() -> Dictionary:
 		hi = w - PAD
 		hint_max = hi - lo
 	else:
+		_portrait_cols = 0
 		if tb.has("stick") and tb.has("e"):
 			lo = (tb["stick"] as Rect2).end.x + PAD
 			hi = (tb["e"] as Rect2).position.x - PAD
@@ -2127,7 +2644,11 @@ func _compute_layout() -> Dictionary:
 		# её из нижней трети. На ПК tb пуст — HOTBAR_BOTTOM не меняется.
 		hint_max = minf(minf(w - 2.0 * PAD, 600.0), hi - lo)
 	L["slot"] = slot
-	L["hotbar"] = Rect2(hx, hy, hb_w, slot - 4.0)
+	var hb_h: float = slot - 4.0
+	if _portrait_cols > 0:
+		var rows_n: int = int(ceil(float(n_slots) / float(_portrait_cols)))
+		hb_h = (slot - 4.0) * float(rows_n) + 4.0 * float(rows_n - 1)
+	L["hotbar"] = Rect2(hx, hy, hb_w, hb_h)
 	# Ландшафт: захват стика шире видимого круга и задевает хотбар у нижнего
 	# края. Сужаем по X, высоту не трогаем. Портрет уже выше всех захватов —
 	# сужение по X снова зажало бы ячейку до 27 px, его нет.
@@ -2182,12 +2703,28 @@ func _compute_layout() -> Dictionary:
 				hint_ceiling = minf(hint_ceiling, (L["card"] as Rect2).position.y - gap)
 			if portrait:
 				var hx0: float = clampf(hx + hb_w * 0.5 - hw * 0.5, PAD, maxf(PAD, w - PAD - hw))
-				slot_r = Rect2(hx0, hy - gap - hint_h, hw, hint_h)
-				# Цель уже над хотбаром — плашка уходит под неё, не на неё.
-				if L.has("card") and slot_r.intersects(L["card"]):
-					slot_r.position.y = (L["card"] as Rect2).end.y + gap
-				if slot_r.end.y > hy - gap + 0.5:
-					slot_r = Rect2()
+				# hy — верх верхнего ряда. Плашка над ним, не между рядами:
+				# иначе она закрывает слоты 0–4, и дверь с волокном не выбрать.
+				# Два ряда на 432 поднимают хотбар к границе трети: щели в 34 px
+				# (строка 24 + зазор 10) нет. Зазоры сжимаем до 4, плашку не прячем.
+				slot_r = _portrait_hint_slot(L, hx0, hy, hw, hint_h, gap, h * TOUCH_BAND)
+				if slot_r.has_area() and slot_r.size.x + 0.5 < hw:
+					hw = slot_r.size.x
+					var shorter: String = _touch_plate_fit(ht, hfont, maxf(48.0, hw - side))
+					if shorter != "":
+						ht = shorter
+						L["hint_text"] = ht
+				# Отсчёт ставится до плашки и не знает, что карточка уехала к границе
+				# трети. На 432 он остаётся на 640 и задевает карточку. Сдвигаем в её
+				# ряд, справа, не пересекая плашку.
+				if L.has("countdown") and L.has("card"):
+					var cd_now: Rect2 = L["countdown"]
+					var card_now: Rect2 = L["card"]
+					if cd_now.intersects(card_now) or (slot_r.has_area() and cd_now.intersects(slot_r)):
+						var moved_cd: Rect2 = _countdown_on_card_row(card_now, cd_now)
+						if moved_cd.has_area() and not moved_cd.intersects(card_now) and not (slot_r.has_area() and moved_cd.intersects(slot_r)):
+							L["countdown"] = moved_cd
+							_countdown_font = UI.FONT["small"]
 			elif not grabs.is_empty():
 				# Прямо над хотбаром, в нижней трети. Свободный поиск сажал плашку
 				# в щель у границы трети и вытеснял цель — здесь ряд фиксирован.
@@ -2211,6 +2748,8 @@ func _compute_layout() -> Dictionary:
 				L["hint"] = slot_r
 				stack_top = minf(stack_top, slot_r.position.y)
 	if touch:
+		if not L.has("card"):
+			_lay_guide_help_band(L, h * TOUCH_BAND)
 		_drop_grab_hits(L)
 		return L
 	# ---- Слева: карточка «Сейчас» (x=14, y=54), под ней — одна строка подсказки
@@ -2227,7 +2766,10 @@ func _compute_layout() -> Dictionary:
 		var cw: float = minf(_card_width(), maxf(96.0, cap))
 		L["card"] = Rect2(card_x, card_y, cw, ch)
 		_fit_card_title(L, cw)
+		_lay_guide_buttons(L, L["card"])
 		y0 = card_y + ch + 4.0
+	elif Game.help_hidden and not Game.in_mission():
+		_place_help_button(L, true, Rect2(CARD_X, CARD_Y, 28.0, 28.0))
 	# На телефоне между низом верхнего стека и верхом нижней плашки — не меньше
 	# 40 логических px мира. На ПК зазор прежний (4).
 	var s_limit: float = stack_top - (40.0 if UI.touch_on else 4.0)
@@ -2303,6 +2845,121 @@ func _compute_layout() -> Dictionary:
 
 
 
+
+
+## Плашка портрета над верхним рядом хотбара. На 432 два ряда поднимают хотбар
+## к границе трети: щели в 34 px (строка 24 + зазор 10) нет. Зазоры сжимаем до 4,
+## карточку поднимаем к границе трети. Отсчёт, севший в эту щель, уходит в ряд
+## карточки. Плашку не прячем: пустой прямоугольник делает «Забрать» нетапабельной.
+func _portrait_hint_slot(L: Dictionary, hx0: float, hy: float, hw: float, hint_h: float, gap: float, band: float) -> Rect2:
+	var gap_use: float = gap
+	var h_use: float = hint_h
+	var y: float = hy - gap_use - h_use
+	var card: Rect2 = L["card"] if L.has("card") else Rect2()
+	if card.has_area() and y + 0.5 < card.end.y + gap_use:
+		gap_use = 4.0
+		y = hy - gap_use - h_use
+		var lifted: float = y - gap_use - card.size.y
+		if lifted + 0.5 >= band:
+			card.position.y = lifted
+			_commit_card(L, card)
+		elif card.position.y + 0.5 > band:
+			card.position.y = band
+			_commit_card(L, card)
+	# Отсчёт ставится раньше и не знает нового ряда карточки. На 432 он на 640,
+	# карточка на 643.7 — пересечение 3.7 px. Уводим секунды в её ряд, справа.
+	if L.has("countdown") and card.has_area():
+		var cd_early: Rect2 = L["countdown"]
+		# Общая граница — не пересечение: иначе 512 сдвигает отсчёт на полосу суток.
+		var overlaps: bool = cd_early.position.x < card.end.x - 0.5 and cd_early.end.x > card.position.x + 0.5 			and cd_early.position.y < card.end.y - 0.5 and cd_early.end.y > card.position.y + 0.5
+		if overlaps:
+			var beside_early: Rect2 = _countdown_on_card_row(card, cd_early)
+			if beside_early.has_area():
+				# Карточка могла сузиться, чтобы справа остался зазор 6.
+				if card.end.x + 5.0 > beside_early.position.x:
+					card.size.x = beside_early.position.x - 6.0 - card.position.x
+				_commit_card(L, card)
+				L["countdown"] = beside_early
+				_countdown_font = UI.FONT["small"]
+	if card.has_area() and y + 0.5 < card.end.y + 4.0:
+		# Карточка и отсчёт делят ряд у границы трети, плашка — щель над хотбаром.
+		var share: float = band
+		if L.has("countdown"):
+			var cd0: Rect2 = L["countdown"]
+			if cd0.intersects(Rect2(PAD, share, size.x - 2.0 * PAD, card.size.y)) or cd0.end.y > share + card.size.y + 0.5:
+				var moved: Rect2 = _countdown_on_card_row(card, cd0)
+				if moved.has_area():
+					L["countdown"] = moved
+					_countdown_font = UI.FONT["small"]
+		card.position.y = share
+		_commit_card(L, card)
+		y = card.end.y + 4.0
+		var room: float = hy - 4.0 - y
+		if room + 0.5 < h_use:
+			h_use = maxf(18.0, room)
+		if y + h_use > hy - 4.0 + 0.5:
+			y = hy - 4.0 - h_use
+	if y + 0.5 < band:
+		y = band
+	var slot_r: Rect2 = Rect2(hx0, y, hw, h_use)
+	if card.has_area() and slot_r.intersects(L["card"]):
+		var below: float = (L["card"] as Rect2).end.y + 4.0
+		if below + h_use <= hy - 4.0 + 0.5:
+			slot_r.position.y = below
+			slot_r.size.y = minf(h_use, hy - 4.0 - below)
+	if slot_r.position.y + 0.5 < band or slot_r.end.y > hy - 4.0 + 0.5 or slot_r.intersects(L["hotbar"]):
+		return Rect2()
+	if L.has("card") and slot_r.intersects(L["card"]):
+		return Rect2()
+	if L.has("countdown") and slot_r.intersects(L["countdown"]):
+		var cd: Rect2 = L["countdown"]
+		var beside: Rect2 = _countdown_on_card_row(L["card"] if L.has("card") else Rect2(PAD, band, 48.0, 22.0), cd)
+		if beside.has_area() and not beside.intersects(slot_r):
+			L["countdown"] = beside
+			_countdown_font = UI.FONT["small"]
+		else:
+			var left: float = cd.position.x - 4.0 - slot_r.position.x
+			var right: float = slot_r.end.x - (cd.end.x + 4.0)
+			if left >= 48.0 and left >= right:
+				slot_r.size.x = left
+			elif right >= 48.0:
+				slot_r.position.x = cd.end.x + 4.0
+				slot_r.size.x = right
+	if slot_r.size.y + 0.5 < 16.0 or slot_r.size.x + 0.5 < 48.0:
+		return Rect2()
+	return slot_r
+
+
+## Карточка сдвинулась — подпись и кнопки этапа едут вместе с ней.
+func _commit_card(L: Dictionary, card: Rect2) -> void:
+	L["card"] = card
+	_fit_card_title(L, card.size.x)
+	_lay_guide_buttons(L, card)
+
+
+## Отсчёт в ряду карточки, справа от неё. На 432 кармана сбоку хотбара нет.
+func _countdown_on_card_row(card: Rect2, cd: Rect2) -> Rect2:
+	if not card.has_area():
+		return Rect2()
+	var need: float = cd.size.x
+	# Зазор 6, не 4: Rect2.intersects считает общую границу пересечением.
+	var x0: float = card.end.x + 6.0
+	if x0 + need > size.x - PAD + 0.5:
+		x0 = size.x - PAD - need
+	if x0 < card.end.x + 6.0:
+		var shrink: float = x0 - 6.0 - card.position.x
+		if shrink + 0.5 >= 48.0:
+			card.size.x = shrink
+		else:
+			return Rect2()
+	var cr: Rect2 = Rect2(x0, card.position.y, need, card.size.y)
+	if cr.end.x > size.x - PAD + 0.5 or cr.position.x < card.end.x + 5.0:
+		return Rect2()
+	if _hits_grab(cr, _grab_circles()):
+		return Rect2()
+	return cr
+
+
 ## Миникарта телефона: 96×28, в нижней трети, не на кнопках и не на захватах.
 ## Сначала правый край, не влезла — карман над рядом боя. Кнопки не двигаем.
 func _touch_map_rect(tb: Dictionary, band: float, h: float, occupied: Array = []) -> Rect2:
@@ -2355,7 +3012,13 @@ func _place_touch_card(L: Dictionary, tb: Dictionary, band: float, hint_top: flo
 	var floor_y: float = size.y - line_h
 	if L.has("hotbar"):
 		var hb_gap: float = card_gap if portrait else HINT_GAP_TOUCH
+		# Верх блока — верхний ряд. Карточка не садится на слоты второго ряда.
 		floor_y = minf(floor_y, (L["hotbar"] as Rect2).position.y - hb_gap - line_h)
+		# Два ряда поднимают хотбар, и низ свободной полосы попадает в захват боя.
+		# Карточка там перехватывает тап по верхнему ряду. Потолок — над захватом.
+		if portrait:
+			var grab_top: float = _combat_grab_top(size.y)
+			floor_y = minf(floor_y, grab_top - hb_gap - line_h)
 	# Ландшафт с плашкой: единственный ряд цели — над ней, у границы трети.
 	# Поиск снизу вверх сажает цель на хотбар или прячет. Ряд фиксируем.
 	if not portrait and hint_top + 0.5 < (L["hotbar"] as Rect2).position.y if L.has("hotbar") else false:
@@ -2611,6 +3274,8 @@ func _card_x_gap(y: float, line_h: float, _need: float, avoid: Array, grabs: Arr
 func _card_line_text() -> String:
 	if card_text == "":
 		return ""
+	if _guide_owns_card():
+		return "Показать · " + card_text
 	var st: int = 1
 	var total: int = Game.OBJECTIVE_STAGES
 	if Game.in_mission() and Game.mission != null:
@@ -2638,6 +3303,15 @@ func _place_touch_top(L: Dictionary, tb: Dictionary, band: float, portrait: bool
 	if L.has("hint"):
 		hint_top = (L["hint"] as Rect2).position.y
 	var ceiling: float = hint_top - HINT_GAP_TOUCH
+	# Два ряда хотбара поднимают плашку к захвату боя, и щель над ней пропадает.
+	# Отсчёт может сесть между верхом хотбара и захватом: тап по хотбару важнее,
+	# но секунды не должны пропадать.
+	if L.has("hotbar"):
+		# Верх хотбара на границе трети — щель над ним вне нижней трети.
+		# Тогда отсчёт идёт в карман сбоку полосы, не над ней.
+		var hb_top: float = (L["hotbar"] as Rect2).position.y
+		if hb_top - 2.0 > band + 18.0:
+			ceiling = maxf(ceiling, hb_top - 2.0)
 	# Плашка команды на телефоне скрыта: team_plate_rect — якорь кнопок меню
 	# (TouchControls._layout). Сдвинуть её в нижнюю треть — сдвинуть I/J/паузу.
 	var room: float = ceiling - band
@@ -2645,7 +3319,7 @@ func _place_touch_top(L: Dictionary, tb: Dictionary, band: float, portrait: bool
 	# Отсчёт до цели (#310): иначе карточка занимает всю ширину ряда, и резерв
 	# справа уже некуда деть. Секунды не должны ждать, пока цель сядет.
 	if night_countdown >= 0:
-		var early: Rect2 = _place_touch_countdown(w, band, ceiling, tb.values())
+		var early: Rect2 = _place_touch_countdown(w, band, ceiling, tb.values(), L.get("hotbar", Rect2()))
 		if early.has_area():
 			L["countdown"] = early
 			taken.append(early)
@@ -2664,6 +3338,7 @@ func _place_touch_top(L: Dictionary, tb: Dictionary, band: float, portrait: bool
 				L["card_line"] = true
 				L["card"] = card_r
 				_fit_card_title(L, card_r.size.x)
+				_lay_guide_buttons(L, card_r)
 				taken.append(card_r)
 			if card_r.position.y <= band + 0.5:
 				y = card_r.end.y + 4.0
@@ -2717,9 +3392,15 @@ func _place_touch_top(L: Dictionary, tb: Dictionary, band: float, portrait: bool
 			dx = minf(dx, (L["map"] as Rect2).position.x - 8.0 - dw)
 		var dr: Rect2 = Rect2(maxf(PAD, dx), y, dw, 34.0)
 		if dr.end.x <= w - PAD + 0.5 and dr.end.y <= ceiling + 0.5 and not _hits(dr, taken):
-			L["day"] = dr
-			taken.append(dr)
-			y = maxf(y, dr.end.y + 4.0)
+			# Полоса суток в ряду карточки. Если её низ задевает ряд плашки,
+			# заметке между ними не остаётся строки — сажаем полосу в ряд карточки.
+			if L.has("card") and dr.end.y + 4.0 > (L["card"] as Rect2).end.y + 4.0:
+				dr.position.y = (L["card"] as Rect2).position.y
+				dr.size.y = (L["card"] as Rect2).size.y
+			if dr.end.y <= ceiling + 0.5 and not _hits(dr, taken):
+				L["day"] = dr
+				taken.append(dr)
+				y = maxf(y, dr.end.y + 4.0)
 	if night_countdown >= 0 and not L.has("countdown"):
 		# Закреплён (#310). Сначала щель над карточкой. На 250 % портрета ряда
 		# над ней нет — тогда справа в её ряду, куда остался cd_reserve.
@@ -2731,17 +3412,39 @@ func _place_touch_top(L: Dictionary, tb: Dictionary, band: float, portrait: bool
 		cd_block.append_array(tb.values())
 		var cd: Rect2 = Rect2()
 		if L.has("card"):
-			cd = _place_touch_countdown(w, band, (L["card"] as Rect2).position.y - 2.0, cd_block)
+			cd = _place_touch_countdown(w, band, (L["card"] as Rect2).position.y - 2.0, cd_block, L.get("hotbar", Rect2()))
 			if not cd.has_area():
 				cd = _countdown_beside_card(L["card"], cd_block)
 		if not cd.has_area():
 			if L.has("card"):
 				cd_block.append(L["card"])
-			cd = _place_touch_countdown(w, band, ceiling, cd_block)
+			cd = _place_touch_countdown(w, band, ceiling, cd_block, L.get("hotbar", Rect2()))
 		if cd.has_area():
 			L["countdown"] = cd
 			taken.append(cd)
 	# Уведомления — над плашкой, в свободной полосе нижней трети. Не влезли — скрыты.
+	# Плашка ставится после этого вызова. Без резерва строка уведомления садится
+	# в её ряд (150 %, холст 1280×2844) и пересекает «hint».
+	# Резерв — только строка плашки, не вся полоса до хотбара: на 512 над
+	# карточкой есть 49 px, и заметка должна сесть туда, не закрывая плашку.
+	var hint_gap: float = HINT_GAP_LAND if not portrait else HINT_GAP_TOUCH
+	var hint_row: float = HINT_H_LAND if not portrait else ROW_H
+	if _plate_text() != "" and L.has("hotbar") and not L.has("hint"):
+		var hb_top: float = (L["hotbar"] as Rect2).position.y
+		var ry: float = hb_top - hint_gap - hint_row
+		if L.has("card"):
+			var card_end: float = (L["card"] as Rect2).end.y
+			if card_end + hint_gap + 0.5 > ry:
+				ry = card_end + hint_gap
+		var reserved: Rect2 = Rect2(PAD, ry, w - 2.0 * PAD, hint_row)
+		if reserved.position.y + 0.5 >= band and reserved.end.y <= hb_top - 4.0 + 0.5:
+			taken.append(reserved)
+			# ceiling выше посчитан от старого верха плашки (зазор 10 над хотбаром).
+			# На 512 карточка поднята, и этот потолок ниже ряда плашки: заметке
+			# остаётся 0 px. Потолок — верх зарезервированной строки.
+			# Потолок — верх строки плашки, не низ карточки. Иначе зазор 4
+			# съедает карман, и строке заметки (24) остаётся 6 px.
+			ceiling = reserved.position.y
 	_place_touch_notes(L, tb, taken, band, ceiling)
 
 
@@ -2771,22 +3474,22 @@ func _countdown_beside_card(card: Rect2, taken: Array) -> Rect2:
 ## Отсчёт до ночи в нижней трети, всегда, пока сумерки. Ширина по кеглю body —
 ## им же строка и рисуется. Сначала центр у границы трети, не влез — любая щель
 ## между захватами. Пустой только если щели нет вовсе.
-func _place_touch_countdown(w: float, band: float, ceiling: float, taken: Array) -> Rect2:
+func _place_touch_countdown(w: float, band: float, ceiling: float, taken: Array, hotbar: Rect2 = Rect2()) -> Rect2:
 	var fb: int = UI.FONT["body"]
 	# Плашка рисует строку по центру на всю ширину прямоугольника. Поля 8 px
 	# хватает обводке. Кегль body. На 288 лог. px (портрет 250 %) body не
 	# влезает рядом с целью — тогда small, не прячем секунды.
 	var need: float = _tw(_countdown_label(), fb) + 8.0
-	var wide: Rect2 = _countdown_slot(w, band, ceiling, taken, need)
+	var wide: Rect2 = _countdown_slot(w, band, ceiling, taken, need, hotbar)
 	if wide.has_area():
 		return wide
 	fb = UI.FONT["small"]
 	need = _tw(_countdown_label(), fb) + 8.0
 	_countdown_font = fb
-	return _countdown_slot(w, band, ceiling, taken, need)
+	return _countdown_slot(w, band, ceiling, taken, need, hotbar)
 
 
-func _countdown_slot(w: float, band: float, ceiling: float, taken: Array, need: float) -> Rect2:
+func _countdown_slot(w: float, band: float, ceiling: float, taken: Array, need: float, hotbar: Rect2 = Rect2()) -> Rect2:
 	# 26 px — запас над body 18. На 250 % между границей трети и плашкой
 	# остаётся ~24 px: строка всё ещё читается, полосу не прячем.
 	var hgt: float = 22.0
@@ -2807,6 +3510,41 @@ func _countdown_slot(w: float, band: float, ceiling: float, taken: Array, need: 
 			if not _hits(cr, taken) and cr.end.y <= top + 0.5 and cr.position.y + 0.5 >= band:
 				return cr
 		y -= 2.0
+	# Два ряда по 78 на 720×1280 садятся на границу трети: щели над ними
+	# в нижней трети нет. Полоса узкая — карман слева или справа, на высоте
+	# рядов, не на захвате и не на ячейках.
+	return _countdown_beside_hotbar(band, need, hgt, taken, grabs, hotbar)
+
+
+
+
+
+## Карман сбоку двухрядного хотбара, внутри нижней трети. Пустой — кармана нет.
+func _countdown_beside_hotbar(band: float, need: float, hgt: float, taken: Array, grabs: Array, hotbar: Rect2) -> Rect2:
+	if _portrait_cols <= 0 or not hotbar.has_area():
+		return Rect2()
+	var hb: Rect2 = hotbar
+	var y: float = hb.position.y
+	if y + 0.5 < band:
+		y = band
+	if y + hgt > hb.end.y + 0.5 or y + hgt > size.y + 0.5:
+		return Rect2()
+	var spots: Array = [
+		Rect2(PAD, y, hb.position.x - PAD - 4.0, hgt),
+		Rect2(hb.end.x + 4.0, y, size.x - PAD - (hb.end.x + 4.0), hgt),
+	]
+	for spot in spots:
+		var pocket: Rect2 = spot
+		if pocket.size.x + 0.5 < need:
+			continue
+		var cr: Rect2 = Rect2(pocket.position.x, pocket.position.y, need, hgt)
+		if pocket.position.x > hb.end.x:
+			cr.position.x = pocket.end.x - need
+		if cr.position.y + 0.5 < band or cr.end.y > size.y + 0.5:
+			continue
+		if _hits(cr, taken) or _hits_grab(cr, grabs) or cr.intersects(hb):
+			continue
+		return cr
 	return Rect2()
 
 
@@ -2869,6 +3607,11 @@ func _place_touch_notes(L: Dictionary, tb: Dictionary, taken: Array, band: float
 	var top: float = band
 	for b in taken:
 		var br: Rect2 = b
+		# Ряд плашки зарезервирован и лежит в taken. Кнопка, которая только
+		# задевает его (захват у границы), не должна вытолкнуть заметку ниже
+		# потолка: иначе строке остаётся отрицательная высота и она пропадает.
+		if br.position.y + 0.5 >= ceiling - ROW_H:
+			continue
 		if br.end.y > top and br.position.y < ceiling:
 			top = maxf(top, br.end.y + 4.0)
 	var n_bottom: float = ceiling
@@ -3081,6 +3824,9 @@ func _draw() -> void:
 		draw_rect(hr, C_PLATE)
 		# ПК: базовая линия на 18, как раньше. Телефон — по ascent выбранного кегля.
 		var hy: float = 18.0 if not UI.touch_on else 6.0 + font.get_ascent(hf)
+		# Узкая плашка (16–18 на 432): базовая линия не должна вылезти из рамки.
+		if UI.touch_on and hy > hr.size.y - 1.0:
+			hy = maxf(font.get_ascent(hf), hr.size.y - 2.0)
 		draw_string(font, hr.position + Vector2(8, hy), String(_lay["hint_text"]),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, hf, Color(C_INTERACT, 0.95))
 
@@ -3136,6 +3882,9 @@ func _fit_card_title(L: Dictionary, cw: float) -> void:
 		var picked: int = int(L.get("card_font", UI.FONT["small"]))
 		ft = picked if picked > 0 else UI.FONT["small"]
 		title = _card_line_text()
+		if _guide_owns_card():
+			inner = maxf(1.0, inner - _guide_hide.get_combined_minimum_size().x)
+			title = _fit_text(title, ft, inner)
 	elif _fit_text(title, ft, inner).ends_with("…"):
 		var smaller: int = UI.FONT["body"]
 		if smaller < ft:
@@ -3165,12 +3914,15 @@ func _draw_card(font: Font) -> void:
 	if not _lay.has("card") or card_text == "":
 		if _card_hit != null:
 			_card_hit.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_hide_guide_hide()
+		_place_guide_help_alone()
 		return
 	var r: Rect2 = _lay["card"]
 	if _card_hit != null:
 		_card_hit.mouse_filter = Control.MOUSE_FILTER_STOP
 		_card_hit.position = r.position
 		_card_hit.size = r.size
+	_place_guide_buttons(r)
 	draw_rect(r, C_PLATE)
 	draw_rect(r, Color(C_LINE, 0.35), false, 1.0)
 	var touch: bool = UI.touch_on
@@ -3203,7 +3955,9 @@ func _draw_card(font: Font) -> void:
 	else:
 		# ПК: те же координаты, что были до телефона. Текст уже вписан, длинная цель не лезет на карту.
 		_text_outlined(font, Vector2(tx, r.position.y + 8.0 + float(ft)), title, ft, C_LINE)
-		if card_mix:
+		if _guide_owns_card():
+			_text_outlined(font, Vector2(tx, r.end.y - 5.0), "Показать", UI.FONT["small"], C_BIO)
+		elif card_mix:
 			_draw_mix_row(Vector2(tx, r.position.y + 8.0 + float(ft) + 6.0))
 		elif card_need > 1:
 			var sf2: int = int(_lay.get("card_sub_font", UI.FONT["body"]))
@@ -3331,11 +4085,17 @@ func _text_outlined(font: Font, pos: Vector2, text: String, fsize: int, col: Col
 ## i за пределом hotbar_size — пустой прямоугольник: тап мимо хотбара ничего не выбирает.
 func hotbar_slot_logical(i: int) -> Rect2:
 	_ensure_layout()
-	if i < 0 or i >= _hotbar_count():
+	if i < 0 or i >= _hotbar_shown():
 		return Rect2()
 	var hb: Rect2 = _lay["hotbar"]
 	var slot: float = float(_lay["slot"])
-	return Rect2(hb.position.x + float(i) * slot, hb.position.y, slot - 4.0, slot - 4.0)
+	var col: int = i
+	var row: int = 0
+	if _portrait_cols > 0:
+		col = i % _portrait_cols
+		row = int(i / _portrait_cols)
+	return Rect2(hb.position.x + float(col) * slot,
+			hb.position.y + float(row) * slot, slot - 4.0, slot - 4.0)
 
 
 ## Ячейка хотбара i на экране, px холста. Ею же попадает тап по хотбару
@@ -3373,7 +4133,7 @@ func _slot_font() -> int:
 
 func _draw_hotbar(font: Font) -> void:
 	var fs: int = _slot_font()
-	for i in _hotbar_count():
+	for i in _hotbar_shown():
 		var r: Rect2 = hotbar_slot_logical(i)
 		var sel: bool = (player.inv.selected == i)
 		draw_rect(r, C_PLATE)

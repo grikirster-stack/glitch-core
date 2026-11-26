@@ -48,7 +48,7 @@ func _init() -> void:
 func _process(delta: float) -> void:
 	super(delta)
 	# СЕТЬ (ADR-002): секунды и лоток считает хост. Клиент рисует по net_state.
-	if not Net.is_authority():
+	if not Net.is_authority() or raid_stopped:
 		queue_redraw()
 		return
 	_tick(delta)
@@ -79,16 +79,10 @@ func _tick(delta: float) -> void:
 func _push_tray() -> void:
 	if tray <= 0:
 		return
-	for d in [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
-		var n = World.machines.get(cell + d)
-		if not (n is Chest):
-			continue
-		var left: int = n.receive_item(IDs.I.SPORE_FIBER, 1)
-		if left > 0:
-			continue
+	var chest := World.machines.get(cell + out_dir()) as Chest
+	if chest != null and chest.receive_item(IDs.I.SPORE_FIBER, 1) == 0:
 		tray -= 1
 		pushed += 1
-		return
 
 
 ## Игрок забрал волокно с лотка. 0 — лоток пуст или это клиент.
@@ -142,6 +136,8 @@ func stage() -> int:
 
 ## «Растёт», «Нет белого луча», «Выход полон». Полный лоток важнее темноты.
 func status_text() -> String:
+	if raid_stopped:
+		return REPAIR_AFTER_RAID
 	if tray >= Balance.SPORE_BED_TRAY:
 		return ST_FULL
 	if not lit:

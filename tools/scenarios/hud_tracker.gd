@@ -26,6 +26,11 @@ func run() -> void:
 		finish()
 		return
 	await _frames(hud, FRAMES_SETTLE)
+	# Цепочка новичка закрывает карточку, пока помощь видна. Трекер цели
+	# читает карточку после «Скрыть» — тот же путь, что кнопка игрока.
+	# Пересчёт раз в 0.25 с, два кадра его не дожидаются.
+	Game.help_hidden = true
+	await wait_until(func() -> bool: return hud.card_text == "Поставь горелку", 1.5)
 	await _tracker(hud)
 	await _countdown(hud)
 	await _power(hud, base)

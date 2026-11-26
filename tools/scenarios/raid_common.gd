@@ -31,6 +31,7 @@ static func build_room(origin: Vector2i, door_open: bool) -> Dictionary:
 	var inside: Vector2i = origin + Vector2i(2, 1)
 	var outside: Vector2i = origin + Vector2i(6, 1)
 	World.set_tile(outside.x, outside.y, IDs.T.AIR)
+	World.set_tile(outside.x - 1, outside.y + 1, IDs.T.STONE)
 	World.set_tile(outside.x, outside.y + 1, IDs.T.STONE)
 	return {"door": door, "inside": inside, "outside": outside, "origin": origin}
 

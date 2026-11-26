@@ -1128,6 +1128,8 @@ func take_damage(amount: float, from: Vector2) -> void:
 	vel += (global_position - from).normalized() * 90.0
 	if hp <= 0.0:
 		alive = false
+		if raid:
+			Threat.raid_repelled()
 		Game.stats_kills += 1
 		Game.notify("Фантом рассеян! Хорошая работа.", Color(0.5, 0.9, 1.0))
 		Sfx.play("craft", -6.0, 0.8)

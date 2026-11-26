@@ -74,7 +74,11 @@ func run_host() -> void:
 	await barrier("plan")
 
 	# --- Копка: ЛКМ у клиента → копка у прокси на хосте.
+	# Стартовый набор уже держит волокно стебля — тот же предмет, что дроп копки.
+	# «Ничего не подобрали» значит «счётчик не вырос», а не «в инвентаре ноль».
 	var drop0: int = p0.inv.count_of(drop)
+	var host0: int = player.inv.count_of(drop)
+	var p1_0: int = p1.inv.count_of(drop)
 	var started: bool = await wait_until(func() -> bool: return p0.mining_progress > 0.0, 5.0)
 	var t_eff: float = wall_clock()
 	ok("копка клиента идёт на хосте (прокси)", started and p0.mining_cell == dig, str(p0.mining_cell))
@@ -84,7 +88,9 @@ func run_host() -> void:
 	ok("хост: дроп подобрал прокси клиента 0 (ближайший живой герой)", got,
 			"%s %d → %d" % [DB.item_name(drop), drop0, p0.inv.count_of(drop)])
 	ok("хост: свой герой и клиент 1 ничего не подобрали",
-			player.inv.count_of(drop) == 0 and p1.inv.count_of(drop) == 0)
+			player.inv.count_of(drop) == host0 and p1.inv.count_of(drop) == p1_0,
+			"хост %d→%d, c1 %d→%d" % [host0, player.inv.count_of(drop),
+					p1_0, p1.inv.count_of(drop)])
 	await barrier("dug")
 	var t_press = share_get("press")
 	if t_press is float:

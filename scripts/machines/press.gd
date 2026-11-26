@@ -47,7 +47,7 @@ func _process(delta: float) -> void:
 	if flash > 0.0:
 		flash = maxf(0.0, flash - delta)
 	# СЕТЬ (ADR-002): партию и буфер считает хост. Клиент рисует по net_state.
-	if not Net.is_authority():
+	if not Net.is_authority() or raid_stopped:
 		queue_redraw()
 		return
 	# Сначала отдать готовую панель. Иначе полный сундук не успевает
@@ -196,6 +196,8 @@ func _say() -> void:
 
 
 func status_text() -> String:
+	if raid_stopped:
+		return REPAIR_AFTER_RAID
 	if reject == ST_SIDE and batch <= 0 and queued <= 0:
 		return ST_SIDE
 	if batch > 0 and _out_full():

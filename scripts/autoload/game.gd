@@ -131,6 +131,12 @@ func reset_run() -> void:
 	raid_remain = 0.0
 	raid_checked = Vector2i(-1, -1)
 	raid_damage = ""
+	# Цепочка новичка (C3, #317): защёлка только растёт, помощь видна, итог налёта пуст.
+	guide_latch = 0
+	help_hidden = false
+	raid_note = ""
+	guide_fiber = false
+	guide_lit = false
 	# --- Журнал и чертежи (#169): живут один забег.
 	Tech.reset()
 	_apply_blueprint_flag()
@@ -326,7 +332,7 @@ func give_next_blueprint() -> int:
 		return -1
 	blueprints.append(name)
 	blueprint_changed.emit(name)
-	return blueprint_item_id(blueprints.size() - 1)
+	return int(IDs.I[name])
 
 
 ## --blueprints=all: все доступные чертежи сразу (сценарии, как раньше unlock_to).
@@ -440,6 +446,17 @@ var raid_remain: float = 0.0
 var raid_checked: Vector2i = Vector2i(-1, -1)
 ## Что сломал налёт: "" / "section" / "device". Клиент рисует итог.
 var raid_damage: String = ""
+## Цепочка новичка (C3, #317). Защёлка только растёт: откат шага запрещён.
+## 0 ничего, 1 каркас, 2 дверь, 3 грядка, 4 белый луч, 5 волокно, 6 сундук, 7 комната.
+var guide_latch: int = 0
+## Помощь скрыта кнопкой. Новый забег — видна. Старый файл поля не знает — тоже видна.
+var help_hidden: bool = false
+## Итог налёта, который HUD снял, пока фаза была 3. Threat строку стирает сам.
+var raid_note: String = ""
+## Волокно уже было в этом забеге. Грядка может исчезнуть — шаг не откатывается.
+var guide_fiber: bool = false
+## Белый луч уже доходил до грядки. Погашенный луч шаг не откатывает.
+var guide_lit: bool = false
 ## Край прошлого кадра: сценарий ставит raid_active через set, без сигнала.
 var _raid_was: bool = false
 
@@ -486,8 +503,18 @@ func objective_target() -> int:
 
 ## Этап 1: горелка стоит, или терминал уже прочитан (чертёж или задание).
 ## Терминал остаётся достаточным — старые сейвы и сценарии без горелки.
+## Чертежи стартового набора (коллектор, грядка) этап не закрывают: их нет
+## в терминале, и новичок ещё не ставил горелку.
 func free_powered() -> bool:
-	return tasks_done > 0 or not blueprints.is_empty() or _free_burner_placed()
+	return tasks_done > 0 or _terminal_blueprint() or _free_burner_placed()
+
+
+## Чертёж с терминала, не из стартового набора. Пустой список — тоже нет.
+func _terminal_blueprint() -> bool:
+	for name in blueprints:
+		if name != "COLLECTOR" and name != "SPORE_BED":
+			return true
+	return false
 
 
 ## Живая горелка где угодно на карте. Радиуса нет: поставленная в стороне тоже закрывает этап.
@@ -618,8 +645,6 @@ func _enter_stage(s: int) -> void:
 	set_objective_stage(s)
 	var bp: Vector2 = _core_pos()
 	match s:
-		1:
-			notify("Цель 1/6: поставь горелку.", Color(0.5, 0.95, 0.8))
 		2:
 			notify("Цель 2/6: накопай %d руды. Хлам не считается." % Balance.FREE_ORE_NEED,
 					Color(0.95, 0.85, 0.45))
@@ -1114,6 +1139,7 @@ const SAVE_FIELDS: Array[String] = [
 	"raid_active", "raid_phase", "raid_number", "raid_target",  # налёт (ADR-006 § 4, #316)
 	"raid_reward_id", "raid_remain", "raid_checked", "raid_damage",
 	"blueprints",                        # чертежи команды (ADR-005 § 7.1, #169)
+	"guide_latch", "help_hidden", "raid_note", "guide_fiber", "guide_lit",  # цепочка новичка (C3, #317)
 ]
 
 
@@ -1195,6 +1221,20 @@ func load_state(d: Dictionary) -> void:
 		raid_checked = d.get("raid_checked", Vector2i(-1, -1))
 		raid_damage = String(d.get("raid_damage", ""))
 		raid_active = bool(d.get("raid_active", raid_phase == 2))
+	# Старый файл цепочки не знает. Грязную защёлку и скрытую помощь не оставляем:
+	# новый забег и старый сейв начинают с видимой помощи и пустого итога.
+	if not d.has("guide_latch"):
+		guide_latch = 0
+		help_hidden = false
+		raid_note = ""
+		guide_fiber = false
+		guide_lit = false
+	else:
+		guide_latch = int(d.get("guide_latch", 0))
+		help_hidden = bool(d.get("help_hidden", false))
+		raid_note = String(d.get("raid_note", ""))
+		guide_fiber = bool(d.get("guide_fiber", false))
+		guide_lit = bool(d.get("guide_lit", false))
 	_raid_was = raid_active
 	set_state(State.PLAYING)
 	_apply_blueprint_flag()         # --blueprints=all важнее файла: сценарии так и ждут

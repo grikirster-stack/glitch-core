@@ -26,6 +26,11 @@ func run() -> void:
 	for _i in 8:
 		RaidCommon.step_frame(self, 0.05)
 	ok("встало устройство, не участок", Game.raid_damage == "device" and bed.raid_stopped, Game.raid_damage)
+	bed.beam_receive(Beams.W)
+	var made_before := bed.made
+	bed._process(Balance.SPORE_BED_SECONDS + 0.1)
+	ok("свет на повреждённой грядке не даёт волокна", bed.made == made_before)
+	ok("грядка подсказывает материал для ремонта", bed.status_text() == MachineBase.REPAIR_AFTER_RAID)
 	ok("награда выдана один раз", Game.raid_reward_id == Game.raid_number and Game.raid_reward_id != reward_before)
 	var scrap_after: int = player.inv.count_of(IDs.I.SCRAP)
 	# Повторный финиш той же волны награду не удваивает.
@@ -44,6 +49,9 @@ func run() -> void:
 	release(KEY_E)
 	ok("камень запустил устройство", not bed.raid_stopped and player.inv.count_of(IDs.I.STONE) < stone0,
 			"стоп %s, камень %d" % [str(bed.raid_stopped), player.inv.count_of(IDs.I.STONE)])
+	bed.beam_receive(Beams.W)
+	bed._process(Balance.SPORE_BED_SECONDS + 0.1)
+	ok("починка вернула выпуск", bed.made == made_before + 1)
 	finish()
 
 

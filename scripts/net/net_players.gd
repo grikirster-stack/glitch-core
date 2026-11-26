@@ -155,6 +155,7 @@ func _on_peer_joined(id: int, info: Dictionary) -> void:
 	heroes[id] = p
 	if Net.is_host():
 		main.give_starter_kit(p)
+		main._grant_starter_blueprints()
 		p.died.connect(_on_proxy_died.bind(p))
 		_st[id] = {"seq": -1, "keys": 0, "presses": 0, "mouse": p.global_position,
 			"last_ms": Time.get_ticks_msec(), "epoch": 0, "corr": false,

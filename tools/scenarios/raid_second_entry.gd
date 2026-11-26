@@ -39,6 +39,12 @@ func run() -> void:
 	ok("первый налёт закончился ударом", Game.raid_phase == 3 and Game.raid_damage != "", Game.raid_damage)
 	# Фаза 3 держит номер. Ждём сброс, затем следующая ночь — второй набор.
 	RaidCommon.tick(Game.raid_remain + 0.3)
+	RaidCommon.tick(2.0)
+	ok("до следующей ночи нового предупреждения нет", Game.raid_number == 1 and Game.raid_phase == 0)
+	var state := Threat.save_state()
+	Threat.load_state(state)
+	Threat.tick(0.1)
+	ok("загрузка итога сохраняет ночь налёта", Game.raid_number == 1 and Game.raid_phase == 0)
 	ok("проверенный вход помним", Game.raid_checked == first,
 			"фаза %d, checked %s" % [Game.raid_phase, str(Game.raid_checked)])
 	Game.day_number = 4

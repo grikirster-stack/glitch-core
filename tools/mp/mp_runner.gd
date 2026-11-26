@@ -84,6 +84,8 @@ const MP_REGISTRY: Dictionary = {
 	# --- Требование релея от N (#139) ---
 	"mp_free_mark": {"file": "mp_free_mark.gd", "title": "сеть: метка базы и поздний вход", "clients": 1,
 		"desc": "E по своему сундуку переносит метку; чужой отказывает; уже вошедший видит клетку живым GLOBAL; поздний вход после второго переноса видит новую клетку"},
+	"mp_workshop": {"file": "mp_workshop.gd", "title": "сеть: 20 устройств мастерской", "clients": 1,
+		"timeout_ms": 120000, "desc": "реальный выпуск, p95 и максимум интервала кадра, трафик на клиента"},
 	"mp_raid_late_join": {"file": "mp_raid_late_join.gd", "title": "сеть: налёт и поздний вход", "clients": 1,
 		"desc": "уже вошедший видит фазу живым GLOBAL; поздний вход получает фазу и цель"},
 	"mp_relay_scale": {"file": "mp_relay_scale.gd", "title": "сеть: требование релея от N", "clients": 1,

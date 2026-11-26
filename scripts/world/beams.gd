@@ -63,7 +63,8 @@ var cells: Dictionary = {}
 ## у начала сегмента (1 у источника, меньше к концу).
 ## Сегмент нулевой длины или нулевой силы не кладётся.
 var segments: Array = []
-## Обрывы последнего rebuild: {cell, color, reason, marker}.
+## Обрывы последнего rebuild: {cell, color, reason, marker}. У белого луча
+## на стене reach хранит оставшуюся дальность по направлениям для подсказки.
 ## reason — "wall" (порода, край мира, угол двух стен) или "budget"
 ## (после зеркала/призмы не осталось клеток). cell — клетка, где луч кончился:
 ## стена или последняя освещённая. marker — короткая подпись для рисунка.
@@ -77,11 +78,6 @@ var changed: int = 0
 var last_rebuild_us: int = 0
 
 var _sig: int = 0
-## Плоская карта прохода: индекс клетки мира → маска. 0 — луча нет.
-var _flat: PackedByteArray = PackedByteArray()
-var _hit: PackedInt32Array = PackedInt32Array()
-## Бегущая подпись клеток прохода: без второго обхода массива.
-var _run: int = 0
 ## Кто стоит в клетке, на время прохода: 0 пусто, 1 глушит луч, 2+ пропускает
 ## (beam_pass). Словарь машин в горячем цикле не трогаем.
 var _occ: PackedByteArray = PackedByteArray()
@@ -121,23 +117,17 @@ func rebuild() -> int:
 	var next_segs: Array = []
 	var next_breaks: Array[Dictionary] = []
 	var prev_sig: int = -1
-	var n: int = World.W * World.H
-	if _flat.size() != n:
-		_flat = PackedByteArray()
-		_flat.resize(n)
+	# Все проходы одного rebuild синхронны. Меняются входы смесителей,
+	# координаты машин и их занятость за это время остаются теми же.
+	_fill_occ()
 	var passes: int = MAX_PASSES if _passers > 0 else 1
 	var kept: Array = []
 	for _pass in passes:
-		# Карта занятости — на каждый проход: между проходами могли поставить
-		# или снять постройку, а note_machines зовут не из каждого кадра.
-		_fill_occ()
 		_reset_pass_inputs()
 		next_segs = []
 		next_breaks = []
-		_run = 0
 		_trace(next_segs, next_breaks)
 		var sig: int = _seg_sig(next_segs) ^ _break_sig(next_breaks)
-		_clear_flat(next_segs)
 		kept = next_segs
 		if sig == prev_sig:
 			break
@@ -164,6 +154,8 @@ func _break_sig(points: Array) -> int:
 		var c: Vector2i = p["cell"]
 		h = (h * 33) ^ (c.x * 73856093) ^ (c.y * 19349663) ^ (int(p["color"]) << 4)
 		h ^= 1 if str(p["reason"]) == "budget" else 2
+		if p.has("reach"):
+			h ^= hash(p["reach"])
 	return h
 
 
@@ -173,18 +165,6 @@ func _seg_sig(segs: Array) -> int:
 		h = (h * 33) ^ (int(s["from"].x) * 73856093) ^ (int(s["from"].y) * 19349663)
 		h ^= (int(s["to"].x) * 83492791) ^ int(s["to"].y) ^ (int(s["color"]) << 8) ^ int(s["air"])
 	return h
-
-
-func _clear_flat(segs: Array) -> void:
-	var w: int = World.W
-	for s in segs:
-		var step: Vector2i = DIR[int(s["dir"]) & 7]
-		var x: int = int(s["from"].x) + step.x
-		var y: int = int(s["from"].y) + step.y
-		for _i in int(s["air"]):
-			_flat[y * w + x] = 0
-			x += step.x
-			y += step.y
 
 
 ## Клетки луча — прямые отрезки сегментов, не список индексов из горячего цикла.
@@ -200,19 +180,6 @@ func _cells_from_segs(into: Dictionary, segs: Array) -> void:
 			into[c] = int(into.get(c, 0)) | col
 			x += step.x
 			y += step.y
-
-
-## Подпись плоской карты: без сборки словаря на каждом проходе.
-func _signature_flat(next_segs: Array) -> int:
-	var h: int = _hit.size() * 16777619
-	for idx in _hit:
-		h = (h * 31) ^ (idx * 73856093) ^ (int(_flat[idx]) * 83492791)
-	h ^= next_segs.size() * 97
-	for s in next_segs:
-		h = (h * 33) ^ (int(s["from"].x) << 8) ^ int(s["from"].y) ^ (int(s["to"].x) << 4) ^ int(s["to"].y)
-		h ^= int(s["color"]) * 17
-		h ^= int(round(float(s["strength"]) * 1000.0))
-	return h
 
 
 ## Один проход: источники → очередь лучей → клетки и сегменты.
@@ -286,6 +253,7 @@ func _trace(next_segs: Array, breaks: Array[Dictionary]) -> void:
 	# стоят свою клетку и отдельной платы не берут: left после них — остаток.
 	# Смеситель смотрит на budget, не на left: белый выход — всегда 32.
 	var q: PackedInt32Array = PackedInt32Array()
+	var break_index: Dictionary = {}
 	var steps: int = 0
 	var solid: PackedByteArray = World._solid_tbl
 	var tiles: PackedByteArray = World.tiles
@@ -347,7 +315,7 @@ func _trace(next_segs: Array, breaks: Array[Dictionary]) -> void:
 			if nx < 0 or ny < 0 or nx >= w or ny >= h:
 				# Край мира — та же стена: искра на последней освещённой клетке.
 				if walked > 0:
-					_add_break(breaks, Vector2i(x, y), color, "wall")
+					_add_break(breaks, break_index, Vector2i(x, y), color, "wall")
 				_close_seg(next_segs, Vector2i(fx, fy), Vector2i(x, y), dir, color, seg_left, length, walked)
 				break
 			var nidx: int = ny * w + nx
@@ -355,7 +323,7 @@ func _trace(next_segs: Array, breaks: Array[Dictionary]) -> void:
 			# должны быть воздухом. Одна стена на углу — луч ещё проходит.
 			if sx != 0 and sy != 0 and _corner_blocked(x, y, sx, sy, w, h, solid, tiles):
 				if walked > 0:
-					_add_break(breaks, Vector2i(x, y), color, "wall")
+					_add_break(breaks, break_index, Vector2i(x, y), color, "wall")
 				_close_seg(next_segs, Vector2i(fx, fy), Vector2i(x, y), dir, color, seg_left, length, walked)
 				break
 			var occ: int = _occ[nidx]
@@ -375,7 +343,7 @@ func _trace(next_segs: Array, breaks: Array[Dictionary]) -> void:
 							out_left = out_budget
 						if out_left <= 0:
 							# Честный обрыв: в очередь луч с нулём не кладём.
-							_add_break(breaks, Vector2i(nx, ny), color, "budget")
+							_add_break(breaks, break_index, Vector2i(nx, ny), color, "budget")
 						else:
 							var span: int = out_left
 							for o in outs:
@@ -397,7 +365,7 @@ func _trace(next_segs: Array, breaks: Array[Dictionary]) -> void:
 			if solid[tiles[nidx]] != 0:
 				# Упирается в породу: линия доходит до стены, сквозь неё не идёт.
 				# Искра — на клетке стены, у грани, куда пришёл луч.
-				_add_break(breaks, Vector2i(nx, ny), color, "wall")
+				_add_break(breaks, break_index, Vector2i(nx, ny), color, "wall", dir, left - 1)
 				_close_seg(next_segs, Vector2i(fx, fy), Vector2i(nx, ny), dir, color, seg_left, length, walked)
 				break
 			# Воздух и жидкость. Клетка источника в карту не пишется — луч из носика.
@@ -405,10 +373,9 @@ func _trace(next_segs: Array, breaks: Array[Dictionary]) -> void:
 			y = ny
 			left -= 1
 			walked += 1
-			_flat[nidx] = _flat[nidx] | color
 		if walked > 0 and left <= 0:
 			# Бюджет кончился в воздухе: маркер в последней освещённой клетке.
-			_add_break(breaks, Vector2i(x, y), color, "budget")
+			_add_break(breaks, break_index, Vector2i(x, y), color, "budget")
 			next_segs.append(_seg(fx, fy, x, y, dir, color, seg_left, length, walked))
 
 
@@ -435,6 +402,10 @@ func _deliver(segs: Array) -> void:
 	var w: int = World.W
 	var hgt: int = World.H
 	for s in segs:
+		# Конец линии для рисования может лежать в стене. За её дальней
+		# гранью приёмник света уже не получает.
+		if World.is_solid_cell(s["to"]):
+			continue
 		var step: Vector2i = DIR[int(s["dir"]) & 7]
 		var x: int = int(s["to"].x) + step.x
 		var y: int = int(s["to"].y) + step.y
@@ -451,18 +422,28 @@ func _deliver(segs: Array) -> void:
 		m.beam_receive(int(hit.get(c.y * w + c.x, 0)))
 
 
-func _add_break(breaks: Array[Dictionary], cell: Vector2i, color: int, reason: String) -> void:
+func _add_break(breaks: Array[Dictionary], index: Dictionary, cell: Vector2i, color: int, reason: String,
+		dir: int = -1, remaining: int = 0) -> void:
 	if color == 0:
 		return
-	for p in breaks:
-		if p["cell"] == cell and str(p["reason"]) == reason and int(p["color"]) == color:
-			return
-	breaks.append({
+	var key := Vector3i(cell.x, cell.y, color if reason == "wall" else -color)
+	if index.has(key):
+		if color == W and dir >= 0:
+			var existing: Dictionary = index[key]
+			var reach: Dictionary = existing.get("reach", {})
+			reach[dir] = maxi(remaining, int(reach.get(dir, 0)))
+			existing["reach"] = reach
+		return
+	var point := {
 		"cell": cell,
 		"color": color,
 		"reason": reason,
 		"marker": "искра" if reason == "wall" else "обрыв",
-	})
+	}
+	if color == W and dir >= 0:
+		point["reach"] = {dir: remaining}
+	index[key] = point
+	breaks.append(point)
 
 
 func _close_seg(segs: Array, from: Vector2i, to: Vector2i, dir: int, color: int, seg_left: int, length: int, air: int) -> void:
