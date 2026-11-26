@@ -666,13 +666,11 @@ func _print_night_diag(day: int, planned: Array, spent: float, contact_s: Dictio
 	print("    откатов>0.4с: %d, сумма %.1f с, длиннейший %.1f с" % [bouts.size(), bout_sum, bout_max])
 	print("    отзывов волны: %d" % int(Threat.wave_recalls))
 	var hf := 0
-	var ff := 0
 	var fired := 0
 	for ph in get_tree().get_nodes_in_group("phantom"):
 		hf += int(ph.get("_hold_frames"))
-		ff += int(ph.get("_hold_fail"))
 		fired += int(ph.get("_breath_n"))
-	print("    кадров удержания: %d, путь не найден: %d, передышек: %d" % [hf, ff, fired])
+	print("    кадров удержания: %d, передышек: %d" % [hf, fired])
 
 
 func _print_diag(key: String, row: Dictionary) -> void:

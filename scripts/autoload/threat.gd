@@ -97,6 +97,7 @@ func reset() -> void:
 	_wave_was_gap = false
 	_wave_recall_left = false
 	_wave_recall_due = false
+	wave_recalls = 0
 	_wave_mark = false
 	spawned_total = 0
 	chapter_echo = false
@@ -330,7 +331,6 @@ static func _steel_wall() -> bool:
 func units_alive() -> int:
 	var n: int = 0
 	var packs: Dictionary = {}
-	var held := 0
 	for p in get_tree().get_nodes_in_group("phantom"):
 		if not is_instance_valid(p) or not bool(p.get("alive")):
 			continue
@@ -438,6 +438,7 @@ func _begin_night() -> void:
 	_wave_out = 0
 	_wave_clock = 0.0
 	_wave_was_gap = false
+	wave_recalls = 0
 	_wave_recall_left = false
 	_wave_mark = true
 
@@ -451,6 +452,7 @@ func _end_night() -> void:
 	_wave_was_gap = false
 	_wave_recall_left = false
 	_wave_recall_due = false
+	wave_recalls = 0
 	_wave_mark = false
 	_relay_seen = false
 
@@ -475,29 +477,6 @@ func _wave_size() -> int:
 	if quiet_night(night_day, Game.relay_active):
 		return 1
 	return 2
-
-
-func _wave_full() -> bool:
-	return _wave_out >= _wave_size() or roster.is_empty()
-
-
-## Пауза между волнами. Отход — когда телеграф этой волны доиграет,
-## иначе фантом выходит уже спиной к базе и до 112 px не доходит.
-## Налёт и главы этот флаг не ставят.
-func _arm_wave_gap() -> void:
-	if roster.is_empty():
-		wave_pause = 0.0
-		_wave_recall_left = false
-		return
-	wave_pause = _wave_gap()
-	_wave_recall_left = true
-
-
-## Пауза растёт с угрозой: на построенной базе интервал уже на полу 2.5 с,
-## и без длинной паузы фантом не успевает выйти из 112 px.
-func _wave_gap() -> float:
-	var t: float = threat_level()
-	return clampf(10.0 + t * 1.5, 12.0, 22.0)
 
 
 ## Директорская волна отходит к точке выхода. Сирена, налёт и осада главы
@@ -644,7 +623,9 @@ func telegraph(vent: Vector2i, kind: String, opts: Dictionary = {}) -> void:
 	var hum: int = Sfx.loop_start("vent_hum", pos, TELEGRAPH_HUM_DB)
 	var entry: Dictionary = {"cell": vent, "kind": kind, "t": Balance.VENT_TELEGRAPH, "hum": hum,
 			"opts": opts}
-	if _wave_mark:
+	# Налёт — не волна директора. Иначе его телеграф закрывает паузу волны,
+	# и следующее окно открывается поверх налёта (#333, ревью).
+	if _wave_mark and not bool(opts.get("raid", false)):
 		entry["wave"] = true
 	pending.append(entry)
 	vent_warning.emit(vent)
@@ -730,14 +711,27 @@ func spawn_phantom(kind: String, pos: Vector2, opts: Dictionary = {}) -> Array:
 func _echo_pos_with_path(pos: Vector2) -> Vector2:
 	var hero: Vector2i = World.world_to_cell(_player_pos())
 	var here: Vector2i = World.world_to_cell(pos)
-	if World.astar.get_id_path(here, hero).size() > 1:
+	if _echo_stands(here, hero):
 		return pos
-	var mouth: Vector2i = _echo_mouth(_player_pos())
-	if mouth.x < 0:
-		return Vector2.ZERO
-	if World.astar.get_id_path(mouth, hero).size() <= 1:
-		return Vector2.ZERO
-	return World.cell_to_world(mouth)
+	# Рот ищем заново, но не больше нескольких попыток: A* на длинной
+	# вертикали может снова отдать клетку без пути. Нет пола — не встаём.
+	var tried: Dictionary = {here: true}
+	for _i in 4:
+		var mouth: Vector2i = _echo_mouth(_player_pos())
+		if mouth.x < 0 or tried.has(mouth):
+			return Vector2.ZERO
+		tried[mouth] = true
+		if _echo_stands(mouth, hero):
+			return World.cell_to_world(mouth)
+	return Vector2.ZERO
+
+
+## Клетка рта годится, если из неё есть путь и под ногами пол.
+## Вода и шахта для A* не стена — без пола эхо проваливается.
+func _echo_stands(cell: Vector2i, hero: Vector2i) -> bool:
+	if not World.is_solid_cell(cell + Vector2i.DOWN):
+		return false
+	return World.astar.get_id_path(cell, hero).size() > 1
 
 
 func _spawn_now(kind: String, pos: Vector2, opts: Dictionary = {}) -> void:
@@ -980,6 +974,7 @@ func load_state(d: Dictionary) -> void:
 	_wave_out = 0
 	_wave_recall_left = false
 	_wave_recall_due = wave_pause > 0.0
+	wave_recalls = 0
 	_wave_mark = active
 	spawned_total = int(d.get("spawned_total", 0))
 	_relay_seen = bool(d.get("relay_seen", false))

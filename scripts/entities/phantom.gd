@@ -54,7 +54,6 @@ var _flee_from: Vector2 = Vector2.ZERO
 ## Волна директора, не сирена: удар маяка отход не обрывает.
 var _wave_hold: bool = false
 var _hold_frames: int = 0
-var _hold_fail: int = 0
 ## Передышка по касанию (#333). 10 с в кольце 112 px — отход на >=200 px
 ## и 8 с снаружи, затем возврат. Числа здесь одни: Balance не трогаем.
 const TOUCH_RING: float = 112.0
@@ -238,10 +237,10 @@ func _physics_process(delta: float) -> void:
 	var player_light: float = _player_light_value(player.global_position) if fears_light else 0.0
 
 	# Передышка по касанию (#333): 10 с в 112 px — отход на >=200 px и 8 с
-	# снаружи. Сирена, налёт с живым подходом и осада главы идут своим курсом.
-	# Налёт, у которого подход кончился и удар не случился, уже не идёт к цели:
-	# без отхода он стоит в кольце до рассвета.
-	if siege_target == null and stun <= 0.0 and (not raid or approach_t <= 0.0):
+	# снаружи. Налёт — отдельный курс C2: даже без живого подхода передышка
+	# обнуляет approach_t, и _raid_hold_course тут же даёт новый. Не зовём.
+	# Осада главы тоже идёт своим курсом.
+	if not raid and siege_target == null and stun <= 0.0:
 		_touch_breath(dt)
 
 	# --- Решения -------------------------------------------------------------
@@ -679,7 +678,8 @@ func _move_walking(dir: Vector2, speed: float, dt: float) -> void:
 		on_ground = false
 	# Узел пути прямо над головой: dir.x == 0, порог выше не срабатывает.
 	# Пеший стоит под клеткой до перестроения — налёт так и не доходит до удара.
-	elif on_ground and dir.y < -0.75 and not _headroom_blocked():
+	# Без пола под узлом прыжок — падение в шахту, не шаг.
+	elif on_ground and dir.y < -0.75 and not _headroom_blocked() and _node_has_floor():
 		vel.y = -280.0
 		on_ground = false
 		if path_i + 1 < path.size():
@@ -973,6 +973,13 @@ func _headroom_blocked() -> bool:
 	return World.is_solid_at(global_position + Vector2(0.0, -20.0))
 
 
+## Пол под узлом над головой. Нет пола — прыжок в шахту, идём вбок.
+func _node_has_floor() -> bool:
+	if path_i >= path.size():
+		return false
+	return World.is_solid_cell(path[path_i] + Vector2i.DOWN)
+
+
 ## Директор (#268): герой виден. Луч по клеткам врёт, если кристалл стоит
 ## в соседней клетке и закрывает отрезок — при дистанции удара свет клетки
 ## героя значит то же, что прямая видимость.
@@ -1176,10 +1183,6 @@ func approach(t: float, at: Vector2) -> void:
 ## _decide состояние не меняет. Стан и смерть — исключения (их проверяет _tick).
 func force_flee(t: float, from: Vector2 = Vector2.ZERO) -> void:
 	wave_hold(t, from, false)
-
-
-## Отход волны директора (#333). Как сирена, но удар маяка таймер не сбрасывает:
-## иначе красный луч возвращает фантома в 112 px в тот же кадр.
 
 
 ## Передышка по касанию (#333). Кольцо — то же 112 px, что доля ночи
