@@ -33,6 +33,8 @@ func run() -> void:
 	await _frames(hud, 2)
 	ok("после фазы 0 плашка — снятый итог", hud.plate_text() == Game.raid_note, "«%s»" % hud.plate_text())
 	ok("дерево не на паузе и UI не блокирует", not get_tree().paused and not UI.blocking())
+	await wait(8.5)
+	ok("итог уступил место контексту прицела", hud.plate_text() != Game.raid_note)
 	Game.raid_note = ""
 	finish()
 

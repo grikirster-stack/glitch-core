@@ -12,6 +12,7 @@ const TIME_ANIMATED: Array[String] = ["Burner", "Siren", "RainbowCore"]
 const DESTROY_DROP_CHANCE: float = 0.5
 ## Сколько осколков разлетается при разрушении.
 const DESTROY_CHIPS: int = 4
+const REPAIR_AFTER_RAID: String = "Почини камнем или хламом"
 
 ## Машина разрушена (до удаления из мира). Для угрозы/HUD/звука.
 signal destroyed(machine: MachineBase)

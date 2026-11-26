@@ -5,8 +5,8 @@ extends "res://tools/scenarios/scenario_base.gd"
 ## и грядка лотком прямо в пресс, панели в буфер. Полный выход ждёт.
 ## Неверная сторона и чужой предмет дают «Не та сторона». Save в середине
 ## партии восстанавливает волокно, секунды и буфер. Разбор возвращает
-## вход и готовое. Минута без игрока копит панели; два световых отрезка
-## дают больше панелей, чем стоит ремонт одной машины.
+## вход и готовое. Пока герой в шахте, мастерская копит панели. Два полных
+## цикла включают ночную отдачу накопителя и восстановление одной секции.
 
 
 func run() -> void:
@@ -101,7 +101,11 @@ func _direct(origin: Vector2i) -> void:
 	ok("прямой лоток дал панели в буфер", got and bed.tray == 0,
 			"буфер %d, лоток %d, подпись %s" % [press.out_buf, bed.tray, press.status_text()])
 	var before: int = player.inv.count_of(IDs.I.PANEL)
-	press.interact(player)
+	player.global_position = press.global_position + Vector2(0, -12)
+	aim(press.global_position)
+	hold(KEY_E)
+	await wait(0.1)
+	release(KEY_E)
 	ok("панели из буфера забираются руками",
 			player.inv.count_of(IDs.I.PANEL) == before + Balance.PRESS_PANEL_OUT and press.out_buf == 0,
 			"инвентарь %d, буфер %d" % [player.inv.count_of(IDs.I.PANEL), press.out_buf])
@@ -319,7 +323,7 @@ func _dismantle(origin: Vector2i) -> void:
 	_sweep()
 
 
-## Минута при работающей цепочке. Игрок стоит в стороне — это и есть «в шахте».
+## Герой спускается под поверхность, выпуск остаётся у мастерской.
 func _minute(origin: Vector2i) -> void:
 	var bed_c: Vector2i = origin
 	var chest_c: Vector2i = origin + Vector2i(1, 0)
@@ -347,7 +351,14 @@ func _minute(origin: Vector2i) -> void:
 	col._check_sky()
 	_flush()
 	ok("минута: грядка под белым", bed.lit, "lit %s" % bed.lit)
+	var mine_x := World.beacon_cell.x - 18
+	var mine := Vector2i(mine_x, World.surface[mine_x] + 12)
+	World.set_tile(mine.x, mine.y - 1, IDs.T.AIR)
+	World.set_tile(mine.x, mine.y, IDs.T.AIR)
+	World.set_tile(mine.x, mine.y + 1, IDs.T.STONE)
+	stand_at_cell(mine)
 	await _proc(60.0)
+	ok("герой провёл минуту в шахте", World.world_to_cell(player.global_position) == mine)
 	var panels: int = _chest_count(outc, IDs.I.PANEL) + press.out_buf
 	var batches: int = int(60.0 / (Balance.SPORE_BED_SECONDS * Balance.PRESS_FIBER_IN))
 	ok("за минуту накопились панели", panels >= Balance.PRESS_PANEL_OUT,
@@ -357,6 +368,7 @@ func _minute(origin: Vector2i) -> void:
 			"лоток %d, выпущено %d, партия %d, очередь %d, сделано %d" % [
 				bed.tray, bed.made, press.batch, press.queued, press.made])
 	var wall: Vector2i = origin + Vector2i(0, 2)
+	stand_at_cell(out_c + Vector2i.DOWN)
 	var spent: int = 0
 	while _chest_count(outc, IDs.I.PANEL) > 0 and spent < 6:
 		if not _spend_panel(outc, wall + Vector2i(spent, 0)):
@@ -372,7 +384,7 @@ func _minute(origin: Vector2i) -> void:
 	_sweep()
 
 
-## Два световых отрезка по 48 с. Выпуск больше, чем один ремонт машины.
+## Две смены с обычной сменой освещения. Считаем панели в выходном сундуке.
 func _two_cycles(origin: Vector2i) -> void:
 	var bed_c: Vector2i = origin
 	var chest_c: Vector2i = origin + Vector2i(1, 0)
@@ -407,16 +419,44 @@ func _two_cycles(origin: Vector2i) -> void:
 			"lit %s, небо %s, светит %s, цвет %d" % [
 				bed.lit, col.sky_open, col.emitting(),
 				World.beams.color_at(bed_c + Vector2i(-1, 0)) if World.beams != null else -1])
-	await _proc(48.0)
+	# Вторая грядка получает белый от заряженного солнцем накопителя.
+	var store_c := origin + Vector2i(0, 3)
+	var source_c := store_c + Vector2i(-2, 0)
+	var night_bed_c := store_c + Vector2i(2, 0)
+	for y in range(source_c.y + 1):
+		World.set_tile(source_c.x, y, IDs.T.AIR)
+	for x in range(source_c.x, night_bed_c.x + 1):
+		World.set_tile(x, store_c.y, IDs.T.AIR)
+	ok("ночная линия: коллектор", MachineBase.place_machine("Collector", source_c))
+	ok("ночная линия: накопитель", MachineBase.place_machine("Accumulator", store_c))
+	ok("ночная линия: грядка", MachineBase.place_machine("SporeBed", night_bed_c))
+	var night_bed := World.machines.get(night_bed_c) as SporeBed
+	var acc := World.machines.get(store_c) as Accumulator
+	if night_bed == null or acc == null:
+		return
+	Game.time_of_day = Balance.NIGHT_END
+	_flush()
+	var start_day := Game.day_number
+	var scale_before := Engine.time_scale
+	Engine.time_scale = 8.0
+	var dusk := await wait_until(func() -> bool: return Game.is_night(), Balance.DAY_LENGTH)
+	var direct_at_dusk := bed.made
+	var stored_at_dusk := night_bed.made
+	await wait(Balance.SPORE_BED_SECONDS + 1.0)
+	ok("на закате прямой луч погас, накопитель продолжил выпуск", dusk
+			and not bed.lit and bed.made == direct_at_dusk and night_bed.made > stored_at_dusk)
+	var first := await wait_until(func() -> bool: return Game.day_number == start_day + 1, Balance.DAY_LENGTH)
 	var day1: int = _chest_count(outc, IDs.I.PANEL) + press.out_buf
-	await _proc(48.0)
+	var repaired := _spend_panel(outc, origin + Vector2i(0, 2))
+	var second := await wait_until(func() -> bool: return Game.day_number == start_day + 2, Balance.DAY_LENGTH + 1.0)
+	Engine.time_scale = scale_before
 	var day2: int = _chest_count(outc, IDs.I.PANEL) + press.out_buf
-	var repair: int = 1
-	ok("два цикла дали больше панелей, чем ремонт", day2 > repair and day2 >= day1,
-			"после 48 с %d, после 96 с %d, ремонт %d" % [day1, day2, repair])
-	print("[замер] пресс: партия %.0f с, %d→%d, буфер %d партий; 48 с → %d панелей, 96 с → %d; ремонт одной машины %d" % [
-		Balance.PRESS_SECONDS, Balance.PRESS_FIBER_IN, Balance.PRESS_PANEL_OUT,
-		Balance.PRESS_BUFFER, day1, day2, repair])
+	ok("на каждом рассвете есть выпуск, одна панель ушла в стену",
+			first and second and repaired and day1 > 0 and day2 > day1)
+	print("[замер] панели к первому рассвету %d, к следующему %d с учётом расхода 1 на стену" % [day1, day2])
+	_gone(World.machines.get(source_c))
+	_gone(acc)
+	_gone(night_bed)
 	_gone(col)
 	_gone(bed)
 	_gone(World.machines.get(chest_c))

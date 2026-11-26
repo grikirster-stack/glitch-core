@@ -142,8 +142,8 @@ func _start() -> void:
 
 func _intro_notify() -> void:
 	Game.notify("Экспедиция «Кербер-9». Связь с орбитой потеряна.", Color(0.8, 0.9, 1.0))
-	Game.notify("Цель: поставь горелку, накопай руду, переживи ночь. Ядро — в сундуке.", Color(0.5, 0.95, 0.8))
-	Game.notify("Терминал под питанием даёт главу журнала и чертёж. %s" % ("Копать — тап к стене, строить — блок в хотбаре."
+	Game.notify("Выбери сторону лагеря для мастерской. Панели и дверь уже в рюкзаке.", Color(0.5, 0.95, 0.8))
+	Game.notify("Коллектор под открытым небом даёт белый луч для грядки. %s" % ("Копать — тап к стене, строить — блок в хотбаре."
 			if UI.touch_on else "Копать — ЛКМ, строить — ПКМ."), Color(0.85, 0.85, 0.7))
 
 
@@ -185,7 +185,7 @@ func _kit_backpack(p: Player, id: int, amount: int) -> void:
 ## Коллектор и грядка в стартовом наборе. Второй игрок сети не дописывает имя дважды.
 ## Сценарий и автотест набор не трогают: этап 1 ждёт пустой список чертежей.
 func _grant_starter_blueprints() -> void:
-	if Game.scenario_mode or _args.has("--test"):
+	if Game.in_mission() or Game.scenario_mode or _args.has("--test"):
 		return
 	for name in ["COLLECTOR", "SPORE_BED"]:
 		if Game.blueprints.has(name):

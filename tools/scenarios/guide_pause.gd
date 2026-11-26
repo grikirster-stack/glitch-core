@@ -53,9 +53,19 @@ func run() -> void:
 			if str(p.get("reason", "")) == "wall" and (int(p.get("color", 0)) & 7) == 7:
 				pts += str(p.get("cell")) + " "
 	ok("стена из break_points", saw_wall, "«%s»" % hud.guide_pause)
+	col.dir = 2
+	World.set_tile(col_cell.x - 1, col_cell.y, IDs.T.STONE)
+	_flush()
+	ok("обрыв луча в противоположную сторону не объясняет остановку", hud._guide_white_wall(bed).x < 0)
+	col.dir = 0
 	World.set_tile(wall.x, wall.y, IDs.T.AIR)
+	World.set_tile(origin.x - 2, origin.y, IDs.T.AIR)
+	World.set_tile(origin.x - 1, origin.y, IDs.T.ROOM_PANEL)
 	col._check_sky()
 	_flush()
+	ok("панель вплотную к грядке преградила свет", not bed.lit
+			and hud._guide_white_wall(bed) == origin + Vector2i.LEFT)
+	World.set_tile(origin.x - 2, origin.y, IDs.T.ROOM_PANEL)
 	bed.tray = Balance.SPORE_BED_TRAY
 	var saw_full: bool = await wait_until(func() -> bool:
 		return hud.guide_pause == "Выход полон — забери", 1.5)

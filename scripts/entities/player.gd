@@ -511,9 +511,14 @@ func _empulse() -> void:
 ## героя к курсору (сквозь стену копать нельзя — единое правило с тапом на телефоне), если
 ## она копаемая и в радиусе. (-1, -1) — копать нечего.
 func dig_target(mouse: Vector2) -> Vector2i:
+	if not mouse.is_finite():
+		return Vector2i(-1, -1)
 	# От центра клетки героя, как у турели и фантомов: луч из точки ног цепляет пол.
 	var origin: Vector2 = World.cell_to_world(World.world_to_cell(global_position))
-	var hit: Vector2i = World.first_solid_on_ray(origin, mouse, true, true)
+	# После смены сцены мировые координаты указателя могут уйти далеко за карту.
+	# Запас покрывает смещение героя от центра и дальний край доступной клетки.
+	var end := origin + (mouse - origin).limit_length(REACH + 2.0 * World.TILE)
+	var hit: Vector2i = World.first_solid_on_ray(origin, end, true, true)
 	if hit.x < 0 or not can_dig(hit):
 		return Vector2i(-1, -1)
 	if World.cell_to_world(hit).distance_to(global_position) > REACH:
@@ -722,6 +727,7 @@ const ET_SIREN: String = "siren"                ## сирена: E при пол
 const ET_LENS: String = "lens"                  ## линза в руке у маяка — вставить
 const ET_PHAROS: String = "pharos"              ## жёлтый маяк: E гасит и зажигает прожектор
 const ET_SPORE_BED: String = "spore_bed"        ## грядка: E забирает волокно с лотка
+const ET_PRESS: String = "press"
 const ET_DOOR: String = "door"                  ## дверь: E открывает и закрывает (#312)
 
 ## Сколько секунд держать E над постройкой, чтобы разобрать её (DISMANTLE).
@@ -895,6 +901,8 @@ func _target_at(c: Vector2i, pos: Vector2, aimed: bool, powered: Callable,
 			tg["kind"] = ET_PHAROS
 		elif m is SporeBed and int(m.get("tray")) > 0 and d < E_MACHINE:
 			tg["kind"] = ET_SPORE_BED
+		elif m is Press and m.out_buf > 0 and d < E_MACHINE:
+			tg["kind"] = ET_PRESS
 		elif m is Chest and d < E_MACHINE and not _chest_empty(m):
 			tg["kind"] = ET_CHEST
 		elif not sel.is_empty() and d <= E_STATION and not (m is Chest or m is Burner) \
@@ -954,11 +962,15 @@ func _do_interact(dt: float, fresh: bool = true) -> void:
 				if not Game.try_finish(self):
 					_say_core_blocked()
 			return
-		ET_BURNER, ET_ACCUMULATOR, ET_SIREN, ET_SPORE_BED:
+		ET_SPORE_BED, ET_PRESS:
+			if fresh:
+				tg["node"].interact(self)
+			_e_used = true
+			return
+		ET_BURNER, ET_ACCUMULATOR, ET_SIREN:
 			# Горелка: топливо — топка, пустая рука — рубильник (#164);
 			# накопитель: рубильник «копить / отдавать» (#166);
 			# сирена: E при полном заряде гонит фантомов (#172);
-			# грядка: E забирает волокно с лотка (#313).
 			tg["node"].interact(self)
 		ET_DOOR:
 			# Закрытая — обычная твёрдая клетка, открытая — проход. set_tile сам

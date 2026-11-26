@@ -65,10 +65,9 @@ const ROOM_KIT_PANELS: int = 12     ## панелей в стартовом на
 const ROOM_KIT_DOORS: int = 1       ## одна дверь
 const ROOM_KIT_SHEATH: int = 6      ## обшивки: фон, не стена
 ## Первое волокно без шахты (C3, #317). Коллектор — 1 слиток и 1 стекло,
-## грядка — 1 слиток и 2 бревна. Запас: зеркало (2 слитка, 1 стекло) и
-## ещё два бревна, чтобы кривой крафт не гнал в шахту. Замер: сценарий
+## грядка — 1 слиток и 2 бревна, выходной сундук — ещё 3 слитка. Замер: сценарий
 ## guide_chain, Game.game_time до первого волокна ≤ 120 с.
-const STARTER_COPPER_INGOT: int = 3
+const STARTER_COPPER_INGOT: int = 5
 const STARTER_GLASS: int = 2
 const STARTER_LOG: int = 4
 

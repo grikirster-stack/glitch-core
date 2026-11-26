@@ -143,6 +143,11 @@ func _check_out_of_reach() -> void:
 	release_mouse(MOUSE_BUTTON_LEFT)
 	ok("(г) клетка цела", World.get_tile_v(_c(7)) == IDs.T.STONE)
 	ok("(г) на ней красный крест", player.dig_denied_cell == _c(7))
+	var origin := World.cell_to_world(_c(0))
+	var far := origin + Vector2.RIGHT * 65000000.0
+	ok("курсор за картой не находит недоступный камень", player.dig_target(far) == NONE)
+	World.set_tile(_hx + 2, _hy, IDs.T.STONE)
+	ok("тот же дальний курсор находит ближнюю стену", player.dig_target(far) == _c(2))
 
 
 ## Замер: 10 000 вызовов на отрезке в 6 клеток (мкс на вызов).

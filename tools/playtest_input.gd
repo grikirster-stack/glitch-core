@@ -224,8 +224,13 @@ func _snapshot(id: int, error_text: String = "") -> void:
 		"deaths": _game.stats_deaths, "mined": _game.stats_mined, "arcs": _game.core_arc_count(),
 		"relay": _game.relay_active, "remaining": _game.relay_timer,
 		"signal_sent": _game.signal_sent, "state": _game.state,
-		"inventory_open": _ui.panel.visible, "goal": _ui.hud.card_text, "hint": _ui.hud.hint_text,
+		"inventory_open": _ui.panel.visible, "goal": _ui.hud.card_text, "hint": _ui.hud.plate_text(),
+		"raid": _game.raid_number, "raid_phase": _game.raid_phase, "raid_note": _game.raid_note,
+		"beds": [],
 	}
+	for m in _world.machines.values():
+		if m.get("kind") == "SporeBed":
+			data.beds.append({"cell": [m.cell.x, m.cell.y], "lit": m.lit, "made": m.made, "tray": m.tray})
 	var temp_path: String = _path("state.tmp")
 	var output: FileAccess = FileAccess.open(temp_path, FileAccess.WRITE)
 	if output == null:

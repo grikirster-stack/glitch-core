@@ -49,7 +49,7 @@ func run() -> void:
 	hud._guide_work = null
 	# Набор рассчитан на одну комнату и одно волокно. Запад — вторая сторона
 	# того же набора, не вторая выдача: докладываем только то, что восток потратил.
-	player.inv.add(IDs.I.COPPER_INGOT, 2)
+	player.inv.add(IDs.I.COPPER_INGOT, 5)
 	player.inv.add(IDs.I.GLASS, 1)
 	player.inv.add(IDs.I.LOG, 2)
 	await _frames(hud, 2)
@@ -115,22 +115,31 @@ func _side(sign: int) -> Vector2i:
 	_flush()
 	await _frames(hud, 2)
 	var fiber_card: bool = await wait_until(func() -> bool:
-		return bed.lit and hud.card_text == CARD_FIBER, 1.5)
-	ok("белый дошёл — карточка «Забери волокно»", fiber_card,
+		return bed.lit and hud.card_text == "Дождись первого волокна", 1.5)
+	ok("белый дошёл — карточка объясняет ожидание", fiber_card,
 			"lit %s, «%s»" % [bed.lit, hud.card_text])
 	var grew: bool = await wait_until(func() -> bool: return bed.tray >= 1, Balance.SPORE_BED_SECONDS + 2.0)
 	ok("волокно вышло само", grew, "лоток %d" % bed.tray)
+	ok("карточка ведёт к волокну до отбора", await wait_until(func() -> bool:
+		return hud.card_text == CARD_FIBER, 1.5))
 	_stand_on(bed_cell + Vector2i(0, 1))
-	bed.interact(player)
+	aim(bed.global_position)
+	hold(KEY_E)
+	await wait(0.12)
+	release(KEY_E)
 	await wait(0.2)
 	ok("волокно в рюкзаке", player.inv.count_of(IDs.I.SPORE_FIBER) >= 1,
 			str(player.inv.count_of(IDs.I.SPORE_FIBER)))
+	ok("первый урожай открыл рецепт пресса", DB.recipe_unlocked(DB.find_recipe_for(IDs.I.PRESS), player))
 	await _frames(hud, 2)
 	ok("после волокна карточка «Поставь сундук у выхода»", hud.card_text == CARD_CHEST,
 			"«%s»" % hud.card_text)
 	var chest_cell: Vector2i = bed_cell + bed.out_dir()
 	World.set_tile(chest_cell.x, chest_cell.y, IDs.T.AIR)
-	ok("сундук поставлен у выхода", MachineBase.place_machine("Chest", chest_cell), str(chest_cell))
+	ok("сундук скрафчен из остатка стартового набора", await _craft(IDs.I.CHEST) == 1)
+	ok("сундук в руке", _select(IDs.I.CHEST))
+	await _place(chest_cell)
+	ok("сундук поставлен у выхода", World.machines.get(chest_cell) is Chest, str(chest_cell))
 	await _frames(hud, 2)
 	var room_card: bool = await wait_until(func() -> bool: return hud.card_text == CARD_ROOM, 1.5)
 	ok("после сундука карточка «Закрой комнату дверью»", room_card, "«%s»" % hud.card_text)

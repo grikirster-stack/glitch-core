@@ -167,6 +167,7 @@ const TOUCH_HINTS: Dictionary = {
 	HINT_LENS: "[E] — линзу",
 	HINT_PHAROS: "Тап — прожектор",
 	HINT_SPORE_BED: "[E] — волокно",
+	HINT_PRESS: "Тап E — забрать панели",
 }
 
 const INTRO_LINES: Array = [
@@ -178,7 +179,7 @@ const INTRO_STEP: float = 5.0
 const INTRO_TIME: float = 15.0
 const HINT_INSERTER: String = "ПКМ — повернуть · [E] с предметом — фильтр"
 const HINT_HIDING: String = "Вы в вентиляции. [V] — вылезть"
-const HINT_REPAIR: String = "[E] — починить хламом (удерживать)"
+const HINT_REPAIR: String = "Удерживай [E] с камнем или хламом"
 const HINT_LOAD: String = "[E] — загрузить в постройку"
 ## Разбор постройки: E удерживать — снять машину и вернуть предмет в рюкзак.
 const HINT_DISMANTLE: String = "[E] (удерживать) — разобрать"
@@ -190,6 +191,7 @@ const HINT_LENS: String = "[E] — вставить линзу"
 ## Рубильник жёлтого маяка (#311). Линза — отдельная строка HINT_LENS.
 const HINT_PHAROS: String = "[E] — прожектор"
 const HINT_SPORE_BED: String = "[E] — забрать волокно"
+const HINT_PRESS: String = "[E] — забрать панели"
 
 ## Цепочка обучения: шаги по порядку, TUT_DONE — пройдена (строка скрыта).
 enum Tut { DIG, CRAFT, PLACE, POWER, TERMINAL, DONE }
@@ -224,6 +226,7 @@ var guide_line: String = ""
 var guide_plate: String = ""
 var guide_pause: String = ""
 var guide_show: bool = false
+var _raid_note_until: float = 0.0
 ## Кнопки карточки. Не TouchControls: раскладка боя их не знает.
 var _guide_hide: Control = null
 var _guide_help: Control = null
@@ -627,6 +630,8 @@ func _compute_hint(_pos: Vector2) -> String:
 		return HINT_PHAROS
 	if kind == player.ET_SPORE_BED:
 		return HINT_SPORE_BED
+	if kind == player.ET_PRESS:
+		return HINT_PRESS
 	if kind == player.ET_TERMINAL:
 		return HINT_TERMINAL
 	if kind == player.ET_BEACON:
@@ -733,6 +738,7 @@ func _update_state(delta: float) -> void:
 	# Новый забег (перезапуск сцены): время игры пошло заново — обучение тоже.
 	if Game.game_time < _last_game_time:
 		tutorial_step = Tut.DIG
+		_raid_note_until = 0.0
 		_intro_done = false
 		_state_t = 0.0
 		_pharos_seen = 0
@@ -955,15 +961,15 @@ func _pharos_at() -> Vector2:
 	return Vector2.INF
 
 
-## Цепочка владеет карточкой, пока новичок не закрыл первый этап цели.
-## Горелка, терминал или этап дальше 1 — карточка «Сейчас» снова про цель.
-## Иначе «Поставь каркас» затирает «Поставь горелку», которую читает трекер.
+## В свободной мастерской чтение терминала не прерывает обучение. Старые
+## забеги без стартовых чертежей продолжают уже начатый проект сигнала.
 func _guide_owns_card() -> bool:
 	if Game.help_hidden or Game.in_mission():
 		return false
-	if Game.signal_sent and not Game.relay_active:
+	if Game.signal_sent or Game.relay_active:
 		return false
-	if Game.free_powered() or Game.objective_stage > 1:
+	var workshop := Game.has_blueprint("SPORE_BED") and Game.has_blueprint("COLLECTOR")
+	if not workshop and (Game.free_powered() or Game.objective_stage > 1):
 		return false
 	return guide_step > 0 and guide_line != ""
 
@@ -990,6 +996,7 @@ func _note_raid() -> void:
 		return
 	var next: String = _raid_next_line()
 	Game.raid_note = line if next == "" else "%s. %s" % [line, next]
+	_raid_note_until = Game.game_time + 8.0
 
 
 ## Один следующий проект и одна альтернатива. Не модалка: дерево не стоит.
@@ -1032,7 +1039,8 @@ func _note_guide_facts() -> void:
 		_guide_work = null
 	if bed != null and bool(bed.get("lit")):
 		Game.guide_lit = true
-	if bed != null and int(bed.get("made")) > 0:
+	if bed != null and (int(bed.get("made")) > int(bed.get("tray"))
+			or (Net.is_client() and player != null and player.inv.count_of(IDs.I.SPORE_FIBER) > 0)):
 		Game.guide_fiber = true
 	# Волокно в рюкзаке само шаг не закрывает: его могли принести с другой грядки.
 	# Считаем только то, что эта грядка уже выпустила.
@@ -1048,21 +1056,21 @@ func _note_guide_facts() -> void:
 ## Ближайший несделанный шаг по фактам, не по счётчику. Ремонт не откатывает защёлку.
 func _guide_fact_step() -> int:
 	var anchor: Vector2i = Game.base_mark_cell()
-	if not _guide_has_frame(anchor):
+	if Game.guide_latch <= 1 and not _guide_has_frame(anchor):
 		return 1
-	if not _guide_has_door(anchor):
+	if Game.guide_latch <= 2 and not _guide_has_door(anchor):
 		return 2
 	var bed = _guide_bed()
 	if bed == null:
 		return 3
 	if not Game.guide_lit and not bool(bed.get("lit")):
 		return 4
-	if not Game.guide_fiber and int(bed.get("made")) <= 0:
+	if not Game.guide_fiber:
 		return 5
 	var work = _guide_work if _guide_work != null and is_instance_valid(_guide_work) else bed
-	if not _guide_chest_at_out(work):
+	if Game.guide_latch <= 6 and not _guide_chest_at_out(work):
 		return 6
-	if not _guide_room_closed(work):
+	if Game.guide_latch <= 7 and not _guide_room_closed(work):
 		return 7
 	return 8
 
@@ -1091,14 +1099,20 @@ func _fill_guide(step: int) -> void:
 			if guide_pause != "":
 				guide_plate = guide_pause
 		5:
-			guide_line = "Забери волокно"
+			var bed = _guide_bed()
+			guide_line = "Забери волокно" if bed != null and int(bed.tray) > 0 else "Дождись первого волокна"
 			guide_plate = "Забери волокно: %s у грядки" % take
+			if bed != null and int(bed.tray) == 0:
+				guide_plate = "Грядка растёт под белым лучом"
 			guide_pause = _guide_pause_line()
 			if guide_pause != "":
 				guide_plate = guide_pause
 		6:
 			guide_line = "Поставь сундук у выхода"
 			guide_plate = "Поставь сундук у выхода грядки"
+			guide_pause = _guide_pause_line()
+			if guide_pause != "":
+				guide_plate = guide_pause
 		7:
 			guide_line = "Закрой комнату дверью"
 			guide_plate = "Закрой комнату дверью: панели и дверь"
@@ -1131,15 +1145,19 @@ func _set_guide_card() -> void:
 
 ## Куда вести «Показать»: к устройству шага, не к выдуманной клетке.
 func _guide_at() -> Vector2:
-	var bed = _guide_bed()
-	if guide_step >= 4 and guide_step <= 6 and bed != null:
-		return bed.global_position
 	var anchor: Vector2i = Game.base_mark_cell()
-	var door: Vector2i = _guide_nearest_tile(anchor, IDs.T.DOOR)
-	if door.x < 0:
-		door = _guide_nearest_tile(anchor, IDs.T.DOOR_OPEN)
-	if guide_step == 2 and door.x >= 0:
-		return World.cell_to_world(door)
+	if guide_step == 1:
+		return World.cell_to_world(anchor)
+	if guide_step >= 4 and guide_step <= 6:
+		var bed = _guide_bed()
+		if bed != null:
+			return bed.global_position
+	if guide_step == 2:
+		var door := _guide_nearest_tile(anchor, IDs.T.DOOR)
+		if door.x < 0:
+			door = _guide_nearest_tile(anchor, IDs.T.DOOR_OPEN)
+		if door.x >= 0:
+			return World.cell_to_world(door)
 	var panel: Vector2i = _guide_nearest_tile(anchor, IDs.T.ROOM_PANEL)
 	if panel.x >= 0:
 		return World.cell_to_world(panel)
@@ -1175,17 +1193,20 @@ func _guide_has_door(anchor: Vector2i) -> bool:
 func _guide_nearest_tile(anchor: Vector2i, id: int) -> Vector2i:
 	var best: Vector2i = Vector2i(-1, -1)
 	var best_d: int = 36
-	for dy in range(-18, 19):
-		for dx in range(-18, 19):
-			var c: Vector2i = anchor + Vector2i(dx, dy)
-			if not World.in_bounds(c.x, c.y):
+	var tiles := World.tiles
+	if tiles.size() != World.W * World.H:
+		return best
+	var x0 := maxi(0, anchor.x - 18)
+	var x1 := mini(World.W, anchor.x + 19)
+	for y in range(maxi(0, anchor.y - 18), mini(World.H, anchor.y + 19)):
+		var row := y * World.W
+		for x in range(x0, x1):
+			if tiles[row + x] != id:
 				continue
-			if World.get_tile_v(c) != id:
-				continue
-			var d: int = absi(dx) + absi(dy)
+			var d := absi(x - anchor.x) + absi(y - anchor.y)
 			if d < best_d:
 				best_d = d
-				best = c
+				best = Vector2i(x, y)
 	return best
 
 
@@ -1213,7 +1234,7 @@ func _guide_room_closed(bed) -> bool:
 			var id: int = World.get_tile_v(n)
 			if id == IDs.T.ROOM_PANEL:
 				panels += 1
-			elif id == IDs.T.DOOR or id == IDs.T.DOOR_OPEN:
+			elif id == IDs.T.DOOR:
 				door = true
 	return door and panels >= 6
 
@@ -1223,6 +1244,8 @@ func _guide_pause_line() -> String:
 	var bed = _guide_work if _guide_work != null and is_instance_valid(_guide_work) else _guide_bed()
 	if bed == null:
 		return ""
+	if bed.raid_stopped:
+		return MachineBase.REPAIR_AFTER_RAID
 	if int(bed.get("tray")) >= Balance.SPORE_BED_TRAY:
 		return "Выход полон — забери"
 	if bool(bed.get("lit")):
@@ -1241,7 +1264,7 @@ func _guide_white_wall(bed) -> Vector2i:
 		return Vector2i(-1, -1)
 	var bed_c: Vector2i = World.world_to_cell(bed.global_position)
 	var best: Vector2i = Vector2i(-1, -1)
-	var best_d: int = 24
+	var best_d: int = World.W + World.H
 	for p in World.beams.break_points:
 		if str(p.get("reason", "")) != "wall":
 			continue
@@ -1252,10 +1275,16 @@ func _guide_white_wall(bed) -> Vector2i:
 			continue
 		if not World.is_solid_cell(cell) and World.get_tile_v(cell) != IDs.T.ROOM_PANEL:
 			continue
-		var d: int = absi(cell.x - bed_c.x) + absi(cell.y - bed_c.y)
-		if d < best_d:
-			best_d = d
-			best = cell
+		var offset := bed_c - cell
+		var d := maxi(absi(offset.x), absi(offset.y))
+		if d >= best_d:
+			continue
+		var reach: Dictionary = p.get("reach", {})
+		for dir in reach:
+			if offset == Beams.DIR[int(dir)] * d and d <= int(reach[dir]):
+				best_d = d
+				best = cell
+				break
 	return best
 
 
@@ -1268,9 +1297,11 @@ func _lay_guide_buttons(L: Dictionary, card: Rect2) -> void:
 	_guide_hide.visible = show_hide
 	_guide_hide.mouse_filter = Control.MOUSE_FILTER_STOP if show_hide else Control.MOUSE_FILTER_IGNORE
 	if show_hide:
-		var bw: float = 52.0 if not UI.touch_on else 44.0
-		var bh: float = minf(22.0, card.size.y - 4.0)
-		var br: Rect2 = Rect2(card.end.x - bw - 4.0, card.position.y + 2.0, bw, bh)
+		var button := _guide_hide as Button
+		button.text = "×" if UI.touch_on else "Скрыть"
+		button.tooltip_text = "Скрыть подсказки"
+		var bs := button.get_combined_minimum_size()
+		var br := Rect2(card.end - bs, bs)
 		_guide_hide.position = br.position
 		_guide_hide.size = br.size
 		L["guide_hide"] = br
@@ -1338,6 +1369,8 @@ func _place_guide_buttons(card: Rect2) -> void:
 func _guide_button(label: String, cb: Callable) -> Button:
 	var b: Button = Button.new()
 	b.text = label
+	b.flat = true
+	b.add_theme_font_size_override("font_size", UI.FONT["small"])
 	b.focus_mode = Control.FOCUS_NONE
 	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	b.visible = false
@@ -2128,9 +2161,11 @@ func layout_screen_rect(key: String) -> Rect2:
 ## только мышью (_card_hit), сам HUD мышь пропускает (MOUSE_FILTER_IGNORE) — тап
 ## TouchControls иначе читает как мир и копает или ставит клетку под панелью.
 func covers_screen(pos: Vector2) -> bool:
+	_ensure_layout()
+	var point := pos / UI.ui_scale
 	for key in ["card", "hp", "emp", "day", "countdown", "map", "team", "hint", "notes", "status"]:
-		var r: Rect2 = layout_screen_rect(key)
-		if r.size != Vector2.ZERO and r.has_point(pos):
+		var r: Rect2 = _lay.get(key, Rect2())
+		if r.has_point(point):
 			return true
 	return false
 
@@ -2396,7 +2431,7 @@ func _plate_text() -> String:
 		return raid_show
 	# После налёта — итог и один следующий проект. Пока фаза не 0, строка налёта
 	# выше: её равенство проверяют сценарии налёта.
-	if Game.raid_phase == 0 and Game.raid_note != "":
+	if Game.raid_phase == 0 and Game.raid_note != "" and Game.game_time < _raid_note_until:
 		return Game.raid_note
 	if not UI.touch_on:
 		# Чужое действие под прицелом важнее шага. Пустой прицел — шаг цепочки.
@@ -3239,6 +3274,8 @@ func _card_x_gap(y: float, line_h: float, _need: float, avoid: Array, grabs: Arr
 func _card_line_text() -> String:
 	if card_text == "":
 		return ""
+	if _guide_owns_card():
+		return "Показать · " + card_text
 	var st: int = 1
 	var total: int = Game.OBJECTIVE_STAGES
 	if Game.in_mission() and Game.mission != null:
@@ -3845,6 +3882,9 @@ func _fit_card_title(L: Dictionary, cw: float) -> void:
 		var picked: int = int(L.get("card_font", UI.FONT["small"]))
 		ft = picked if picked > 0 else UI.FONT["small"]
 		title = _card_line_text()
+		if _guide_owns_card():
+			inner = maxf(1.0, inner - _guide_hide.get_combined_minimum_size().x)
+			title = _fit_text(title, ft, inner)
 	elif _fit_text(title, ft, inner).ends_with("…"):
 		var smaller: int = UI.FONT["body"]
 		if smaller < ft:
@@ -3915,7 +3955,9 @@ func _draw_card(font: Font) -> void:
 	else:
 		# ПК: те же координаты, что были до телефона. Текст уже вписан, длинная цель не лезет на карту.
 		_text_outlined(font, Vector2(tx, r.position.y + 8.0 + float(ft)), title, ft, C_LINE)
-		if card_mix:
+		if _guide_owns_card():
+			_text_outlined(font, Vector2(tx, r.end.y - 5.0), "Показать", UI.FONT["small"], C_BIO)
+		elif card_mix:
 			_draw_mix_row(Vector2(tx, r.position.y + 8.0 + float(ft) + 6.0))
 		elif card_need > 1:
 			var sf2: int = int(_lay.get("card_sub_font", UI.FONT["body"]))

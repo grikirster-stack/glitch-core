@@ -50,7 +50,7 @@ func _process(delta: float) -> void:
 func emitting() -> bool:
 	if not Net.is_authority():
 		return _net_on
-	return sky_open and Game.daylight() >= Balance.COLLECTOR_MIN_DAYLIGHT
+	return not raid_stopped and sky_open and Game.daylight() >= Balance.COLLECTOR_MIN_DAYLIGHT
 
 
 ## Белый луч из носика. Пусто — ночь или крыша.

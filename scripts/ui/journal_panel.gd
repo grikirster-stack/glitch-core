@@ -150,7 +150,7 @@ func _draw_text(o: Vector2, font: Font) -> void:
 	if selected < 0:
 		draw_string(font, Vector2(x, o.y + 56), "ЗАПИСЕЙ НЕТ", HORIZONTAL_ALIGNMENT_LEFT, -1, UI.FONT["small"], Color(0.85, 0.8, 0.6))
 		draw_multiline_string(font, Vector2(x, o.y + 80),
-				"Журнал экипажа хранят терминалы станции. Запитайте терминал и прочтите его — глава появится здесь.",
+				"Журнал экипажа хранят терминалы станции. Удерживайте E у терминала, чтобы прочитать главу.",
 				HORIZONTAL_ALIGNMENT_LEFT, TEXT_W, UI.FONT["small"], 4, Color(0.62, 0.65, 0.72))
 		return
 	draw_string(font, Vector2(x, o.y + 56), "Глава %d. %s" % [selected + 1, Lore.chapter_title(selected)],
@@ -173,10 +173,9 @@ func blueprint_rect(i: int) -> Rect2:
 
 ## Подпись чертежа: короткое имя предмета, без «чертёж» и без «…».
 func blueprint_caption(i: int) -> String:
-	var id: int = Game.blueprint_item_id(i) if i >= 0 and i < Game.blueprints.size() else -1
-	if id < 0:
+	if i < 0 or i >= Game.blueprints.size():
 		return ""
-	return DB.item_name(id)
+	return Game.blueprint_label(Game.blueprints[i])
 
 
 func _draw_blueprints(o: Vector2, font: Font) -> void:
@@ -194,7 +193,7 @@ func _draw_blueprints(o: Vector2, font: Font) -> void:
 			break
 		draw_rect(r, Color(0.12, 0.13, 0.1, 0.9))
 		draw_rect(r, Color(0.75, 0.68, 0.45, 0.55), false, 1.0)
-		var id: int = Game.blueprint_item_id(i)
+		var id: int = int(IDs.I.get(Game.blueprints[i], -1))
 		var tex: ImageTexture = DB.item_texture(id) if id >= 0 else null
 		if tex:
 			draw_texture_rect(tex, Rect2(r.position + Vector2(4, 2), Vector2(BP_ICON, BP_ICON)), false)

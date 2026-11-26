@@ -19,8 +19,9 @@ func run() -> void:
 	var line: String = RaidCommon.plate()
 	ok("плашка назвала грядку", line.contains("грядка") and not line.contains("[E]"), "«%s»" % line)
 	# Светлая грядка ночью целью не выбирается: луч включён.
-	Game.raid_phase = 0
+	RaidCommon.arm(4)
 	bed.beam_receive(Beams.W)
 	Threat.tick(0.05)
-	ok("зажжённая грядка не приоритет", Game.raid_target != bed_cell or bed.lit == false, "цель %s lit %s" % [str(Game.raid_target), str(bed.lit)])
+	ok("следующей ночью цель сменилась", Game.raid_phase == 1 and Game.raid_target != bed_cell and bed.lit,
+			"цель %s, фаза %d" % [str(Game.raid_target), Game.raid_phase])
 	finish()

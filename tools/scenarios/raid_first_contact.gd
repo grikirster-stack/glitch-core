@@ -20,7 +20,9 @@ func run() -> void:
 	var lead: float = Game.raid_remain
 	ok("предупреждение не короче 25 с", Game.raid_phase == 1 and lead >= Balance.RAID_WARN_LEAD - 0.05, "%.1f" % lead)
 	# До конца предупреждения фантома ещё нет. Контакт — начало фазы 2.
+	var terrain := hash(World.tiles)
 	RaidCommon.tick(lead + 0.05)
+	ok("выход фантома сохранил геометрию базы", hash(World.tiles) == terrain)
 	ok("фаза 2 началась", Game.raid_phase == 2, "фаза %d" % Game.raid_phase)
 	var spawn: Vector2i = Threat.raid_entrance
 	ok("вход назначен снаружи", spawn.x >= 0 and spawn != room["inside"])

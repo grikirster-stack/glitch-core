@@ -332,7 +332,7 @@ func give_next_blueprint() -> int:
 		return -1
 	blueprints.append(name)
 	blueprint_changed.emit(name)
-	return blueprint_item_id(blueprints.size() - 1)
+	return int(IDs.I[name])
 
 
 ## --blueprints=all: все доступные чертежи сразу (сценарии, как раньше unlock_to).
@@ -645,8 +645,6 @@ func _enter_stage(s: int) -> void:
 	set_objective_stage(s)
 	var bp: Vector2 = _core_pos()
 	match s:
-		1:
-			notify("Цель 1/6: поставь горелку.", Color(0.5, 0.95, 0.8))
 		2:
 			notify("Цель 2/6: накопай %d руды. Хлам не считается." % Balance.FREE_ORE_NEED,
 					Color(0.95, 0.85, 0.45))

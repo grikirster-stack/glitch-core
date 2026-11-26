@@ -238,6 +238,10 @@ func _chest_takes(origin: Vector2i) -> void:
 		return
 	bed.tray = 3
 	bed.beam_receive(0)
+	bed.dir = 0
+	await wait(0.15)
+	ok("сундук сбоку от стрелки оставил лоток полным", bed.pushed == 0 and bed.tray == 3)
+	bed.dir = 2
 	await await_frame()
 	await wait(0.1)
 	ok("сундук забрал волокно", bed.pushed >= 1 and bed.tray < 3, "лоток %d, отдано %d" % [bed.tray, bed.pushed])

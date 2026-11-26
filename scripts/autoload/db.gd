@@ -370,6 +370,10 @@ func recipes_for(station: String) -> Array:
 ## закрытое панель не рисует.
 func recipe_unlocked(r: Dictionary, who = null) -> bool:
 	var out_id: int = int(r.get("out", -1))
+	# Первый урожай открывает автоматизацию мастерской. Старые чертежи
+	# пресса также действуют, в том числе у вернувшегося игрока.
+	if out_id == IDs.I.PRESS and not Game.in_mission() and _seen_now(IDs.I.SPORE_FIBER, who):
+		return true
 	if Game.blueprint_name(out_id) != "" and not Game.has_blueprint(out_id):
 		return false
 	if String(r.get("reveal", "")) == "seen" and not _ingredient_seen(r, who):
