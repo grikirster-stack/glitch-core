@@ -95,6 +95,14 @@ func run() -> void:
 		_print_color_row(row)
 		finish()
 		return
+	# Незнакомый --pressure-only= — до рассвета и уровней: иначе опечатка
+	# молча ждёт ночь и гоняет всё (или ждёт зря).
+	if _flag("pressure-diag") and not _pressure_only_ok():
+		ok("pressure-only известен: %s" % _flag_str("pressure-only"), false,
+				"нет в empty, red, seven, all")
+		finish()
+		return
+
 	var dawn: float = await _dawn_to_night()
 	print("  первая ночь через %.1f с после старта (рассвет %.2f → ночь %.2f)" % [
 			dawn, Balance.START_TIME, Balance.NIGHT_START])
@@ -112,18 +120,17 @@ func run() -> void:
 		finish()
 		return
 	if _flag("pressure-diag"):
-		var only: String = ""
-		for a in OS.get_cmdline_user_args():
-			if a.begins_with("--pressure-only="):
-				only = a.substr(16)
-		if only != "seven":
+		# --pressure-only= пусто | all — все три уровня диагностики (как без флага).
+		# empty / red / seven — ровно свой уровень. Иное отсечено выше.
+		var only: String = _flag_str("pressure-only")
+		if only == "" or only == "all" or only == "empty":
 			rows.append(await _level_empty(repeats))
-		if only == "" or only == "red":
+		if only == "" or only == "all" or only == "red":
 			rows.append(await _level_mid(Beams.R, repeats, true))
-		if only != "red":
+		if only == "" or only == "all" or only == "seven":
 			rows.append(await _level_seven(repeats, false))
 		_print_table(rows)
-		if only != "seven" and only != "red" and not rows.is_empty():
+		if (only == "" or only == "all" or only == "empty") and not rows.is_empty():
 			var empty: Dictionary = rows[0]
 			ok("пусто: 0 смертей за ночи 1–3", int(empty["deaths"]) == 0, "%d" % int(empty["deaths"]))
 			var quiet: int = 99
@@ -149,6 +156,12 @@ func run() -> void:
 		quiet = maxi(int(empty["peaks"][0]), int(empty["peaks"][1]))
 	ok("пусто: тихие ночи 1–2 — не больше 1 фантома", quiet <= 1, "по ночам %s" % str(empty["peaks"]))
 	finish()
+
+
+## --pressure-only= пусто | all | empty | red | seven. Иное — не гоняем.
+func _pressure_only_ok() -> bool:
+	var only: String = _flag_str("pressure-only")
+	return only == "" or only == "all" or only == "empty" or only == "red" or only == "seven"
 
 
 func _flag(name: String) -> bool:
