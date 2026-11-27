@@ -14,6 +14,13 @@ extends "res://tools/scenarios/balance_common.gd"
 ## Дефолт — дым для CI (шард сценариев 12 мин): пусто, средняя «оставили красный»,
 ## семь цветов, удержание, по одному прогону. Флаги не входят в `--scenario=all`:
 ##   --autopilot-colors     средняя по каждому цвету (7) + «оставили красный»
+##                          (не влезает в 240 с: после пурпурного таймаут, #334)
+##   --color=<имя>          один цвет средней базы (red/green/blue/yellow/cyan/
+##                          magenta/white). Без рассвета, пусто, семи цветов и
+##                          удержания — один вызов укладывается в 240 с.
+##                          --color=table собирает «цвет × потери × давление ×
+##                          uptime» из --colors-dir (логи отдельных цветов).
+##   --colors-dir=<путь>    каталог логов для --color=table (обязателен с table)
 ##   --autopilot-repeats=N  повторов ночи внутри сида (дефолт 1; для решения — 5)
 ##
 ## Печатает пик живых, бюджет, cap, потери машин, топливо, секунды до первого
@@ -35,6 +42,8 @@ const SPEED: float = 4.0
 const PRESSURE_PX: float = 7.0 * 16.0
 ## Цвета маяка по порядку прогона средней базы. Имена — Beams.NAME.
 const COLOR_ORDER: Array[int] = [Beams.R, Beams.G, Beams.B, Beams.Y, Beams.C, Beams.M, Beams.W]
+## Ключи --color=. Порядок — тот же, что COLOR_ORDER (семь цветов, #334).
+const COLOR_KEYS: Array[String] = ["red", "green", "blue", "yellow", "cyan", "magenta", "white"]
 ## Топливо горелки под чистый цвет. Смеси собирает смеситель из чистых.
 const FUEL_OF: Dictionary = {Beams.R: IDs.I.COAL, Beams.G: IDs.I.COPPER_ORE, Beams.B: IDs.I.CRYSTAL}
 
@@ -59,9 +68,33 @@ func _process(delta: float) -> void:
 func run() -> void:
 	player.invuln = 1.0e9
 	var repeats: int = _flag_int("autopilot-repeats", 1)
+	var color_key: String = _flag_str("color")
+	if color_key == "table":
+		_print_color_table(_flag_str("colors-dir"))
+		finish()
+		return
+	var one_color: int = _color_mask(color_key)
 	var colors: bool = _flag("autopilot-colors")
-	print("  режим: повторов %d, цвета %s (дым CI — без --autopilot-colors)" % [
-			repeats, "все 7 + красный" if colors else "только красный"])
+	var mode: String = "только красный"
+	if one_color >= 0:
+		mode = "только %s (--color)" % _color_name(one_color)
+	elif colors:
+		mode = "все 7 + красный"
+	print("  режим: повторов %d, цвета %s (дым CI — без --autopilot-colors)" % [repeats, mode])
+	if one_color == -2:
+		ok("цвет известен: %s" % color_key, false, "нет в red,green,blue,yellow,cyan,magenta,white,table")
+		finish()
+		return
+	if one_color >= 0:
+		# Один цвет, без ожидания рассвета: иначе семь вызовов снова не влезут
+		# в 240 с на вызов (рассвет ~150 с игровых + ночь). Ночь 3 — как у
+		# средней базы, seed_threat тот же. Потери и давление не переписываем.
+		ok("цвет известен: %s" % color_key, true, _color_name(one_color))
+		var row: Dictionary = await _level_mid(one_color, repeats, false)
+		_print_table([row])
+		_print_color_row(row)
+		finish()
+		return
 	var dawn: float = await _dawn_to_night()
 	print("  первая ночь через %.1f с после старта (рассвет %.2f → ночь %.2f)" % [
 			dawn, Balance.START_TIME, Balance.NIGHT_START])
@@ -131,6 +164,24 @@ func _flag_int(name: String, fallback: int) -> int:
 		if a.begins_with(key):
 			return maxi(1, int(a.substr(key.length())))
 	return fallback
+
+
+func _flag_str(name: String) -> String:
+	var key: String = "--" + name + "="
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with(key):
+			return a.substr(key.length()).strip_edges()
+	return ""
+
+
+## -1 — ключ пуст или неизвестен. table сюда не попадает.
+func _color_mask(key: String) -> int:
+	if key == "":
+		return -1
+	var i: int = COLOR_KEYS.find(key)
+	if i < 0:
+		return -2
+	return COLOR_ORDER[i]
 
 
 ## От старта на рассвете до первой ночи, игровые секунды. Директор молчит.
@@ -974,6 +1025,67 @@ func _wipe_built() -> void:
 		World.machines.erase(c)
 		if is_instance_valid(m):
 			m.queue_free()
+
+
+## Одна строка для сборщика --color=table. Формат фиксированный: парсер ниже
+## читает её из лога отдельного прогона и не гоняет ночь заново.
+func _print_color_row(row: Dictionary) -> void:
+	print("  ЦВЕТ-СТРОКА | %s | %s | %d | %.0f %% | %.0f %% |" % [
+			_flag_str("color"), _color_name(int(row["color"])), int(row["lost"]),
+			float(row["pressure"]) * 100.0, float(row["uptime"]) * 100.0])
+
+
+## Собрать «цвет × потери × давление × uptime» из логов --color=<имя>.
+## Файл: <dir>/<сид>-<ключ>.log. Семь цветов обязательны — иначе провал.
+func _print_color_table(dir: String) -> void:
+	var seed_s: String = str(int(scene.get("seed_value")))
+	print("  ТАБЛИЦА цвет × потери × давление × uptime (сид %s)" % seed_s)
+	print("  | цвет | потери | давление | uptime |")
+	if dir == "":
+		ok("каталог логов цветов задан", false, "нет --colors-dir=")
+		return
+	var missing: PackedStringArray = []
+	for i in COLOR_KEYS.size():
+		var key: String = COLOR_KEYS[i]
+		var path: String = dir.path_join("%s-%s.log" % [seed_s, key])
+		var parsed: Dictionary = _parse_color_log(path, key)
+		if parsed.is_empty():
+			missing.append(key)
+			print("  | %s | — | — | — |" % _color_name(COLOR_ORDER[i]))
+			continue
+		print("  | %s | %d | %.0f %% | %.0f %% |" % [
+				parsed["name"], int(parsed["lost"]), float(parsed["pressure"]), float(parsed["uptime"])])
+	ok("семь цветов в таблице", missing.is_empty(),
+			"нет: %s" % ", ".join(missing) if not missing.is_empty() else dir)
+	if missing.is_empty():
+		print("  таблица полная: 7 цветов, сид %s" % seed_s)
+
+
+func _parse_color_log(path: String, key: String) -> Dictionary:
+	if not FileAccess.file_exists(path):
+		return {}
+	var f: FileAccess = FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return {}
+	var needle: String = "ЦВЕТ-СТРОКА | %s |" % key
+	var found: String = ""
+	while not f.eof_reached():
+		var line: String = f.get_line()
+		if needle in line:
+			found = line
+	f.close()
+	if found == "":
+		return {}
+	var parts: PackedStringArray = found.split("|", false)
+	# "  ЦВЕТ-СТРОКА ", key, name, lost, pressure, uptime
+	if parts.size() < 6:
+		return {}
+	return {
+		"name": parts[2].strip_edges(),
+		"lost": int(parts[3].strip_edges()),
+		"pressure": float(parts[4].strip_edges().trim_suffix("%")),
+		"uptime": float(parts[5].strip_edges().trim_suffix("%")),
+	}
 
 
 func _print_table(rows: Array) -> void:
