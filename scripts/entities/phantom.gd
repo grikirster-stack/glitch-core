@@ -170,6 +170,10 @@ var _drain_t: float = Balance.SHADE_DRAIN_PERIOD	## Таймер дренажа 
 var _dig_t: float = 0.0				## Таймер копания (копатель).
 var _buzz_t: float = 0.0			## Таймер жужжания роя.
 var _blocked_x: bool = false		## В прошлом кадре упёрлись в стену по горизонтали.
+## Стоянка в CHASE без шага (#341). Печать — только под --pressure-diag.
+var _chase_still: float = 0.0
+var _chase_spot: Vector2 = Vector2.ZERO
+var _chase_noted: bool = false
 ## Клетка, из которой пеший отход только что вышел. Штраф против дёрганья.
 var _flee_left: Vector2i = Vector2i(-9999, -9999)
 ## Дочерний узел обводки отхода (#236). null — обводки нет.
@@ -397,15 +401,24 @@ func _physics_process(delta: float) -> void:
 			_rebuild_path()
 	if path_i < path.size():
 		var node: Vector2i = path[path_i]
-		var np: Vector2 = World.cell_to_world(node)
-		var dnode: float = global_position.distance_to(np)
-		if dnode < NODE_REACH:
-			path_i += 1
-			_stuck_t = 0.0
-			_stuck_best = INF
-		else:
-			dir = (np - global_position).normalized()
-			_track_progress(dnode, dt)
+		# Пеший не прыгает в шахту (#341). Первая клетка без пола над телом —
+		# не шаг: ищем обход по клеткам, куда шагнуть можно. Обхода нет —
+		# путь бросаем и идём вбок, а не стоим под стволом до таймаута.
+		if not flying and on_ground and not _step_ok(World.world_to_cell(global_position), node):
+			path.clear()
+			path_i = 0
+			_path_failed = true
+			node = Vector2i(-1, -1)
+		if node.x >= 0:
+			var np: Vector2 = World.cell_to_world(node)
+			var dnode: float = global_position.distance_to(np)
+			if dnode < NODE_REACH:
+				path_i += 1
+				_stuck_t = 0.0
+				_stuck_best = INF
+			else:
+				dir = (np - global_position).normalized()
+				_track_progress(dnode, dt)
 	elif state != St.DORMANT:
 		_stuck_t = 0.0
 		_stuck_best = INF
@@ -432,6 +445,7 @@ func _physics_process(delta: float) -> void:
 		_move_flying(dir, speed, dt)
 	else:
 		_move_walking(dir, speed, dt)
+	_note_chase_still(dt)
 
 	# --- Работа по типу -----------------------------------------------------
 	if stun <= 0.0:
@@ -542,8 +556,9 @@ func _flee_dark_row(here: Vector2i, origin: Vector2) -> Vector2i:
 				continue
 			walls = 0
 			gap += 1
-			# Клетка под потолком без пола рядом — не шаг: тело падает в шахту.
-			if gap < 2 and not _flee_floor(c):
+			# Клетка без пола — не цель пешего (#341). A* к ней срезает
+			# через воздух над колонной, и первый шаг возврата не шагается.
+			if not _flee_floor(c):
 				continue
 			if c == _flee_left:
 				continue
@@ -577,6 +592,9 @@ func _flee_best(here: Vector2i, deltas: Array[Vector2i], origin: Vector2, skip_b
 	for d in deltas:
 		var c: Vector2i = here + d
 		if not _flee_open(c):
+			continue
+		# Вертикальный сосед без пола — ствол, не шаг (#341).
+		if d.y < 0 and not _flee_floor(c):
 			continue
 		if skip_back and c == _flee_left:
 			continue
@@ -1011,8 +1029,7 @@ func _wander_target() -> Vector2:
 
 
 func _blocked_ahead() -> bool:
-	var ahead: Vector2 = global_position + Vector2(facing * 14.0, 0.0)
-	return World.is_solid_at(ahead)
+	return World.is_solid_at(global_position + Vector2(facing * 14.0, 0.0))
 
 
 ## Потолок в клетке над головой: прыжок вверх только разобьётся об него.
@@ -1136,7 +1153,18 @@ func _rebuild_path() -> void:
 		to = alt
 		# И идём к этой клетке, а не в стену.
 		_aim_pos = World.cell_to_world(alt)
-	var p: Array[Vector2i] = World.astar.get_id_path(from, to)
+	# Пеший не начинает шаг с клетки без пола (#341). A* срезает через
+	# воздух над колонной, и тело стоит. Ищем путь, где каждый шаг —
+	# на пол. Телепорта вверх по стволу нет. Пусто — обычный A*.
+	var p: Array[Vector2i] = []
+	if not flying:
+		p = _walk_path(from, to)
+	if p.size() <= 1:
+		p = World.astar.get_id_path(from, to)
+	if not flying and p.size() > 1 and not _step_ok(p[0], p[1]):
+		var around: Array[Vector2i] = _shaft_detour(from, to)
+		if not around.is_empty():
+			p = around
 	if p.size() > 1:
 		var sliced: Array[Vector2i] = []
 		var end_i: int = mini(p.size(), PATH_MAX_NODES)
@@ -1151,6 +1179,148 @@ func _rebuild_path() -> void:
 	else:
 		# Пути нет вовсе — фантом не должен тут застрять.
 		_path_failed = true
+
+
+## Пеший путь: каждый шаг на клетку с полом. A* этого не знает и
+## срезает через воздух над колонной (#341). Окно — вокруг from и to,
+## не вся карта: ночной поиск не должен обходить мир.
+func _walk_path(src: Vector2i, goal: Vector2i) -> Array[Vector2i]:
+	if World.astar == null:
+		return []
+	# Отход уводит на 200 px (12 клеток). Окно ±6 обрывало второй заход
+	# на середине коридора, и тело возвращалось по A* через воздух.
+	var span: int = absi(goal.x - src.x) + absi(goal.y - src.y)
+	if span > 48:
+		return []
+	var pad: int = 14
+	var x0: int = mini(src.x, goal.x) - pad
+	var x1: int = maxi(src.x, goal.x) + pad
+	var y0: int = mini(src.y, goal.y) - pad
+	var y1: int = maxi(src.y, goal.y) + pad
+	var seen: Dictionary = {}
+	var prev: Dictionary = {}
+	var q: Array[Vector2i] = [src]
+	seen[_cell_key(src)] = true
+	var guard: int = 0
+	var found: bool = false
+	while not q.is_empty() and guard < 2400:
+		var c: Vector2i = q.pop_front()
+		guard += 1
+		if c == goal:
+			found = true
+			break
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(1, 1), Vector2i(-1, 1), Vector2i(0, -1), Vector2i(1, -1), Vector2i(-1, -1)]:
+			var n: Vector2i = c + d
+			if n.x < x0 or n.x > x1 or n.y < y0 or n.y > y1:
+				continue
+			var key: String = _cell_key(n)
+			if seen.has(key):
+				continue
+			if not World.astar.is_in_boundsv(n) or World.astar.is_point_solid(n):
+				continue
+			if not _step_ok(c, n):
+				continue
+			if n != goal and not _cell_floor(n):
+				continue
+			seen[key] = true
+			prev[key] = c
+			q.append(n)
+	if not found:
+		return []
+	var out: Array[Vector2i] = []
+	var cur: Vector2i = goal
+	while true:
+		out.append(cur)
+		if cur == src:
+			break
+		cur = prev[_cell_key(cur)]
+	out.reverse()
+	return out
+
+
+func _cell_floor(c: Vector2i) -> bool:
+	var below: Vector2i = c + Vector2i.DOWN
+	return World.astar != null and World.astar.is_in_boundsv(below) and World.astar.is_point_solid(below)
+
+
+func _cell_key(c: Vector2i) -> String:
+	return "%d,%d" % [c.x, c.y]
+
+
+## Обход ствола: клетка рядом, куда пеший шагает, и откуда первый шаг A*
+## тоже не в воздух. Телепорт не делаем. Пусто — обхода нет.
+func _shaft_detour(here: Vector2i, goal: Vector2i) -> Array[Vector2i]:
+	if World.astar == null:
+		return []
+	var saved: Array[Vector2i] = []
+	for r in range(1, 9):
+		for dy in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if absi(dx) != r and absi(dy) != r:
+					continue
+				var c: Vector2i = here + Vector2i(dx, dy)
+				if not World.astar.is_in_boundsv(c) or World.astar.is_point_solid(c):
+					continue
+				if not _step_ok(here, c):
+					continue
+				var p: Array[Vector2i] = World.astar.get_id_path(c, goal)
+				if p.size() <= 1:
+					continue
+				var out: Array[Vector2i] = [here]
+				for i in range(p.size()):
+					out.append(p[i])
+				if not _path_steppable(out):
+					continue
+				if out.size() <= PATH_MAX_NODES:
+					return out
+				if saved.is_empty():
+					saved = out
+	if not saved.is_empty():
+		return saved
+	return []
+
+
+## Весь путь пеший: каждый шаг вбок, вниз или вверх на пол.
+## Дыра в середине иначе срезается A*, и тело стоит на ней (#341).
+func _path_steppable(p: Array[Vector2i]) -> bool:
+	for i in range(1, p.size()):
+		if not _step_ok(p[i - 1], p[i]):
+			return false
+	return true
+
+
+## Стоянка в CHASE: тело не сдвинулось больше 4 px. Дольше 5 с — печать
+## под --pressure-diag, один раз на стоянку (#341).
+func _note_chase_still(dt: float) -> void:
+	if state != St.CHASE or flying or stun > 0.0 or frozen:
+		_chase_still = 0.0
+		_chase_noted = false
+		return
+	if global_position.distance_to(_chase_spot) > 4.0:
+		_chase_spot = global_position
+		_chase_still = 0.0
+		_chase_noted = false
+		return
+	_chase_still += dt
+	if _chase_still > 5.0 and not _chase_noted:
+		_chase_noted = true
+		if OS.get_cmdline_user_args().has("--pressure-diag"):
+			var here: Vector2i = World.world_to_cell(global_position)
+			var nxt: Vector2i = path[path_i] if path_i < path.size() else Vector2i(-1, -1)
+			print("  стоянка CHASE %s (%d,%d) %.0f с клетка=(%d,%d) свет=%.2f" % [
+				kind, here.x, here.y, _chase_still, nxt.x, nxt.y, _light])
+
+
+## Шаг с a на b. Вбок и вниз — всегда (вниз тело падает само).
+## Вверх — только если под клеткой есть пол: иначе это ствол шахты,
+## и пеший прыжок туда не делается (#341).
+func _step_ok(a: Vector2i, b: Vector2i) -> bool:
+	if b.y >= a.y:
+		return true
+	var below: Vector2i = b + Vector2i.DOWN
+	if not World.in_bounds(below.x, below.y):
+		return false
+	return World.astar != null and World.astar.is_point_solid(below)
 
 
 # ------------------------------------------------------------------ УРОН
