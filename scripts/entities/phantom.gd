@@ -54,20 +54,53 @@ var _flee_from: Vector2 = Vector2.ZERO
 ## Волна директора, не сирена: удар маяка отход не обрывает.
 var _wave_hold: bool = false
 var _hold_frames: int = 0
-## Передышка по касанию (#333). 10 с в кольце 112 px — отход на >=200 px
-## и 8 с снаружи, затем возврат. Числа здесь одни: Balance не трогаем.
+## Передышка по касанию (#333). Порог и длительность — от числа тел
+## в кольце 112 px. Число фиксируется на входе и держится весь цикл.
+## Одиночка: стоянка 10 с, отход 8/12, паузы нет. Пара: 14/8/6.
+## Стая (≥3): 10/12/2. Пауза глушит счётчик. 200 px — цель, не условие
+## возврата. Общий выдох ночи задаёт свои часы и не читает эти.
+## Числа здесь: Balance не трогаем.
 const TOUCH_RING: float = 112.0
 const TOUCH_HOLD: float = 10.0
 const TOUCH_AWAY: float = 200.0
 const TOUCH_REST: float = 8.0
+const TOUCH_CAP: float = 12.0
+const SOLO_PAUSE: float = 0.0
+const PAIR_HOLD: float = 14.0
+const PAIR_REST: float = 8.0
+const PAIR_CAP: float = 8.0
+const PAIR_PAUSE: float = 6.0
+const SWARM_HOLD: float = 10.0
+const SWARM_REST: float = 12.0
+const SWARM_CAP: float = 12.0
+const SWARM_PAUSE: float = 2.0
+## Второй заход (#333, раунд 5). Стоянка без пути к якорю дольше 3 с —
+## застревание, не передышка. Пауза 2 с, затем перерождение. Потолок — 3
+## за ночь на фантома. Числа здесь: Balance не трогаем.
+const STUCK_PATH: float = 3.0
+const STUCK_PAUSE: float = 2.0
+const STUCK_REBORN: int = 3
 var _touch_s: float = 0.0
 var _breath: float = 0.0
 var _breath_n: int = 0
 var _breath_out: bool = false
 var _breath_gone: bool = false
+## Длительность этого отхода: минимум и потолок. Одиночка берёт TOUCH_*.
+var _breath_rest: float = 0.0
+var _breath_cap: float = 0.0
+## После выдоха счётчик касания не копится. Иначе отход кончился и сразу начался.
+var _breath_pause: float = 0.0
+## Число тел на входе в кольцо. 0 — ещё не в цикле. Держим до конца паузы:
+## пересчёт каждый кадр мигает на границе 112 px и рвёт стоянку.
+var _ring_n: int = 0
 var raid_struck: bool = false
 var _touch_cache: Array = []
 var _touch_cache_t: float = 0.0
+## Нет валидного пути к якорю. Пауза перед перерождением, когда > 0.
+var _stuck_path: float = 0.0
+var _stuck_pause: float = 0.0
+var _reborn_n: int = 0
+var _reborn_from: Vector2i = Vector2i(-1, -1)
 ## Глава «Огонь» (#215): пока > 0, эхо идёт к лучу (CHASE на approach_at),
 ## а не бродит. Свет ярче light_flee по-прежнему перебивает — эхо отступает.
 var approach_t: float = 0.0
@@ -220,7 +253,7 @@ func _physics_process(delta: float) -> void:
 	# виден от вентиляции, и эхо разворачивается, не войдя в кольцо 112 px.
 	# Вход в кольцо тоже не конец: свет клетки ярче light_flee, и эхо стоит
 	# секунду, а не 10. Подход кончается передышкой по касанию, не взглядом.
-	if seek_los and _touch_s >= TOUCH_HOLD:
+	if seek_los and _touch_s >= _ring_hold():
 		seek_los = false
 
 	# --- Растворение в глубине ------------------------------------------------
@@ -246,6 +279,14 @@ func _physics_process(delta: float) -> void:
 	# Осада главы тоже идёт своим курсом.
 	if (not raid or raid_struck) and siege_target == null and stun <= 0.0:
 		_touch_breath(dt)
+		# Второй заход (#333): тень, вставшая без пути к якорю, не висит
+		# столбом до рассвета. Налёт и осада идут своим курсом.
+		if _stuck_pause <= 0.0:
+			_note_stuck(dt)
+		else:
+			_stuck_pause = maxf(0.0, _stuck_pause - dt)
+			if _stuck_pause <= 0.0:
+				_reborn()
 
 	# --- Решения -------------------------------------------------------------
 	if _forced_flee > 0.0:
@@ -683,8 +724,9 @@ func _move_walking(dir: Vector2, speed: float, dt: float) -> void:
 		on_ground = false
 	# Узел пути прямо над головой: dir.x == 0, порог выше не срабатывает.
 	# Пеший стоит под клеткой до перестроения — налёт так и не доходит до удара.
-	# Без пола под узлом прыжок — падение в шахту, не шаг.
-	elif on_ground and dir.y < -0.75 and not _headroom_blocked() and _node_has_floor():
+	# Пол под узлом — шаг. Без пола тень не стоит: она висит и проходит клетку.
+	# Стоянка без пола по-прежнему запрещена — её ловит _note_stuck, не прыжок.
+	elif on_ground and dir.y < -0.75 and not _headroom_blocked() and (_node_has_floor() or _hangs()):
 		vel.y = -280.0
 		on_ground = false
 		if path_i + 1 < path.size():
@@ -985,6 +1027,12 @@ func _node_has_floor() -> bool:
 	return World.is_solid_cell(path[path_i] + Vector2i.DOWN)
 
 
+## Тень висит: проход через клетку без пола — движение, не стоянка.
+## Рой и так летает. Эхо, копатель и двойник по-прежнему не прыгают в шахту.
+func _hangs() -> bool:
+	return kind == "shade"
+
+
 ## Директор (#268): герой виден. Луч по клеткам врёт, если кристалл стоит
 ## в соседней клетке и закрывает отрезок — при дистанции удара свет клетки
 ## героя значит то же, что прямая видимость.
@@ -1191,10 +1239,10 @@ func force_flee(t: float, from: Vector2 = Vector2.ZERO) -> void:
 
 
 ## Передышка по касанию (#333). Кольцо — то же 112 px, что доля ночи
-## под давлением. 8 с начинаются в момент выхода за 200 px и не
-## перезапускаются, пока тело ещё внутри: иначе отдых не кончается
-## никогда. Повторный вход во время этих 8 с часы не останавливает.
-## Возврат — только после. До выхода держим отход, но часы не тикают.
+## под давлением. 8 с идут с приказа, независимо от дистанции.
+## 200 px — куда идём, не когда возвращаемся: не дошли — всё равно
+## держим минимум. Потолок 12 с: дальше возврат к охоте, даже если
+## 200 px так и не набрали. Повторный вход часы не останавливает.
 func breath_out() -> void:
 	if not alive or net_puppet:
 		return
@@ -1207,47 +1255,203 @@ func breath_out() -> void:
 
 func _begin_breath() -> void:
 	_touch_s = 0.0
-	_breath = TOUCH_REST
+	# Общий выдох мог прийти до личного набора — тогда число ещё не снято.
+	if _ring_n <= 0:
+		_ring_n = _ring_mates()
+	var span: Vector2 = _span_for(_ring_n)
+	_breath_rest = span.x
+	_breath_cap = span.y
+	_breath = _breath_cap
 	_breath_out = true
 	_breath_gone = false
 	_breath_n += 1
-	# 8 с — с приказа, не с выхода за 200. Пеший шаг часто не доходит
-	# до вентиляции, и часы «после выхода» не начинались вовсе.
-	wave_hold(TOUCH_REST, _touch_anchor())
+	# Минимум — с приказа, не с выхода за 200. Пеший шаг часто
+	# не доходит до вентиляции, и часы «после выхода» не начинались.
+	# Потолок — длительность этой стаи: wave_hold не обрывает отход раньше.
+	wave_hold(_breath_cap, _touch_anchor())
+
+
+## Общий выдох ночи (#333, раунд 9). Часы задаёт Threat, не личный цикл:
+## отход 16 или 20 с целиком, пауза после — тоже оттуда. Личный _span_for
+## сюда не подмешивается, иначе одиночка снова уйдёт на 8/12.
+func breath_union(rest: float, pause: float) -> void:
+	if not alive or net_puppet:
+		return
+	if raid and not raid_struck:
+		return
+	if _breath > 0.0 or _breath_out:
+		return
+	_touch_s = 0.0
+	if _ring_n <= 0:
+		_ring_n = _ring_mates()
+	_breath_rest = rest
+	_breath_cap = rest
+	_breath_pause = pause
+	_breath = rest
+	_breath_out = true
+	_breath_gone = false
+	_breath_n += 1
+	wave_hold(rest, _touch_anchor())
+
+
+## Нет пути к якорю дольше 3 с — застряли. Пауза 2 с, потом перерождение.
+## Кадр с путём обнуляет счётчик: это не стоянка. Потолок — 3 за ночь.
+func _note_stuck(dt: float) -> void:
+	if flying or net_puppet or not alive or raid or kind == "burrower":
+		_stuck_path = 0.0
+		return
+	if _reborn_n >= STUCK_REBORN or not Threat.reborn_room(kind):
+		return
+	if _forced_flee > 0.0 or _wave_hold or _breath_out:
+		_stuck_path = 0.0
+		return
+	# Путь к якорю уже считает _rebuild_path. Повторный A* здесь на ночи
+	# без обороны не отпускает кадр. Застревание — нет пути или узел не
+	# проходится дольше 3 с. Кадр с прогрессом обнуляет счётчик.
+	if not _path_failed and _stuck_t < STUCK_TIME:
+		_stuck_path = 0.0
+		return
+	_stuck_path += dt
+	if _stuck_path > STUCK_PATH:
+		_stuck_path = 0.0
+		_stuck_pause = STUCK_PAUSE
+		path.clear()
+		path_i = 0
+
+
+## Перерождение: директор ищет клетку с путём, мы только сбрасываем подход.
+func _reborn() -> void:
+	if not alive or net_puppet or _reborn_n >= STUCK_REBORN or not Threat.reborn_room(kind):
+		return
+	var was: Vector2 = global_position
+	var cell: Vector2i = Threat.reborn_cell(self, _reborn_from)
+	if cell.x < 0:
+		return
+	var at: Vector2 = World.cell_to_world(cell) + Vector2(0.0, 5.0)
+	global_position = at
+	spawn_point = at
+	vel = Vector2.ZERO
+	path.clear()
+	path_i = 0
+	_path_failed = false
+	_stuck_t = 0.0
+	_stuck_best = INF
+	_stuck_path = 0.0
+	target_machine = null
+	_reborn_from = cell
+	_reborn_n += 1
+	var hero: Vector2 = player.global_position if player != null and is_instance_valid(player) else at
+	seek_until_seen(30.0, hero)
+	Threat.note_reborn(was, at, _reborn_n, kind)
 
 
 func _touch_breath(dt: float) -> void:
 	if _breath > 0.0 or _breath_out:
 		_touch_s = 0.0
 		var near: float = _touch_near()
-		# Часы идут с приказа. Пока не вышли за 200 — не уменьшаем запас
-		# отхода: иначе тело, застрявшее в кольце, возвращается через 8 с.
+		# 200 px — цель отхода, не условие возврата. Часы идут всегда.
+		# Минимум этой стаи держим, даже если цель уже взята. Потолок
+		# возвращает к охоте, даже если 200 px так и не набрали.
 		if near >= TOUCH_AWAY:
 			_breath_gone = true
 		_breath = maxf(0.0, _breath - dt)
-		if _breath <= 0.0 and (_breath_gone or near >= TOUCH_AWAY):
+		var cap: float = _breath_cap if _breath_cap > 0.0 else TOUCH_CAP
+		var rest: float = _breath_rest if _breath_rest > 0.0 else TOUCH_REST
+		var held: float = cap - _breath
+		var done: bool = _breath <= 0.0 or (held >= rest and _breath_gone)
+		if done:
+			_breath = 0.0
 			_breath_gone = false
 			_breath_out = false
+			# Общий выдох уже записал свою паузу. Личный — от числа на входе.
+			# Одиночке паузы нет: счётчик снова копится сразу.
+			if _breath_pause <= 0.0:
+				_breath_pause = _pause_for(_ring_n if _ring_n > 0 else 1)
+			if _breath_pause <= 0.0:
+				_ring_n = 0
 			return
-		if _breath <= 0.0:
-			_breath = TOUCH_REST
 		var anchor: Vector2 = _touch_anchor()
 		if not _wave_hold or _flee_from.distance_to(anchor) > 32.0 or _forced_flee < _breath:
 			wave_hold(_breath, anchor)
 		return
+	if _breath_pause > 0.0:
+		_breath_pause = maxf(0.0, _breath_pause - dt)
+		_touch_s = 0.0
+		if _breath_pause <= 0.0:
+			_ring_n = 0
+		return
 	if _touch_near() <= TOUCH_RING:
+		# Число снимаем на первом кадре набора и не пересчитываем:
+		# сосед на границе 112 px иначе мигает стоянку каждый кадр.
+		if _touch_s <= 0.0:
+			_ring_n = _ring_mates()
 		_touch_s += dt
-		if _touch_s >= TOUCH_HOLD:
+		if _touch_s >= _hold_for(_ring_n):
 			_begin_breath()
 	else:
 		# Касание непрерывное: кадр вне кольца обнуляет счётчик до отхода.
 		_touch_s = 0.0
+		_ring_n = 0
 
 
 ## Ближайшая дистанция до героя или машины базы, px.
 ## Только поставленные игроком: горелка, маяк, накопитель, смеситель,
 ## зеркало, призма, грядка. Полный обход World.machines — тысячи клеток,
 ## и ночь на автопилоте не доигрывается.
+
+## Сколько живых не-налётных тел сейчас в кольце 112 px, включая себя.
+## Порог и длительность выдоха от этого числа, не от уровня ночи.
+func _ring_mates() -> int:
+	var n: int = 0
+	var tree: SceneTree = get_tree()
+	if tree == null:
+		return 1
+	for p in tree.get_nodes_in_group("phantom"):
+		if not is_instance_valid(p) or not bool(p.get("alive")):
+			continue
+		if bool(p.get("raid")) and not bool(p.get("raid_struck")):
+			continue
+		if p.get("siege_target") != null:
+			continue
+		if not p.has_method("_touch_near"):
+			continue
+		if float(p._touch_near()) <= TOUCH_RING:
+			n += 1
+	return maxi(n, 1)
+
+
+## Стоянка той стаи, что вошла. Пересчёта нет: n снят на первом кадре.
+func _ring_hold() -> float:
+	return _hold_for(_ring_n if _ring_n > 0 else _ring_mates())
+
+
+func _hold_for(n: int) -> float:
+	if n >= 3:
+		return SWARM_HOLD
+	if n == 2:
+		return PAIR_HOLD
+	return TOUCH_HOLD
+
+
+## Минимум и потолок отхода, с. Пара — 8. Стая — 12.
+## Одиночка — 8/12: отход может кончиться на 200 px, потолок 12 с.
+func _span_for(n: int) -> Vector2:
+	if n >= 3:
+		return Vector2(SWARM_REST, SWARM_CAP)
+	if n == 2:
+		return Vector2(PAIR_REST, PAIR_CAP)
+	return Vector2(TOUCH_REST, TOUCH_CAP)
+
+
+## Пауза после выдоха, с. Счётчик касания в ней не копится.
+func _pause_for(n: int) -> float:
+	if n >= 3:
+		return SWARM_PAUSE
+	if n == 2:
+		return PAIR_PAUSE
+	return SOLO_PAUSE
+
+
 func _touch_near() -> float:
 	var best: float = INF
 	if player != null and is_instance_valid(player):
@@ -1257,6 +1461,10 @@ func _touch_near() -> float:
 	for c in World.machines:
 		best = minf(best, global_position.distance_to(World.cell_to_world(c)))
 	for m in _touch_base():
+		# Кэш живёт 0.5 с: осада и потеря горелки освобождают машину раньше.
+		# Обращение к freed даёт SCRIPT ERROR каждый кадр и глушит выдох.
+		if not is_instance_valid(m) or not (m is Node2D):
+			continue
 		# Та же точка, что у давления ночи: центр клетки, не спрайт.
 		# Спрайт маяка выше ряда, и тело в 80 px от клетки не копило касание.
 		var spot: Vector2 = m.global_position
@@ -1268,11 +1476,14 @@ func _touch_near() -> float:
 
 ## Точка, от которой отходим: ближайшая машина базы или герой.
 func _touch_anchor() -> Vector2:
-	var best: Vector2 = player.global_position if player != null else global_position
+	var best: Vector2 = global_position
 	var best_d: float = INF
 	if player != null and is_instance_valid(player):
+		best = player.global_position
 		best_d = global_position.distance_to(player.global_position)
 	for m in _touch_base():
+		if not is_instance_valid(m) or not (m is Node2D):
+			continue
 		var spot: Vector2 = m.global_position
 		if m.get("cell") is Vector2i:
 			spot = World.cell_to_world(m.cell)
@@ -1289,6 +1500,14 @@ const TOUCH_KINDS: Array[String] = ["Burner", "Pharos", "Accumulator", "Mixer", 
 func _touch_base() -> Array:
 	_touch_cache_t -= get_physics_process_delta_time()
 	if _touch_cache_t > 0.0:
+		# Кэш мог устареть внутри 0.5 с: осада уничтожает горелку между
+		# пересборами. Освобождённые не отдаём — иначе _touch_near падает.
+		var live: Array = []
+		for m in _touch_cache:
+			if is_instance_valid(m) and m is Node2D:
+				live.append(m)
+		if live.size() != _touch_cache.size():
+			_touch_cache = live
 		return _touch_cache
 	_touch_cache_t = 0.5
 	_touch_cache = []

@@ -671,6 +671,11 @@ func _print_night_diag(day: int, planned: Array, spent: float, contact_s: Dictio
 		hf += int(ph.get("_hold_frames"))
 		fired += int(ph.get("_breath_n"))
 	print("    кадров удержания: %d, передышек: %d" % [hf, fired])
+	print("    перерождений: %d" % int(Threat.reborn_n))
+	for line in Threat.reborn_log:
+		print("    %s" % line)
+	for line in Threat.union_log:
+		print("    %s" % line)
 
 
 func _print_diag(key: String, row: Dictionary) -> void:

@@ -56,7 +56,19 @@ var _wave_recall_left: bool = false
 var _wave_recall_due: bool = false
 var _wave_mark: bool = false
 var wave_recalls: int = 0
+var reborn_n: int = 0
+var reborn_log: Array[String] = []
+## Кап второго захода на вид, не на тело: растворение и новый спавн
+## рождали счётчик заново, и «3 на фантома» не держались.
+var reborn_by: Dictionary = {}
+const REBORN_NIGHT_CAP: int = 9
 var _swarm_touch: float = 0.0
+## Объединённое давление (#333, раунд 9): кто-то у базы, не непрерывная
+## стоянка одного тела. Повтор с 20/6 — только если 16/4 не удержит семёрку.
+const UNION_HOLD: float = 10.0
+const UNION_REST: float = 20.0
+const UNION_PAUSE: float = 6.0
+var union_log: Array[String] = []
 var spawned_total: int = 0          ## сколько фантомов вышло за забег
 ## Глава выпустила безвредное эхо. Сценарий читает: ночью эхо уходит за секунды.
 var chapter_echo: bool = false
@@ -100,6 +112,10 @@ func reset() -> void:
 	_wave_recall_due = false
 	wave_recalls = 0
 	_swarm_touch = 0.0
+	reborn_n = 0
+	reborn_log.clear()
+	union_log.clear()
+	reborn_by.clear()
 	_wave_mark = false
 	spawned_total = 0
 	chapter_echo = false
@@ -417,6 +433,10 @@ func tick(delta: float) -> void:
 
 func _begin_night() -> void:
 	active = true
+	reborn_n = 0
+	reborn_log.clear()
+	union_log.clear()
+	reborn_by.clear()
 	night_day = Game.day_number
 	Game.wave += 1
 	_relay_seen = Game.relay_active
@@ -445,6 +465,10 @@ func _begin_night() -> void:
 	_wave_was_gap = false
 	wave_recalls = 0
 	_swarm_touch = 0.0
+	reborn_n = 0
+	reborn_log.clear()
+	union_log.clear()
+	reborn_by.clear()
 	_wave_recall_left = false
 	_wave_mark = true
 
@@ -460,6 +484,10 @@ func _end_night() -> void:
 	_wave_recall_due = false
 	wave_recalls = 0
 	_swarm_touch = 0.0
+	reborn_n = 0
+	reborn_log.clear()
+	union_log.clear()
+	reborn_by.clear()
 	_wave_mark = false
 	_relay_seen = false
 
@@ -494,10 +522,11 @@ func _recall_echoes() -> void:
 	_wave_recall_due = true
 
 
-## Общий выдох (#333): один счётчик на ночь, не на фантома. Кто-то в
-## кольце 112 px непрерывно дольше 10 с — все не-налётные в кольце уходят
-## на те же 8 с. Кадр без никого в кольце обнуляет счётчик. Налёт до удара
-## не отзываем: breath_out сам откажется, здесь его даже не зовём.
+## Объединённое давление (#333, раунд 9): один счётчик на ночь. Копит,
+## пока в кольце хотя бы одно тело — тела меняются, база под давлением
+## непрерывно. Налёт до удара и осада главы не входят. Порог UNION_HOLD,
+## не личная стоянка. Дошёл — отозвать всех в кольце на общий отход,
+## затем пауза, в которую счётчик не копит.
 func _swarm_breath(delta: float) -> void:
 	var ring: Array = []
 	for p in get_tree().get_nodes_in_group("phantom"):
@@ -514,19 +543,32 @@ func _swarm_breath(delta: float) -> void:
 			ring_px = float(p.TOUCH_RING)
 		if float(p._touch_near()) <= ring_px:
 			ring.append(p)
-	if ring.is_empty():
+	# Пауза общего выдоха глушит счётчик, даже если тела уже вышли из кольца.
+	# Иначе отход кончился, пауза не видна, и набор начинается сразу.
+	var cooling: bool = false
+	for p in get_tree().get_nodes_in_group("phantom"):
+		if not is_instance_valid(p) or not bool(p.get("alive")):
+			continue
+		if float(p.get("_breath_pause")) > 0.0:
+			cooling = true
+			break
+	if cooling or ring.size() < 1:
 		_swarm_touch = 0.0
 		return
 	_swarm_touch += delta
-	var hold: float = 10.0
-	if "TOUCH_HOLD" in ring[0]:
-		hold = float(ring[0].TOUCH_HOLD)
-	if _swarm_touch < hold:
+	if _swarm_touch < UNION_HOLD:
 		return
 	_swarm_touch = 0.0
+	var called: int = 0
 	for p in ring:
-		if is_instance_valid(p) and p.has_method("breath_out"):
-			p.breath_out()
+		if is_instance_valid(p) and p.has_method("breath_union"):
+			p.breath_union(UNION_REST, UNION_PAUSE)
+			called += 1
+	var t: float = _wave_clock
+	var line: String = "выдох роя t=%.1f, тел %d" % [t, called]
+	union_log.append(line)
+	if _pressure_diag():
+		print("  %s" % line)
 
 
 func _recall_wave() -> void:
@@ -788,6 +830,115 @@ func _spawn_now(kind: String, pos: Vector2, opts: Dictionary = {}) -> void:
 
 ## Незапечатанные вентиляции не ближе VENT_SPAWN_MIN_PX и не дальше
 ## VENT_SPAWN_MAX_PX от игрока, по возрастанию дистанции; первые count.
+## Второй заход (#333): ближайшая пещерная или вентиляционная клетка,
+## из которой ЕСТЬ путь к якорю. find_cave_cell не меняем — только зовём.
+## По возможности не та же клетка, что в прошлый раз.
+## Сколько перерождений этого вида уже было за ночь. Тело может
+## раствориться — кап от этого не обнуляется.
+func reborn_count(kind: String) -> int:
+	return int(reborn_by.get(kind, 0))
+
+
+## Ещё можно: 3 на вид за ночь и 9 на ночь. Тело спрашивает до шага.
+func reborn_room(kind: String) -> bool:
+	if reborn_n >= REBORN_NIGHT_CAP:
+		return false
+	return reborn_count(kind) < 3
+
+
+func reborn_cell(body: Node2D, avoid: Vector2i) -> Vector2i:
+	if body == null or not is_instance_valid(body):
+		return Vector2i(-1, -1)
+	if not reborn_room(String(body.get("kind"))):
+		return Vector2i(-1, -1)
+	var anchor: Vector2 = body.global_position
+	if body.has_method("_touch_anchor"):
+		anchor = body._touch_anchor()
+	var hero: Vector2i = World.world_to_cell(anchor)
+	var best: Vector2i = Vector2i(-1, -1)
+	var best_d: float = INF
+	var fallback: Vector2i = Vector2i(-1, -1)
+	var fallback_d: float = INF
+	for v in nearest_vents(anchor, 8):
+		var mouth: Vector2i = _reborn_mouth(v, hero)
+		if mouth.x < 0:
+			continue
+		var d: float = World.cell_to_world(mouth).distance_to(body.global_position)
+		if d < fallback_d:
+			fallback_d = d
+			fallback = mouth
+		if mouth != avoid and d < best_d:
+			best_d = d
+			best = mouth
+	for _i in 6:
+		var cave: Vector2i = find_cave_cell(anchor)
+		if cave.x < 0:
+			break
+		if not _reborn_stands(cave, hero):
+			continue
+		var d2: float = World.cell_to_world(cave).distance_to(body.global_position)
+		if d2 < fallback_d:
+			fallback_d = d2
+			fallback = cave
+		if cave != avoid and d2 < best_d:
+			best_d = d2
+			best = cave
+	if best.x >= 0:
+		return best
+	return fallback
+
+
+## Рот вентиляции для второго захода: ближайшая тёмная клетка с путём.
+## A* только пока рот не найден — дальний get_id_path не отпускает кадр.
+func _reborn_mouth(vent: Vector2i, hero: Vector2i) -> Vector2i:
+	var near: Array[Vector2i] = []
+	for dy in range(0, 4):
+		for dx in range(-2, 3):
+			near.append(vent + Vector2i(dx, -dy))
+	near.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return absi(a.x - vent.x) + (vent.y - a.y) < absi(b.x - vent.x) + (vent.y - b.y))
+	for c in near:
+		if _reborn_stands(c, hero):
+			return c
+	return Vector2i(-1, -1)
+
+
+## Клетка второго захода: воздух, пол под ногами, путь к якорю длиннее одной клетки.
+func _reborn_stands(cell: Vector2i, hero: Vector2i) -> bool:
+	if not World.astar.is_in_boundsv(cell) or not World.astar.is_in_boundsv(hero):
+		return false
+	if World.get_tile(cell.x, cell.y) != IDs.T.AIR:
+		return false
+	if not World.is_solid_cell(cell + Vector2i.DOWN):
+		return false
+	if World.astar.is_point_solid(cell):
+		return false
+	var goal: Vector2i = hero
+	if World.astar.is_point_solid(goal):
+		return false
+	return World.astar.get_id_path(cell, goal).size() > 1
+
+
+func note_reborn(was: Vector2, at: Vector2, n: int, kind: String = "") -> void:
+	reborn_n += 1
+	if kind != "":
+		reborn_by[kind] = int(reborn_by.get(kind, 0)) + 1
+	var a: Vector2i = World.world_to_cell(was)
+	var b: Vector2i = World.world_to_cell(at)
+	var line: String = "тень застряла (%d,%d) → перерождение из (%d,%d)" % [a.x, a.y, b.x, b.y]
+	reborn_log.append(line)
+	if _pressure_diag():
+		var of_kind: int = int(reborn_by.get(kind, n)) if kind != "" else n
+		print("  %s  [%d за ночь, %d у фантома]" % [line, reborn_n, of_kind])
+
+
+func _pressure_diag() -> bool:
+	for a in OS.get_cmdline_user_args():
+		if a == "--pressure-diag" or a.begins_with("--pressure-diag="):
+			return true
+	return false
+
+
 func nearest_vents(ppos: Vector2, count: int = Balance.VENT_SPAWN_COUNT) -> Array[Vector2i]:
 	var cand: Array = []
 	for v in World.vents:
@@ -1018,6 +1169,10 @@ func load_state(d: Dictionary) -> void:
 	_wave_recall_due = wave_pause > 0.0
 	wave_recalls = 0
 	_swarm_touch = 0.0
+	reborn_n = 0
+	reborn_log.clear()
+	union_log.clear()
+	reborn_by.clear()
 	_wave_mark = active
 	spawned_total = int(d.get("spawned_total", 0))
 	_relay_seen = bool(d.get("relay_seen", false))
