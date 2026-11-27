@@ -81,6 +81,10 @@ var raid_side: String = ""
 ## Участок, который налёт повредил. Пусто — участка нет.
 var raid_section: Vector2i = Vector2i(-1, -1)
 var raid_section_t: float = 0.0
+## Сдача застрявшего налёта (#339). Окно — от спавна тела, не от контакта:
+## A* строит путь уже после появления, пустой path на спавне ничего не значит.
+var _raid_stall: float = 0.0
+var _raid_stall_best: float = -1.0
 
 var _relay_seen: bool = false
 var _pack_seq: int = 0
@@ -124,6 +128,8 @@ func reset() -> void:
 	raid_side = ""
 	raid_section = Vector2i(-1, -1)
 	raid_section_t = 0.0
+	_raid_stall = 0.0
+	_raid_stall_best = -1.0
 	_relay_seen = false
 	night_players = 1
 
@@ -1230,6 +1236,9 @@ func _tick_raid(delta: float) -> void:
 		# само. Здесь только курс: удар и шаг — в phantom._physics_process.
 		if raid_entrance.x >= 0 and not _raid_phantom_alive():
 			_raid_finish(Game.raid_damage != "")
+		elif _raid_stalled(delta):
+			# У стены без пути к цели: «не дошёл», не весь бюджет контакта (#339).
+			_raid_finish(false)
 		elif Game.raid_remain <= 0.0 and Game.raid_damage == "":
 			_raid_finish(false)
 		return
@@ -1264,6 +1273,7 @@ func _raid_begin_warn() -> void:
 	Game.raid_remain = Balance.RAID_WARN_LEAD
 	Game.raid_damage = ""
 	Game.raid_active = false
+	_raid_stall_reset()
 	raid_entrance = pick["entrance"]
 	raid_side = String(pick["side"])
 	_raid_was_sync()
@@ -1287,12 +1297,14 @@ func _raid_contact() -> void:
 		Game.raid_phase = RAID_ON
 		Game.raid_active = true
 		Game.raid_remain = Balance.RAID_GIVE_UP
+		_raid_stall_reset()
 		_raid_was_sync()
 		return
 	Game.raid_checked = cell
 	Game.raid_phase = RAID_ON
 	Game.raid_active = true
 	Game.raid_remain = Balance.RAID_CONTACT_MAX
+	_raid_stall_reset()
 	_raid_was_sync()
 	var opts: Dictionary = {"raid": true, "at": World.cell_to_world(Game.raid_target if Game.raid_target.x >= 0 else cell)}
 	telegraph(cell, "echo", opts)
@@ -1309,6 +1321,43 @@ func _raid_hold_course() -> void:
 		if float(p.get("approach_t")) > 1.0:
 			continue
 		p.approach(8.0, at)
+
+
+## Новый налёт и контакт обнуляют окно. Секунда после спавна — на A*.
+func _raid_stall_reset() -> void:
+	_raid_stall = 0.0
+	_raid_stall_best = -1.0
+
+
+## Живое тело налёта без удара не приблизилось к цели на 8 px за окно.
+## Окно — от первого кадра тела, не от контакта и не от пустого path (#339).
+## Пока тела нет (гудок) или удар уже был — не сдаёмся.
+func _raid_stalled(delta: float) -> bool:
+	if Game.raid_damage != "":
+		return false
+	var body: Node = null
+	for p in get_tree().get_nodes_in_group("phantom"):
+		if not is_instance_valid(p) or not bool(p.get("raid")) or not bool(p.get("alive")):
+			continue
+		if bool(p.get("raid_struck")):
+			continue
+		body = p
+		break
+	if body == null:
+		return false
+	var goal: Vector2i = Game.raid_target if Game.raid_target.x >= 0 else raid_entrance
+	var dist: float = body.global_position.distance_to(World.cell_to_world(goal))
+	# Первый кадр тела: секунда на построение пути, база — текущая дистанция.
+	if _raid_stall_best < 0.0:
+		_raid_stall_best = dist
+		_raid_stall = -1.0
+		return false
+	if dist < _raid_stall_best - 8.0:
+		_raid_stall_best = dist
+		_raid_stall = 0.0
+		return false
+	_raid_stall += delta
+	return _raid_stall >= Balance.RAID_STALL_GIVE_UP
 
 
 func _raid_phantom_alive() -> bool:
